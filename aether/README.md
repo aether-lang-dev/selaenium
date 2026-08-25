@@ -169,12 +169,20 @@ without it the client hangs on chromedriver responses).
 - **Lua binding** (Lua 5.4 C extension): ✅ FFI + **live headless Chrome +
   surface**. A real C extension (Lua has no stdlib FFI) that dlopen's the engine;
   hand-rolled JSON. Builds a bundled 5.4 host on boxes whose interpreter is 5.3.
-- Thirteen languages across eleven FFI mechanisms (ctypes / cgo / Fiddle / koffi
-  / Panama FFM / P/Invoke / Rust extern-C / dart:ffi / Erlang NIF / Nim importc /
-  Zig extern / Lua C-extension — the BEAM three share the NIF) all drive the
-  byte-identical `libselenium_core.so`. Eleven are live-verified here; the two
-  BEAM wrappers (Elixir, Gleam) are authored here and verified on a box with
-  their compilers (catchyos).
+- **JVM family** (Kotlin, Clojure): consume the ONE Java FFM jar over seamless
+  JVM interop — **no second FFI, no second `.so`** (one Java jar backs the whole
+  JVM family, exactly as one Erlang NIF backs the BEAM family).
+  - **Kotlin**: ✅ FFI + **live headless Chrome + surface** — live-verified.
+    Needs Kotlin ≥ 1.9 (a modern kotlinc; Debian's 1.3 can't read JDK-22+ FFM
+    bytecode). Adds a `headlessChrome { }` builder + element extensions.
+  - **Clojure**: ✅ FFI + **live headless Chrome + surface** — live-verified.
+    Adds a `with-chrome` macro + keyword `by`.
+- Fifteen languages across eleven FFI mechanisms (ctypes / cgo / Fiddle / koffi /
+  Panama FFM / P/Invoke / Rust extern-C / dart:ffi / Erlang NIF / Nim importc /
+  Zig extern / Lua C-extension — the BEAM three share the NIF, the JVM family
+  shares the Java jar) all drive the byte-identical `libselenium_core.so`.
+  Thirteen are live-verified here; the two BEAM wrappers (Elixir, Gleam) are
+  authored here and verified on a box with their compilers (catchyos).
 - **Consumer install** (all three): ✅ the packaged wheel / Go module / gem
   stands alone with the `.so` bundled inside — clean-env install, no source tree,
   no env var — and drives real headless Chrome from the installed artifact

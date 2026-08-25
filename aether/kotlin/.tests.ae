@@ -1,0 +1,28 @@
+// Kotlin binding tests. Kotlin is a JVM-family binding: it consumes the ONE Java
+// FFM binding's classes over seamless Java-interop — no second FFI, no second
+// .so (exactly as one Java jar backs Kotlin/Scala/Clojure/Groovy). This node
+// deps the engine; run-tests.sh compiles the Java binding classes, then the
+// Kotlin wrapper + test against them, and runs with --enable-native-access.
+//
+// It needs a MODERN kotlinc (>= 1.9): the Java binding is Panama FFM (JDK 22+),
+// which Debian's kotlinc 1.3 can't read. run-tests.sh discovers one (KOTLIN_HOME
+// / sdkman / a capable PATH kotlinc) and SKIPS LOUDLY otherwise.
+import build
+import std.os
+
+aeb(cap) {
+    b = build.start()
+    build.dep(b, "core/.build.ae")
+    lib = build.dep_artifact(b, "core/.build.ae", "shared_lib")
+    root = build._get(b, "root")
+    kdir = "${root}/kotlin"
+    jsrc = "${root}/java/src/org/seleniumhq/aether"
+
+    rc = os.system("bash \"${kdir}/run-tests.sh\" \"${lib}\" \"${jsrc}\" \"${kdir}\"")
+    if rc != 0 {
+        println("kotlin tests: FAILED")
+        return 1
+    }
+    println("kotlin tests: PASSED (ffi + live+surface)")
+    return 0
+}
