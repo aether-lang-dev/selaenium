@@ -162,11 +162,18 @@ without it the client hangs on chromedriver responses).
   - **Erlang** (NIF): ✅ FFI + **live headless Chrome + surface** — live-verified.
   - **Elixir** (defdelegate to the NIF): authored; ✅ verify on a box with Elixir.
   - **Gleam** (`@external` to the NIF): authored; ✅ verify on a box with Gleam.
-- Ten languages across nine FFI mechanisms (ctypes / cgo / Fiddle / koffi /
-  Panama FFM / P/Invoke / Rust extern-C / dart:ffi / Erlang NIF — the BEAM three
-  share the NIF) all drive the byte-identical `libselenium_core.so` — the
-  one-engine-many-bindings claim, proven. Eight are live-verified here; the two
-  BEAM wrappers (Elixir, Gleam) are authored here and verified on a box that has
+- **Nim binding** (importc + link-time): ✅ FFI + **live headless Chrome +
+  surface**. std/json; `{.passL.}` links the engine with rpath.
+- **Zig binding** (`@extern` + link-time, Zig 0.16): ✅ FFI + **live headless
+  Chrome + surface**. std.json; build.zig links + rpaths the engine.
+- **Lua binding** (Lua 5.4 C extension): ✅ FFI + **live headless Chrome +
+  surface**. A real C extension (Lua has no stdlib FFI) that dlopen's the engine;
+  hand-rolled JSON. Builds a bundled 5.4 host on boxes whose interpreter is 5.3.
+- Thirteen languages across eleven FFI mechanisms (ctypes / cgo / Fiddle / koffi
+  / Panama FFM / P/Invoke / Rust extern-C / dart:ffi / Erlang NIF / Nim importc /
+  Zig extern / Lua C-extension — the BEAM three share the NIF) all drive the
+  byte-identical `libselenium_core.so`. Eleven are live-verified here; the two
+  BEAM wrappers (Elixir, Gleam) are authored here and verified on a box with
   their compilers (catchyos).
 - **Consumer install** (all three): ✅ the packaged wheel / Go module / gem
   stands alone with the `.so` bundled inside — clean-env install, no source tree,

@@ -1,0 +1,27 @@
+// Nim binding tests (importc + link-time). The engine .so is LINKED at build
+// time via src/selenium_core.nim's {.passL.} (-L nim/native + ../core/native,
+// with matching rpaths). This node deps the engine and stages the .so into
+// nim/native/ before compiling, exactly as go/.tests.ae does for cgo. The live
+// test self-skips if chromedriver is absent.
+import build
+import std.os
+
+aeb(cap) {
+    b = build.start()
+    build.dep(b, "core/.build.ae")
+    lib = build.dep_artifact(b, "core/.build.ae", "shared_lib")
+    root = build._get(b, "root")
+    ndir = "${root}/nim"
+    nim = "PATH=\"$HOME/.local/bin:$PATH\""
+
+    // Stage the engine .so where {.passL.} links it.
+    st = os.system("mkdir -p \"${ndir}/native\" && cp \"${lib}\" \"${ndir}/native/libselenium_core.so\"")
+    if st != 0 { println("nim tests: failed to stage engine .so"); return 1 }
+
+    rc = os.system("cd \"${ndir}\" && ${nim} nim c -r --hints:off --path:src tests/tffi.nim")
+    if rc != 0 { println("nim tests: tffi FAILED"); return 1 }
+    rc2 = os.system("cd \"${ndir}\" && ${nim} nim c -r --hints:off --threads:on --path:src tests/tlive.nim")
+    if rc2 != 0 { println("nim tests: tlive FAILED"); return 1 }
+    println("nim tests: PASSED (ffi + live+surface)")
+    return 0
+}

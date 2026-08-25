@@ -20,6 +20,9 @@ aeb(cap) {
     build.dep(b, "erlang/.tests.ae")
     build.dep(b, "gleam/.tests.ae")
     build.dep(b, "elixir/.tests.ae")
+    build.dep(b, "nim/.tests.ae")
+    build.dep(b, "zig/.tests.ae")
+    build.dep(b, "lua/.tests.ae")
     // Consumer-install proofs: the packaged wheel / Go module / gem / npm
     // tarball / jar / nupkg / crate / pub package standing alone with the .so.
     build.dep(b, "python/.example.ae")
@@ -30,5 +33,8 @@ aeb(cap) {
     build.dep(b, "dotnet/.example.ae")
     build.dep(b, "rust/.example.ae")
     build.dep(b, "dart/.example.ae")
+    build.dep(b, "nim/.example.ae")
+    build.dep(b, "zig/.example.ae")
+    build.dep(b, "lua/.example.ae")
     return 0
 }

@@ -1,0 +1,37 @@
+// Third-party-consumer EXAMPLE test for the Nim binding.
+//
+// Stages a standalone copy of the selenium_core package under target/nim-pkg
+// (carrying the bundled native/ .so, but WITHOUT the repo's core/ sibling — so
+// {.passL.}'s ../core/native path can't resolve and only the package's own
+// bundled native/ .so satisfies the link/rpath). A consumer program then
+// compiles + runs against it (--path to ../nim-pkg/src) with SELENIUM_CORE_LIB
+// unset. The honest "add the package and it just works" test.
+import build
+import std.os
+
+aeb(cap) {
+    b = build.start()
+    build.dep(b, "nim/.package.ae")
+    _p = build.dep_artifact(b, "nim/.package.ae", "package_dir")
+    root = build._get(b, "root")
+    exsrc = "${root}/nim/example"
+    pkg = "${root}/target/nim-pkg"
+    consumer = "${root}/target/nim-consumer"
+    nim = "PATH=\"$HOME/.local/bin:$PATH\""
+
+    // Stage the package (src/ + native/ + nimble) WITHOUT tests/ or a core/
+    // sibling (target/ has no core/), plus the consumer program.
+    rc = os.system("rm -rf \"${pkg}\" \"${consumer}\" && mkdir -p \"${pkg}/src\" \"${pkg}/native\" \"${consumer}\" && cp \"${root}/nim/src/selenium_core.nim\" \"${pkg}/src/\" && cp \"${root}/nim/selenium_core.nimble\" \"${pkg}/\" && cp \"${root}/nim/native/libselenium_core.so\" \"${pkg}/native/\" && cp \"${exsrc}/consumer.nim\" \"${consumer}/\"")
+    if rc != 0 { println("nim example: staging the package + consumer failed"); return 1 }
+    rc_so = os.system("ls \"${pkg}/native/libselenium_core.so\" >/dev/null 2>&1 && test ! -d \"${root}/target/core\"")
+    if rc_so != 0 { println("nim example: staged package missing native/*.so (or a core/ leaked)"); return 1 }
+
+    // Compile the consumer with the packaged module on the path; because the
+    // pkg copy has no ../core/native, only its own native/ .so links.
+    rc2 = os.system("cd \"${consumer}\" && ${nim} env -u SELENIUM_CORE_LIB nim c -r --hints:off --path:\"${pkg}/src\" consumer.nim ffi")
+    if rc2 != 0 { println("nim example: ffi-mode consumer run failed"); return 1 }
+    rc3 = os.system("cd \"${consumer}\" && ${nim} env -u SELENIUM_CORE_LIB ./consumer live")
+    if rc3 != 0 { println("nim example: live-mode consumer run failed"); return 1 }
+    println("nim example: PASS — consumer linked the engine via the package's bundled .so (ffi + live)")
+    return 0
+}

@@ -1,0 +1,30 @@
+// Zig binding tests (@extern + link-time, Zig 0.16). The engine .so is LINKED
+// at build time via build.zig (-L nim-style search + rpath). This node deps the
+// engine, stages the .so into zig/native/, runs `zig build test` (FFI unit
+// tests) and then the live-surface binary via run-live.sh (which starts the
+// content server + chromedriver and passes their URLs in env — Zig 0.16's
+// reworked std.net stays out of the test). The live step self-skips if
+// chromedriver is absent.
+import build
+import std.os
+
+aeb(cap) {
+    b = build.start()
+    build.dep(b, "core/.build.ae")
+    lib = build.dep_artifact(b, "core/.build.ae", "shared_lib")
+    root = build._get(b, "root")
+    zdir = "${root}/zig"
+    zig = "PATH=\"$HOME/.local/bin:$PATH\""
+
+    st = os.system("mkdir -p \"${zdir}/native\" && cp \"${lib}\" \"${zdir}/native/libselenium_core.so\"")
+    if st != 0 { println("zig tests: failed to stage engine .so"); return 1 }
+
+    // FFI unit tests + build the live/example binaries.
+    rc = os.system("cd \"${zdir}\" && ${zig} zig build test")
+    if rc != 0 { println("zig tests: `zig build test` (FFI) FAILED"); return 1 }
+    // Live-surface test (skips green without chromedriver).
+    rc2 = os.system("cd \"${zdir}\" && ${zig} bash run-live.sh zig-out/bin/selenium-live")
+    if rc2 != 0 { println("zig tests: live-surface FAILED"); return 1 }
+    println("zig tests: PASSED (ffi + live+surface)")
+    return 0
+}

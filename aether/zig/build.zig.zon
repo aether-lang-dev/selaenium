@@ -1,0 +1,15 @@
+// Package manifest, so another Zig project can depend on this binding. There
+// are no `.dependencies` and never will be: the binding needs libc and the
+// engine .so, neither of which is a Zig package. A consumer must link the
+// engine itself — a Zig module carries source, not link flags.
+.{
+    .name = .selenium_core,
+    .version = "0.1.0",
+    .fingerprint = 0x740e86fcfa41a6b0,
+    .minimum_zig_version = "0.16.0",
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    },
+}

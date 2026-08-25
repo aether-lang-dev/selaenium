@@ -1,0 +1,27 @@
+// Third-party-consumer PACKAGE stage for the Lua binding.
+//
+// Lua consumes selenium_core as a package: the pure-Lua wrapper
+// (selenium_core.lua) + the compiled C extension (selenium_core_native.so). The
+// extension dlopen's the engine from its own native/ dir, so the engine .so must
+// ship alongside. This stages the engine .so into lua/native/ and (re)builds the
+// C extension. Deps core/.build.ae; publishes the package dir on "package_dir".
+import build
+import std.os
+
+aeb(cap) {
+    b = build.start()
+    build.dep(b, "core/.build.ae")
+    lib = build.dep_artifact(b, "core/.build.ae", "shared_lib")
+    root = build._get(b, "root")
+    ldir = "${root}/lua"
+
+    st = os.system("mkdir -p \"${ldir}/native\" && cp \"${lib}\" \"${ldir}/native/libselenium_core.so\"")
+    if st != 0 { println("lua package: failed to stage engine .so"); return 1 }
+    // Build the C extension (needs the 5.4 headers).
+    cf = "$(pkg-config --cflags lua5.4 2>/dev/null || echo -I/usr/include/lua5.4)"
+    rc = os.system("cc -O2 -fPIC -shared ${cf} \"${ldir}/src/selenium_core.c\" -o \"${ldir}/selenium_core_native.so\" -ldl")
+    if rc != 0 { println("lua package: failed to build the C extension"); return 1 }
+    build.publish_artifact(b, "package_dir", "${ldir}")
+    println("lua package: staged engine .so + built C extension (Lua package ready)")
+    return 0
+}

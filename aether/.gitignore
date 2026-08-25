@@ -45,6 +45,23 @@
 /dart/example/.dart_tool/
 /dart/example/pubspec.lock
 
+# Nim
+/nim/native/
+/nim/nimcache/
+/nim/tests/tffi
+/nim/tests/tlive
+/nim/example/consumer
+
+# Zig
+/zig/native/
+/zig/.zig-cache/
+/zig/zig-out/
+
+# Lua
+/lua/native/
+/lua/selenium_core_native.so
+/lua/lua54
+
 # BEAM family (Erlang owns the shared NIF; Elixir/Gleam ride it)
 /erlang/_build/
 /erlang/erl_crash.dump

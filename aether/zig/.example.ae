@@ -1,0 +1,41 @@
+// Third-party-consumer EXAMPLE test for the Zig binding.
+//
+// Stages a standalone copy of the zig package under target/zig-pkg (carrying the
+// bundled native/ .so, but WITHOUT the repo's core/ sibling — so build.zig's
+// ../core/native path can't resolve and only the package's own native/ .so
+// satisfies the link/rpath). The package's own build.zig builds the consumer
+// example (example/main.zig imports selenium_core), which we then run for ffi
+// and live with SELENIUM_CORE_LIB unset. The live mode reads SEL_CHROMEDRIVER_URL
+// from the chromedriver this harness spawns (self-skips if absent).
+import build
+import std.os
+
+aeb(cap) {
+    b = build.start()
+    build.dep(b, "zig/.package.ae")
+    _p = build.dep_artifact(b, "zig/.package.ae", "package_dir")
+    root = build._get(b, "root")
+    pkg = "${root}/target/zig-pkg"
+    zig = "PATH=\"$HOME/.local/bin:$PATH\""
+
+    // Stage the whole package (src/ + example/ + build.zig* + bundled native/)
+    // WITHOUT a core/ sibling (target/ has no core/).
+    rc = os.system("rm -rf \"${pkg}\" && mkdir -p \"${pkg}\" && cp -r \"${root}/zig/src\" \"${root}/zig/example\" \"${pkg}/\" && cp \"${root}/zig/build.zig\" \"${root}/zig/build.zig.zon\" \"${pkg}/\" && mkdir -p \"${pkg}/native\" && cp \"${root}/zig/native/libselenium_core.so\" \"${pkg}/native/\"")
+    if rc != 0 { println("zig example: staging the package failed"); return 1 }
+    rc_so = os.system("ls \"${pkg}/native/libselenium_core.so\" >/dev/null 2>&1 && test ! -d \"${root}/target/core\"")
+    if rc_so != 0 { println("zig example: staged package missing native/*.so (or a core/ leaked)"); return 1 }
+
+    // Build the consumer example from the packaged copy (links only its own .so).
+    bc = os.system("cd \"${pkg}\" && ${zig} zig build")
+    if bc != 0 { println("zig example: consumer build against the package failed"); return 1 }
+
+    // ffi mode.
+    rc2 = os.system("cd \"${pkg}\" && ${zig} env -u SELENIUM_CORE_LIB SEL_MODE=ffi ./zig-out/bin/selenium-example")
+    if rc2 != 0 { println("zig example: ffi-mode consumer run failed"); return 1 }
+    // live mode: spawn chromedriver, pass its URL, run.
+    rc3 = os.system("cd \"${pkg}\" && ${zig} bash \"${root}/zig/run-example-live.sh\" zig-out/bin/selenium-example")
+    if rc3 != 0 { println("zig example: live-mode consumer run failed"); return 1 }
+
+    println("zig example: PASS — consumer linked the engine via the package's bundled .so (ffi + live)")
+    return 0
+}
