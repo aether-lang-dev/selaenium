@@ -62,10 +62,15 @@
 /lua/selenium_core_native.so
 /lua/lua54
 
-# JVM family (Kotlin/Clojure consume the Java jar; compiled output only)
+# JVM family (Kotlin/Clojure/Groovy consume the Java jar; compiled output only)
 /kotlin/out/
 /kotlin/jout/
 /clojure/jout/
+/groovy/jout/
+
+# Haskell
+/haskell/native/
+/haskell/dist-newstyle/
 
 # BEAM family (Erlang owns the shared NIF; Elixir/Gleam ride it)
 /erlang/_build/

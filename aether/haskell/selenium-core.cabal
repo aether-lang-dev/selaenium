@@ -1,0 +1,38 @@
+cabal-version:      2.4
+name:               selenium-core
+version:            0.1.0
+synopsis:           Selenium WebDriver for Haskell — a thin FFI binding over the shared pure-Aether WebDriver core.
+license:            Apache-2.0
+author:             Paul Hammant
+build-type:         Simple
+
+-- This binding LINKS the engine rather than dlopen'ing it, so
+-- libselenium_core.so must exist at BUILD time. haskell/.tests.ae stages the
+-- artifact into haskell/native/ before invoking the compiler; ../core/native is
+-- the in-tree monorepo path. Both are on the lib path and baked in as rpath.
+
+library
+  hs-source-dirs:   src
+  exposed-modules:  SeleniumCore
+                  , SeleniumCore.Native
+  build-depends:    base       >=4.14 && <5
+                  , bytestring >=0.10 && <0.13
+  default-language: Haskell2010
+  ghc-options:      -Wall
+  extra-lib-dirs:   native
+  extra-libraries:  selenium_core
+  -- ld-options is a whitespace-separated token list (unlike the comma list
+  -- extra-lib-dirs is). Each -Wl,... reaches the linker verbatim for the rpath.
+  ld-options:       -Wl,-rpath,native -Wl,-rpath,../core/native
+
+test-suite live
+  type:             exitcode-stdio-1.0
+  hs-source-dirs:   test
+  main-is:          Live.hs
+  build-depends:    base
+                  , selenium-core
+  default-language: Haskell2010
+  ghc-options:      -threaded -rtsopts
+  extra-lib-dirs:   native
+  extra-libraries:  selenium_core
+  ld-options:       -Wl,-rpath,native -Wl,-rpath,../core/native

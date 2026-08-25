@@ -177,6 +177,12 @@ without it the client hangs on chromedriver responses).
     bytecode). Adds a `headlessChrome { }` builder + element extensions.
   - **Clojure**: ✅ FFI + **live headless Chrome + surface** — live-verified.
     Adds a `with-chrome` macro + keyword `by`.
+  - **Groovy**: a `withHeadlessChrome { }` closure form. Authored here; verified
+    on a box with a modern Groovy (≥ 4) + JDK ≥ 22 — Debian's 2.4/JVM17 can't
+    read the FFM binding, so it skips green here.
+- **Haskell binding** (`foreign import ccall` + link-time): FFI + live surface.
+  Dependency-light (base + bytestring; params/values as JSON strings). Authored
+  here; verified on a box with GHC (skips green without it).
 - Fifteen languages across eleven FFI mechanisms (ctypes / cgo / Fiddle / koffi /
   Panama FFM / P/Invoke / Rust extern-C / dart:ffi / Erlang NIF / Nim importc /
   Zig extern / Lua C-extension — the BEAM three share the NIF, the JVM family
