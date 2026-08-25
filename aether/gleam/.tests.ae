@@ -1,0 +1,31 @@
+// Gleam binding tests. Gleam consumes the SAME shared NIF the Erlang binding
+// owns (selenium_nif) via @external — no second C source. This node deps the
+// Erlang NIF build and runs `gleam test` with ERL_LIBS pointed at _build so the
+// selenium_nif module + priv/selenium_nif.so resolve over the BEAM.
+//
+// SKIPS LOUDLY (green) when the Gleam compiler is absent — this box has
+// Erlang/BEAM but not gleam; the binding is authored here and live-verified on a
+// box that has both (catchyos). The Erlang NIF underneath is fully verified.
+import build
+import std.os
+
+aeb(cap) {
+    b = build.start()
+    build.dep(b, "erlang/.build.ae")
+    libs = build.dep_artifact(b, "erlang/.build.ae", "erl_libs")
+    root = build._get(b, "root")
+    gdir = "${root}/gleam"
+
+    have = os.system("command -v gleam >/dev/null 2>&1")
+    if have != 0 {
+        println("gleam tests: SKIPPED — gleam compiler not on PATH (authored here, verify on a box with gleam)")
+        return 0
+    }
+    rc = os.system("cd \"${gdir}\" && ERL_LIBS=\"${libs}\" gleam test")
+    if rc != 0 {
+        println("gleam tests: gleam test FAILED")
+        return 1
+    }
+    println("gleam tests: PASSED")
+    return 0
+}

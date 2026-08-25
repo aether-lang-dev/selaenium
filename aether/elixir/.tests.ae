@@ -1,0 +1,33 @@
+// Elixir binding tests. Elixir consumes the SAME shared NIF the Erlang binding
+// owns (:selenium_nif) via defdelegate — no second C source. This node deps the
+// Erlang NIF build; mix does NOT fold ERL_LIBS in, so the test helper puts the
+// NIF ebin on the code path via SELENIUM_NIF_EBIN (Code.append_path).
+//
+// SKIPS LOUDLY (green) when Elixir is absent — this box has Erlang/BEAM but not
+// elixir; the binding is authored here and live-verified on a box that has both
+// (catchyos). The Erlang NIF underneath is fully verified.
+import build
+import std.os
+
+aeb(cap) {
+    b = build.start()
+    build.dep(b, "erlang/.build.ae")
+    libs = build.dep_artifact(b, "erlang/.build.ae", "erl_libs")
+    ebin = build.dep_artifact(b, "erlang/.build.ae", "nif_ebin")
+    root = build._get(b, "root")
+    exdir = "${root}/elixir"
+
+    have = os.system("command -v elixir >/dev/null 2>&1 && command -v mix >/dev/null 2>&1")
+    if have != 0 {
+        println("elixir tests: SKIPPED — elixir/mix not on PATH (authored here, verify on a box with elixir)")
+        return 0
+    }
+    // mix needs the NIF ebin on the code path; test_helper appends SELENIUM_NIF_EBIN.
+    rc = os.system("cd \"${exdir}\" && ERL_LIBS=\"${libs}\" SELENIUM_NIF_EBIN=\"${ebin}\" mix test")
+    if rc != 0 {
+        println("elixir tests: mix test FAILED")
+        return 1
+    }
+    println("elixir tests: PASSED")
+    return 0
+}

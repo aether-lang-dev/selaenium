@@ -45,6 +45,14 @@
 /dart/example/.dart_tool/
 /dart/example/pubspec.lock
 
+# BEAM family (Erlang owns the shared NIF; Elixir/Gleam ride it)
+/erlang/_build/
+/erlang/erl_crash.dump
+/gleam/build/
+/gleam/manifest.toml
+/elixir/_build/
+/elixir/deps/
+
 # Python packaging + caches
 /python/dist/
 /python/build/

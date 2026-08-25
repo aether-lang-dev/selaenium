@@ -1,0 +1,24 @@
+// Erlang binding tests. Erlang owns the canonical Aether Selenium NIF for the
+// BEAM family — erlang/.build.ae compiles it ONCE into _build/selenium_nif. This
+// node deps that build and runs the live-surface test with ERL_LIBS pointed at
+// _build, so the selenium/selenium_nif modules and the NIF .so resolve the
+// standard OTP way. The live test self-skips if chromedriver is absent.
+import build
+import std.os
+
+aeb(cap) {
+    b = build.start()
+    build.dep(b, "erlang/.build.ae")
+    libs = build.dep_artifact(b, "erlang/.build.ae", "erl_libs")
+    ebin = build.dep_artifact(b, "erlang/.build.ae", "nif_ebin")
+    root = build._get(b, "root")
+    erl = "${root}/erlang"
+
+    // Compile the test module against the NIF ebin, then run it.
+    cc = os.system("erlc -o \"${erl}/_build\" -pa \"${ebin}\" \"${erl}/test/live_test.erl\"")
+    if cc != 0 { println("erlang tests: erlc failed"); return 1 }
+    rc = os.system("cd \"${erl}\" && ERL_LIBS=\"${libs}\" erl -noshell -pa \"${ebin}\" -pa \"${erl}/_build\" -eval 'live_test:main([]), halt(0)'")
+    if rc != 0 { println("erlang tests: live test FAILED"); return 1 }
+    println("erlang tests: PASSED (ffi implicit + live+surface)")
+    return 0
+}

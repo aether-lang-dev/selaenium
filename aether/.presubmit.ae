@@ -14,6 +14,12 @@ aeb(cap) {
     build.dep(b, "dotnet/.tests.ae")
     build.dep(b, "rust/.tests.ae")
     build.dep(b, "dart/.tests.ae")
+    // BEAM family: Erlang owns the shared NIF; Elixir + Gleam ride the SAME
+    // compiled NIF. Erlang is live-verified here; gleam/elixir skip green when
+    // their compiler is absent (verified on a box that has them).
+    build.dep(b, "erlang/.tests.ae")
+    build.dep(b, "gleam/.tests.ae")
+    build.dep(b, "elixir/.tests.ae")
     // Consumer-install proofs: the packaged wheel / Go module / gem / npm
     // tarball / jar / nupkg / crate / pub package standing alone with the .so.
     build.dep(b, "python/.example.ae")

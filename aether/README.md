@@ -156,9 +156,18 @@ without it the client hangs on chromedriver responses).
   Chrome + surface**. Synchronous (FFI blocks the isolate), so the live test runs
   its content server out-of-process; the consumer self-locates its bundled `.so`
   via `Isolate.resolvePackageUri`.
-- Eight languages across eight FFI approaches (ctypes / cgo / Fiddle / koffi /
-  Panama FFM / P/Invoke / Rust extern-C / dart:ffi) all drive the byte-identical
-  `libselenium_core.so` — the one-engine-many-bindings claim, proven.
+- **BEAM family** (Erlang / Elixir / Gleam): one shared C NIF (`selenium_nif`)
+  that Erlang owns and Elixir + Gleam load over the BEAM — the SAME compiled
+  module, no second C source (exactly as the JVM family would layer over one jar).
+  - **Erlang** (NIF): ✅ FFI + **live headless Chrome + surface** — live-verified.
+  - **Elixir** (defdelegate to the NIF): authored; ✅ verify on a box with Elixir.
+  - **Gleam** (`@external` to the NIF): authored; ✅ verify on a box with Gleam.
+- Ten languages across nine FFI mechanisms (ctypes / cgo / Fiddle / koffi /
+  Panama FFM / P/Invoke / Rust extern-C / dart:ffi / Erlang NIF — the BEAM three
+  share the NIF) all drive the byte-identical `libselenium_core.so` — the
+  one-engine-many-bindings claim, proven. Eight are live-verified here; the two
+  BEAM wrappers (Elixir, Gleam) are authored here and verified on a box that has
+  their compilers (catchyos).
 - **Consumer install** (all three): ✅ the packaged wheel / Go module / gem
   stands alone with the `.so` bundled inside — clean-env install, no source tree,
   no env var — and drives real headless Chrome from the installed artifact
