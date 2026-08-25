@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <!-- The local feed (the packaged SeleniumCore nupkg) is ADDED to restore
+         sources via the generated nuget.config in the .example.ae harness, so
+         framework reference packs still resolve from the SDK. A framework-
+         dependent build still extracts runtimes/<rid>/native/*.so next to the
+         app on `dotnet build` because RuntimeIdentifier is set at restore. -->
+    <RuntimeIdentifier>linux-x64</RuntimeIdentifier>
+    <SelfContained>false</SelfContained>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="SeleniumCore" Version="0.1.0" />
+  </ItemGroup>
+
+</Project>

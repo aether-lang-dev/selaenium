@@ -1,0 +1,28 @@
+// Aggregate target set: everything that must be green before pushing the
+// Aether Selenium core. A named set is just build.dep() edges (see aeb LLM.md).
+import build
+
+aeb(cap) {
+    b = build.start()
+    build.dep(b, "core/.build.ae")
+    build.dep(b, "core_tests/.tests.ae")
+    build.dep(b, "python/.tests.ae")
+    build.dep(b, "go/.tests.ae")
+    build.dep(b, "ruby/.tests.ae")
+    build.dep(b, "javascript/.tests.ae")
+    build.dep(b, "java/.tests.ae")
+    build.dep(b, "dotnet/.tests.ae")
+    build.dep(b, "rust/.tests.ae")
+    build.dep(b, "dart/.tests.ae")
+    // Consumer-install proofs: the packaged wheel / Go module / gem / npm
+    // tarball / jar / nupkg / crate / pub package standing alone with the .so.
+    build.dep(b, "python/.example.ae")
+    build.dep(b, "go/.example.ae")
+    build.dep(b, "ruby/.example.ae")
+    build.dep(b, "javascript/.example.ae")
+    build.dep(b, "java/.example.ae")
+    build.dep(b, "dotnet/.example.ae")
+    build.dep(b, "rust/.example.ae")
+    build.dep(b, "dart/.example.ae")
+    return 0
+}

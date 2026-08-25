@@ -1,0 +1,49 @@
+// Third-party-consumer EXAMPLE test for the Go binding.
+//
+// Publishes a standalone copy of the selenium-aether-go module under
+// target/go-pkg (carrying the bundled native/ .so, but deliberately WITHOUT the
+// repo's core/ as a sibling — so cgo's ${SRCDIR}/../core/native path can't
+// resolve and only the module's own bundled ${SRCDIR}/native .so satisfies the
+// link/rpath). A separate consumer module then `go run`s against it with no
+// SELENIUM_CORE_LIB. The honest "go get it and it just works" test the in-tree
+// go/.tests.ae cannot give (that one sits next to core/).
+import build
+import std.os
+
+aeb(cap) {
+    b = build.start()
+    build.dep(b, "go/.package.ae")
+    _m = build.dep_artifact(b, "go/.package.ae", "module_dir")
+    root = build._get(b, "root")
+    exdir = "${root}/go/example"
+    pkg = "${root}/target/go-pkg"
+    consumer = "${root}/target/go-consumer"
+
+    // Stage a copy of the module WITHOUT example/ and WITHOUT a core/ sibling
+    // (target/ has no core/), plus a separate consumer program that replaces
+    // the module to ../go-pkg.
+    rc = os.system("rm -rf \"${pkg}\" \"${consumer}\" && cp -r \"${root}/go\" \"${pkg}\" && rm -rf \"${pkg}/example\" && mkdir -p \"${consumer}\" && cp \"${exdir}/go.mod\" \"${consumer}/\" && cp \"${exdir}/main.go\" \"${consumer}/\"")
+    if rc != 0 {
+        println("go example: staging the published module + consumer failed")
+        return 1
+    }
+    // The bundled .so must be present in the packaged copy (and NO core/ sibling).
+    rc_so = os.system("ls \"${pkg}/native\"/*.so >/dev/null 2>&1 && test ! -d \"${root}/target/core\"")
+    if rc_so != 0 {
+        println("go example: packaged module missing bundled native/*.so (or a core/ sibling leaked in)")
+        return 1
+    }
+
+    rc2 = os.system("cd \"${consumer}\" && env -u SELENIUM_CORE_LIB GOFLAGS=-mod=mod go run . ffi")
+    if rc2 != 0 {
+        println("go example: consumer `go run . ffi` against the bundled module failed")
+        return 1
+    }
+    rc3 = os.system("cd \"${consumer}\" && env -u SELENIUM_CORE_LIB GOFLAGS=-mod=mod go run . live")
+    if rc3 != 0 {
+        println("go example: consumer `go run . live` against the bundled module failed")
+        return 1
+    }
+    println("go example: PASS — consumer module drove the engine via its own bundled .so (ffi + live)")
+    return 0
+}

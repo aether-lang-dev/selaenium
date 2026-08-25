@@ -1,0 +1,56 @@
+// Third-party-consumer EXAMPLE test for the JavaScript/Node binding.
+//
+// Installs the packaged tarball (from javascript/.package.ae) into a CLEAN
+// consumer project (target/js-consumer, its own node_modules) and runs
+// example/consumer_example.js from the INSTALLED package — no source tree on the
+// module path, and with SELENIUM_CORE_LIB unset (env -u) so ONLY the package's
+// bundled native/ .so can satisfy the load. The honest "npm install and it just
+// works" test the in-tree javascript/.tests.ae cannot give.
+//
+// Three consumer modes, each in its own fresh process: ffi, discovery, live.
+import build
+import std.os
+
+aeb(cap) {
+    b = build.start()
+    build.dep(b, "javascript/.package.ae")
+    tarball_dir = build.dep_artifact(b, "javascript/.package.ae", "tarball_dir")
+    root = build._get(b, "root")
+    exsrc = "${root}/javascript/example"
+    consumer = "${root}/target/js-consumer"
+
+    // Fresh consumer project: a minimal package.json, the example, then
+    // `npm install <tarball>` (pulls koffi + unpacks our package with its
+    // bundled .so into node_modules/selenium-core/native/).
+    rc = os.system("rm -rf \"${consumer}\" && mkdir -p \"${consumer}\" && cp \"${exsrc}/consumer_example.js\" \"${consumer}/\" && printf '{\"name\":\"js-consumer\",\"private\":true,\"version\":\"0.0.0\"}' > \"${consumer}/package.json\" && cd \"${consumer}\" && npm install --silent --no-audit --no-fund \"${tarball_dir}\"/*.tgz")
+    if rc != 0 {
+        println("javascript example: clean-project tarball install failed")
+        return 1
+    }
+    // Sanity: the installed package must carry its bundled .so.
+    rc_so = os.system("ls \"${consumer}/node_modules/selenium-core/native\"/*.so >/dev/null 2>&1")
+    if rc_so != 0 {
+        println("javascript example: installed package missing native/*.so")
+        return 1
+    }
+
+    pfx = "cd \"${consumer}\" && env -u SELENIUM_CORE_LIB node consumer_example.js"
+    rc2 = os.system("${pfx} ffi")
+    if rc2 != 0 {
+        println("javascript example: ffi-mode consumer run failed")
+        return 1
+    }
+    rc3 = os.system("${pfx} discovery")
+    if rc3 != 0 {
+        println("javascript example: discovery-mode consumer run failed")
+        return 1
+    }
+    rc4 = os.system("${pfx} live")
+    if rc4 != 0 {
+        println("javascript example: live-mode consumer run failed")
+        return 1
+    }
+
+    println("javascript example: PASS — installed package loaded its bundled .so (ffi + discovery + live)")
+    return 0
+}

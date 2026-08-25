@@ -1,0 +1,19 @@
+{
+  "name": "selenium-core",
+  "version": "0.1.0",
+  "description": "Selenium WebDriver for Node — a thin koffi wrapper over the shared pure-Aether WebDriver core (libselenium_core.so)",
+  "license": "Apache-2.0",
+  "author": "Paul Hammant <paul@hammant.org>",
+  "main": "index.js",
+  "files": [
+    "index.js",
+    "lib/",
+    "native/"
+  ],
+  "scripts": {
+    "test": "node test/ffi_test.js && node test/live_test.js"
+  },
+  "dependencies": {
+    "koffi": "^2.16.3"
+  }
+}

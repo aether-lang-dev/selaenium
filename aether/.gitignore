@@ -1,0 +1,54 @@
+# aeb build outputs
+/target/
+
+# Engine artifact (built by core/.build.ae; also staged into bindings)
+/core/native/*.so
+/core/native/*.dylib
+/core/native/*.dll
+
+# Bindings' bundled engine copies (staged by .package.ae)
+/python/selenium_core/native/
+/go/native/
+/ruby/lib/selenium_core/native/
+
+# Ruby packaging
+/ruby/pkg/
+
+# JavaScript
+/javascript/native/
+/javascript/node_modules/
+/javascript/pkgout/
+/javascript/package-lock.json
+
+# Java
+/java/native/
+/java/out/
+/java/pkgout/
+
+# .NET
+/dotnet/**/bin/
+/dotnet/**/obj/
+/dotnet/SeleniumCore/native/
+/dotnet/SeleniumCore/nupkg/
+
+# Rust
+/rust/native/
+/rust/target/
+/rust/Cargo.lock
+/rust/example/target/
+/rust/example/Cargo.lock
+
+# Dart
+/dart/native/
+/dart/.dart_tool/
+/dart/pubspec.lock
+/dart/example/.dart_tool/
+/dart/example/pubspec.lock
+
+# Python packaging + caches
+/python/dist/
+/python/build/
+/python/*.egg-info/
+__pycache__/
+*.pyc
+.pytest_cache/

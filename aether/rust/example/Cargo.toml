@@ -1,0 +1,16 @@
+[package]
+name = "selenium-consumer"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+# The consumer resolves the binding from the PACKAGED crate copy staged under
+# target/rust-pkg (which carries the bundled native/ .so but has NO core/
+# sibling), so build.rs can only link the crate's own bundled .so. The
+# .example.ae harness writes this path dependency to the staged copy.
+[dependencies]
+selenium-core = { path = "../rust-pkg" }
+
+[[bin]]
+name = "consumer"
+path = "src/main.rs"

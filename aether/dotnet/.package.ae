@@ -1,0 +1,43 @@
+// Third-party-consumer PACKAGE stage for the .NET binding.
+//
+// Builds the `SeleniumCore` NuGet package (.nupkg) as a downstream user would
+// receive it: the freshly-built engine .so bundled INSIDE the package under
+// runtimes/linux-x64/native/libselenium_core.so (the csproj's <None Pack=..>
+// item), via `dotnet pack`. A consumer's restore then places the .so next to
+// their app automatically.
+//
+// Deps core/.build.ae for the engine .so; publishes the pack output dir on the
+// "nupkg_dir" edge (a local NuGet feed), which dotnet/.example.ae consumes.
+import build
+import std.os
+
+aeb(cap) {
+    b = build.start()
+    build.dep(b, "core/.build.ae")
+    lib = build.dep_artifact(b, "core/.build.ae", "shared_lib")
+    root = build._get(b, "root")
+    ndir = "${root}/dotnet"
+    dnet = "PATH=\"$HOME/.dotnet:$PATH\" DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1"
+
+    // 1. Stage the engine .so where the csproj's Pack item picks it up.
+    rc = os.system("mkdir -p \"${ndir}/SeleniumCore/native\" && cp \"${lib}\" \"${ndir}/SeleniumCore/native/libselenium_core.so\"")
+    if rc != 0 {
+        println("dotnet package: failed to stage engine .so")
+        return 1
+    }
+
+    // 2. dotnet pack → nupkg under SeleniumCore/nupkg.
+    rc2 = os.system("cd \"${ndir}\" && ${dnet} dotnet pack SeleniumCore/SeleniumCore.csproj -c Release --nologo -v q -o SeleniumCore/nupkg")
+    if rc2 != 0 {
+        println("dotnet package: `dotnet pack` failed")
+        return 1
+    }
+    rc3 = os.system("ls \"${ndir}/SeleniumCore/nupkg\"/*.nupkg >/dev/null 2>&1")
+    if rc3 != 0 {
+        println("dotnet package: no .nupkg produced")
+        return 1
+    }
+    build.publish_artifact(b, "nupkg_dir", "${ndir}/SeleniumCore/nupkg")
+    println("dotnet package: built SeleniumCore.nupkg with engine .so bundled (runtimes/linux-x64/native)")
+    return 0
+}

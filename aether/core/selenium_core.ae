@@ -1,0 +1,620 @@
+// selenium_core — the language-agnostic core of Selenium WebDriver, in pure
+// Aether. One engine, many thin bindings (the servirtium-vcr / html-sanitizer
+// shape). Everything a language binding used to reimplement — the W3C command
+// catalog, the command -> (HTTP method, path template) route table, path
+// templating, capabilities/By normalization, the W3C error-envelope decode,
+// and the HTTP round-trip to the driver/Grid — lives HERE and is shared.
+//
+// A binding is a thin FFI shim (see core/embed.ae for the C ABI): it opens a
+// session, issues commands by name with JSON params, and reads back the result
+// value or a typed error. It carries NO protocol logic.
+//
+// Ported from javascript/selenium-webdriver/lib/{command,http,error,by}.js.
+// W3C-only: the legacy JSON-wire (Selenium 2) client path is intentionally
+// dropped — Selenium 4 speaks W3C to the remote end.
+
+import std.http.client
+import std.json
+import std.string
+import std.heap
+
+// ---- Session handle ------------------------------------------------------
+//
+// One Session is one live (or nascent) WebDriver connection: the remote-end
+// base URL, the session id (empty until newSession), and the drained result
+// of the most recent execute() — the JSON `value` as a string, plus a decoded
+// error code + message. A binding holds this as an opaque ptr and reads the
+// last-result fields through the accessors below after each execute().
+
+struct Session {
+    base_url: string
+    session_id: string
+    last_status: int        // HTTP status of the last response (0 = transport failure)
+    last_value: string      // JSON text of the response `value` (the useful payload)
+    last_error_code: int    // decoded W3C error code (0 = success), see error_code()
+    last_error: string      // human-readable error / transport-failure message
+}
+
+// Create a session bound to `base_url` (e.g. "http://127.0.0.1:9515"). No
+// network I/O yet — call execute(s, "newSession", caps_json) to start one.
+session_new(base_url: string) -> ptr {
+    s = heap.new(Session)
+    // Copy the borrowed FFI string into an owned, ref-counted AetherString so
+    // the struct field owns it — a bare store of the extern param would keep a
+    // borrowed pointer that dangles once the caller's buffer is reused/freed.
+    s.base_url = string.concat(base_url, "")
+    s.session_id = ""
+    s.last_status = 0
+    s.last_value = ""
+    s.last_error_code = 0
+    s.last_error = ""
+    return s as ptr
+}
+
+session_free(sp: ptr) {
+    if sp == null {
+        return
+    }
+    heap.free(sp)
+}
+
+session_id_of(sp: ptr) -> string {
+    if sp == null { return "" }
+    s = sp as *Session
+    return s.session_id
+}
+
+last_status_of(sp: ptr) -> int {
+    if sp == null { return 0 }
+    s = sp as *Session
+    return s.last_status
+}
+
+last_value_of(sp: ptr) -> string {
+    if sp == null { return "" }
+    s = sp as *Session
+    return s.last_value
+}
+
+last_error_code_of(sp: ptr) -> int {
+    if sp == null { return 0 }
+    s = sp as *Session
+    return s.last_error_code
+}
+
+last_error_of(sp: ptr) -> string {
+    if sp == null { return "" }
+    s = sp as *Session
+    return s.last_error
+}
+
+// ---- execute: the full command round-trip + W3C decode -------------------
+//
+// `name` is a command identifier (see route()); `params_json` is the JSON
+// parameters object as text ("" or "{}" for none). The path parameters
+// (:sessionId is injected from the session; :id/:name/etc. come from params)
+// are substituted into the route path; the remaining params form the request
+// body for POST. The response is decoded: on success last_value holds the JSON
+// `value`; on a W3C error, last_error_code + last_error are set and the
+// return is that non-zero code. Session id is captured on a newSession.
+//
+// Build the concrete HTTP request for a command WITHOUT sending it — the pure
+// half of execute(), factored out so it can be unit-tested with no network and
+// so a binding can inspect the wire form. Given a command `name`, a session id
+// (""=none), and JSON params ("" or "{}"=none), returns "METHOD\tPATH\tBODY"
+// (tab-separated) on success, or "ERR\t<message>\t" on an unknown command or
+// bad params JSON. BODY is "" for non-POST methods.
+build_request(name: string, session_id: string, params_json: string) -> string {
+    spec = route(name)
+    if spec == "" {
+        return string.concat("ERR\tUnrecognized command: ", string.concat(name, "\t"))
+    }
+    sp_idx = string.index_of(spec, " ")
+    method = string.substring(spec, 0, sp_idx)
+    path_tmpl = string.substring(spec, sp_idx + 1, string.length(spec))
+
+    pj = params_json
+    if pj == "" {
+        pj = "{}"
+    }
+    params, perr = json.parse(pj)
+    if perr != "" {
+        return string.concat("ERR\tInvalid params JSON: ", string.concat(perr, "\t"))
+    }
+    if session_id != "" {
+        _si = json.set(params, "sessionId", json.str(session_id))
+    }
+    path = build_path(path_tmpl, params)
+    body = ""
+    if method == "POST" {
+        body = body_without_path_params(params, path_tmpl)
+    }
+    json.free(params)
+
+    out = string.concat(method, "\t")
+    out = string.concat(out, path)
+    out = string.concat(out, "\t")
+    out = string.concat(out, body)
+    return out
+}
+
+// Returns 0 on success, non-zero = the decoded error code (or -1 transport).
+execute(sp: ptr, name: string, params_json: string) -> int {
+    if sp == null {
+        return -1
+    }
+    s = sp as *Session
+    s.last_status = 0
+    s.last_value = ""
+    s.last_error_code = 0
+    s.last_error = ""
+
+    // Build the wire request (shared, tested path). Returns
+    // "METHOD\tPATH\tBODY" or "ERR\t<message>\t".
+    reqline = build_request(name, s.session_id, params_json)
+    t1 = string.index_of(reqline, "\t")
+    field0 = string.substring(reqline, 0, t1)
+    if field0 == "ERR" {
+        // Extract the message between the two tabs.
+        rest0 = string.substring(reqline, t1 + 1, string.length(reqline))
+        t2 = string.index_of(rest0, "\t")
+        msg = rest0
+        if t2 >= 0 {
+            msg = string.substring(rest0, 0, t2)
+        }
+        // An unknown command vs a bad-params error: classify by message prefix.
+        if string.starts_with(msg, "Unrecognized command") == 1 {
+            s.last_error_code = error_code("unknown command")
+        } else {
+            s.last_error_code = error_code("invalid argument")
+        }
+        s.last_error = msg
+        return s.last_error_code
+    }
+    method = field0
+    rest1 = string.substring(reqline, t1 + 1, string.length(reqline))
+    t3 = string.index_of(rest1, "\t")
+    path = string.substring(rest1, 0, t3)
+    body = string.substring(rest1, t3 + 1, string.length(rest1))
+
+    tagged = http_roundtrip(s.base_url, method, path, body)
+    // tagged is "ERR <msg>" or "OK <status> <body>"
+    if string.starts_with(tagged, "ERR ") == 1 {
+        s.last_error_code = -1
+        s.last_error = string.substring(tagged, 4, string.length(tagged))
+        return -1
+    }
+    // Strip "OK "
+    rest = string.substring(tagged, 3, string.length(tagged))
+    sp2 = string.index_of(rest, " ")
+    status_str = string.substring(rest, 0, sp2)
+    resp_body = string.substring(rest, sp2 + 1, string.length(rest))
+    status, _sterr = string.to_int(status_str)
+    s.last_status = status
+
+    return decode_response(s, name, resp_body)
+}
+
+// Build a JSON object string of every param EXCEPT the path parameters and
+// the injected sessionId, for use as the POST body. If nothing remains,
+// returns "{}".
+body_without_path_params(params: ptr, path_tmpl: string) -> string {
+    out = json.obj()
+    n = json.object_size(params)
+    i = 0
+    while i < n {
+        key, val, _eerr = json.object_entry(params, i)
+        keep = 1
+        if key == "sessionId" {
+            keep = 0
+        }
+        if is_path_param(path_tmpl, key) == 1 {
+            keep = 0
+        }
+        if keep == 1 {
+            // Deep-copy the value into the new object by re-parsing its
+            // stringified form (values are owned by `params`).
+            vs, _e = json.stringify(val)
+            vcopy, _pe = json.parse(vs)
+            _s = json.set(out, key, vcopy)
+        }
+        i = i + 1
+    }
+    result, _err = json.encode(out)
+    json.free(out)
+    return result
+}
+
+// Decode a W3C response body: the top-level object has a `value` field. If
+// `value` is an object with a string `error` field, it's a failure — set the
+// decoded code + message. Otherwise `value` is the success payload, stored as
+// JSON text in last_value. On a newSession success, capture the session id.
+decode_response(sp: ptr, name: string, resp_body: string) -> int {
+    s = sp as *Session
+    parsed, perr = json.parse(resp_body)
+    if perr != "" {
+        s.last_error_code = error_code("unknown error")
+        s.last_error = string.concat("Unable to parse response: ", resp_body)
+        return s.last_error_code
+    }
+    value, _ve = json.object_get(parsed, "value")
+    if value == null {
+        // No `value` field — store the whole body and treat as success.
+        s.last_value = resp_body
+        json.free(parsed)
+        return 0
+    }
+    // Is it an error envelope? value.error is a string on failure.
+    if json.json_type(value) == 5 {                  // JSON_OBJECT
+        errval, _ee = json.object_get(value, "error")
+        if errval != null {
+            if json.json_type(errval) == 3 {         // JSON_STRING (3), not ARRAY (4)
+                ecode_str, _es = json.get_string(errval)
+                msgval, _me = json.object_get(value, "message")
+                msg = ""
+                if msgval != null {
+                    msg, _ms = json.get_string(msgval)
+                }
+                s.last_error_code = error_code(ecode_str)
+                s.last_error = msg
+                json.free(parsed)
+                return s.last_error_code
+            }
+        }
+    }
+    // Success. Capture session id on newSession.
+    if name == "newSession" {
+        sidval, _si = json.object_get(value, "sessionId")
+        if sidval != null {
+            sid, _sis = json.get_string(sidval)
+            s.session_id = sid
+        }
+    }
+    // Stash the value payload as JSON text.
+    vtext, _vt = json.stringify(value)
+    s.last_value = vtext
+    json.free(parsed)
+    return 0
+}
+
+// Pure, offline classifier of a W3C response body: returns the decoded error
+// code (0 = success / not an error envelope) for a `{"value":{"error":...}}`
+// body. Shares the exact same type checks decode_response uses, so a probe can
+// pin the "error string is JSON type 3, not 4" invariant that once silently
+// swallowed every WebDriver error. Returns -1 if the body isn't parseable JSON.
+response_error_code(resp_body: string) -> int {
+    parsed, perr = json.parse(resp_body)
+    if perr != "" {
+        return -1
+    }
+    value, _ve = json.object_get(parsed, "value")
+    code = 0
+    if value != null {
+        if json.json_type(value) == 5 {              // JSON_OBJECT
+            errval, _ee = json.object_get(value, "error")
+            if errval != null {
+                if json.json_type(errval) == 3 {     // JSON_STRING
+                    ecode_str, _es = json.get_string(errval)
+                    code = error_code(ecode_str)
+                }
+            }
+        }
+    }
+    json.free(parsed)
+    return code
+}
+
+// ---- Command names (cmd.Name in command.js) ------------------------------
+//
+// These are the canonical command identifiers a binding sends. Kept as plain
+// string constants so a binding can send the same spelling the JS/Python/Ruby
+// bindings already use. Only the ones with a fixed W3C HTTP route live in the
+// route table below; atom-backed commands (findElementsRelative, isDisplayed,
+// getAttribute) are handled by the binding via executeScript for now.
+
+// ---- The W3C command -> (method, path) route table -----------------------
+//
+// Mirrors W3C_COMMAND_MAP in http.js. `route(name)` returns "METHOD PATH" (a
+// single space-separated pair) or "" for an unknown command. Path templates
+// carry :sessionId / :id / :name / :propertyName / :authenticatorId /
+// :credentialId placeholders, substituted by build_path() from the command's
+// JSON parameters.
+
+route(name: string) -> string {
+    return match (name) {
+        // Session management
+        "newSession" -> "POST /session"
+        "quit" -> "DELETE /session/:sessionId"
+        // Server status
+        "getStatus" -> "GET /status"
+        // Timeouts
+        "getTimeout" -> "GET /session/:sessionId/timeouts"
+        "setTimeout" -> "POST /session/:sessionId/timeouts"
+        // Navigation
+        "getCurrentUrl" -> "GET /session/:sessionId/url"
+        "get" -> "POST /session/:sessionId/url"
+        "goBack" -> "POST /session/:sessionId/back"
+        "goForward" -> "POST /session/:sessionId/forward"
+        "refresh" -> "POST /session/:sessionId/refresh"
+        // Page inspection
+        "getPageSource" -> "GET /session/:sessionId/source"
+        "getTitle" -> "GET /session/:sessionId/title"
+        // Script execution
+        "executeScript" -> "POST /session/:sessionId/execute/sync"
+        "executeAsyncScript" -> "POST /session/:sessionId/execute/async"
+        // Frame selection
+        "switchToFrame" -> "POST /session/:sessionId/frame"
+        "switchToFrameParent" -> "POST /session/:sessionId/frame/parent"
+        // Window management
+        "getCurrentWindowHandle" -> "GET /session/:sessionId/window"
+        "close" -> "DELETE /session/:sessionId/window"
+        "switchToWindow" -> "POST /session/:sessionId/window"
+        "newWindow" -> "POST /session/:sessionId/window/new"
+        "getWindowHandles" -> "GET /session/:sessionId/window/handles"
+        "getWindowRect" -> "GET /session/:sessionId/window/rect"
+        "setWindowRect" -> "POST /session/:sessionId/window/rect"
+        "maximizeWindow" -> "POST /session/:sessionId/window/maximize"
+        "minimizeWindow" -> "POST /session/:sessionId/window/minimize"
+        "fullscreenWindow" -> "POST /session/:sessionId/window/fullscreen"
+        // Actions
+        "actions" -> "POST /session/:sessionId/actions"
+        "clearActions" -> "DELETE /session/:sessionId/actions"
+        "printPage" -> "POST /session/:sessionId/print"
+        // Locating elements
+        "getActiveElement" -> "GET /session/:sessionId/element/active"
+        "findElement" -> "POST /session/:sessionId/element"
+        "findElements" -> "POST /session/:sessionId/elements"
+        "findChildElement" -> "POST /session/:sessionId/element/:id/element"
+        "findChildElements" -> "POST /session/:sessionId/element/:id/elements"
+        // Element interaction / inspection
+        "getElementTagName" -> "GET /session/:sessionId/element/:id/name"
+        "getDomAttribute" -> "GET /session/:sessionId/element/:id/attribute/:name"
+        "getElementProperty" -> "GET /session/:sessionId/element/:id/property/:name"
+        "getElementValueOfCssProperty" -> "GET /session/:sessionId/element/:id/css/:propertyName"
+        "getElementRect" -> "GET /session/:sessionId/element/:id/rect"
+        "clearElement" -> "POST /session/:sessionId/element/:id/clear"
+        "clickElement" -> "POST /session/:sessionId/element/:id/click"
+        "sendKeysToElement" -> "POST /session/:sessionId/element/:id/value"
+        "getElementText" -> "GET /session/:sessionId/element/:id/text"
+        "getAriaRole" -> "GET /session/:sessionId/element/:id/computedrole"
+        "getAccessibleName" -> "GET /session/:sessionId/element/:id/computedlabel"
+        "isElementEnabled" -> "GET /session/:sessionId/element/:id/enabled"
+        "isElementSelected" -> "GET /session/:sessionId/element/:id/selected"
+        // Cookie management
+        "getCookies" -> "GET /session/:sessionId/cookie"
+        "addCookie" -> "POST /session/:sessionId/cookie"
+        "deleteAllCookies" -> "DELETE /session/:sessionId/cookie"
+        "getCookie" -> "GET /session/:sessionId/cookie/:name"
+        "deleteCookie" -> "DELETE /session/:sessionId/cookie/:name"
+        // Alert management
+        "acceptAlert" -> "POST /session/:sessionId/alert/accept"
+        "dismissAlert" -> "POST /session/:sessionId/alert/dismiss"
+        "getAlertText" -> "GET /session/:sessionId/alert/text"
+        "setAlertValue" -> "POST /session/:sessionId/alert/text"
+        // Screenshots
+        "screenshot" -> "GET /session/:sessionId/screenshot"
+        "takeElementScreenshot" -> "GET /session/:sessionId/element/:id/screenshot"
+        // Shadow root
+        "getShadowRoot" -> "GET /session/:sessionId/element/:id/shadow"
+        "findElementFromShadowRoot" -> "POST /session/:sessionId/shadow/:id/element"
+        "findElementsFromShadowRoot" -> "POST /session/:sessionId/shadow/:id/elements"
+        // Log extensions
+        "getLog" -> "POST /session/:sessionId/se/log"
+        "getAvailableLogTypes" -> "GET /session/:sessionId/se/log/types"
+        // Server extensions
+        "uploadFile" -> "POST /session/:sessionId/se/file"
+        // Virtual Authenticator
+        "addVirtualAuthenticator" -> "POST /session/:sessionId/webauthn/authenticator"
+        "removeVirtualAuthenticator" -> "DELETE /session/:sessionId/webauthn/authenticator/:authenticatorId"
+        "addCredential" -> "POST /session/:sessionId/webauthn/authenticator/:authenticatorId/credential"
+        "getCredentials" -> "GET /session/:sessionId/webauthn/authenticator/:authenticatorId/credentials"
+        "removeCredential" -> "DELETE /session/:sessionId/webauthn/authenticator/:authenticatorId/credentials/:credentialId"
+        "removeAllCredentials" -> "DELETE /session/:sessionId/webauthn/authenticator/:authenticatorId/credentials"
+        "setUserVerified" -> "POST /session/:sessionId/webauthn/authenticator/:authenticatorId/uv"
+        // Downloads
+        "getDownloadableFiles" -> "GET /session/:sessionId/se/files"
+        "downloadFile" -> "POST /session/:sessionId/se/files"
+        "deleteDownloadableFiles" -> "DELETE /session/:sessionId/se/files"
+        "fireSessionEvent" -> "POST /session/:sessionId/se/event"
+        // FedCM
+        "cancelDialog" -> "POST /session/:sessionId/fedcm/canceldialog"
+        "selectAccount" -> "POST /session/:sessionId/fedcm/selectaccount"
+        "getFedCmTitle" -> "GET /session/:sessionId/fedcm/gettitle"
+        "getFedCmDialogType" -> "GET /session/:sessionId/fedcm/getdialogtype"
+        "setDelayEnabled" -> "POST /session/:sessionId/fedcm/setdelayenabled"
+        "resetCooldown" -> "POST /session/:sessionId/fedcm/resetcooldown"
+        "clickdialogbutton" -> "POST /session/:sessionId/fedcm/clickdialogbutton"
+        "getAccounts" -> "GET /session/:sessionId/fedcm/accountlist"
+        _ -> ""
+    }
+}
+
+// ---- Path templating (buildPath in http.js) ------------------------------
+//
+// Replace each ":placeholder" segment of `path` with the same-named field
+// from the JSON parameters object `params`. A substituted parameter is
+// consumed (a binding must not also send it in the body — the JS impl deletes
+// it; we simply don't re-add path params to the body).
+//
+// Returns the concrete path. Unknown/missing placeholders are left intact so
+// the caller can surface a clear "missing parameter" server error rather than
+// silently producing a wrong path.
+
+build_path(path: string, params: ptr) -> string {
+    result = path
+    // Substitute the known W3C placeholders. Each is looked up in params;
+    // absent ones are left as-is.
+    result = subst_one(result, ":sessionId", params)
+    result = subst_one(result, ":id", params)
+    result = subst_one(result, ":name", params)
+    result = subst_one(result, ":propertyName", params)
+    result = subst_one(result, ":authenticatorId", params)
+    result = subst_one(result, ":credentialId", params)
+    return result
+}
+
+// Replace the first occurrence of `placeholder` in `path` with the string
+// value of params[placeholder-without-colon]. No-op if the key is absent.
+subst_one(path: string, placeholder: string, params: ptr) -> string {
+    if string.contains(path, placeholder) == 0 {
+        return path
+    }
+    // key is the placeholder without its leading ':'
+    key = string.substring(placeholder, 1, string.length(placeholder))
+    if params == null {
+        return path
+    }
+    val, gerr = json.object_get(params, key)
+    if gerr != "" {
+        return path
+    }
+    if val == null {
+        return path
+    }
+    strval, err = json.get_string(val)
+    if err != "" {
+        return path
+    }
+    return string.replace(path, placeholder, strval)
+}
+
+// The set of parameter keys consumed by path substitution — a binding builds
+// the request body from all params EXCEPT these. Returns 1 if `key` is a path
+// parameter for the given path, else 0.
+is_path_param(path: string, key: string) -> int {
+    placeholder = string.concat(":", key)
+    return string.contains(path, placeholder)
+}
+
+// ---- W3C error-envelope decode (error.js) --------------------------------
+//
+// Map the W3C error string (the "error" field of a failed response's value)
+// to a stable integer code the bindings translate into their own exception
+// types. This keeps the string<->type table in ONE place. 0 is reserved for
+// "no error / success".
+
+error_code(w3c_error: string) -> int {
+    return match (w3c_error) {
+        "" -> 0
+        "unknown error" -> 1
+        "detached shadow root" -> 2
+        "element click intercepted" -> 3
+        "element not interactable" -> 4
+        "element not selectable" -> 5
+        "insecure certificate" -> 6
+        "invalid argument" -> 7
+        "invalid cookie domain" -> 8
+        "invalid coordinates" -> 9
+        "invalid element state" -> 10
+        "invalid selector" -> 11
+        "invalid session id" -> 12
+        "javascript error" -> 13
+        "move target out of bounds" -> 14
+        "no such alert" -> 15
+        "no such cookie" -> 16
+        "no such element" -> 17
+        "no such frame" -> 18
+        "no such shadow root" -> 19
+        "no such window" -> 20
+        "script timeout" -> 21
+        "session not created" -> 22
+        "stale element reference" -> 23
+        "timeout" -> 24
+        "unable to set cookie" -> 25
+        "unable to capture screen" -> 26
+        "unexpected alert open" -> 27
+        "unknown command" -> 28
+        "unknown method" -> 29
+        "unsupported operation" -> 30
+        _ -> 1
+    }
+}
+
+// ---- By locators (by.js) -------------------------------------------------
+//
+// Normalize a (strategy, value) locator to the W3C form the /element endpoint
+// expects, returned as a JSON object string {"using": ..., "value": ...}.
+// W3C has four native strategies; id/name/className are rewritten to CSS and
+// tagName is passed through (drivers accept "tag name"). This is the ONE place
+// the CSS-escaping rewrite lives.
+
+by_locator(strategy: string, value: string) -> string {
+    using = strategy
+    v = value
+    match (strategy) {
+        "id" -> {
+            using = "css selector"
+            v = string.concat(string.concat("*[id=\"", css_escape(value)), "\"]")
+        }
+        "name" -> {
+            using = "css selector"
+            v = string.concat(string.concat("*[name=\"", css_escape(value)), "\"]")
+        }
+        "className" -> {
+            using = "css selector"
+            v = string.concat(".", css_escape(value))
+        }
+        "class name" -> {
+            using = "css selector"
+            v = string.concat(".", css_escape(value))
+        }
+        _ -> {
+            // css / css selector / link text / partial link text / xpath /
+            // tag name pass through unchanged.
+        }
+    }
+    obj = json.obj()
+    _e1 = json.set(obj, "using", json.str(using))
+    _e2 = json.set(obj, "value", json.str(v))
+    out, _err = json.encode(obj)
+    json.free(obj)
+    return out
+}
+
+// Minimal CSS identifier escape: prefix a leading digit and escape the
+// characters CSS.escape handles that actually appear in ids/classes/names.
+// (Selenium's escapeCss is the full CSS.escape; this covers the common set.)
+css_escape(s: string) -> string {
+    // Escape backslash and double-quote which would break the selector string.
+    out = string.replace(s, "\\", "\\\\")
+    out = string.replace(out, "\"", "\\\"")
+    return out
+}
+
+// ---- The HTTP round-trip -------------------------------------------------
+//
+// A WebDriver session is: a server base URL (e.g. "http://127.0.0.1:9515")
+// plus a session id (empty until newSession succeeds). `execute` builds the
+// request from a command name + JSON params, sends it via std.http.client,
+// and returns the response as (status, body). The embed layer decodes the
+// W3C envelope from the body.
+
+// Send `method PATH` with `body` (may be "") to `base_url`, returning the
+// response body. On transport failure returns "" and sets the out-error via
+// the split accessors in embed.ae — here we return a tagged string:
+//   "OK <http-status> <body>"        on an HTTP response (any status)
+//   "ERR <message>"                  on a transport-level failure
+http_roundtrip(base_url: string, method: string, path: string, body: string) -> string {
+    url = string.concat(base_url, path)
+    req = client.request(method, url)
+    _h1 = client.set_header(req, "Accept", "application/json")
+    _h2 = client.set_header(req, "Content-Type", "application/json; charset=utf-8")
+    // WebDriver servers expect a JSON body for POST even when empty ("{}").
+    if method == "POST" {
+        b = body
+        if b == "" {
+            b = "{}"
+        }
+        _sb = client.set_body(req, b, string.length(b), "application/json; charset=utf-8")
+    }
+    _to = client.set_timeout(req, 0ns)
+    resp, err = client.send_request(req)
+    client.request_free(req)
+    if err != "" {
+        return string.concat("ERR ", err)
+    }
+    status = client.response_status(resp)
+    rbody = client.response_body(resp)
+    client.response_free(resp)
+    return string.concat(string.concat("OK ", string.from_int(status)), string.concat(" ", rbody))
+}

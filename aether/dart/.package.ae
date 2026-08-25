@@ -1,0 +1,25 @@
+// Third-party-consumer PACKAGE stage for the Dart binding.
+//
+// Dart consumes selenium_core as a pub package (source). The dart:ffi loader
+// finds the engine .so in the package's own native/ dir, so the .so must ship
+// inside the package. This stages the freshly-built engine .so into dart/native/.
+// Deps core/.build.ae; publishes the package dir on "package_dir".
+import build
+import std.os
+
+aeb(cap) {
+    b = build.start()
+    build.dep(b, "core/.build.ae")
+    lib = build.dep_artifact(b, "core/.build.ae", "shared_lib")
+    root = build._get(b, "root")
+    ddir = "${root}/dart"
+
+    rc = os.system("mkdir -p \"${ddir}/native\" && cp \"${lib}\" \"${ddir}/native/libselenium_core.so\"")
+    if rc != 0 {
+        println("dart package: failed to stage engine .so into dart/native/")
+        return 1
+    }
+    build.publish_artifact(b, "package_dir", "${ddir}")
+    println("dart package: staged engine .so into dart/native/ (package ready)")
+    return 0
+}

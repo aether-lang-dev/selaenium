@@ -1,0 +1,56 @@
+// Third-party-consumer EXAMPLE test for the Java binding.
+//
+// Compiles a consumer class against ONLY the packaged jar (from java/.package.ae)
+// in a clean dir — no source tree on the classpath — and runs it with
+// SELENIUM_CORE_LIB unset (env -u), so ONLY the jar's bundled /native/ resource
+// can satisfy the load. The honest "add the jar and it just works" test the
+// in-tree java/.tests.ae cannot give (that one compiles against the source and
+// points at the .so via env var).
+//
+// Three consumer modes, each in its own fresh process: ffi, discovery, live.
+import build
+import std.os
+
+aeb(cap) {
+    b = build.start()
+    build.dep(b, "java/.package.ae")
+    jar = build.dep_artifact(b, "java/.package.ae", "jar")
+    root = build._get(b, "root")
+    exsrc = "${root}/java/example"
+    consumer = "${root}/target/java-consumer"
+
+    // Fresh consumer dir: copy the jar in, compile the example against ONLY the
+    // jar (no src/), producing consumer classes with no source-tree exposure.
+    rc = os.system("rm -rf \"${consumer}\" && mkdir -p \"${consumer}\" && cp \"${jar}\" \"${consumer}/selenium-core.jar\" && cp \"${exsrc}/ConsumerExample.java\" \"${consumer}/\" && cd \"${consumer}\" && javac -cp selenium-core.jar ConsumerExample.java")
+    if rc != 0 {
+        println("java example: consumer compile against the jar FAILED")
+        return 1
+    }
+    // Sanity: the jar must carry the bundled .so resource.
+    rc_so = os.system("cd \"${consumer}\" && jar tf selenium-core.jar 2>/dev/null | grep -q 'native/libselenium_core.so'")
+    if rc_so != 0 {
+        println("java example: jar missing bundled native/libselenium_core.so resource")
+        return 1
+    }
+
+    na = "--enable-native-access=ALL-UNNAMED"
+    pfx = "cd \"${consumer}\" && env -u SELENIUM_CORE_LIB java ${na} -cp .:selenium-core.jar ConsumerExample"
+    rc2 = os.system("${pfx} ffi")
+    if rc2 != 0 {
+        println("java example: ffi-mode consumer run failed")
+        return 1
+    }
+    rc3 = os.system("${pfx} discovery")
+    if rc3 != 0 {
+        println("java example: discovery-mode consumer run failed")
+        return 1
+    }
+    rc4 = os.system("${pfx} live")
+    if rc4 != 0 {
+        println("java example: live-mode consumer run failed")
+        return 1
+    }
+
+    println("java example: PASS — installed jar loaded its bundled .so (ffi + discovery + live)")
+    return 0
+}

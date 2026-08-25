@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AssemblyName>SeleniumCore</AssemblyName>
+    <RootNamespace>SeleniumCore</RootNamespace>
+    <!-- Packaging: bundle the engine .so as a runtime-specific native asset so a
+         NuGet consumer gets it under runtimes/linux-x64/native/ automatically. -->
+    <PackageId>SeleniumCore</PackageId>
+    <Version>0.1.0</Version>
+    <IncludeBuildOutput>true</IncludeBuildOutput>
+  </PropertyGroup>
+
+  <!-- The engine .so is staged into native/ by dotnet/.package.ae (and by the
+       test harness). Ship it inside the package under runtimes/linux-x64/native
+       so NativeLoader / the default resolver finds it in a consumer app. -->
+  <ItemGroup Condition="Exists('native/libselenium_core.so')">
+    <None Include="native/libselenium_core.so"
+          Pack="true"
+          PackagePath="runtimes/linux-x64/native/libselenium_core.so"
+          CopyToOutputDirectory="PreserveNewest">
+      <Link>runtimes/linux-x64/native/libselenium_core.so</Link>
+    </None>
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,52 @@
+// Third-party-consumer EXAMPLE test for the Ruby binding.
+//
+// Installs the packaged gem (from ruby/.package.ae) into a CLEAN gem dir and
+// runs example/consumer_example.rb from the INSTALLED gem — no source tree on
+// the load path (no -Ilib), and with SELENIUM_CORE_LIB unset (env -u) so ONLY
+// the gem's bundled native/ .so can satisfy the load. The honest "gem install
+// and it just works" test the in-tree ruby/.tests.ae cannot give.
+//
+// Three consumer modes, each in its own fresh process: ffi, discovery, live.
+import build
+import std.os
+
+aeb(cap) {
+    b = build.start()
+    build.dep(b, "ruby/.package.ae")
+    gem = build.dep_artifact(b, "ruby/.package.ae", "gem")
+    root = build._get(b, "root")
+    exdir = "${root}/ruby/example"
+    gemhome = "${root}/target/ruby-consumer-gems"
+
+    // Fresh isolated gem dir; install ONLY our gem (no runtime gem deps).
+    // --install-dir is what actually isolates the install (some rubygems
+    // packagings force the user dir if only GEM_HOME is set).
+    rc = os.system("rm -rf \"${gemhome}\" && gem install --no-document --local --install-dir \"${gemhome}\" \"${gem}\"")
+    if rc != 0 {
+        println("ruby example: gem install into clean dir failed")
+        return 1
+    }
+
+    // Run from example/ with the isolated GEM_HOME/GEM_PATH so `require
+    // 'selenium_core'` resolves to the INSTALLED gem, NOT ruby/lib/. env -u
+    // unsets SELENIUM_CORE_LIB so only the bundled .so can load.
+    pfx = "cd \"${exdir}\" && env -u SELENIUM_CORE_LIB GEM_HOME=\"${gemhome}\" GEM_PATH=\"${gemhome}\" ruby consumer_example.rb"
+    rc2 = os.system("${pfx} ffi")
+    if rc2 != 0 {
+        println("ruby example: ffi-mode consumer run failed")
+        return 1
+    }
+    rc3 = os.system("${pfx} discovery")
+    if rc3 != 0 {
+        println("ruby example: discovery-mode consumer run failed")
+        return 1
+    }
+    rc4 = os.system("${pfx} live")
+    if rc4 != 0 {
+        println("ruby example: live-mode consumer run failed")
+        return 1
+    }
+
+    println("ruby example: PASS — installed gem loaded its bundled .so (ffi + discovery + live)")
+    return 0
+}

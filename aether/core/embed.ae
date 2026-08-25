@@ -1,0 +1,133 @@
+// core/embed.ae — the flat C ABI over the pure-Aether Selenium engine.
+//
+// Build as a shared library and dlsym/link the exports:
+//
+//     ae build --emit=lib --with=net core/embed.ae \
+//         --extra core/_embed_strdup.c -o core/native/libselenium_core.so
+//
+// No protocol logic lives here — the command catalog, route table, path
+// templating, By/capabilities normalization, W3C error decode and the HTTP
+// round-trip all stay in core/selenium_core.ae. This layer adds only the
+// embedding seam a raw module surface lacks:
+//
+//   * caller-owned C strings — every string result is duplicated via
+//     sel_embed_dup; the host frees it with sel_embed_free_string;
+//   * an opaque handle (the *Session pointer) so N independent sessions
+//     coexist in one process;
+//   * flat, scalar-only signatures — no Aether tuples/structs/closures cross
+//     the boundary, so a ctypes/Fiddle/koffi/Panama binding can describe every
+//     symbol with primitive types alone.
+//
+// Export naming: every function is prefixed `sel_embed_`, so under --emit=lib
+// it lands as `aether_sel_embed_<name>`. The ABI is append-only — never
+// renumber a constant, never change a signature; add a new symbol instead.
+//
+// Lifecycle: open -> execute (repeatedly) -> quit -> close.
+//
+//     void* h = aether_sel_embed_open("http://127.0.0.1:9515");
+//     int rc  = aether_sel_embed_execute(h, "newSession", capsJson);
+//     char* v = aether_sel_embed_last_value(h);   // JSON result payload
+//     ...
+//     aether_sel_embed_execute(h, "quit", "{}");
+//     aether_sel_embed_close(h);
+
+import selenium_core
+import selenium_core (Session)
+import std.string
+
+// Caller-owned-string helper (core/_embed_strdup.c): malloc/strdup a C string
+// the host owns and later frees via sel_embed_free_string.
+extern sel_embed_dup(s: string) -> string
+extern sel_embed_free(s: string)
+
+// ---- lifecycle ----
+
+// Create a session handle bound to a remote-end base URL, e.g.
+// "http://127.0.0.1:9515" (chromedriver) or a Grid hub URL. No network I/O
+// happens until sel_embed_execute(h, "newSession", ...). Returns the opaque
+// handle (never null under normal allocation).
+sel_embed_open(base_url: string) -> ptr {
+    return selenium_core.session_new(base_url)
+}
+
+// Release the session handle. Does NOT send a "quit" — a well-behaved host
+// executes "quit" first to end the browser session, then closes the handle.
+// NULL-safe.
+sel_embed_close(h: ptr) {
+    selenium_core.session_free(h)
+}
+
+// ---- the one workhorse ----
+
+// Execute a WebDriver command by name with JSON parameters (params_json may be
+// "" or "{}" for none). Returns 0 on success, a non-zero W3C error code on a
+// protocol error (see sel_embed_error_code_name), or -1 on transport failure.
+// After the call, drain the result via the accessors below.
+sel_embed_execute(h: ptr, name: string, params_json: string) -> int {
+    return selenium_core.execute(h, name, params_json)
+}
+
+// ---- result accessors (drain after execute) ----
+
+// The response `value` as JSON text (the useful payload: a string, number,
+// object or array — the binding parses it in its own language). Caller frees.
+sel_embed_last_value(h: ptr) -> string {
+    return sel_embed_dup(selenium_core.last_value_of(h))
+}
+
+// HTTP status of the last response (0 = transport failure before a response).
+sel_embed_last_status(h: ptr) -> int {
+    return selenium_core.last_status_of(h)
+}
+
+// Decoded W3C error code of the last execute (0 = success). Maps to a stable
+// integer via selenium_core.error_code(); see sel_embed_error_code_name.
+sel_embed_last_error_code(h: ptr) -> int {
+    return selenium_core.last_error_code_of(h)
+}
+
+// Human-readable error / transport-failure message of the last execute.
+// Empty on success. Caller frees.
+sel_embed_last_error(h: ptr) -> string {
+    return sel_embed_dup(selenium_core.last_error_of(h))
+}
+
+// The current session id ("" until a newSession has succeeded). Caller frees.
+sel_embed_session_id(h: ptr) -> string {
+    return sel_embed_dup(selenium_core.session_id_of(h))
+}
+
+// ---- pure helpers a binding may want without a live session ----
+
+// The W3C locator JSON {"using":...,"value":...} for a (strategy, value) pair,
+// with id/name/className rewritten to CSS exactly as the JS/Python bindings do.
+// Caller frees. A binding uses this to build findElement params.
+sel_embed_by_locator(strategy: string, value: string) -> string {
+    return sel_embed_dup(selenium_core.by_locator(strategy, value))
+}
+
+// The "METHOD PATH" route for a command name, or "" if unknown. Exposed for
+// bindings that want to inspect the protocol mapping. Caller frees.
+sel_embed_route(name: string) -> string {
+    return sel_embed_dup(selenium_core.route(name))
+}
+
+// The concrete wire request for a command WITHOUT sending it: returns
+// "METHOD\tPATH\tBODY" (tab-separated) or "ERR\t<message>\t". Lets a binding
+// (or a test) inspect exactly what the engine would send. Caller frees.
+sel_embed_build_request(name: string, session_id: string, params_json: string) -> string {
+    return sel_embed_dup(selenium_core.build_request(name, session_id, params_json))
+}
+
+// Map a W3C error string to its stable integer code (0 = success). Lets a
+// binding share the ONE code table rather than duplicating it.
+sel_embed_error_code(w3c_error: string) -> int {
+    return selenium_core.error_code(w3c_error)
+}
+
+// ---- string ownership ----
+
+// Free any char* returned by a sel_embed_* function above.
+sel_embed_free_string(s: string) {
+    sel_embed_free(s)
+}
