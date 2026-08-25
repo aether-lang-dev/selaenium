@@ -1,0 +1,118 @@
+name: Nightly
+on:
+  schedule:
+    - cron: 0 0 * * *
+  workflow_dispatch:
+    inputs:
+      language:
+        description: Language artefacts
+        required: true
+        type: choice
+        default: "all"
+        options:
+          - all
+          - java
+          - ruby
+          - python
+          - dotnet
+          - javascript
+  workflow_call:
+    inputs:
+      language:
+        required: false
+        type: string
+        default: "all"
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  prepare:
+    name: Prepare
+    runs-on: ubuntu-latest
+    if: github.event.repository.fork == false
+    outputs:
+      language: ${{ steps.parse.outputs.language }}
+      artifact-name: ${{ steps.parse.outputs.artifact-name }}
+      artifact-path: ${{ steps.parse.outputs.artifact-path }}
+      release-in-progress: ${{ steps.check.outputs.release-in-progress }}
+    steps:
+      - name: Parse inputs
+        id: parse
+        env:
+          LANGUAGE: ${{ inputs.language }}
+        run: |
+          LANG="${LANGUAGE:-all}"
+          echo "language=$LANG" >> "$GITHUB_OUTPUT"
+          if [[ "$LANG" == "all" || "$LANG" == "java" ]]; then
+            echo "artifact-name=nightly-grid" >> "$GITHUB_OUTPUT"
+            echo "artifact-path=build/dist/*.*" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Check if release ruleset is active
+        id: check
+        env:
+          GH_TOKEN: ${{ secrets.SELENIUM_CI_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          rulesets=$(gh api "repos/$GH_REPO/rulesets" 2>/dev/null || echo '[{"name":"Release: api-error"}]')
+          if jq -e 'any(.[]; .name | startswith("Release:"))' <<<"$rulesets" >/dev/null; then
+            echo "release-in-progress=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  nightly-release:
+    name: Nightly ${{ matrix.language }}
+    needs: prepare
+    if: needs.prepare.outputs.release-in-progress != 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [java, python, ruby, dotnet, javascript]
+    uses: ./.github/workflows/bazel.yml
+    with:
+      name: Nightly ${{ matrix.language }} Release
+      run: ${{ (needs.prepare.outputs.language == 'all' || needs.prepare.outputs.language == matrix.language) && format('./go {0}:release nightly', matrix.language) || 'echo skipping' }}
+      artifact-name: ${{ matrix.language == 'java' && needs.prepare.outputs.artifact-name || '' }}
+      artifact-path: ${{ matrix.language == 'java' && needs.prepare.outputs.artifact-path || '' }}
+    secrets: inherit
+
+  release-grid:
+    name: Release Grid
+    needs: [prepare, nightly-release]
+    if: always() && needs.prepare.outputs.artifact-name && needs.nightly-release.result != 'skipped'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download grid packages
+        uses: actions/download-artifact@v8
+        with:
+          name: nightly-grid
+          path: build/dist
+      - name: Create nightly release
+        uses: marvinpinto/action-automatic-releases@v1.2.1
+        with:
+          repo_token: "${{ secrets.GITHUB_TOKEN }}"
+          automatic_release_tag: nightly
+          title: Nightly
+          prerelease: true
+          files: build/dist/*.*
+
+  on-failure:
+    name: Notify on Failure
+    runs-on: ubuntu-latest
+    needs: [prepare, nightly-release, release-grid]
+    if: failure()
+    steps:
+      - uses: actions/checkout@v6
+      - name: Slack Notification
+        uses: rtCamp/action-slack-notify@v2
+        env:
+          SLACK_ICON_EMOJI: ":rotating_light:"
+          SLACK_COLOR: failure
+          SLACK_CHANNEL: selenium-tlc
+          SLACK_USERNAME: GitHub Workflows
+          SLACK_TITLE: Nightly ${{ needs.prepare.outputs.language }} Release failed
+          MSG_MINIMAL: actions url
+          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK_URL }}

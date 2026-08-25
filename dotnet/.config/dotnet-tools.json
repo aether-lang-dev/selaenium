@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "isRoot": true,
+  "tools": {
+    "paket": {
+      "version": "10.3.1",
+      "commands": [
+        "paket"
+      ],
+      "rollForward": false
+    },
+    "aver": {
+      "version": "1.0.2",
+      "commands": [
+        "aver"
+      ],
+      "rollForward": false
+    }
+  }
+}

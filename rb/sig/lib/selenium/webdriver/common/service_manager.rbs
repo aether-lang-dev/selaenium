@@ -1,0 +1,83 @@
+# Licensed to the Software Freedom Conservancy (SFC) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The SFC licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+
+module Selenium
+  module WebDriver
+    class ServiceManager
+      @executable_path: untyped
+
+      @host: untyped
+
+      @port: untyped
+
+      @io: untyped
+
+      @extra_args: untyped
+
+      @shutdown_supported: untyped
+
+      @uri: untyped
+
+      @process: untyped
+
+      @socket_lock: untyped
+
+      START_TIMEOUT: Integer
+
+      SOCKET_LOCK_TIMEOUT: Integer
+
+      STOP_TIMEOUT: Integer
+
+      def initialize: (untyped config) -> void
+
+      def start: () -> untyped
+
+      def stop: () -> untyped
+
+      def uri: () -> untyped
+
+      private
+
+      def build_process: (*untyped command) -> untyped
+
+      def connect_to_server: () { (untyped) -> untyped } -> untyped
+
+      def find_free_port: () -> untyped
+
+      def start_process: () -> untyped
+
+      def stop_process: () -> (nil | untyped)
+
+      def stop_server: () -> untyped
+
+      def process_running?: () -> untyped
+
+      def process_exited?: () -> untyped
+
+      def connect_until_stable: () -> untyped?
+
+      def check_connection_error: () -> String?
+
+      def current_time: () -> Float
+
+      def cannot_connect_error_text: () -> String
+
+      def socket_lock: () -> untyped
+    end
+  end
+end

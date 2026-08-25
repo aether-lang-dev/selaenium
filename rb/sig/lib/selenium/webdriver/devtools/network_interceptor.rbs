@@ -1,0 +1,75 @@
+# Licensed to the Software Freedom Conservancy (SFC) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The SFC licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+
+module Selenium
+  module WebDriver
+    class DevTools
+      class NetworkInterceptor
+        @devtools: untyped
+
+        @lock: untyped
+
+        @pending_response_requests: untyped
+
+        @cancelled_requests: untyped
+
+        CANNOT_GET_BODY_ON_REDIRECT_ERROR_CODE: String
+
+        INVALID_INTERCEPTION_ID_ERROR_CODE: String
+
+        def initialize: (untyped devtools) -> void
+
+        def intercept: () { () -> untyped } -> untyped
+
+        private
+
+        attr_accessor devtools: untyped
+
+        attr_accessor lock: untyped
+
+        def pending_response_requests: () -> untyped
+
+        def cancelled_requests: () -> untyped
+
+        def track_cancelled_request: (untyped data) -> untyped?
+
+        def request_paused: (untyped data) { () -> untyped } -> untyped
+
+        def response?: (untyped params) -> untyped
+
+        def intercept_request: (untyped id, untyped params) { () -> untyped } -> untyped
+
+        def intercept_response: (untyped id, untyped params) ?{ (untyped) -> untyped } -> untyped
+
+        def continue_request: (untyped id) -> untyped
+
+        alias continue_response continue_request
+
+        def mutate_request: (untyped request) -> untyped
+
+        def mutate_response: (untyped response) -> untyped
+
+        def fetch_response_body: (untyped id) -> untyped
+
+        def with_cancellable_request: (untyped network_id) { () -> untyped } -> untyped
+
+        def cancelled?: (untyped network_id) -> untyped
+      end
+    end
+  end
+end

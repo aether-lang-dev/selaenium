@@ -1,0 +1,11 @@
+{
+  "name": "selenium",
+  "workspaces": [
+    "javascript/grid-ui",
+    "javascript/selenium-webdriver"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/SeleniumHQ/selenium.git"
+  }
+}

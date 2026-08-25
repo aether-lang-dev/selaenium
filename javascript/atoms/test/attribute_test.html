@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<!--
+Copyright 2010 WebDriver committers
+Copyright 2010 Google Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+     http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+-->
+<html>
+
+<head>
+  <meta charset="UTF-8">
+  <title>attribute_test.html</title>
+  <link rel="stylesheet" href="/filez/_main/third_party/js/qunit/qunit.css">
+  <script src="/filez/_main/third_party/js/qunit/qunit.js"></script>
+  <script src="/filez/_main/third_party/js/qunit/qunit_test_runner.js"></script>
+  <script src="test_bootstrap.js"></script>
+  <script type="text/javascript">
+    goog.require('bot.dom');
+    goog.require('bot.locators');
+    goog.require('goog.events.EventType');
+  </script>
+  <script type="text/javascript">
+    function assertAttributeEquals(assert, expected, elem, attr) {
+      assert.strictEqual(bot.dom.getAttribute(elem, attr), expected,
+          'Expected attribute "' + attr + '" to equal "' + expected + '"');
+    }
+
+    QUnit.test('can find named attributes', function(assert) {
+      var e = bot.locators.findElement({ id: 'cheddar' });
+      assertAttributeEquals(assert, 'cheese', e, 'name');
+    });
+
+    QUnit.test('can find attributes on the expando', function(assert) {
+      var e = bot.locators.findElement({ id: 'cheddar' });
+      assertAttributeEquals(assert, 'lovely', e, 'unknown');
+    });
+
+    QUnit.test('should return class attribute', function(assert) {
+      var e = bot.locators.findElement({ id: 'cheddar' });
+      assertAttributeEquals(assert, 'tasty', e, 'class');
+    });
+
+    QUnit.test('should return null for missing attributes', function(assert) {
+      var e = bot.locators.findElement({ id: 'checky' });
+      assertAttributeEquals(assert, null, e, 'never_there');
+      assertAttributeEquals(assert, null, e, 'class');
+    });
+
+    QUnit.test('should return an empty string when attributes value is an empty string', function(assert) {
+      var e = bot.locators.findElement({ id: 'cheddar' });
+      assertAttributeEquals(assert, '', e, 'empty');
+    });
+
+    QUnit.test('return attribute string for present boolean attributes', function(assert) {
+      function assertPresentBooleanAttr(elem, attr) {
+        var value = bot.dom.getAttribute(elem, attr);
+        assert.strictEqual(value, String(elem.getAttribute(attr)));
+      }
+
+      var e = bot.locators.findElement({ id: 'selecty' });
+      assertPresentBooleanAttr(e, 'selected');
+
+      var e = bot.locators.findElement({ id: 'checky' });
+      assertPresentBooleanAttr(e, 'disabled');
+      assertPresentBooleanAttr(e, 'readonly');
+      assertPresentBooleanAttr(e, 'checked');
+    });
+
+    QUnit.test('return null for absent boolean attributes', function(assert) {
+      var e = bot.locators.findElement({ id: 'unselecty' });
+      assertAttributeEquals(assert, null, e, 'selected');
+
+      var e = bot.locators.findElement({ id: 'unchecky' });
+      assertAttributeEquals(assert, null, e, 'disabled');
+      assertAttributeEquals(assert, null, e, 'readonly');
+      assertAttributeEquals(assert, null, e, 'checked');
+    });
+
+    QUnit.test('can get value attribute from input', function(assert) {
+      var input = bot.locators.findElement({ id: 'unchecky' });
+      var option = bot.locators.findElement({ id: 'unselecty' });
+
+      assertAttributeEquals(assert, 'unchecky', input, 'value');
+      assertAttributeEquals(assert, 'unselecty', option, 'value');
+    });
+
+    QUnit.test('attribute matches are case insensitive', function(assert) {
+      var e = bot.locators.findElement({ id: 'checky' });
+      assertAttributeEquals(assert, bot.dom.getAttribute(e, 'readonly'), e, 'readOnly');
+      assertAttributeEquals(assert, bot.dom.getAttribute(e, 'name'), e, 'NaMe');
+    });
+
+    QUnit.test('attribute does not change the type of the attribute', function(assert) {
+      var e = bot.locators.findElement({ id: 'aValue' });
+      assertAttributeEquals(assert, "4b273a33fbbd29013nN93dy4F1A~", e, "value");
+    });
+
+  </script>
+</head>
+
+<body>
+  <div id="qunit"></div>
+  <div id="qunit-fixture"></div>
+  <div id="cheddar" name="cheese" class="tasty" unknown="lovely" empty="">Cheddar</div>
+
+  <form>
+    <select>
+      <option id="selecty" selected>selecty</option>
+      <option id="unselecty" value="unselecty">unselecty</option>
+    </select>
+    <!-- Setting checked="false" but getAttribute should be non-null. -->
+    <input id="checky" type="checkbox" disabled readonly="readonly" checked="false" />
+    <input id="unchecky" type="checkbox" value="unchecky" />
+  </form>
+  <li id=aValue value="4b273a33fbbd29013nN93dy4F1A~" class="cur"></li>
+</body>
+
+</html>

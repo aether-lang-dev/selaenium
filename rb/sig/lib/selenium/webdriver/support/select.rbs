@@ -1,0 +1,75 @@
+# Licensed to the Software Freedom Conservancy (SFC) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The SFC licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+
+module Selenium
+  module WebDriver
+    module Support
+      class Select
+        @element: untyped
+
+        @multi: untyped
+
+        def initialize: (untyped element) -> void
+
+        def multiple?: () -> untyped
+
+        def options: () -> untyped
+
+        def selected_options: () -> untyped
+
+        def first_selected_option: () -> untyped
+
+        def select_by: (untyped how, untyped what) -> untyped
+
+        def deselect_by: (untyped how, untyped what) -> untyped
+
+        def select_all: () -> untyped
+
+        def deselect_all: () -> untyped
+
+        private
+
+        def select_by_text: (untyped text) -> untyped
+
+        def select_by_index: (untyped index) -> untyped
+
+        def select_by_value: (untyped value) -> untyped
+
+        def deselect_by_text: (untyped text) -> untyped
+
+        def deselect_by_value: (untyped value) -> untyped
+
+        def deselect_by_index: (untyped index) -> untyped
+
+        def select_option: (untyped option) -> untyped
+
+        def deselect_option: (untyped option) -> untyped?
+
+        def select_options: (untyped opts) -> untyped
+
+        def deselect_options: (untyped opts) -> untyped
+
+        def find_by_text: (untyped text) -> untyped
+
+        def find_by_index: (untyped index) -> untyped
+
+        def find_by_value: (untyped value) -> untyped
+      end
+    end
+  end
+end

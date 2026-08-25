@@ -1,0 +1,205 @@
+# frozen_string_literal: true
+
+# Licensed to the Software Freedom Conservancy (SFC) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The SFC licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+require File.expand_path('../spec_helper', __dir__)
+
+module Selenium
+  module WebDriver
+    module Firefox
+      describe Service do
+        describe '#new' do
+          let(:service_path) { "/path/to/#{Service::EXECUTABLE}" }
+          let(:debug_args) { ENV.key?('SE_DEBUG') ? ['-v'] : [] }
+
+          before do
+            allow(Platform).to receive(:assert_executable)
+            allow(WebDriver.logger).to receive(:debug?).and_return(false)
+          end
+
+          it 'uses default port and nil path' do
+            service = described_class.new
+
+            expect(service.port).to eq Service::DEFAULT_PORT
+            expect(service.host).to eq Platform.localhost
+            expect(service.executable_path).to be_nil
+          end
+
+          it 'uses provided path and port' do
+            path = 'foo'
+            port = 5678
+
+            service = described_class.new(path: path, port: port)
+
+            expect(service.executable_path).to eq path
+            expect(service.port).to eq port
+          end
+
+          it 'creates websocket args by default' do
+            service = described_class.new
+
+            expect(service.extra_args.count).to eq(2 + debug_args.size)
+          end
+
+          it 'uses sets log path to stdout' do
+            service = described_class.new(log: :stdout)
+
+            expect(service.log).to eq $stdout
+          end
+
+          it 'uses sets log path to stderr' do
+            service = described_class.new(log: :stderr)
+
+            expect(service.log).to eq $stderr
+          end
+
+          it 'sets log path as file location' do
+            service = described_class.new(log: '/path/to/log.txt')
+
+            expect(service.log).to eq '/path/to/log.txt'
+          end
+
+          it 'uses provided args' do
+            service = described_class.new(args: %w[--foo --bar])
+            expect(service.extra_args).to include(*%w[--foo --bar])
+          end
+
+          it 'there is a zero port for websocket' do
+            service = described_class.new
+            ws_index = service.extra_args.index('--websocket-port')
+            port = service.extra_args[ws_index + 1].to_i
+            expect(port).to be_zero
+          end
+
+          context 'with connect existing' do
+            it 'does not uses websocket-port' do
+              service = described_class.new(args: ['--connect-existing'])
+              expect(service.extra_args).not_to include('--websocket-port')
+              expect(service.extra_args).to eq(['--connect-existing'] + debug_args)
+            end
+          end
+
+          context 'with websocket port' do
+            it 'does not add websocket-port' do
+              service = described_class.new(args: ['--websocket-port=1234'])
+              expect(service.extra_args).not_to include('--websocket-port=0')
+              expect(service.extra_args).to eq(['--websocket-port=1234'] + debug_args)
+            end
+          end
+
+          context 'when SE_DEBUG is set' do
+            around do |example|
+              original_debug = ENV.fetch('SE_DEBUG', nil)
+              ENV['SE_DEBUG'] = '1'
+              example.run
+            ensure
+              original_debug ? ENV['SE_DEBUG'] = original_debug : ENV.delete('SE_DEBUG')
+            end
+
+            it 'adds -v flag' do
+              service = described_class.new
+
+              expect(service.extra_args).to include('-v')
+            end
+
+            it 'preserves conflicting --log args with value and warns' do
+              service = nil
+
+              expect { service = described_class.new(args: ['--log', 'info']) }.to have_warning(:se_debug)
+
+              expect(service.extra_args).not_to include('-v')
+              expect(service.extra_args).to include('--log')
+              expect(service.extra_args).to include('info')
+            end
+
+            it 'preserves conflicting --log= args and warns' do
+              service = nil
+
+              expect { service = described_class.new(args: ['--log=info']) }.to have_warning(:se_debug)
+
+              expect(service.extra_args).not_to include('-v')
+              expect(service.extra_args).to include('--log=info')
+            end
+
+            it 'does not remove next arg if --log has no value' do
+              service = described_class.new(args: ['--log', '--other-flag'])
+
+              expect(service.extra_args).not_to include('-v')
+              expect(service.extra_args).to include('--log')
+              expect(service.extra_args).to include('--other-flag')
+            end
+
+            it 'preserves conflicting --log args added after initialization' do
+              service = described_class.new(path: service_path)
+              manager = instance_double(ServiceManager, start: nil)
+              service.args.push('--log', 'trace')
+
+              allow(ServiceManager).to receive(:new).with(service).and_return(manager)
+
+              expect { service.launch }.to have_warning(:se_debug)
+
+              expect(service.extra_args).not_to include('-v')
+              expect(service.extra_args).to include('--log')
+              expect(service.extra_args).to include('trace')
+            end
+          end
+        end
+
+        context 'when initializing driver' do
+          let(:driver) { Firefox::Driver }
+          let(:service) do
+            instance_double(described_class, launch: service_manager, executable_path: nil, 'executable_path=': nil,
+                                             class: described_class)
+          end
+          let(:service_manager) { instance_double(ServiceManager, uri: 'http://example.com') }
+          let(:bridge) { instance_double(Remote::Bridge, quit: nil, create_session: {}) }
+          let(:finder) { instance_double(DriverFinder, browser_path?: false, driver_path: '/path/to/driver') }
+
+          before do
+            allow(Remote::Bridge).to receive(:new).and_return(bridge)
+            allow(bridge).to receive(:browser).and_return(:firefox)
+          end
+
+          it 'is not created when :url is provided' do
+            expect {
+              driver.new(url: 'http://example.com:4321')
+            }.to raise_error(ArgumentError, /Can't set the server URL for/)
+          end
+
+          it 'is created when :url is not provided' do
+            allow(DriverFinder).to receive(:new).and_return(finder)
+            allow(described_class).to receive(:new).and_return(service)
+
+            driver.new
+
+            expect(described_class).to have_received(:new).with(no_args)
+          end
+
+          it 'accepts :service without creating a new instance' do
+            allow(DriverFinder).to receive(:new).and_return(finder)
+            allow(described_class).to receive(:new)
+
+            driver.new(service: service)
+
+            expect(described_class).not_to have_received(:new)
+          end
+        end
+      end
+    end # Firefox
+  end # WebDriver
+end # Selenium

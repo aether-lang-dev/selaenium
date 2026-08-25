@@ -1,0 +1,90 @@
+load("@bazel_skylib//rules:common_settings.bzl", "string_flag")
+load("@contrib_rules_jvm//java:defs.bzl", "spotbugs_binary", "spotbugs_config")
+load("@rules_java//java:java_plugin.bzl", "java_plugin")
+load(":defs.bzl", "artifact", "java_library")
+
+exports_files(
+    srcs = [
+        "CHANGELOG",
+        "empty_test_template.txt",
+        "java_stub_template.txt",
+    ],
+    visibility = [
+        "//visibility:public",
+    ],
+)
+
+java_plugin(
+    name = "auto-service-plugin",
+    processor_class = "com.google.auto.service.processor.AutoServiceProcessor",
+    visibility = ["//visibility:private"],
+    deps = [
+        artifact("com.google.auto.service:auto-service"),
+    ],
+)
+
+java_plugin(
+    name = "nullaway",
+    visibility = [
+        "//java:__subpackages__",
+    ],
+    deps = [
+        artifact("com.uber.nullaway:nullaway"),
+    ],
+)
+
+java_library(
+    name = "auto-service",
+    exported_plugins = [
+        ":auto-service-plugin",
+    ],
+    visibility = [
+        "//java:__subpackages__",
+    ],
+    exports = [
+        artifact("com.google.auto.service:auto-service-annotations"),
+    ],
+)
+
+spotbugs_binary(
+    name = "spotbugs-cli",
+    runtime_deps = [
+        artifact("com.github.spotbugs:spotbugs"),
+        artifact("org.slf4j:slf4j-jdk14"),
+    ],
+)
+
+spotbugs_config(
+    name = "spotbugs-config",
+    effort = "default",
+    exclude_filter = "spotbugs-excludes.xml",
+    fail_on_warning = True,
+    spotbugs_binary = ":spotbugs-cli",
+    visibility = [
+        "//visibility:public",
+    ],
+)
+
+string_flag(
+    name = "nullaway_level",
+    build_setting_default = "NONE",
+    values = [
+        "NONE",
+        "WARN",
+        "ERROR",
+    ],
+)
+
+config_setting(
+    name = "use_nullaway_level_warn",
+    flag_values = {
+        ":nullaway_level": "WARN",
+    },
+)
+
+config_setting(
+    name = "use_nullaway_level_error",
+    flag_values = {
+        ":nullaway_level": "ERROR",
+    },
+)

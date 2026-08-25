@@ -1,0 +1,613 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <meta http-equiv="Expire" content="0" />
+  <meta charset="utf-8">
+  <title>select_test.html</title>
+  <link rel="stylesheet" href="/filez/_main/third_party/js/qunit/qunit.css">
+  <script src="/filez/_main/third_party/js/qunit/qunit.js"></script>
+  <script src="/filez/_main/third_party/js/qunit/qunit_test_runner.js"></script>
+  <script type="text/javascript" src="test_bootstrap.js"></script>
+  <script type="text/javascript" src="jquery.min.js"></script>
+  <script type="text/javascript">
+    goog.require('bot.action');
+    goog.require('bot.locators');
+    goog.require('bot.userAgent');
+    goog.require('goog.array');
+    goog.require('goog.events');
+    goog.require('goog.userAgent');
+  </script>
+  <script type="text/javascript">
+    var singleSelect, multiSelect, radioButtons, checkboxes, changeCount;
+    var gotPointerCaptureCount, lostPointerCaptureCount;
+
+    function checkActionCompatibility(action) {
+      if (action == bot.action.tap) {
+        return bot.events.SUPPORTS_TOUCH_EVENTS;
+      }
+      return true;
+    }
+
+    function expectChanges(target) {
+      changeCount = 0;
+      goog.events.listen(target, 'change', function (e) {
+        changeCount++;
+      });
+    }
+
+    function assertChanges(assert, expectedCount) {
+      assert.strictEqual(changeCount, expectedCount, 'Unexpected number of changes');
+    }
+
+    function expectPointerCaptures(target) {
+      gotPointerCaptureCount = 0;
+      lostPointerCaptureCount = 0;
+      goog.events.listen(target, goog.events.EventType.MSGOTPOINTERCAPTURE,
+        function (e) {
+          gotPointerCaptureCount++;
+        });
+      goog.events.listen(target, goog.events.EventType.MSLOSTPOINTERCAPTURE,
+        function (e) {
+          lostPointerCaptureCount++;
+        });
+    }
+
+    function assertPointerCaptures(assert, expectedCount) {
+      assert.strictEqual(gotPointerCaptureCount, expectedCount, 'Unexpected number of got captures');
+      assert.strictEqual(lostPointerCaptureCount, expectedCount, 'Unexpected number of lost captures');
+    }
+
+    function firesChangeEventIfNotToggled() {
+      if (goog.userAgent.product.CHROME && bot.userAgent.isProductVersion(45)) {
+        return false;
+      } else if (goog.userAgent.WEBKIT || bot.userAgent.IE_DOC_9 ||
+        goog.userAgent.EDGE) {
+        return true;
+      }
+      return false;
+    }
+
+    QUnit.testStart(function() {
+      singleSelect = bot.locators.findElement({ id: 'singleSelect' });
+      multiSelect = bot.locators.findElement({ id: 'multiSelect' });
+      checkboxes = bot.locators.findElements({ name: 'checkbox' });
+      radioButtons = bot.locators.findElements({ name: 'radio' });
+
+      goog.events.removeAll(singleSelect);
+      goog.events.removeAll(multiSelect);
+      for (var i = 0; i < checkboxes.length; ++i) {
+        goog.events.removeAll(checkboxes[i]);
+      }
+      for (var i = 0; i < radioButtons.length; ++i) {
+        goog.events.removeAll(radioButtons[i]);
+      }
+      singleSelect.selectedIndex = 0;
+      goog.array.forEach(multiSelect.options, function (e) {
+        e.selected = false;
+      });
+      goog.array.forEach(checkboxes, function (e) {
+        e.checked = false;
+      });
+      goog.array.forEach(radioButtons, function (e) {
+        e.checked = false;
+      });
+    });
+
+    function canSelectAnOptionFromASingleSelect(assert, action) {
+      if (!checkActionCompatibility(action)) {
+        assert.ok(true, 'Action not supported, skipping');
+        return;
+      }
+      assert.notOk(bot.dom.isSelected(singleSelect.options[1]));
+      expectChanges(singleSelect);
+      if (bot.userAgent.IE_DOC_10) {
+        expectPointerCaptures(singleSelect);
+      }
+      action(singleSelect.options[1]);
+
+      assertChanges(assert, 1);
+      if (bot.userAgent.IE_DOC_10) {
+        assertPointerCaptures(assert, 1);
+      }
+      assert.ok(bot.dom.isSelected(singleSelect.options[1]));
+    }
+
+    QUnit.test('click can select an option from a single select', function(assert) {
+      canSelectAnOptionFromASingleSelect(assert, bot.action.click);
+    });
+
+    QUnit.test('tap can select an option from a single select', function(assert) {
+      canSelectAnOptionFromASingleSelect(assert, bot.action.tap);
+    });
+
+    function cannotDeselectAnOptionFromASingleSelect(assert, action) {
+      if (!checkActionCompatibility(action)) {
+        assert.ok(true, 'Action not supported, skipping');
+        return;
+      }
+      assert.ok(bot.dom.isSelected(singleSelect.options[0]));
+      expectChanges(singleSelect);
+
+      action(singleSelect.options[0]);
+
+      assertChanges(assert, 0);
+      assert.ok(bot.dom.isSelected(singleSelect.options[0]));
+    }
+
+    QUnit.test('click cannot deselect an option from a single select', function(assert) {
+      cannotDeselectAnOptionFromASingleSelect(assert, bot.action.click);
+    });
+
+    QUnit.test('tap cannot deselect an option from a single select', function(assert) {
+      cannotDeselectAnOptionFromASingleSelect(assert, bot.action.tap);
+    });
+
+    function cannotSelectAnOptionFromADisabledSelect(assert, action) {
+      if (!checkActionCompatibility(action)) {
+        assert.ok(true, 'Action not supported, skipping');
+        return;
+      }
+      singleSelect.disabled = true;
+      assert.notOk(bot.dom.isSelected(singleSelect.options[1]));
+      expectChanges(singleSelect);
+
+      action(singleSelect.options[1]);
+
+      assertChanges(assert, 0);
+      assert.notOk(bot.dom.isSelected(singleSelect.options[1]));
+      singleSelect.disabled = false;
+    }
+
+    QUnit.test('click cannot select an option from a disabled select', function(assert) {
+      cannotSelectAnOptionFromADisabledSelect(assert, bot.action.click);
+    });
+
+    QUnit.test('tap cannot select an option from a disabled select', function(assert) {
+      cannotSelectAnOptionFromADisabledSelect(assert, bot.action.tap);
+    });
+
+    function canSelectAnEnabledOptionFromASelectWithADisabledOption(assert, action) {
+      if (!checkActionCompatibility(action)) {
+        assert.ok(true, 'Action not supported, skipping');
+        return;
+      }
+      singleSelect.options[1].disabled = true;
+      assert.notOk(bot.dom.isSelected(singleSelect.options[2]));
+      expectChanges(singleSelect);
+
+      action(singleSelect.options[2]);
+
+      assertChanges(assert, 1);
+      assert.ok(bot.dom.isSelected(singleSelect.options[2]));
+      singleSelect.options[1].disabled = false;
+    }
+
+    QUnit.test('click can select an enabled option from a select with a disabled option', function(assert) {
+      canSelectAnEnabledOptionFromASelectWithADisabledOption(assert, bot.action.click);
+    });
+
+    QUnit.test('tap can select an enabled option from a select with a disabled option', function(assert) {
+      canSelectAnEnabledOptionFromASelectWithADisabledOption(assert, bot.action.tap);
+    });
+
+    function canToggleOptionsInAMultiSelect(assert, action) {
+      if (!checkActionCompatibility(action)) {
+        assert.ok(true, 'Action not supported, skipping');
+        return;
+      }
+      multiSelect.options[0].selected = true;
+      expectChanges(multiSelect);
+
+      action(multiSelect.options[0]);
+      action(multiSelect.options[1]);
+      action(multiSelect.options[2]);
+
+      assertChanges(assert, 3);
+      assert.notOk(bot.dom.isSelected(multiSelect.options[0]));
+      assert.ok(bot.dom.isSelected(multiSelect.options[1]));
+      assert.ok(bot.dom.isSelected(multiSelect.options[2]));
+    }
+
+    QUnit.test('click can toggle options in a multi select', function(assert) {
+      if (goog.userAgent.product.CHROME || goog.userAgent.product.SAFARI) {
+        assert.ok(true, 'Skipping: disabled due to Chrome/Safari issues');
+        return;
+      }
+      canToggleOptionsInAMultiSelect(assert, bot.action.click);
+    });
+
+    QUnit.test('tap can toggle options in a multi select', function(assert) {
+      if (goog.userAgent.product.CHROME || goog.userAgent.product.SAFARI) {
+        assert.ok(true, 'Skipping: disabled due to Chrome/Safari issues');
+        return;
+      }
+      canToggleOptionsInAMultiSelect(assert, bot.action.tap);
+    });
+
+    function canToggleCheckboxes(assert, action) {
+      if (!checkActionCompatibility(action)) {
+        assert.ok(true, 'Action not supported, skipping');
+        return;
+      }
+      checkboxes[0].checked = true;
+      expectChanges(checkboxes[0]);
+      action(checkboxes[0]);
+      assertChanges(assert, 1);
+
+      if (!bot.userAgent.IE_DOC_PRE9) {
+        expectChanges(checkboxes[1]);
+      }
+      action(checkboxes[1]);
+      assertChanges(assert, 1);
+
+      expectChanges(checkboxes[2]);
+      action(checkboxes[2]);
+      assertChanges(assert, 1);
+
+      assert.notOk(bot.dom.isSelected(checkboxes[0]));
+      assert.ok(bot.dom.isSelected(checkboxes[1]));
+      assert.ok(bot.dom.isSelected(checkboxes[2]));
+    }
+
+    QUnit.test('click can toggle checkboxes', function(assert) {
+      canToggleCheckboxes(assert, bot.action.click);
+    });
+
+    QUnit.test('tap can toggle checkboxes', function(assert) {
+      canToggleCheckboxes(assert, bot.action.tap);
+    });
+
+    function canSelectRadioButtons(assert, action) {
+      if (!checkActionCompatibility(action)) {
+        assert.ok(true, 'Action not supported, skipping');
+        return;
+      }
+      expectChanges(radioButtons[0]);
+      action(radioButtons[0]);
+      assertChanges(assert, 1);
+
+      assert.ok(bot.dom.isSelected(radioButtons[0]));
+
+      if (!bot.userAgent.IE_DOC_PRE9) {
+        expectChanges(radioButtons[1]);
+      }
+      action(radioButtons[1]);
+      assertChanges(assert, 1);
+      assert.ok(bot.dom.isSelected(radioButtons[1]));
+
+      expectChanges(radioButtons[2]);
+      action(radioButtons[2]);
+      assertChanges(assert, 1);
+      assert.ok(bot.dom.isSelected(radioButtons[2]));
+    }
+
+    QUnit.test('click can select radio buttons', function(assert) {
+      canSelectRadioButtons(assert, bot.action.click);
+    });
+
+    QUnit.test('tap can select radio buttons', function(assert) {
+      canSelectRadioButtons(assert, bot.action.tap);
+    });
+
+    function cannotDeselectRadioButtons(assert, action) {
+      if (!checkActionCompatibility(action)) {
+        assert.ok(true, 'Action not supported, skipping');
+        return;
+      }
+      radioButtons[0].checked = true;
+      expectChanges(radioButtons[0]);
+
+      action(radioButtons[0]);
+      assertChanges(assert, 0);
+      assert.ok(bot.dom.isSelected(radioButtons[0]));
+    }
+
+    QUnit.test('click cannot deselect radio buttons', function(assert) {
+      cannotDeselectRadioButtons(assert, bot.action.click);
+    });
+
+    QUnit.test('tap cannot deselect radio buttons', function(assert) {
+      cannotDeselectRadioButtons(assert, bot.action.tap);
+    });
+
+    function cannotSelectDisabledElements(assert, action) {
+      if (!checkActionCompatibility(action)) {
+        assert.ok(true, 'Action not supported, skipping');
+        return;
+      }
+      function assertCannotSelectWhenDisabled(elem, isOption) {
+        elem.disabled = true;
+        expectChanges(isOption ? elem.parentNode : elem);
+
+        action(elem);
+
+        assertChanges(assert, 0);
+        assert.notOk(bot.dom.isSelected(elem));
+        elem.disabled = false;
+      }
+
+      assertCannotSelectWhenDisabled(singleSelect.options[1], true);
+      assertCannotSelectWhenDisabled(multiSelect.options[0], true);
+      assertCannotSelectWhenDisabled(checkboxes[0], false);
+      assertCannotSelectWhenDisabled(radioButtons[0], false);
+    }
+
+    QUnit.test('click cannot select disabled elements', function(assert) {
+      cannotSelectDisabledElements(assert, bot.action.click);
+    });
+
+    QUnit.test('tap cannot select disabled elements', function(assert) {
+      cannotSelectDisabledElements(assert, bot.action.tap);
+    });
+
+    function canSelectOptionWhenDefaultPrevented(assert, action) {
+      if (!checkActionCompatibility(action)) {
+        assert.ok(true, 'Action not supported, skipping');
+        return;
+      }
+      function assertCanSelectWhenDefaultPrevented(elem) {
+        goog.events.listen(elem, 'click', function (e) {
+          e.preventDefault();
+        });
+        expectChanges(elem.parentNode);
+
+        action(elem);
+
+        assertChanges(assert, 1);
+        assert.ok(bot.dom.isSelected(elem));
+      }
+
+      assertCanSelectWhenDefaultPrevented(singleSelect.options[1]);
+      assertCanSelectWhenDefaultPrevented(multiSelect.options[0]);
+    }
+
+    QUnit.test('click can select option when default prevented', function(assert) {
+      if (goog.userAgent.product.SAFARI) {
+        assert.ok(true, 'Skipping: disabled on Safari');
+        return;
+      }
+      canSelectOptionWhenDefaultPrevented(assert, bot.action.click);
+    });
+
+    QUnit.test('tap can select option when default prevented', function(assert) {
+      if (goog.userAgent.product.CHROME || goog.userAgent.product.SAFARI) {
+        assert.ok(true, 'Skipping: disabled due to Chrome/Safari issues');
+        return;
+      }
+      canSelectOptionWhenDefaultPrevented(assert, bot.action.tap);
+    });
+
+    function cannotSelectCheckboxWhenDefaultPrevented(assert, action) {
+      if (!checkActionCompatibility(action)) {
+        assert.ok(true, 'Action not supported, skipping');
+        return;
+      }
+      var elem = checkboxes[0];
+      goog.events.listen(elem, 'click', function (e) {
+        e.preventDefault();
+      });
+      expectChanges(elem);
+
+      action(elem);
+
+      assertChanges(assert, firesChangeEventIfNotToggled() ? 1 : 0);
+      assert.notOk(bot.dom.isSelected(elem));
+    }
+
+    QUnit.test('click cannot select checkbox when default prevented', function(assert) {
+      cannotSelectCheckboxWhenDefaultPrevented(assert, bot.action.click);
+    });
+
+    QUnit.test('tap cannot select checkbox when default prevented', function(assert) {
+      cannotSelectCheckboxWhenDefaultPrevented(assert, bot.action.tap);
+    });
+
+    function maybeSelectRadioButtonWhenDefaultPrevented(assert, action) {
+      if (!checkActionCompatibility(action)) {
+        assert.ok(true, 'Action not supported, skipping');
+        return;
+      }
+      var elem = radioButtons[0];
+      goog.events.listen(elem, 'click', function (e) {
+        e.preventDefault();
+      });
+      expectChanges(elem);
+
+      action(elem);
+
+      if ((goog.userAgent.product.CHROME &&
+        !bot.userAgent.isProductVersion(39)) ||
+        (goog.userAgent.WEBKIT && !goog.userAgent.product.CHROME)) {
+        assertChanges(assert, 1);
+        assert.ok(bot.dom.isSelected(elem));
+      } else {
+        assertChanges(assert, firesChangeEventIfNotToggled() ? 1 : 0);
+        assert.notOk(bot.dom.isSelected(elem));
+      }
+    }
+
+    QUnit.test('click maybe select radio button when default prevented', function(assert) {
+      maybeSelectRadioButtonWhenDefaultPrevented(assert, bot.action.click);
+    });
+
+    QUnit.test('tap maybe select radio button when default prevented', function(assert) {
+      maybeSelectRadioButtonWhenDefaultPrevented(assert, bot.action.tap);
+    });
+
+    function canSelectOptionFromTransparentSelect(assert, action) {
+      if (!checkActionCompatibility(action)) {
+        assert.ok(true, 'Action not supported, skipping');
+        return;
+      }
+      var style = singleSelect.style;
+      style['opacity'] = '0';
+      style['filter'] = 'alpha(opacity=0)';
+      assert.strictEqual(bot.dom.getOpacity(singleSelect), 0);
+      assert.notOk(bot.dom.isSelected(singleSelect.options[1]));
+      expectChanges(singleSelect);
+
+      bot.action.click(singleSelect.options[1]);
+
+      assertChanges(assert, 1);
+      assert.ok(bot.dom.isSelected(singleSelect.options[1]));
+      style['opacity'] = '';
+      style['filter'] = '';
+      assert.strictEqual(bot.dom.getOpacity(singleSelect), 1);
+    }
+
+    QUnit.test('click can select option from transparent select', function(assert) {
+      canSelectOptionFromTransparentSelect(assert, bot.action.click);
+    });
+
+    QUnit.test('tap can select option from transparent select', function(assert) {
+      canSelectOptionFromTransparentSelect(assert, bot.action.tap);
+    });
+
+    function noErrorAfterSelectWhenOnChangePreventsDefault(assert, action) {
+      if (!checkActionCompatibility(action) ||
+        (goog.userAgent.IE && !bot.userAgent.isProductVersion(7))) {
+        assert.ok(true, 'Skipping: not supported');
+        return;
+      }
+      goog.events.listen(radioButtons[1], 'change', function (e) {
+        e.preventDefault();
+      });
+      action(radioButtons[1]);
+      assert.ok(bot.dom.isSelected(radioButtons[1]));
+
+      action(radioButtons[2]);
+      assert.ok(true);
+    }
+
+    QUnit.test('click no error after select when on change prevents default', function(assert) {
+      noErrorAfterSelectWhenOnChangePreventsDefault(assert, bot.action.click);
+    });
+
+    QUnit.test('tap no error after select when on change prevents default', function(assert) {
+      noErrorAfterSelectWhenOnChangePreventsDefault(assert, bot.action.tap);
+    });
+
+    function selectOptionTriggersJQueryChangeHandler(assert, action) {
+      if (!checkActionCompatibility(action)) {
+        assert.ok(true, 'Action not supported, skipping');
+        return;
+      }
+      var changes = 0;
+      $('#singleSelect').change(function () {
+        changes++;
+      });
+
+      action(singleSelect.options[1]);
+
+      assert.strictEqual(changes, 1);
+      $('#singleSelect').unbind();
+    }
+
+    QUnit.test('click select option triggers jQuery change handler', function(assert) {
+      selectOptionTriggersJQueryChangeHandler(assert, bot.action.click);
+    });
+
+    QUnit.test('tap select option triggers jQuery change handler', function(assert) {
+      selectOptionTriggersJQueryChangeHandler(assert, bot.action.tap);
+    });
+
+    function pointerCaptureFiresOnCheckboxToggle(assert, action) {
+      if (!bot.userAgent.IE_DOC_10) {
+        assert.ok(true, 'Skipping: only for IE10');
+        return;
+      }
+      checkboxes[0].checked = true;
+      expectPointerCaptures(checkboxes[0]);
+      action(checkboxes[0]);
+      if (action == bot.action.tap) {
+        assertPointerCaptures(assert, 1);
+      } else {
+        assertPointerCaptures(assert, 0);
+      }
+      assert.notOk(bot.dom.isSelected(checkboxes[0]));
+    }
+
+    QUnit.test('click pointer capture fires on checkbox toggle', function(assert) {
+      pointerCaptureFiresOnCheckboxToggle(assert, bot.action.click);
+    });
+
+    QUnit.test('tap pointer capture fires on checkbox toggle', function(assert) {
+      pointerCaptureFiresOnCheckboxToggle(assert, bot.action.tap);
+    });
+
+    function togglesByTheTimeChangeEventFires(assert, action) {
+      if (!checkActionCompatibility(action)) {
+        assert.ok(true, 'Action not supported, skipping');
+        return;
+      }
+
+      singleSelect.options[0].selected = true;
+      checkToggleAtChange(action, singleSelect, singleSelect.options[1]);
+
+      multiSelect.options[0].selected = false;
+      checkToggleAtChange(action, multiSelect, multiSelect.options[0]);
+
+      radioButtons[0].checked = false;
+      checkToggleAtChange(action, radioButtons[0], radioButtons[0]);
+
+      checkboxes[0].checked = false;
+      checkToggleAtChange(action, checkboxes[0], checkboxes[0]);
+
+      function checkToggleAtChange(action, targetElem, toggleElem) {
+        var preState = bot.dom.isSelected(toggleElem);
+        var postState = null;
+        goog.events.listen(targetElem, 'change', function (e) {
+          postState = bot.dom.isSelected(toggleElem);
+        });
+        action(toggleElem);
+        assert.ok(postState !== null, 'change event did not fire');
+        assert.notStrictEqual(postState, preState, 'element did not toggle');
+      }
+    }
+
+    QUnit.test('click toggles by the time change event fires', function(assert) {
+      if (goog.userAgent.product.SAFARI) {
+        assert.ok(true, 'Skipping: disabled on Safari');
+        return;
+      }
+      togglesByTheTimeChangeEventFires(assert, bot.action.click);
+    });
+
+    QUnit.test('tap toggles by the time change event fires', function(assert) {
+      if (goog.userAgent.product.CHROME || goog.userAgent.product.SAFARI) {
+        assert.ok(true, 'Skipping: disabled due to Chrome/Safari issues');
+        return;
+      }
+      togglesByTheTimeChangeEventFires(assert, bot.action.tap);
+    });
+  </script>
+</head>
+
+<body>
+  <div id="qunit"></div>
+  <div id="qunit-fixture"></div>
+  <form action="#" method="get">
+    <select id="singleSelect">
+      <option id="singleOption1" value="foo">foo</option>
+      <option id="singleOption2" value="bar">bar</option>
+      <option id="singleOption3" value="baz">baz</option>
+    </select>
+    <br>
+    <select id="multiSelect" multiple>
+      <option id="multiOption1" value="apples">apples</option>
+      <option id="multiOption2" value="oranges">oranges</option>
+      <option id="multiOption3" value="cherries">cherries</option>
+    </select>
+    <br>
+    <input type="checkbox" name="checkbox" value="peas">peas
+    <input type="checkbox" name="checkbox" value="spinach">spinach
+    <input type="checkbox" name="checkbox" value="broccoli">broccoli
+    <br>
+    <input type="radio" name="radio" value="cheese">cheese
+    <input type="radio" name="radio" value="water">water
+    <input type="radio" name="radio" value="bread">bread
+  </form>
+</body>
+
+</html>

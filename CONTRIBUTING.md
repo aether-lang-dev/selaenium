@@ -1,0 +1,391 @@
+# Contributing to Selenium
+
+The Selenium project welcomes contributions from everyone. There are a
+number of ways you can help:
+
+## Bug Reports
+
+When opening new issues or commenting on existing issues please make
+sure discussions are related to concrete technical issues with the
+Selenium software.
+
+It's imperative that issue reports outline the steps to reproduce
+the defect. If the issue can't be reproduced it will be closed.
+Please provide [concise reproducible test cases](http://sscce.org/)
+and describe what results you are seeing and what results you expect.
+
+Issues shouldn't be used for support. To raise a bug, please go to the
+[Issue tracker](https://github.com/SeleniumHQ/selenium/issues).
+Discussion of high level project ideas or non-technical topics should
+move to the Selenium [Slack channel](https://inviter.co/seleniumhq).
+
+We also need help with triaging
+[issues that needs investigation](https://github.com/SeleniumHQ/selenium/labels/I-needs%20investigation).
+This means asking the right questions, procuring the right information
+to properly debug and verify the issue, and bisecting a commit range if
+the issue is a regression.
+
+## Feature Requests
+
+If you find that Selenium is missing something, feel free to open an issue
+with details describing what feature(s) you'd like added or changed.
+
+If you'd like a hand at trying to implement the feature yourself, please refer to the [Code Contributions](#code-contributions) section of the document.
+
+## Documentation
+
+Selenium is a big software project and documentation is key to
+understanding how things work and learning effective ways to exploit
+its potential.
+
+The [seleniumhq.github.io](https://github.com/SeleniumHQ/seleniumhq.github.io/)
+repository contains both Selenium’s site and documentation. This is an ongoing effort (not targeted
+at any specific release) to provide updated information on how to use Selenium effectively, how to
+get involved and how to contribute to Selenium.
+
+The official documentation of Selenium is at https://selenium.dev/documentation/. More details on
+how to get involved and contribute, please check the site's and
+documentation [contributing guidelines](https://www.selenium.dev/documentation/about/contributing/).
+
+## Code Contributions
+
+The Selenium project welcomes new contributors. Individuals making
+significant and valuable contributions over time are made _Committers_
+and given commit-access to the project.
+
+If you're looking for easy bugs, have a look at
+[issues labelled: `good first issue`](https://github.com/SeleniumHQ/selenium/issues?q=is%3Aopen%20is%3Aissue%20label%3A%22good%20first%20issue%22)
+on Github.
+
+This document will guide you through the contribution process.
+
+### AI-assisted contributions (Copilot, LLMs, code generators)
+
+We allow contributors to use AI tools to help write code, tests, and documentation. However:
+
+**Human-in-the-loop is required:**
+- You are the author. You must read, review, and understand all AI-assisted output before requesting review.
+- You must be able to explain the change and rationale without referring back to the tool.
+
+**Disclosure:**
+- If substantial parts of the PR are AI-assisted, disclose it in the PR description 
+(tool name + what was generated). This is for reviewer context, not for judgment.
+
+**No autonomous agents:**
+- Do not use agents/bots to open PRs, push commits, or post review comments without
+direct human approval and ownership of the result.
+- Do not add `Co-Authored-By` tags for AI tools in commits. 
+AI tools are not authors; disclosure belongs in the PR description, not commit metadata.
+
+**Quality bar / reviewer time:**
+- Using AI assistance should not lower the bar. Bug fixes and features must include tests where possible
+- Maintainers may ask you to reduce scope, add tests, or justify value if a PR appears to be low-effort generated content.
+
+**Copyright and licensing:**
+- You are responsible for ensuring you have the rights to contribute your work under the project license. 
+Using AI tools does not remove third-party copyrights; content found to violate this will be removed.
+
+(Policy inspired by the [LLVM Project AI Tool Use Policy](https://llvm.org/docs/AIToolPolicy.html))
+
+### Step 1: Fork & Clone
+
+Fork the project [on Github](https://github.com/seleniumhq/selenium)
+and clone the repository locally. Use `--depth 1` for a quick clone.
+The repository is over 2GB and cloning the whole history takes a while.
+
+```shell
+% git clone git@github.com:username/selenium.git --depth 1
+% cd selenium
+% git remote add upstream git://github.com/seleniumhq/selenium.git
+```
+
+#### Dependencies
+
+We bundle dependencies in the _third-party/_ directory that are not
+part of the proper project. Any changes to files in this directory or
+its subdirectories should be sent upstream to the respective projects.
+Please don't send your patch to us as we cannot accept it.
+
+We do accept help in upgrading our existing dependencies or removing
+superfluous dependencies. If you need to add a new dependency it's
+often a good idea to reach out to the committers on the
+[IRC channel or the mailing list](https://github.com/SeleniumHQ/selenium/blob/trunk/CONTRIBUTING.md#communication)
+to check that your approach aligns with the project's
+ideas. Nothing is more frustrating than seeing your hard work go to
+waste because your vision doesn't align with the project's.
+
+#### Dependencies Managed by Bazel
+
+##### Java
+
+Edit `MODULE.bazel`, and either update or add the dependency you want
+using the regular maven coordinates to the `maven.install` with the
+name `maven`. Once done, run `REPIN=1 bazel run @maven//:pin` to
+update the lock file, create a PR and check the change in.
+
+##### JS
+
+We use `pnpm` for JS development in the project, and we also use [pnpm
+workspaces](https://pnpm.io/workspaces). Take a look at the top-level
+`pnpm-workspace.yaml` file to find them all, but the main thing to
+know is that each of the workspaces has its own `package.json`. You
+can add dependencies to specific workspaces either by using `pnpm`
+installed on your local machine, or by executing:
+
+```shell
+# Example of adding a dep to the JS webdriver bindings 
+cd javascript/selenium-webdriver
+bazel run javascript:pnpm -- install my-amazing-dep --dir $PWD
+```
+
+This will install the dependency using the same version of `pnpm` we
+build the project with for a single JS project.
+
+To update all dependencies in the tree to the latest version:
+
+`bazel run javascript:pnpm -- -r up --dir $PWD`
+
+This will also update the lock file, so once a change is made, create
+a PR and commit all the changed files.
+
+#### License Headers
+
+Every file in the Selenium project must carry the following license
+header boilerplate:
+
+```text
+Licensed to the Software Freedom Conservancy (SFC) under one
+or more contributor license agreements.  See the NOTICE file
+distributed with this work for additional information
+regarding copyright ownership.  The SFC licenses this file
+to you under the Apache License, Version 2.0 (the
+"License"); you may not use this file except in compliance
+with the License.  You may obtain a copy of the License at
+
+  http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing,
+software distributed under the License is distributed on an
+"AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+KIND, either express or implied.  See the License for the
+specific language governing permissions and limitations
+under the License.
+```
+
+There's no need to include a copyright statement in the file's header.
+The copyright attributions can be reviewed in the
+[NOTICE](https://github.com/SeleniumHQ/selenium/blob/trunk/NOTICE)
+file found in the top-level directory.
+
+### Step 2: Branch
+
+Create a feature branch and start hacking:
+
+```shell
+% git checkout -b my-feature-branch
+```
+
+We practice HEAD-based development, which means all changes are applied
+directly on top of trunk.
+
+### Step 3: Commit
+
+First make sure git knows your name and email address:
+
+```shell
+% git config --global user.name 'Santa Claus'
+% git config --global user.email 'santa@example.com'
+```
+
+**Writing good commit messages is important.** A commit message
+should describe what changed, why, and reference issues fixed (if
+any). Follow these guidelines when writing one:
+
+1. The first line should be around 50 characters or less and contain a
+    short description of the change.
+2. Keep the second line blank.
+3. Wrap all other lines at 72 columns.
+4. Include `Fixes #N`, where _N_ is the issue number the commit
+    fixes, if any.
+
+A good commit message can look like this:
+
+```text
+explain commit normatively in one line
+
+Body of commit message is a few lines of text, explaining things
+in more detail, possibly giving some background about the issue
+being fixed, etc.
+
+The body of the commit message can be several paragraphs, and
+please do proper word-wrap and keep columns shorter than about
+72 characters or so. That way `git log` will show things
+nicely even when it is indented.
+
+Fixes #141
+```
+
+The first line must be meaningful as it's what people see when they
+run `git shortlog` or `git log --oneline`.
+
+### Step 4: Rebase
+
+Use `git rebase` (not `git merge`) to sync your work from time to time.
+
+```shell
+% git fetch upstream
+% git rebase upstream/trunk
+```
+
+### Step 5: Test
+
+Bug fixes and features **should have tests**. Look at other tests to
+see how they should be structured. Verify that new and existing tests are
+passing locally before pushing code.
+
+#### Running tests locally
+
+Build your code for the latest changes and run tests locally.
+
+##### Python
+<details>
+  <summary>
+    Click to see How to run Python Tests.
+  </summary>
+
+  It's not mandatory to run tests sequentially but running Unit tests
+  before browser testing is recommended.
+
+  Unit Tests
+  ```shell
+  % bazel test //py:unit
+  ```
+
+  Remote Tests
+  ```shell
+  % bazel test --jobs 1 //py:test-remote
+  ```
+
+  Browser Tests
+  ```shell
+  % bazel test //py:test-<browsername> #eg test-chrome, test-firefox
+  ```
+</details>
+
+##### Javascript
+<details>
+  <summary>
+    Click to see How to run JavaScript Tests.
+  </summary>
+
+  Node Tests
+  ```shell
+  % bazel test //javascript/selenium-webdriver:all
+  ```
+
+  Firefox Atom Tests
+  ```shell
+  % bazel test --test_tag_filters=firefox //javascript/atoms/... //javascript/webdriver/...
+  ```
+
+  Grid UI Unit Tests
+  ```shell
+  % cd javascript/grid-ui && npm install && npm test
+  ```
+</details>
+
+##### Java
+<details>
+  <summary>
+    Click to see How to run Java Tests.
+  </summary>
+
+  Small Tests
+  ```shell
+  % bazel test --cache_test_results=no --test_size_filters=small grid java/test/...
+  ```
+
+  Large Tests
+  ```shell
+  % bazel test --cache_test_results=no java/test/org/openqa/selenium/grid/router:large-tests
+  ```
+
+  Browser Tests
+  ```shell
+  bazel test --test_size_filters=small,medium --cache_test_results=no --test_tag_filters=-browser-test //java/...
+  ```
+</details>
+
+##### Ruby
+
+Please see https://github.com/SeleniumHQ/selenium#ruby for details about running
+tests.
+
+### Step 6: Push
+
+```shell
+% git push origin my-feature-branch
+```
+
+Go to https://github.com/yourusername/selenium.git and press the _Pull
+Request_ and fill out the form.
+
+Pull requests are usually reviewed within a few days. If there are
+comments to address, apply your changes in new commits (preferably
+[fixups](http://git-scm.com/docs/git-commit)) and push to the same
+branch.
+
+### Step 7: Integration
+
+When code review is complete, a committer will take your PR and
+integrate it on Selenium's trunk branch. Because we like to keep a
+linear history on the trunk branch, we will normally squash and rebase
+your branch history.
+
+## Stages of an Issue or PR
+
+From your create your issue or pull request, through code review and
+towards integration, it will be assigned different Github labels. The
+labels serve for the committers to more easily keep track of work
+that's pending or awaiting action.
+
+Component labels are yellow and carry the **C** prefix. They highlight
+the subsystem or component your PR makes changes in.
+
+The driver labels (**D**) indicate if the changes are related to a
+WebDriver implementation or the Selenium atoms.
+
+The review labels (**R**) are:
+
+* **awaiting answer**: awaits an answer from you
+* **awaiting merge**: waits for a committer to integrate the PR
+* **awaiting reviewer**: pending code review
+* **blocked on external**: a change in an upstream repo is required
+* **needs code changes**: waiting for you to fix a review issue
+* **needs rebase**: the branch isn't in sync with trunk and needs to
+    be rebased
+
+Issues are labelled to make them easier to categorise and find by:
+
+* which **component** they relate to (java, cpp, dotnet, py, rb, nodejs)
+* which **driver** is affected
+* their presumed **difficulty** (easy, less easy, hard)
+* what **type** of issue they are (defect, race condition, cleanup)
+
+## Communication
+
+Selenium contributors frequent the `#selenium` channel on
+[`libera.chat`](https://web.libera.chat/). You can also join
+the [`selenium-developers@` mailing list](https://groups.google.com/forum/#!forum/selenium-developers).
+Check https://selenium.dev/support/ for a complete list of options to communicate.
+
+## Using the EngFlow RBE
+
+To access the EngFlow RBE, a developer needs to be granted access to our project
+container repository. Once that has been done, then any bazel command can be run
+remotely by using `--config=rbe`. For example: `bazel build --config=rbe
+grid` or `bazel test --config=rbe java/test/...`
+
+When you run a remote build, one of the first lines of output from Bazel will 
+include a link to the EngFlow UI so you can track the progress of the build and
+gather information about the efficiency of the build.

@@ -1,0 +1,149 @@
+load("@aspect_rules_js//npm:defs.bzl", "npm_link_package")
+load("@buildifier_prebuilt//:rules.bzl", "buildifier")
+load("@npm//:defs.bzl", "npm_link_all_packages")
+load("@package_metadata//licenses/rules:license.bzl", "license")
+load("@package_metadata//rules:package_metadata.bzl", "package_metadata")
+load("//common:browsers.bzl", "chrome_data", "firefox_data")
+load("//java:browsers.bzl", "chrome_jvm_flags", "firefox_jvm_flags")
+load("//java:defs.bzl", "artifact", "java_binary")
+
+exports_files([
+    "package.json",
+    "pnpm-workspace.yaml",
+])
+
+npm_link_all_packages(name = "node_modules")
+
+filegroup(
+    name = "license",
+    srcs = [
+        "LICENSE",
+        "NOTICE",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+package_metadata(
+    name = "package_metadata",
+    attributes = [
+        ":apache2",
+    ],
+    purl = "pkg:bazel/{}@{}".format(
+        module_name(),
+        module_version(),
+    ) if module_version() else "pkg:bazel/{}".format(module_name()),
+    visibility = ["//visibility:public"],
+)
+
+license(
+    name = "apache2",
+    kind = "@package_metadata//licenses/spdx:Apache-2.0",
+    text = "LICENSE",
+)
+
+filegroup(
+    name = "rakefile",
+    srcs = [
+        "Rakefile",
+    ] + glob([
+        "rake_tasks/*.rake",
+        "rake_tasks/*.rb",
+    ]),
+    visibility = ["//rb:__subpackages__"],
+)
+
+filegroup(
+    name = "rake_tasks",
+    srcs = [
+        "Rakefile",
+    ] + glob([
+        "rake_tasks/*.rake",
+        "rake_tasks/*.rb",
+    ]),
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "grid",
+    actual = "//java/src/org/openqa/selenium/grid:executable-grid",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "pinned-grid",
+    actual = "//java/src/org/openqa/selenium/grid:pinned-grid",
+)
+
+alias(
+    name = "debug-server",
+    actual = "//java/test/org/openqa/selenium/environment:appserver",
+)
+
+alias(
+    name = "calcdeps",
+    actual = "//javascript/atoms:deps",
+)
+
+alias(
+    name = "selenium-server-standalone",
+    actual = "//java/src/org/openqa/selenium/grid:selenium_server_deploy.jar",
+)
+
+java_binary(
+    name = "server",
+    args = [
+        "standalone",
+        "--relax-checks",
+        "true",
+    ],
+    data = chrome_data + firefox_data,
+    jvm_flags = chrome_jvm_flags + firefox_jvm_flags,
+    main_class = "org.openqa.selenium.grid.Bootstrap",
+    runtime_deps = [
+        "//java/src/org/openqa/selenium/grid",
+        artifact("org.slf4j:slf4j-jdk14"),
+    ],
+)
+
+npm_link_package(
+    name = "node_modules/selenium-webdriver",
+    src = "//javascript/selenium-webdriver",
+)
+
+platform(
+    name = "rosetta",
+    constraint_values = [
+        "@platforms//os:osx",
+        "@platforms//cpu:x86_64",
+    ],
+)
+
+platform(
+    name = "local_linux_gnu",
+    constraint_values = [
+        "@llvm//constraints/libc:gnu.2.28",
+    ],
+    parents = ["@platforms//host"],
+)
+
+platform(
+    name = "local_windows_gnullvm",
+    constraint_values = [
+        # alias -> @llvm//constraints/windows/abi:gnullvm
+        "@rules_rs//rs/platforms/constraints:windows_gnullvm",
+        # rules_rs 0.0.90 (via llvm 0.8.3) requires the CRT to be selected
+        # explicitly; the gnullvm Rust toolchain targets msvcrt, while the crt
+        # constraint otherwise defaults to ucrt and no toolchain would match.
+        "@llvm//constraints/windows/crt:msvcrt",
+    ],
+    parents = ["@platforms//host"],
+)
+
+buildifier(
+    name = "buildifier",
+    lint_mode = "fix",
+    mode = "fix",
+    tags = [
+        "manual",
+    ],
+)

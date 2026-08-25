@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<!--
+Copyright 2011 WebDriver committers
+Copyright 2011 Google Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+     http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+-->
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>atoms_test.html</title>
+  <link rel="stylesheet" href="/filez/_main/third_party/js/qunit/qunit.css">
+  <script src="/filez/_main/third_party/js/qunit/qunit.js"></script>
+  <script src="/filez/_main/third_party/js/qunit/qunit_test_runner.js"></script>
+  <script type="text/javascript" src="test_bootstrap.js">
+  </script>
+  <script type="text/javascript">
+    goog.require('goog.math.Coordinate');
+    goog.require('goog.math.Rect');
+    goog.require('goog.math.Size');
+    goog.require('webdriver.chrome');
+  </script>
+
+  <script type="text/javascript">
+    function assertRoughlyEquals(expected, actual, tolerance) {
+      QUnit.assert.ok(Math.abs(expected - actual) <= tolerance,
+          'Expected ' + expected + ' ± ' + tolerance + ', got ' + actual);
+    }
+
+    QUnit.testStart(function() {
+      // Reset iframe scroll position before each test to avoid order dependencies
+      if (frames[0] && frames[0].document && frames[0].document.documentElement) {
+        frames[0].document.documentElement.scrollLeft = 0;
+        frames[0].document.documentElement.scrollTop = 0;
+      }
+    });
+
+    QUnit.testDone(function() {
+      // Reset iframe scroll position after each test to avoid order dependencies
+      if (frames[0] && frames[0].document && frames[0].document.documentElement) {
+        frames[0].document.documentElement.scrollLeft = 0;
+        frames[0].document.documentElement.scrollTop = 0;
+      }
+    });
+
+    QUnit.test('computeScrollOffsets', function(assert) {
+      function computeX(left, right, center) {
+        var offsets = webdriver.chrome.computeScrollOffsets_(
+            new goog.math.Size(10, 10),
+            new goog.math.Rect(left, 1, right - left, 2),
+            center);
+        return offsets.x;
+      }
+      // In bounds
+      assert.strictEqual(computeX(1, 5, false), 0);
+      // On left edge
+      assert.strictEqual(computeX(0, 5, false), 0);
+      // Overlap left edge
+      assert.strictEqual(computeX(-1, 5, false), -1);
+      // Past left edge
+      assert.strictEqual(computeX(-5, -1, false), -5);
+      // On right edge
+      assert.strictEqual(computeX(5, 10, false), 0);
+      // Overlap right edge
+      assert.strictEqual(computeX(5, 11, false), 1);
+      // Past right edge
+      assert.strictEqual(computeX(12, 14, false), 4);
+      // Too big
+      assert.strictEqual(computeX(-1, 11, false), -1);
+      assert.strictEqual(computeX(-1, 15, true), 2);
+
+      function computeY(top, bottom, center) {
+        var offsets = webdriver.chrome.computeScrollOffsets_(
+            new goog.math.Size(10, 10),
+            new goog.math.Rect(1, top, 2, bottom - top),
+            center);
+        return offsets.y;
+      }
+      // Above top edge
+      assert.strictEqual(computeY(-3, -1, false), -3);
+      // Below bottom edge
+      assert.strictEqual(computeY(13, 15, false), 5);
+      // Too big
+      assert.strictEqual(computeY(-1, 11, false), -1);
+      assert.strictEqual(computeY(-1, 15, true), 2);
+    });
+
+    QUnit.test('computeOffsetInContainer', function(assert) {
+      function computeY(container, elem) {
+        return webdriver.chrome.computeOffsetInContainer_(
+            document.getElementById(container),
+            document.getElementById(elem)).y;
+      }
+      // Padding/margins/borders
+      assert.strictEqual(computeY('c1', 'e1'), 17);
+
+      // Absolute positioning
+      assert.strictEqual(computeY('c2', 'e2'), 50);
+
+      // Container hidden
+      assert.strictEqual(computeY('c3', 'e3'), 0);
+
+      // Element hidden
+      assert.strictEqual(computeY('c4', 'e4'), 0);
+
+      // Not displayed
+      assert.strictEqual(computeY('c5', 'e5'), 0);
+    });
+
+    QUnit.test('getLocationInViewNoScroll', function(assert) {
+      var elem = frames[0].document.getElementById('elem0');
+      var coord = webdriver.chrome.getLocationInView(
+          elem, false, new goog.math.Rect(0,0,4,4));
+      var tolerance = 1;
+      assertRoughlyEquals(108, coord.x, tolerance);
+      assertRoughlyEquals(108, coord.y, tolerance);
+      assert.strictEqual(frames[0].document.documentElement.scrollLeft, 0);
+      assert.strictEqual(frames[0].document.documentElement.scrollTop, 0);
+    });
+
+    QUnit.test('getLocationInViewScrolling', function(assert) {
+      var elem = frames[0].document.getElementById('elem');
+      var coord = webdriver.chrome.getLocationInView(
+          elem, false, new goog.math.Rect(0,0,4,4));
+      var tolerance = 1;
+      assertRoughlyEquals(280, coord.x, tolerance);
+      assertRoughlyEquals(280, coord.y, tolerance);
+      assert.strictEqual(frames[0].document.documentElement.scrollLeft, 408);
+      assert.strictEqual(frames[0].document.documentElement.scrollTop, 408);
+    });
+
+    QUnit.test('getLocationInViewDocumentElement', function(assert) {
+      var elem = document.documentElement;
+      var coord = webdriver.chrome.getLocationInView(
+          elem, false, new goog.math.Rect(0,0,4,4));
+      assert.strictEqual(coord.x, 0);
+      assert.strictEqual(coord.y, 0);
+      assert.strictEqual(document.documentElement.scrollLeft, 0);
+      assert.strictEqual(document.documentElement.scrollTop, 0);
+    });
+
+    QUnit.test('getLocationInViewFrameDocumentElement', function(assert) {
+      var elem = frames[0].document.documentElement;
+      var coord = webdriver.chrome.getLocationInView(
+          elem, false, new goog.math.Rect(0,0,4,4));
+      assert.strictEqual(coord.x, 0);
+      assert.strictEqual(coord.y, 0);
+      assert.strictEqual(frames[0].document.documentElement.scrollLeft, 0);
+      assert.strictEqual(frames[0].document.documentElement.scrollTop, 0);
+    });
+
+    QUnit.test('getFirstClientRect', function(assert) {
+      var rect = webdriver.chrome.getFirstClientRect(
+          document.getElementById('span'));
+      assert.strictEqual(rect.left, 0);
+      assert.strictEqual(rect.top, 0);
+      assert.ok(rect.width > 0);
+      assert.ok(rect.height > 0);
+    });
+
+    QUnit.test('getFirstClientRectThrows', function(assert) {
+      assert.throws(function() {
+            webdriver.chrome.getFirstClientRect(
+              document.getElementById('e5'));
+          });
+    });
+  </script>
+</head>
+<style>
+  body {
+    padding: 0px;
+    margin: 0px;
+  }
+  #c1 {
+    padding-top: 1px;
+    margin-top: 2px;
+    border: 0px solid blue;
+    border-top-width: 4px;
+  }
+  #e1 {
+    padding-top: 8px;
+    margin-top: 16px;
+    border: 0px solid red;
+    border-top-width: 32px;
+  }
+</style>
+<body id='body'>
+  <div id="qunit"></div>
+  <div id="qunit-fixture"></div>
+  <div id='c1'>
+    <div id='e1'>1</div>
+  </div>
+  <div id='c2' style='position:fixed; top:50px'>
+    <div id='e2' style='position:absolute; top:50px'>2</div>
+  </div>
+  <div id='c3' style='visibility:hidden'>
+    <div id='e3'>3</div>
+  </div>
+  <div id='c4'>
+    <div id='e4' style='visibility:hidden'>4</div>
+  </div>
+  <div id='c5' style='display:none'>
+    <div id='e5'>5</div>
+  </div>
+  <div style='width:1px'>
+    <span id='span'>a b</span>
+  </div>
+  <iframe width=300 height=300 src='location_in_view.html'></iframe>
+</body>
+</html>

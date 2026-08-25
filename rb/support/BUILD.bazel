@@ -1,0 +1,29 @@
+load("@rules_ruby//ruby:defs.bzl", "rb_library")
+
+package(default_visibility = ["//rb:__subpackages__"])
+
+rb_library(
+    name = "nightly_version_generator",
+    srcs = ["nightly_version_generator.rb"],
+)
+
+rb_library(
+    name = "bundle",
+    srcs = ["bundle.rb"],
+)
+
+rb_library(
+    name = "steep_check",
+    srcs = ["steep_check.rb"],
+)
+
+rb_library(
+    name = "rbs_collection_update",
+    srcs = ["rbs_collection_update.rb"],
+)
+
+rb_library(
+    name = "generated_note",
+    srcs = ["generated_note.rb"],
+    deps = ["@rules_ruby//ruby/runfiles"],
+)

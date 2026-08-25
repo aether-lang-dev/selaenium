@@ -1,0 +1,43 @@
+package(
+    default_visibility = [
+        "//dotnet/src/webdriver:__pkg__",
+        "//dotnet/test/common:__pkg__",
+        "//java/src/org/openqa/selenium/manager:__pkg__",
+        "//javascript/selenium-webdriver:__pkg__",
+        "//py:__pkg__",
+        "//rb:__pkg__",
+    ],
+)
+
+alias(
+    name = "selenium-manager-linux",
+    actual = select({
+        "//common:use_pinned_browser": "@download_sm_linux//file",
+        "//conditions:default": "//rust:selenium-manager-linux",
+    }),
+)
+
+alias(
+    name = "selenium-manager-macos",
+    actual = select({
+        "//common:use_pinned_browser": "@download_sm_macos//file",
+        "//conditions:default": "//rust:selenium-manager-macos",
+    }),
+)
+
+# The Rust selenium-manager cannot be built from source on Windows (pending the
+# @llvm toolchain migration)
+alias(
+    name = "selenium-manager-windows",
+    actual = "@download_sm_windows//file",
+)
+
+alias(
+    name = "selenium-manager-sbom",
+    actual = "@download_sm_sbom//file",
+)
+
+alias(
+    name = "selenium-manager-notice",
+    actual = "@download_sm_notice//file",
+)

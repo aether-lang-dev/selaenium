@@ -1,0 +1,53 @@
+name: 🚀 Feature Proposal
+description: Suggest a new feature or improvement to Selenium
+title: "[🚀 Feature]: "
+labels: [ I-enhancement, A-needs-triaging ]
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      placeholder: |
+        What would you like Selenium to support or do differently?
+        Please include:
+        - The problem this would solve
+        - How you expect the feature would work
+        - Any relevant context or use cases
+        - Links to related issues, discussions, or external tools (if applicable)
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Have you considered any alternatives or workarounds?
+      placeholder: |
+        If you've tried other ways to solve this problem, describe them here.
+        If not, you can leave this blank.
+    validations:
+      required: false
+
+  - type: dropdown
+    id: bindings
+    attributes:
+      label: Does this apply to specific language bindings?
+      multiple: true
+      options:
+        - Java
+        - Python
+        - C#/.NET
+        - JavaScript/Node.js
+        - Ruby
+
+  - type: dropdown
+    id: components
+    attributes:
+      label: What part(s) of Selenium does this relate to?
+      multiple: true
+      options:
+        - Atoms
+        - Build (CI or Bazel)
+        - DevTools (CDP or BiDi)
+        - Documentation
+        - Grid
+        - Selenium Manager

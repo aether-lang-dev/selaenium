@@ -1,0 +1,91 @@
+load("@py_dev_requirements//:requirements.bzl", "requirement")
+load("@rules_python//python:defs.bzl", "py_binary", "py_library")
+load("//java:defs.bzl", "artifact", "java_binary")
+
+# Canonical license notice text, shared by update_copyright and the code generators
+# so the license body is defined in exactly one place. Consumers in other packages
+# use a local copy_file target rather than depending on this label directly, so each
+# generator can read it as a plain sibling file instead of locating the repo root.
+exports_files([
+    "generated_note_template.txt",
+    "license_header.txt",
+])
+
+# Shared "generated, DO NOT EDIT" marker text. Python generators depend on this
+# library directly (deps, not a local copy_file) since Bazel resolves the Python
+# import regardless of package location — only raw data-file reads need the local
+# copy trick. Non-Python generators format generated_note_template.txt themselves.
+py_library(
+    name = "generated_note",
+    srcs = ["generated_note.py"],
+    data = ["generated_note_template.txt"],
+    visibility = ["//visibility:public"],
+)
+
+py_binary(
+    name = "pinned_browsers",
+    srcs = ["pinned_browsers.py"],
+    deps = [
+        ":generated_note",
+        requirement("packaging"),
+        requirement("urllib3"),
+    ],
+)
+
+py_binary(
+    name = "selenium_manager",
+    srcs = ["selenium_manager.py"],
+    deps = [
+        requirement("urllib3"),
+    ],
+)
+
+py_binary(
+    name = "update_cdp",
+    srcs = ["update_cdp.py"],
+    deps = [
+        requirement("packaging"),
+        requirement("urllib3"),
+    ],
+)
+
+py_binary(
+    name = "update_cddl",
+    srcs = ["update_cddl.py"],
+    deps = [
+        requirement("urllib3"),
+    ],
+)
+
+py_binary(
+    name = "update_copyright",
+    srcs = ["update_copyright.py"],
+    data = ["license_header.txt"],
+)
+
+py_binary(
+    name = "update_multitool_binaries",
+    srcs = ["update_multitool_binaries.py"],
+)
+
+py_binary(
+    name = "update_docfx",
+    srcs = ["update_docfx.py"],
+    deps = [
+        requirement("packaging"),
+        requirement("urllib3"),
+    ],
+)
+
+java_binary(
+    name = "google-java-format",
+    jvm_flags = [
+        "--add-exports jdk.compiler/com.sun.tools.javac.api=ALL-UNNAMED",
+        "--add-exports jdk.compiler/com.sun.tools.javac.file=ALL-UNNAMED",
+        "--add-exports jdk.compiler/com.sun.tools.javac.parser=ALL-UNNAMED",
+        "--add-exports jdk.compiler/com.sun.tools.javac.tree=ALL-UNNAMED",
+        "--add-exports jdk.compiler/com.sun.tools.javac.util=ALL-UNNAMED",
+    ],
+    main_class = "com.google.googlejavaformat.java.Main",
+    runtime_deps = [artifact("com.google.googlejavaformat:google-java-format")],
+)

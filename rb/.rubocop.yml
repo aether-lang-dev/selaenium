@@ -1,0 +1,176 @@
+plugins:
+  - rubocop-performance
+  - rubocop-rake
+  - rubocop-rspec
+
+AllCops:
+  TargetRubyVersion: 3.3
+  NewCops: enable
+  Exclude:
+    - !ruby/regexp /lib\/selenium\/devtools\/v\d+/
+
+Gemspec/DevelopmentDependencies:
+  EnforcedStyle: gemspec
+
+Layout/LineLength:
+  AllowedPatterns:
+    - '^\s*#'
+
+Layout/SpaceInsideHashLiteralBraces:
+  EnforcedStyle: no_space
+
+Metrics/AbcSize:
+  Max: 30
+  Exclude:
+    - 'lib/selenium/webdriver/common/driver_finder.rb'
+    - 'lib/selenium/webdriver/remote/http/curb.rb'
+    - 'lib/selenium/webdriver/support/color.rb'
+    - '../rake_tasks/**/*'
+
+Metrics/BlockLength:
+  Max: 18
+  Exclude:
+    - 'spec/**/*.rb'
+    - 'selenium-*.gemspec'
+    - 'Steepfile'
+    - '../rake_tasks/**/*'
+    - '../Rakefile'
+
+Metrics/ClassLength:
+  CountComments: false
+  Max: 160
+  Exclude:
+    - 'lib/selenium/webdriver/remote/bridge.rb'
+    - 'lib/selenium/webdriver/remote/capabilities.rb'
+    - 'lib/selenium/webdriver/bidi/support/bidi_generate.rb'
+    - 'lib/selenium/webdriver/bidi/protocol/**/*'
+    - 'spec/integration/selenium/webdriver/spec_support/test_environment.rb'
+
+Metrics/CyclomaticComplexity:
+  Max: 9
+  Exclude:
+    - 'lib/selenium/webdriver/support/color.rb'
+    - '../rake_tasks/**/*'
+
+Metrics/MethodLength:
+  CountComments: false
+  Max: 22
+  Exclude:
+    - 'lib/selenium/webdriver/common/driver_finder.rb'
+    - '../rake_tasks/**/*'
+
+Metrics/ModuleLength:
+  CountComments: false
+  Max: 110
+  Exclude:
+    - 'lib/selenium/webdriver/common/platform.rb'
+    - 'lib/selenium/webdriver/bidi/serialization/record.rb'
+    - 'lib/selenium/webdriver/bidi/support/bidi_generate.rb'
+    - 'spec/**/*'
+
+Metrics/PerceivedComplexity:
+  Max: 9
+  Exclude:
+    - '../rake_tasks/**/*'
+
+Metrics/ParameterLists:
+  CountKeywordArgs: false
+
+Naming/BlockForwarding:
+  EnforcedStyle: explicit
+
+Naming/AccessorMethodName:
+  Exclude:
+    - 'lib/selenium/webdriver/bidi/protocol/**/*'
+
+Naming/FileName:
+  Exclude:
+    - 'lib/selenium-webdriver.rb'
+    - '../Rakefile'
+
+Naming/MethodParameterName:
+  AllowedNames:
+    - x
+    - y
+    - ex
+    - by
+    - id
+    - io
+
+Naming/PredicateMethod:
+  Exclude:
+    - 'lib/selenium/webdriver/common/file_reaper.rb'
+    - 'lib/selenium/webdriver/common/socket_poller.rb'
+
+RSpec/AnyInstance:
+  Enabled: false
+
+RSpec/BeforeAfterAll:
+  Enabled: false
+
+RSpec/ExampleLength:
+  Enabled: false
+
+RSpec/InstanceVariable:
+  Exclude:
+    - 'spec/unit/selenium/webdriver/socket_poller_spec.rb'
+    - 'spec/integration/selenium/webdriver/chrome/print_pdf_spec.rb'
+    - 'spec/integration/selenium/webdriver/spec_helper.rb'
+
+RSpec/MultipleExpectations:
+  Enabled: false
+
+RSpec/NoExpectationExample:
+  Exclude:
+    - 'spec/unit/selenium/webdriver/guards_spec.rb'
+    - 'spec/integration/selenium/webdriver/takes_screenshot_spec.rb'
+
+RSpec/MultipleMemoizedHelpers:
+  Max: 6
+  Exclude:
+    - 'spec/unit/selenium/webdriver/common/interactions/*_spec.rb'
+
+Style/BlockDelimiters:
+  EnforcedStyle: braces_for_chaining
+
+Style/CommentedKeyword:
+  Enabled: false
+
+# __dir__ should be avoided when used with Bazel.
+Style/Dir:
+  Exclude:
+    - 'selenium-devtools.gemspec'
+    - 'selenium-webdriver.gemspec'
+
+# Consider documenting all top-level classes and modules
+Style/Documentation:
+  Enabled: false
+
+Style/MixinUsage:
+  Exclude:
+    - 'spec/integration/selenium/webdriver/spec_helper.rb'
+
+Style/HashEachMethods:
+  Enabled: true
+
+# Port Integers do not need underscores
+Style/NumericLiterals:
+  Enabled: false
+
+Style/OptionalBooleanParameter:
+  Enabled: false
+
+Lint/Debugger:
+  Exclude:
+    - 'lib/selenium/webdriver/common/driver_extensions/full_page_screenshot.rb'
+
+Lint/UselessConstantScoping:
+  Enabled: false
+
+Lint/RedundantRequireStatement:
+  Exclude:
+    - '../rake_tasks/**/*'
+
+RSpec/Output:
+  Exclude:
+    - 'spec/integration/selenium/webdriver/spec_support/test_environment.rb'

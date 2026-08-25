@@ -1,0 +1,463 @@
+// Licensed to the Software Freedom Conservancy (SFC) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The SFC licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
+//
+//   http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
+package org.openqa.selenium.remote;
+
+import static java.util.Collections.singleton;
+import static java.util.Collections.singletonMap;
+
+import java.time.Duration;
+import java.util.Collection;
+import java.util.List;
+import java.util.Map;
+import org.jspecify.annotations.Nullable;
+import org.openqa.selenium.Capabilities;
+import org.openqa.selenium.Cookie;
+import org.openqa.selenium.Dimension;
+import org.openqa.selenium.Point;
+import org.openqa.selenium.WindowType;
+import org.openqa.selenium.interactions.Sequence;
+import org.openqa.selenium.internal.Require;
+import org.openqa.selenium.print.PrintOptions;
+
+/**
+ * An empty interface defining constants for the standard commands defined in the WebDriver JSON
+ * wire protocol.
+ *
+ * @author jmleyba@gmail.com (Jason Leyba)
+ */
+public interface DriverCommand {
+  String GET_CAPABILITIES = "getCapabilities";
+  String NEW_SESSION = "newSession";
+  String STATUS = "status";
+  String CLOSE = "close";
+  String QUIT = "quit";
+  String GET = "get";
+  String GO_BACK = "goBack";
+  String GO_FORWARD = "goForward";
+  String REFRESH = "refresh";
+  String ADD_COOKIE = "addCookie";
+  String GET_ALL_COOKIES = "getCookies";
+  String GET_COOKIE = "getCookie";
+  String DELETE_COOKIE = "deleteCookie";
+  String DELETE_ALL_COOKIES = "deleteAllCookies";
+  String FIND_ELEMENT = "findElement";
+  String FIND_ELEMENTS = "findElements";
+  String FIND_CHILD_ELEMENT = "findChildElement";
+  String FIND_CHILD_ELEMENTS = "findChildElements";
+  String GET_ELEMENT_SHADOW_ROOT = "getElementShadowRoot";
+  String FIND_ELEMENT_FROM_SHADOW_ROOT = "findElementFromShadowRoot";
+  String FIND_ELEMENTS_FROM_SHADOW_ROOT = "findElementsFromShadowRoot";
+  String CLEAR_ELEMENT = "clearElement";
+  String CLICK_ELEMENT = "clickElement";
+  String SEND_KEYS_TO_ELEMENT = "sendKeysToElement";
+  String SUBMIT_ELEMENT = "submitElement";
+  String UPLOAD_FILE = "uploadFile";
+  String GET_CURRENT_WINDOW_HANDLE = "getCurrentWindowHandle";
+  String GET_WINDOW_HANDLES = "getWindowHandles";
+  String SWITCH_TO_WINDOW = "switchToWindow";
+  String SWITCH_TO_NEW_WINDOW = "newWindow";
+  String SWITCH_TO_FRAME = "switchToFrame";
+  String SWITCH_TO_PARENT_FRAME = "switchToParentFrame";
+  String GET_ACTIVE_ELEMENT = "getActiveElement";
+  String GET_CURRENT_URL = "getCurrentUrl";
+  String GET_PAGE_SOURCE = "getPageSource";
+  String GET_TITLE = "getTitle";
+  String EXECUTE_SCRIPT = "executeScript";
+  String EXECUTE_ASYNC_SCRIPT = "executeAsyncScript";
+  String GET_ELEMENT_TEXT = "getElementText";
+  String GET_ELEMENT_TAG_NAME = "getElementTagName";
+  String IS_ELEMENT_SELECTED = "isElementSelected";
+  String IS_ELEMENT_ENABLED = "isElementEnabled";
+  String IS_ELEMENT_DISPLAYED = "isElementDisplayed";
+  String GET_ELEMENT_RECT = "getElementRect";
+  String GET_ELEMENT_LOCATION = "getElementLocation";
+  String GET_ELEMENT_LOCATION_ONCE_SCROLLED_INTO_VIEW = "getElementLocationOnceScrolledIntoView";
+  String GET_ELEMENT_SIZE = "getElementSize";
+  String GET_ELEMENT_DOM_PROPERTY = "getElementDomProperty";
+  String GET_ELEMENT_DOM_ATTRIBUTE = "getElementDomAttribute";
+  String GET_ELEMENT_ATTRIBUTE = "getElementAttribute";
+  String GET_ELEMENT_VALUE_OF_CSS_PROPERTY = "getElementValueOfCssProperty";
+  String GET_ELEMENT_ARIA_ROLE = "getElementAriaRole";
+  String GET_ELEMENT_ACCESSIBLE_NAME = "getElementAccessibleName";
+  String SCREENSHOT = "screenshot";
+  String ELEMENT_SCREENSHOT = "elementScreenshot";
+  String ACCEPT_ALERT = "acceptAlert";
+  String DISMISS_ALERT = "dismissAlert";
+  String GET_ALERT_TEXT = "getAlertText";
+  String SET_ALERT_VALUE = "setAlertValue";
+  String GET_TIMEOUTS = "getTimeouts";
+  String SET_TIMEOUT = "setTimeout";
+  String PRINT_PAGE = "printPage";
+  String IMPLICITLY_WAIT = "implicitlyWait";
+  String SET_SCRIPT_TIMEOUT = "setScriptTimeout";
+  String GET_LOCATION = "getLocation";
+  String SET_LOCATION = "setLocation";
+
+  /**
+   * @deprecated localStorage is not part of W3C WebDriver spec. Use ((JavascriptExecutor)
+   *     driver).executeScript("return window.localStorage.getItem('key')") instead.
+   */
+  @Deprecated String GET_LOCAL_STORAGE_ITEM = "getLocalStorageItem";
+
+  /**
+   * @deprecated localStorage is not part of W3C WebDriver spec. Use ((JavascriptExecutor)
+   *     driver).executeScript("return Object.keys(window.localStorage)") instead.
+   */
+  @Deprecated String GET_LOCAL_STORAGE_KEYS = "getLocalStorageKeys";
+
+  /**
+   * @deprecated localStorage is not part of W3C WebDriver spec. Use ((JavascriptExecutor)
+   *     driver).executeScript("window.localStorage.setItem('key', 'value')") instead.
+   */
+  @Deprecated String SET_LOCAL_STORAGE_ITEM = "setLocalStorageItem";
+
+  /**
+   * @deprecated localStorage is not part of W3C WebDriver spec. Use ((JavascriptExecutor)
+   *     driver).executeScript("window.localStorage.removeItem('key')") instead.
+   */
+  @Deprecated String REMOVE_LOCAL_STORAGE_ITEM = "removeLocalStorageItem";
+
+  /**
+   * @deprecated localStorage is not part of W3C WebDriver spec. Use ((JavascriptExecutor)
+   *     driver).executeScript("window.localStorage.clear()") instead.
+   */
+  @Deprecated String CLEAR_LOCAL_STORAGE = "clearLocalStorage";
+
+  /**
+   * @deprecated localStorage is not part of W3C WebDriver spec. Use ((JavascriptExecutor)
+   *     driver).executeScript("return window.localStorage.length") instead.
+   */
+  @Deprecated String GET_LOCAL_STORAGE_SIZE = "getLocalStorageSize";
+
+  /**
+   * @deprecated sessionStorage is not part of W3C WebDriver spec. Use ((JavascriptExecutor)
+   *     driver).executeScript("return window.sessionStorage.getItem('key')") instead.
+   */
+  @Deprecated String GET_SESSION_STORAGE_ITEM = "getSessionStorageItem";
+
+  /**
+   * @deprecated sessionStorage is not part of W3C WebDriver spec. Use ((JavascriptExecutor)
+   *     driver).executeScript("return Object.keys(window.sessionStorage)") instead.
+   */
+  @Deprecated String GET_SESSION_STORAGE_KEYS = "getSessionStorageKey";
+
+  /**
+   * @deprecated sessionStorage is not part of W3C WebDriver spec. Use ((JavascriptExecutor)
+   *     driver).executeScript("window.sessionStorage.setItem('key', 'value')") instead.
+   */
+  @Deprecated String SET_SESSION_STORAGE_ITEM = "setSessionStorageItem";
+
+  /**
+   * @deprecated sessionStorage is not part of W3C WebDriver spec. Use ((JavascriptExecutor)
+   *     driver).executeScript("window.sessionStorage.removeItem('key')") instead.
+   */
+  @Deprecated String REMOVE_SESSION_STORAGE_ITEM = "removeSessionStorageItem";
+
+  /**
+   * @deprecated sessionStorage is not part of W3C WebDriver spec. Use ((JavascriptExecutor)
+   *     driver).executeScript("window.sessionStorage.clear()") instead.
+   */
+  @Deprecated String CLEAR_SESSION_STORAGE = "clearSessionStorage";
+
+  /**
+   * @deprecated sessionStorage is not part of W3C WebDriver spec. Use ((JavascriptExecutor)
+   *     driver).executeScript("return window.sessionStorage.length") instead.
+   */
+  @Deprecated String GET_SESSION_STORAGE_SIZE = "getSessionStorageSize";
+
+  // W3C Actions APIs
+  String ACTIONS = "actions";
+  String CLEAR_ACTIONS_STATE = "clearActionState";
+  // Window API
+  String SET_CURRENT_WINDOW_POSITION = "setWindowPosition";
+  String GET_CURRENT_WINDOW_POSITION = "getWindowPosition";
+  // W3C compatible Window API
+  String SET_CURRENT_WINDOW_SIZE = "setCurrentWindowSize";
+  String GET_CURRENT_WINDOW_SIZE = "getCurrentWindowSize";
+  String MAXIMIZE_CURRENT_WINDOW = "maximizeCurrentWindow";
+  String MINIMIZE_CURRENT_WINDOW = "minimizeCurrentWindow";
+  String FULLSCREEN_CURRENT_WINDOW = "fullscreenCurrentWindow";
+  // Logging API
+  String GET_AVAILABLE_LOG_TYPES = "getAvailableLogTypes";
+  String GET_LOG = "getLog";
+  // Virtual Authenticator API
+  // http://w3c.github.io/webauthn#sctn-automation
+  String ADD_VIRTUAL_AUTHENTICATOR = "addVirtualAuthenticator";
+  String REMOVE_VIRTUAL_AUTHENTICATOR = "removeVirtualAuthenticator";
+  String ADD_CREDENTIAL = "addCredential";
+  String GET_CREDENTIALS = "getCredentials";
+  String REMOVE_CREDENTIAL = "removeCredential";
+  String REMOVE_ALL_CREDENTIALS = "removeAllCredentials";
+  String SET_USER_VERIFIED = "setUserVerified";
+  // Federated Credential Management API
+  // https://w3c-fedid.github.io/FedCM/#automation
+  String CANCEL_DIALOG = "cancelDialog";
+  String SELECT_ACCOUNT = "selectAccount";
+  String CLICK_DIALOG = "clickDialog";
+  String GET_ACCOUNTS = "getAccounts";
+  String GET_FEDCM_TITLE = "getFedCmTitle";
+  String GET_FEDCM_DIALOG_TYPE = "getFedCmDialogType";
+  String SET_DELAY_ENABLED = "setDelayEnabled";
+  String RESET_COOLDOWN = "resetCooldown";
+  String GET_DOWNLOADABLE_FILES = "getDownloadableFiles";
+  String DOWNLOAD_FILE = "downloadFile";
+
+  /**
+   * This endpoint was introduced in 4.39.0, but not used anymore since 4.40.0. Left here for
+   * backward compatibility (if someone uses Grid 4.40+, but Client 4.39.0).
+   *
+   * <p>Remove it in 4.41, 4.42 or 4.43.
+   *
+   * @deprecated use {@link #DOWNLOAD_FILE} instead
+   */
+  @Deprecated String GET_DOWNLOADED_FILE = "getDownloadedFile";
+
+  String DELETE_DOWNLOADABLE_FILES = "deleteDownloadableFiles";
+
+  String FIRE_SESSION_EVENT = "fireSessionEvent";
+
+  static CommandPayload NEW_SESSION(Capabilities capabilities) {
+    Require.nonNull("Capabilities", capabilities);
+    return NEW_SESSION(singleton(capabilities));
+  }
+
+  static CommandPayload NEW_SESSION(Collection<Capabilities> capabilities) {
+    Require.nonNull("Capabilities", capabilities);
+    if (capabilities.isEmpty()) {
+      throw new IllegalArgumentException("Capabilities for new session must not be empty");
+    }
+
+    return new CommandPayload(NEW_SESSION, Map.of("capabilities", capabilities));
+  }
+
+  static CommandPayload GET(String url) {
+    return new CommandPayload(GET, Map.of("url", url));
+  }
+
+  static CommandPayload ADD_COOKIE(Cookie cookie) {
+    return new CommandPayload(ADD_COOKIE, Map.of("cookie", cookie));
+  }
+
+  static CommandPayload DELETE_COOKIE(String name) {
+    return new CommandPayload(DELETE_COOKIE, Map.of("name", name));
+  }
+
+  static CommandPayload FIND_ELEMENT(String strategy, Object value) {
+    return new CommandPayload(FIND_ELEMENT, Map.of("using", strategy, "value", value));
+  }
+
+  static CommandPayload FIND_ELEMENTS(String strategy, Object value) {
+    return new CommandPayload(FIND_ELEMENTS, Map.of("using", strategy, "value", value));
+  }
+
+  static CommandPayload FIND_CHILD_ELEMENT(String id, String strategy, String value) {
+    return new CommandPayload(
+        FIND_CHILD_ELEMENT, Map.of("id", id, "using", strategy, "value", value));
+  }
+
+  static CommandPayload FIND_CHILD_ELEMENTS(String id, String strategy, String value) {
+    return new CommandPayload(
+        FIND_CHILD_ELEMENTS, Map.of("id", id, "using", strategy, "value", value));
+  }
+
+  static CommandPayload GET_ELEMENT_SHADOW_ROOT(String id) {
+    Require.nonNull("Element ID", id);
+    return new CommandPayload(GET_ELEMENT_SHADOW_ROOT, singletonMap("id", id));
+  }
+
+  static CommandPayload FIND_ELEMENT_FROM_SHADOW_ROOT(
+      String shadowId, String strategy, String value) {
+    Require.nonNull("Shadow root ID", shadowId);
+    Require.nonNull("Element finding strategy", strategy);
+    Require.nonNull("Value for finding strategy", value);
+    return new CommandPayload(
+        FIND_ELEMENT_FROM_SHADOW_ROOT,
+        Map.of("shadowId", shadowId, "using", strategy, "value", value));
+  }
+
+  static CommandPayload FIND_ELEMENTS_FROM_SHADOW_ROOT(
+      String shadowId, String strategy, String value) {
+    Require.nonNull("Shadow root ID", shadowId);
+    Require.nonNull("Element finding strategy", strategy);
+    Require.nonNull("Value for finding strategy", value);
+    return new CommandPayload(
+        FIND_ELEMENTS_FROM_SHADOW_ROOT,
+        Map.of("shadowId", shadowId, "using", strategy, "value", value));
+  }
+
+  static CommandPayload CLEAR_ELEMENT(String id) {
+    return new CommandPayload(CLEAR_ELEMENT, Map.of("id", id));
+  }
+
+  static CommandPayload CLICK_ELEMENT(String id) {
+    return new CommandPayload(CLICK_ELEMENT, Map.of("id", id));
+  }
+
+  static CommandPayload SEND_KEYS_TO_ELEMENT(String id, CharSequence[] keysToSend) {
+    return new CommandPayload(SEND_KEYS_TO_ELEMENT, Map.of("id", id, "value", keysToSend));
+  }
+
+  static CommandPayload SUBMIT_ELEMENT(String id) {
+    return new CommandPayload(SUBMIT_ELEMENT, Map.of("id", id));
+  }
+
+  static CommandPayload UPLOAD_FILE(String file) {
+    return new CommandPayload(UPLOAD_FILE, Map.of("file", file));
+  }
+
+  static CommandPayload SWITCH_TO_WINDOW(String windowHandleOrName) {
+    return new CommandPayload(SWITCH_TO_WINDOW, Map.of("handle", windowHandleOrName));
+  }
+
+  static CommandPayload SWITCH_TO_NEW_WINDOW(WindowType typeHint) {
+    return new CommandPayload(SWITCH_TO_NEW_WINDOW, Map.of("type", typeHint.toString()));
+  }
+
+  static CommandPayload SWITCH_TO_FRAME(@Nullable Object frame) {
+    return new CommandPayload(SWITCH_TO_FRAME, singletonMap("id", frame));
+  }
+
+  static CommandPayload EXECUTE_SCRIPT(String script, List<Object> args) {
+    return new CommandPayload(EXECUTE_SCRIPT, Map.of("script", script, "args", args));
+  }
+
+  static CommandPayload EXECUTE_ASYNC_SCRIPT(String script, List<Object> args) {
+    return new CommandPayload(EXECUTE_ASYNC_SCRIPT, Map.of("script", script, "args", args));
+  }
+
+  static CommandPayload GET_ELEMENT_TEXT(String id) {
+    return new CommandPayload(GET_ELEMENT_TEXT, Map.of("id", id));
+  }
+
+  static CommandPayload GET_ELEMENT_TAG_NAME(String id) {
+    return new CommandPayload(GET_ELEMENT_TAG_NAME, Map.of("id", id));
+  }
+
+  static CommandPayload IS_ELEMENT_SELECTED(String id) {
+    return new CommandPayload(IS_ELEMENT_SELECTED, Map.of("id", id));
+  }
+
+  static CommandPayload IS_ELEMENT_ENABLED(String id) {
+    return new CommandPayload(IS_ELEMENT_ENABLED, Map.of("id", id));
+  }
+
+  static CommandPayload IS_ELEMENT_DISPLAYED(String id) {
+    return new CommandPayload(IS_ELEMENT_DISPLAYED, Map.of("id", id));
+  }
+
+  static CommandPayload GET_ELEMENT_RECT(String id) {
+    return new CommandPayload(GET_ELEMENT_RECT, Map.of("id", id));
+  }
+
+  static CommandPayload GET_ELEMENT_LOCATION(String id) {
+    return new CommandPayload(GET_ELEMENT_LOCATION, Map.of("id", id));
+  }
+
+  static CommandPayload GET_ELEMENT_LOCATION_ONCE_SCROLLED_INTO_VIEW(String id) {
+    return new CommandPayload(GET_ELEMENT_LOCATION_ONCE_SCROLLED_INTO_VIEW, Map.of("id", id));
+  }
+
+  static CommandPayload GET_ELEMENT_SIZE(String id) {
+    return new CommandPayload(GET_ELEMENT_SIZE, Map.of("id", id));
+  }
+
+  static CommandPayload GET_ELEMENT_DOM_PROPERTY(String id, String name) {
+    return new CommandPayload(GET_ELEMENT_DOM_PROPERTY, Map.of("id", id, "name", name));
+  }
+
+  static CommandPayload GET_ELEMENT_DOM_ATTRIBUTE(String id, String name) {
+    return new CommandPayload(GET_ELEMENT_DOM_ATTRIBUTE, Map.of("id", id, "name", name));
+  }
+
+  static CommandPayload GET_ELEMENT_ATTRIBUTE(String id, String name) {
+    return new CommandPayload(GET_ELEMENT_ATTRIBUTE, Map.of("id", id, "name", name));
+  }
+
+  static CommandPayload GET_ELEMENT_VALUE_OF_CSS_PROPERTY(String id, String name) {
+    return new CommandPayload(
+        GET_ELEMENT_VALUE_OF_CSS_PROPERTY, Map.of("id", id, "propertyName", name));
+  }
+
+  static CommandPayload GET_ELEMENT_ARIA_ROLE(String id) {
+    return new CommandPayload(GET_ELEMENT_ARIA_ROLE, Map.of("id", id));
+  }
+
+  static CommandPayload GET_ELEMENT_ACCESSIBLE_NAME(String id) {
+    return new CommandPayload(GET_ELEMENT_ACCESSIBLE_NAME, Map.of("id", id));
+  }
+
+  static CommandPayload ELEMENT_SCREENSHOT(String id) {
+    return new CommandPayload(ELEMENT_SCREENSHOT, Map.of("id", id));
+  }
+
+  static CommandPayload SET_ALERT_VALUE(String keysToSend) {
+    return new CommandPayload(SET_ALERT_VALUE, Map.of("text", keysToSend));
+  }
+
+  static CommandPayload PRINT_PAGE(PrintOptions options) {
+    return new CommandPayload(PRINT_PAGE, options.toMap());
+  }
+
+  static CommandPayload SET_IMPLICIT_WAIT_TIMEOUT(Duration duration) {
+    return new CommandPayload(SET_TIMEOUT, Map.of("implicit", duration.toMillis()));
+  }
+
+  static CommandPayload SET_SCRIPT_TIMEOUT(Duration duration) {
+    return new CommandPayload(SET_TIMEOUT, Map.of("script", duration.toMillis()));
+  }
+
+  static CommandPayload SET_PAGE_LOAD_TIMEOUT(Duration duration) {
+    return new CommandPayload(SET_TIMEOUT, Map.of("pageLoad", duration.toMillis()));
+  }
+
+  static CommandPayload ACTIONS(Collection<Sequence> actions) {
+    return new CommandPayload(ACTIONS, Map.of("actions", actions));
+  }
+
+  static CommandPayload SET_CURRENT_WINDOW_POSITION(Point targetPosition) {
+    return new CommandPayload(
+        SET_CURRENT_WINDOW_POSITION, Map.of("x", targetPosition.x, "y", targetPosition.y));
+  }
+
+  static CommandPayload GET_CURRENT_WINDOW_POSITION() {
+    return new CommandPayload(GET_CURRENT_WINDOW_POSITION, Map.of("windowHandle", "current"));
+  }
+
+  static CommandPayload SET_CURRENT_WINDOW_SIZE(Dimension targetSize) {
+    return new CommandPayload(
+        SET_CURRENT_WINDOW_SIZE, Map.of("width", targetSize.width, "height", targetSize.height));
+  }
+
+  static CommandPayload SELECT_ACCOUNT(int index) {
+    return new CommandPayload(SELECT_ACCOUNT, Map.of("accountIndex", index));
+  }
+
+  static CommandPayload SET_DELAY_ENABLED(boolean enabled) {
+    return new CommandPayload(SET_DELAY_ENABLED, Map.of("enabled", enabled));
+  }
+
+  static CommandPayload FIRE_SESSION_EVENT(
+      String eventType, @Nullable Map<String, Object> payload) {
+    Require.nonNull("Event type", eventType);
+    if (payload == null || payload.isEmpty()) {
+      return new CommandPayload(FIRE_SESSION_EVENT, Map.of("eventType", eventType));
+    }
+    return new CommandPayload(
+        FIRE_SESSION_EVENT, Map.of("eventType", eventType, "payload", payload));
+  }
+}

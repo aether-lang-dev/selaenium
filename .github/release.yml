@@ -1,0 +1,6 @@
+changelog:
+  exclude:
+    labels:
+      - B-dependencies
+    authors:
+      - selenium-ci

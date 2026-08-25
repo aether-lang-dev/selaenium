@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>svg_test.html</title>
+  <link rel="stylesheet" href="/filez/_main/third_party/js/qunit/qunit.css">
+  <script src="/filez/_main/third_party/js/qunit/qunit.js"></script>
+  <script src="/filez/_main/third_party/js/qunit/qunit_test_runner.js"></script>
+  <script src="test_bootstrap.js"></script>
+  <script type="text/javascript">
+    goog.require('bot.action');
+    goog.require('bot.dom');
+    goog.require('bot.inject');
+    goog.require('bot.locators');
+    goog.require('bot.test');
+    goog.require('goog.userAgent');
+  </script>
+  <script type="text/javascript">
+    function assertSvgRectApprox(assert, left, top, width, height, rect) {
+      function assertInRange(desc, min, max, value) {
+        assert.ok(value >= min, desc + ' too small');
+        assert.ok(value < max, desc + ' too big');
+      }
+
+      assertInRange('left', left, left + 10, rect.left);
+      assertInRange('top', top, top + 10, rect.top);
+      assertInRange('width', width - 1, width + 6, rect.width);
+      assertInRange('height', height - 1, height + 6, rect.height);
+    }
+
+    QUnit.test('svg elements should be visible', function(assert) {
+      if (!bot.test.SUPPORTS_INLINE_SVG) {
+        assert.ok(true, 'Skipping: browser does not support inline SVG');
+        return;
+      }
+      var element = bot.locators.findElement({id: 'rect'});
+      assert.ok(bot.dom.isShown(element));
+    });
+
+    QUnit.test('focusing on svg element does not throw', function(assert) {
+      if (!bot.test.SUPPORTS_INLINE_SVG) {
+        assert.ok(true, 'Skipping: browser does not support inline SVG');
+        return;
+      }
+      var element = bot.locators.findElement({id: 'rect'});
+      var otherElement = bot.locators.findElement({id: 'text'});
+      bot.action.focusOnElement(otherElement);
+      bot.action.focusOnElement(element);
+      assert.ok(true);
+    });
+
+    QUnit.test('getting text of svg element does not throw', function(assert) {
+      if (!bot.test.SUPPORTS_INLINE_SVG) {
+        assert.ok(true, 'Skipping: browser does not support inline SVG');
+        return;
+      }
+      var element = bot.locators.findElement({id: 'text'});
+      bot.dom.getVisibleText(element);
+      assert.ok(true);
+    });
+
+    QUnit.test('svg line with zero size bounding box is shown', function(assert) {
+      if (!bot.test.SUPPORTS_INLINE_SVG) {
+        assert.ok(true, 'Skipping: browser does not support inline SVG');
+        return;
+      }
+      if ((goog.userAgent.WEBKIT && !goog.userAgent.isVersionOrHigher(536)) ||
+          (goog.userAgent.GECKO && !goog.userAgent.isVersionOrHigher(17))) {
+        assert.ok(true, 'Skipping: older browser reports incorrect bounding box');
+        return;
+      }
+      var element = bot.locators.findElement({id: 'path'});
+      assert.ok(bot.dom.isShown(element));
+    });
+
+    QUnit.test('svg client rect', function(assert) {
+      if (!bot.test.SUPPORTS_INLINE_SVG) {
+        assert.ok(true, 'Skipping: browser does not support inline SVG');
+        return;
+      }
+      var e = bot.locators.findElement({id: 'rect'});
+      var rect = bot.dom.getClientRect(e);
+      assertSvgRectApprox(assert, 10, 10, 10, 10, rect);
+    });
+
+    QUnit.test('svg client rect of transformed', function(assert) {
+      if (!bot.test.SUPPORTS_INLINE_SVG) {
+        assert.ok(true, 'Skipping: browser does not support inline SVG');
+        return;
+      }
+      var e = bot.locators.findElement({id: 'transformed'});
+      var rect = bot.dom.getClientRect(e);
+      assertSvgRectApprox(assert, -10, -10, 10, 10, rect);
+    });
+
+    QUnit.test('clicking on element in svg document', function(assert) {
+      if (!bot.test.SUPPORTS_INLINE_SVG) {
+        assert.ok(true, 'Skipping: browser does not support inline SVG');
+        return;
+      }
+      var frame = window.frames[0];
+      var rect = bot.locators.findElement({id: 'rect'}, frame.document);
+      assert.strictEqual(rect.getAttribute('fill'), 'blue');
+      bot.action.click(rect);
+      assert.strictEqual(rect.getAttribute('fill'), 'green');
+    });
+
+    QUnit.test('executing script in svg document', function(assert) {
+      if (!bot.test.SUPPORTS_INLINE_SVG) {
+        assert.ok(true, 'Skipping: browser does not support inline SVG');
+        return;
+      }
+      var frame = window.frames[0];
+      var bgEl = bot.locators.findElement({id: 'bg'}, frame.document);
+
+      assert.strictEqual(bgEl.getAttribute('fill'), 'red');
+      bot.inject.executeScript(
+          'document.getElementById("bg").setAttribute("fill", "yellow")',
+          [], false, frame);
+      assert.strictEqual(bgEl.getAttribute('fill'), 'yellow');
+    });
+  </script>
+</head>
+<body>
+<div id="qunit"></div>
+<div id="qunit-fixture"></div>
+<svg xmlns="http://www.w3.org/2000/svg" version="1.1">
+  <rect id="rect" fill="red" stroke="none" width="10" height="10" x="10" y="10"/>
+  <text id="text" fill="black" font-size="12" font-family="Arial" x="25" y="20">Apple</text>
+  <path id="path" d="M 100 15 L 200 15" stroke="red" stroke-width="10"/>
+  <rect id="transformed" transform="translate(-20, -20)" fill="green" stroke="none" width="10" height="10" x="10" y="10"/>
+</svg>
+<div>
+  <script>
+    var src = bot.test.SUPPORTS_INLINE_SVG ? "testdata/rect.svg" : "";
+    document.write('<iframe src="' + src + '"></' + 'iframe>');
+  </script>
+</div>
+</body>
+</html>

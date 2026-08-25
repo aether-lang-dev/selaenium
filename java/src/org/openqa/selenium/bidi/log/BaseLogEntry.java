@@ -1,0 +1,65 @@
+// Licensed to the Software Freedom Conservancy (SFC) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The SFC licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
+//
+//   http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
+package org.openqa.selenium.bidi.log;
+
+import org.jspecify.annotations.Nullable;
+import org.openqa.selenium.Beta;
+import org.openqa.selenium.bidi.script.Source;
+
+/**
+ * @see <a href="https://w3c.github.io/webdriver-bidi/#types-log-logentry">BiDi spec</a>
+ */
+@Beta
+public class BaseLogEntry {
+
+  private final LogLevel level;
+  private final Source source;
+  private final String text;
+  private final long timestamp;
+  @Nullable private final StackTrace stackTrace;
+
+  public LogLevel getLevel() {
+    return level;
+  }
+
+  public String getText() {
+    return text;
+  }
+
+  public long getTimestamp() {
+    return timestamp;
+  }
+
+  @Nullable
+  public StackTrace getStackTrace() {
+    return stackTrace;
+  }
+
+  public Source getSource() {
+    return source;
+  }
+
+  public BaseLogEntry(
+      LogLevel level, Source source, String text, long timestamp, @Nullable StackTrace stackTrace) {
+    this.level = level;
+    this.source = source;
+    this.text = text;
+    this.timestamp = timestamp;
+    this.stackTrace = stackTrace;
+  }
+}

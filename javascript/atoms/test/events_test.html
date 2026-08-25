@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<!--
+Copyright 2010 WebDriver committers
+Copyright 2010 Google Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+     http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+-->
+<html>
+<head>
+<meta charset="utf-8">
+<title>events_test.html</title>
+<link rel="stylesheet" href="/filez/_main/third_party/js/qunit/qunit.css">
+<script src="/filez/_main/third_party/js/qunit/qunit.js"></script>
+<script src="/filez/_main/third_party/js/qunit/qunit_test_runner.js"></script>
+<script src="test_bootstrap.js"></script>
+<script type="text/javascript">
+  goog.require('bot.events');
+  goog.require('bot.events.EventType');
+  goog.require('bot.locators');
+  goog.require('bot.userAgent');
+  goog.require('goog.array');
+  goog.require('goog.events');
+  goog.require('goog.userAgent');
+  goog.require('goog.userAgent.product');
+</script>
+</head>
+<body>
+<div id="qunit"></div>
+<div id="qunit-fixture"></div>
+<form>
+  <input id="target" type="text">
+</form>
+<script type="text/javascript">
+  var target = bot.locators.findElement({id: 'target'});
+
+  function fireAndTest(assert, type, opt_args, opt_listener) {
+    var fired = false, exception = null;
+    goog.events.listenOnce(target, type.toString(), function(event) {
+      fired = true;
+      try {
+        assert.strictEqual(event.target, target);
+        if (opt_listener) {
+          opt_listener(event);
+        }
+      } catch (e) {
+        exception = e;
+      }
+    });
+    bot.events.fire(target, type, opt_args);
+    assert.ok(fired, 'Event was not fired');
+    if (exception) {
+      throw exception;
+    }
+  }
+
+  QUnit.test('can fire event', function(assert) {
+    fireAndTest(assert, bot.events.EventType.FOCUS);
+  });
+
+  QUnit.test('can fire mouse event', function(assert) {
+    fireAndTest(assert, bot.events.EventType.MOUSEMOVE, {
+      clientX: 0,
+      clientY: 0,
+      button: 0,
+      altKey: false,
+      ctrlKey: false,
+      metaKey: false,
+      relatedTarget: null,
+      wheelDelta: 0
+    });
+  });
+
+  QUnit.test('can fire keyboard event', function(assert) {
+    fireAndTest(assert, bot.events.EventType.KEYDOWN, {
+      keyCode: 0,
+      charCode: 0,
+      altKey: false,
+      ctrlKey: false,
+      metaKey: false
+    });
+  });
+
+  QUnit.test('can fire touch event', function(assert) {
+    if (!goog.userAgent.product.CHROME && !goog.userAgent.MOBILE) {
+      assert.ok(true, 'Skipping: touch not supported');
+      return;
+    }
+
+    var touch = {
+      identifier: 0,
+      clientX: 0,
+      clientY: 0,
+      screenX: 0,
+      screenY: 0,
+      pageX: 0,
+      pageY: 0
+    };
+    fireAndTest(assert, bot.events.EventType.TOUCHSTART, {
+      touches: [touch],
+      targetTouches: [touch],
+      changedTouches: [touch],
+      altKey: false,
+      ctrlKey: false,
+      metaKey: false,
+      relatedTarget: null,
+      clientX: 0,
+      clientY: 0,
+      scale: 0,
+      rotation: 0
+    });
+  });
+
+  QUnit.test('can fire MS gesture event', function(assert) {
+    if (!bot.events.SUPPORTS_MSPOINTER_EVENTS) {
+      assert.ok(true, 'Skipping: MSPointer not supported');
+      return;
+    }
+    fireAndTest(assert, bot.events.EventType.MSGESTURESTART, {
+      clientX: 0,
+      clientY: 0,
+      translationX: 0,
+      translationY: 0,
+      scale: 0,
+      expansion: 0,
+      rotation: 0,
+      velocityX: 0,
+      velocityY: 0,
+      velocityExpansion: 0,
+      velocityAngular: 0,
+      relatedTarget: null
+    });
+  });
+
+  QUnit.test('can fire MS pointer event', function(assert) {
+    if (!bot.events.SUPPORTS_MSPOINTER_EVENTS) {
+      assert.ok(true, 'Skipping: MSPointer not supported');
+      return;
+    }
+    fireAndTest(assert, bot.events.EventType.MSPOINTERMOVE, {
+      clientX: 0,
+      clientY: 0,
+      button: 0,
+      altKey: false,
+      ctrlKey: false,
+      metaKey: false,
+      relatedTarget: null,
+      width: 1,
+      height: 1,
+      pressure: 10,
+      rotation: 0,
+      pointerIdArg: 1,
+      tiltX: 0,
+      tiltY: 0,
+      pointerType: MSPointerEvent.MSPOINTER_TYPE_MOUSE,
+      isPrimary: 2
+    });
+  });
+
+  QUnit.test('is synthetic', function(assert) {
+    fireAndTest(assert, bot.events.EventType.CHANGE, {}, function(event) {
+      assert.ok(bot.events.isSynthetic(event));
+      assert.ok(bot.events.isSynthetic(event.getBrowserEvent()));
+    });
+  });
+
+  QUnit.test('related target correctly set', function(assert) {
+    var args = {
+      clientX: 0,
+      clientY: 0,
+      button: 0,
+      altKey: false,
+      ctrlKey: false,
+      metaKey: false,
+      relatedTarget: document.body,
+      wheelDelta: 0
+    };
+
+    fireAndTest(assert, bot.events.EventType.MOUSEOUT, args, function(event) {
+      assert.strictEqual(event.relatedTarget, args.relatedTarget);
+      if (goog.userAgent.IE && Object.defineProperty) {
+        var nativeEvent = event.getBrowserEvent();
+        assert.strictEqual(nativeEvent.fromElement, target);
+        assert.strictEqual(nativeEvent.toElement, args.relatedTarget);
+      }
+    });
+
+    fireAndTest(assert, bot.events.EventType.MOUSEOVER, args, function(event) {
+      assert.strictEqual(event.relatedTarget, args.relatedTarget);
+      if (goog.userAgent.IE && Object.defineProperty) {
+        var nativeEvent = event.getBrowserEvent();
+        assert.strictEqual(nativeEvent.fromElement, args.relatedTarget);
+        assert.strictEqual(nativeEvent.toElement, target);
+      }
+    });
+  });
+
+  QUnit.test('wheel delta correctly set', function(assert) {
+    var args = {
+      clientX: 0,
+      clientY: 0,
+      button: 0,
+      altKey: false,
+      ctrlKey: false,
+      metaKey: false,
+      relatedTarget: null,
+      wheelDelta: 0
+    };
+
+    function fireMouseWheelAndTestWheelDeltaAndDetail(wheelDelta, detail) {
+      fireAndTest(assert, bot.events.EventType.MOUSEWHEEL, args, function(event) {
+        var nativeEvent = event.getBrowserEvent();
+        if ((goog.userAgent.IE && Object.defineProperty) || goog.userAgent.WEBKIT) {
+          assert.strictEqual(nativeEvent.wheelDelta, wheelDelta);
+        } else if (goog.userAgent.IE && !Object.defineProperty) {
+          assert.strictEqual(nativeEvent.detail, wheelDelta);
+        }
+        if (goog.userAgent.GECKO) {
+          assert.strictEqual(nativeEvent.detail, detail);
+        }
+      });
+    }
+
+    args.wheelDelta = 120;
+    fireMouseWheelAndTestWheelDeltaAndDetail(120, -3);
+
+    args.wheelDelta = -80;
+    fireMouseWheelAndTestWheelDeltaAndDetail(-80, 2);
+  });
+
+  QUnit.test('mouse pixel scroll fires correctly only on firefox', function(assert) {
+    var args = {
+      clientX: 0,
+      clientY: 0,
+      button: 0,
+      altKey: false,
+      ctrlKey: false,
+      metaKey: false,
+      relatedTarget: null,
+      wheelDelta: 15
+    };
+
+    if (goog.userAgent.GECKO) {
+      fireAndTest(assert, bot.events.EventType.MOUSEPIXELSCROLL, args, function(event) {
+        assert.strictEqual(event.getBrowserEvent().detail, 15);
+      });
+    } else {
+      assert.throws(function() {
+        bot.events.fire(target, bot.events.EventType.MOUSEPIXELSCROLL, args);
+      });
+    }
+  });
+</script>
+</body>
+</html>

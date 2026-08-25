@@ -1,0 +1,55 @@
+# Licensed to the Software Freedom Conservancy (SFC) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The SFC licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+
+module Selenium
+  module WebDriver
+    class BiDi
+      class Network
+        @bidi: BiDi
+
+        EVENTS: Hash[Symbol, String]
+
+        PHASES: Hash[Symbol, String]
+
+        def initialize: (BiDi bidi) -> void
+
+        def add_intercept: (?phases: Array[String], ?contexts: BrowsingContext?, ?url_patterns: String | Array[String]?, ?pattern_type: (Symbol | nil)) -> Hash[String, String]
+
+        def cancel_auth: -> Hash[nil, nil]
+
+        def continue_request: -> Hash[nil, nil]
+
+        def continue_response: -> Hash[nil, nil]
+
+        def continue_without_auth: -> Hash[nil, nil]
+
+        def fail_request: -> Hash[nil, nil]
+
+        def remove_intercept: (String intercept) -> Hash[nil, nil]
+
+        def continue_with_auth: (Integer request_id, String username, String password) -> Hash[nil, nil]
+
+        def provide_response: -> Hash[nil, nil]
+
+        def set_cache_behavior: (String behavior, Array[BrowsingContext]) -> Hash[nil, nil]
+
+        def on: (Symbol event) { (?) -> untyped } -> Integer
+      end
+    end
+  end
+end

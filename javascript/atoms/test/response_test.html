@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<!--
+Copyright 2011 Software Freedom Conservancy. All Rights Reserved.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+     http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+-->
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>response_test</title>
+  <link rel="stylesheet" href="/filez/_main/third_party/js/qunit/qunit.css">
+  <script src="/filez/_main/third_party/js/qunit/qunit.js"></script>
+  <script src="/filez/_main/third_party/js/qunit/qunit_test_runner.js"></script>
+  <script src="test_bootstrap.js"></script>
+  <script>
+    goog.require('bot.Error');
+    goog.require('bot.ErrorCode');
+    goog.require('bot.response');
+  </script>
+</head>
+<body>
+<div id="qunit"></div>
+<div id="qunit-fixture"></div>
+<script>
+QUnit.test('checkResponse_statusOk', function(assert) {
+  var obj = {status: 0, value: 'foo'};
+  assert.strictEqual(bot.response.checkResponse(obj), obj);
+});
+
+QUnit.test('checkResponse_valueHasMesage', function(assert) {
+  var threw = false;
+  try {
+    bot.response.checkResponse({
+      status: 7,
+      value: {
+        message: 'Ouch'
+      }
+    });
+  } catch (ex) {
+    threw = true;
+    assert.strictEqual(ex.code, 7);
+    assert.strictEqual(ex.message, 'Ouch');
+  }
+  assert.ok(threw, 'Did not throw!');
+});
+
+QUnit.test('checkResponse_valueIsString', function(assert) {
+  var threw = false;
+  try {
+    bot.response.checkResponse({
+      status: 7,
+      value: 'No soup for you'
+    });
+  } catch (ex) {
+    threw = true;
+    assert.strictEqual(ex.code, 7);
+    assert.strictEqual(ex.message, 'No soup for you');
+  }
+  assert.ok(threw, 'Did not throw!');
+});
+
+QUnit.test('checkResponse_noStatus', function(assert) {
+  var threw = false;
+  try {
+    bot.response.checkResponse({
+      value: 'No soup for you'
+    });
+  } catch (ex) {
+    threw = true;
+    assert.strictEqual(ex.code, bot.ErrorCode.UNKNOWN_ERROR);
+    assert.strictEqual(ex.message, 'No soup for you');
+  }
+  assert.ok(threw, 'Did not throw!');
+});
+</script>
+</body>
+</html>

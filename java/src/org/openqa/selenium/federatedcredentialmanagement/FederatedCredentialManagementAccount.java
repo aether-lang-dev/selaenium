@@ -1,0 +1,105 @@
+// Licensed to the Software Freedom Conservancy (SFC) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The SFC licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
+//
+//   http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
+package org.openqa.selenium.federatedcredentialmanagement;
+
+import java.util.Map;
+import org.jspecify.annotations.Nullable;
+
+/**
+ * Represents an account displayed in a FedCM account list.
+ *
+ * @see <a href="https://w3c-fedid.github.io/FedCM/#dictdef-identityprovideraccount">
+ *     https://w3c-fedid.github.io/FedCM/#dictdef-identityprovideraccount</a>
+ * @see <a href="https://w3c-fedid.github.io/FedCM/#webdriver-accountlist">
+ *     https://w3c-fedid.github.io/FedCM/#webdriver-accountlist</a>
+ */
+public class FederatedCredentialManagementAccount {
+  private final @Nullable String accountId;
+  private final @Nullable String email;
+  private final @Nullable String name;
+  private final @Nullable String givenName;
+  private final @Nullable String pictureUrl;
+
+  /**
+   * The config URL of the identity provider that provided this account.
+   *
+   * <p>This allows identifying the IDP in multi-IDP cases.
+   */
+  private final @Nullable String idpConfigUrl;
+
+  /**
+   * The login state for this account.
+   *
+   * <p>One of LOGIN_STATE_SIGNIN and LOGIN_STATE_SIGNUP.
+   */
+  private final @Nullable String loginState;
+
+  private final @Nullable String termsOfServiceUrl;
+  private final @Nullable String privacyPolicyUrl;
+
+  public static final String LOGIN_STATE_SIGNIN = "SignIn";
+  public static final String LOGIN_STATE_SIGNUP = "SignUp";
+
+  public FederatedCredentialManagementAccount(Map<String, @Nullable String> dict) {
+    accountId = dict.getOrDefault("accountId", null);
+    email = dict.getOrDefault("email", null);
+    name = dict.getOrDefault("name", null);
+    givenName = dict.getOrDefault("givenName", null);
+    pictureUrl = dict.getOrDefault("pictureUrl", null);
+    idpConfigUrl = dict.getOrDefault("idpConfigUrl", null);
+    loginState = dict.getOrDefault("loginState", null);
+    termsOfServiceUrl = dict.getOrDefault("termsOfServiceUrl", null);
+    privacyPolicyUrl = dict.getOrDefault("privacyPolicyUrl", null);
+  }
+
+  public @Nullable String getAccountid() {
+    return accountId;
+  }
+
+  public @Nullable String getEmail() {
+    return email;
+  }
+
+  public @Nullable String getName() {
+    return name;
+  }
+
+  public @Nullable String getGivenName() {
+    return givenName;
+  }
+
+  public @Nullable String getPictureUrl() {
+    return pictureUrl;
+  }
+
+  public @Nullable String getIdpConfigUrl() {
+    return idpConfigUrl;
+  }
+
+  public @Nullable String getLoginState() {
+    return loginState;
+  }
+
+  public @Nullable String getTermsOfServiceUrl() {
+    return termsOfServiceUrl;
+  }
+
+  public @Nullable String getPrivacyPolicyUrl() {
+    return privacyPolicyUrl;
+  }
+}

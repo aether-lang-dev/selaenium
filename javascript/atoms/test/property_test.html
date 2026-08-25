@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<!--
+Copyright 2010 WebDriver committers
+Copyright 2010 Google Inc.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+     http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+-->
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>property_test.html</title>
+  <link rel="stylesheet" href="/filez/_main/third_party/js/qunit/qunit.css">
+  <script src="/filez/_main/third_party/js/qunit/qunit.js"></script>
+  <script src="/filez/_main/third_party/js/qunit/qunit_test_runner.js"></script>
+  <script src="test_bootstrap.js"></script>
+  <script type="text/javascript">
+    goog.require('bot.dom');
+    goog.require('bot.locators');
+    goog.require('goog.events.EventType');
+  </script>
+
+  <script type="text/javascript">
+    QUnit.test('shouldIndicateWhetherAPropertyIsAvailableOnAnElement', function(assert) {
+      var chips = bot.locators.findElement({id: 'chips'});
+
+      assert.ok(bot.dom.getProperty(chips, 'selected') !== undefined,
+               'Chips has the "selected" property, but not the attribute');
+    });
+
+    QUnit.test('selectedShouldBeFalseIfNotSet', function(assert) {
+      var chips = bot.locators.findElement({id: 'chips'});
+
+      var result = bot.dom.getProperty(chips, 'selected');
+      assert.ok(typeof result === 'boolean');
+      assert.notOk(result);
+    });
+
+    QUnit.test('selectedShouldBeReturnedAsABooleanWhenValueNotOnAttribute', function(assert) {
+      var e = bot.locators.findElement({id: 'peas'});
+
+      var result = bot.dom.getProperty(e, 'selected');
+      assert.ok(typeof result === 'boolean');
+      assert.ok(result);
+    });
+
+    QUnit.test('shouldReturnDisabledProperty', function(assert) {
+      var disabled = bot.locators.findElement({id: 'is_disabled'});
+      assert.ok(bot.dom.getProperty(disabled, 'disabled'));
+    });
+
+    QUnit.test('getsTextInsideOptionTagWhenValuePropertyIsNotDefined', function(assert) {
+      var e = bot.locators.findElement({id: 'novalue'});
+      assert.strictEqual(bot.dom.getProperty(e, 'value'), 'One');
+    });
+
+    QUnit.test('canGetBlankValueFromOptionViaPropertyWhenPropertyDoesntExist', function(assert) {
+      var e = bot.locators.findElement({id: 'novalue-blank'});
+      assert.strictEqual(bot.dom.getProperty(e, 'value'), '');
+    });
+
+    QUnit.test('canGetValueFromOptionViaPropertyWhenPropertyIsEmptyString', function(assert) {
+      var e = bot.locators.findElement({id: 'value-empty'});
+      assert.strictEqual(bot.dom.getProperty(e, 'value'), '');
+    });
+
+    QUnit.test('canGetValueFromOptionViaProperty', function(assert) {
+      var e = bot.locators.findElement({id: 'chips'});
+      assert.strictEqual(bot.dom.getProperty(e, 'value'), 'chips');
+      e = bot.locators.findElement({id: 'peas'});
+      assert.strictEqual(bot.dom.getProperty(e, 'value'), 'peas');
+    });
+
+  </script>
+</head>
+<body>
+  <div id="qunit"></div>
+  <div id="qunit-fixture"></div>
+  <div name="cheese1" id="cheddar" unknown="lovely">Cheddar</div>
+  <div name="cheese2" id="brie" class="tasty">Brie</div>
+  <div name="cheese3" id="gouda" empty="">Gouda</div>
+
+  <form action="#" method="get" name="myform">
+    <select name="fish_supper">
+      <option value="fish">Fish</option>
+      <option id="chips" value="chips">Chips</option>
+      <option id="peas"  value="peas" selected>Mushy Peas</option>
+      <option value="gravy">Gravy</option>
+    </select>
+
+    <select>
+      <option id="novalue">One</option>
+      <option id="novalue-blank"></option>
+      <option id="value-empty" value="">nothing</option>
+    </select>
+
+    <input id="is_disabled" name="foo" disabled />
+  </form>
+</body>
+</html>

@@ -1,0 +1,105 @@
+// <copyright file="RealmInfo.cs" company="Selenium Committers">
+// Licensed to the Software Freedom Conservancy (SFC) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The SFC licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
+//
+//   http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+// </copyright>
+
+using System.Text.Json;
+using System.Text.Json.Serialization;
+using OpenQA.Selenium.BiDi.Json;
+
+namespace OpenQA.Selenium.BiDi.Script;
+
+// https://github.com/dotnet/runtime/issues/72604
+//[JsonPolymorphic(TypeDiscriminatorPropertyName = "type")]
+//[JsonDerivedType(typeof(WindowRealmInfo), "window")]
+//[JsonDerivedType(typeof(DedicatedWorkerRealmInfo), "dedicated-worker")]
+//[JsonDerivedType(typeof(SharedWorkerRealmInfo), "shared-worker")]
+//[JsonDerivedType(typeof(ServiceWorkerRealmInfo), "service-worker")]
+//[JsonDerivedType(typeof(WorkerRealmInfo), "worker")]
+//[JsonDerivedType(typeof(PaintWorkletRealmInfo), "paint-worklet")]
+//[JsonDerivedType(typeof(AudioWorkletRealmInfo), "audio-worklet")]
+//[JsonDerivedType(typeof(WorkletRealmInfo), "worklet")]
+[JsonConverter(typeof(RealmInfoConverter))]
+public abstract record RealmInfo(
+    Realm Realm,
+    string Origin);
+
+public sealed record WindowRealmInfo(
+    Realm Realm,
+    string Origin,
+    BrowsingContext.BrowsingContext Context) : RealmInfo(Realm, Origin)
+{
+    public Browser.UserContext? UserContext { get; init; }
+
+    public string? Sandbox { get; init; }
+}
+
+public sealed record DedicatedWorkerRealmInfo(
+    Realm Realm,
+    string Origin,
+    ImmutableArray<Realm> Owners) : RealmInfo(Realm, Origin);
+
+public sealed record SharedWorkerRealmInfo(
+    Realm Realm,
+    string Origin) : RealmInfo(Realm, Origin);
+
+public sealed record ServiceWorkerRealmInfo(
+    Realm Realm,
+    string Origin) : RealmInfo(Realm, Origin);
+
+public sealed record WorkerRealmInfo(
+    Realm Realm,
+    string Origin) : RealmInfo(Realm, Origin);
+
+public sealed record PaintWorkletRealmInfo(
+    Realm Realm,
+    string Origin) : RealmInfo(Realm, Origin);
+
+public sealed record AudioWorkletRealmInfo(
+    Realm Realm,
+    string Origin) : RealmInfo(Realm, Origin);
+
+public sealed record WorkletRealmInfo(
+    Realm Realm,
+    string Origin) : RealmInfo(Realm, Origin);
+
+// https://github.com/dotnet/runtime/issues/72604
+internal class RealmInfoConverter : JsonConverter<RealmInfo>
+{
+    public override RealmInfo? Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+    {
+        var type = reader.GetDiscriminator("type");
+
+        return type switch
+        {
+            "window" => JsonSerializer.Deserialize(ref reader, options.GetTypeInfo<WindowRealmInfo>()),
+            "dedicated-worker" => JsonSerializer.Deserialize(ref reader, options.GetTypeInfo<DedicatedWorkerRealmInfo>()),
+            "shared-worker" => JsonSerializer.Deserialize(ref reader, options.GetTypeInfo<SharedWorkerRealmInfo>()),
+            "service-worker" => JsonSerializer.Deserialize(ref reader, options.GetTypeInfo<ServiceWorkerRealmInfo>()),
+            "worker" => JsonSerializer.Deserialize(ref reader, options.GetTypeInfo<WorkerRealmInfo>()),
+            "paint-worklet" => JsonSerializer.Deserialize(ref reader, options.GetTypeInfo<PaintWorkletRealmInfo>()),
+            "audio-worklet" => JsonSerializer.Deserialize(ref reader, options.GetTypeInfo<AudioWorkletRealmInfo>()),
+            "worklet" => JsonSerializer.Deserialize(ref reader, options.GetTypeInfo<WorkletRealmInfo>()),
+            _ => throw new BiDiException($"Unknown realm type '{type}'")
+        };
+    }
+
+    public override void Write(Utf8JsonWriter writer, RealmInfo value, JsonSerializerOptions options)
+    {
+        throw new NotImplementedException();
+    }
+}

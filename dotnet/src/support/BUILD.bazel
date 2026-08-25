@@ -1,0 +1,69 @@
+load(
+    "//dotnet:defs.bzl",
+    "csharp_sourcelink_library",
+    "generated_assembly_info",
+    "nuget_pack",
+    "nuget_package",
+)
+load(
+    "//dotnet:version.bzl",
+    "ASSEMBLY_COMPANY",
+    "ASSEMBLY_COPYRIGHT",
+    "ASSEMBLY_INFORMATIONAL_VERSION",
+    "ASSEMBLY_PRODUCT",
+    "ASSEMBLY_VERSION",
+    "SE_VERSION",
+)
+
+generated_assembly_info(
+    name = "assembly-info",
+    company = ASSEMBLY_COMPANY,
+    copyright = ASSEMBLY_COPYRIGHT,
+    description = "Selenium WebDriver .NET Bindings support classes",
+    informational_version = ASSEMBLY_INFORMATIONAL_VERSION,
+    product = ASSEMBLY_PRODUCT,
+    title = "Selenium WebDriver Support",
+    version = ASSEMBLY_VERSION,
+)
+
+csharp_sourcelink_library(
+    name = "support",
+    srcs = glob([
+        "**/*.cs",
+    ]) + [
+        ":assembly-info",
+        "//dotnet:source_files_support_needs_from_core",
+    ],
+    out = "Selenium.Support",
+    keyfile = "//dotnet:Selenium.snk",
+    langversion = "14.0",
+    nullable = "enable",
+    target_frameworks = [
+        "netstandard2.0",
+    ],
+    visibility = [
+        "//dotnet:__subpackages__",
+    ],
+    deps = [
+        "//dotnet/src/webdriver:webdriver-netstandard2.0",
+        nuget_package("Microsoft.Bcl.AsyncInterfaces"),
+        nuget_package("System.Threading.Tasks.Extensions"),
+    ],
+)
+
+nuget_pack(
+    name = "support-pack",
+    files = {
+        "//common/images:selenium_logo_small.png": "icon.png",
+    },
+    id = "Selenium.Support",
+    libs = {
+        ":support": "Selenium.Support",
+    },
+    nuspec_template = "Selenium.Support.nuspec",
+    tags = [
+        "block-network",
+    ],
+    version = SE_VERSION,
+    visibility = ["//visibility:public"],
+)

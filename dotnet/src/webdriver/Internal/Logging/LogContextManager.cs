@@ -1,0 +1,55 @@
+// <copyright file="LogContextManager.cs" company="Selenium Committers">
+// Licensed to the Software Freedom Conservancy (SFC) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The SFC licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
+//
+//   http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+// </copyright>
+
+using System.Diagnostics.CodeAnalysis;
+
+namespace OpenQA.Selenium.Internal.Logging;
+
+internal class LogContextManager
+{
+    internal const int DefaultTruncationLength = 1000;
+    private static bool _seDebugWarned;
+    private readonly AsyncLocal<ILogContext?> _currentAmbientLogContext = new();
+
+    public LogContextManager()
+    {
+        var defaultLogHandler = new TextWriterHandler(Console.Error);
+
+        // Enable debug logging if SE_DEBUG environment variable is set
+        if (Environment.GetEnvironmentVariable("SE_DEBUG") is not null && !_seDebugWarned)
+        {
+            _seDebugWarned = true;
+            Console.Error.WriteLine("WARNING: Environment Variable `SE_DEBUG` is set; Selenium is forcing verbose logging which may override user-specified settings.");
+        }
+        var level = Environment.GetEnvironmentVariable("SE_DEBUG") is not null
+            ? LogEventLevel.Debug
+            : LogEventLevel.Warn;
+
+        GlobalContext = new LogContext(level, null, null, DefaultTruncationLength, [defaultLogHandler]);
+    }
+
+    public ILogContext GlobalContext { get; }
+
+    [AllowNull]
+    public ILogContext CurrentContext
+    {
+        get => _currentAmbientLogContext.Value ?? GlobalContext;
+        set => _currentAmbientLogContext.Value = value;
+    }
+}

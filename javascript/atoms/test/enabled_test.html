@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>Unit tests for bot.dom.isEnabled</title>
+    <link rel="stylesheet" href="/filez/_main/third_party/js/qunit/qunit.css">
+    <script src="/filez/_main/third_party/js/qunit/qunit.js"></script>
+    <script src="/filez/_main/third_party/js/qunit/qunit_test_runner.js"></script>
+    <script src="test_bootstrap.js"></script>
+    <script type="text/javascript">
+      goog.require('bot.dom');
+      goog.require('bot.userAgent');
+      goog.require('goog.dom');
+      goog.require('goog.userAgent');
+      goog.require('goog.userAgent.product');
+    </script>
+    <script type="text/javascript">
+function assertDisabled(assert, id) {
+  var element = goog.dom.$(id);
+  assert.ok(element !== null && element !== undefined, 'no such element: ' + id);
+  assert.notOk(bot.dom.isEnabled(element), id + ' should be disabled');
+}
+
+function assertEnabled(assert, id) {
+  var element = goog.dom.$(id);
+  assert.ok(element !== null && element !== undefined, 'no such element: ' + id);
+  assert.ok(bot.dom.isEnabled(element), id + ' should be enabled');
+}
+
+QUnit.test('elements that do not support the disabled attribute are always enabled', function(assert) {
+  assert.ok(bot.dom.isEnabled(document.body), 'Body should be enabled');
+  assert.ok(bot.dom.isEnabled(document.forms[0]), 'Form should be enabled');
+});
+
+QUnit.test('should be enabled if does not have disabled attribute', function(assert) {
+  assertEnabled(assert, 'enabled-button-a');
+});
+
+QUnit.test('should be disabled if it has the disabled attribute', function(assert) {
+  assertDisabled(assert, 'disabled-button-b');
+  assertDisabled(assert, 'disabled-button-c');
+  assertDisabled(assert, 'disabled-button-d');
+  assertDisabled(assert, 'disabled-button-e');
+});
+
+QUnit.test('disabled should be an inherited attribute', function(assert) {
+  assertEnabled(assert, 'enabled-select');
+  assertEnabled(assert, 'enabled-option');
+  assertDisabled(assert, 'disabled-optgroup');
+  assertDisabled(assert, 'inherits-disabled');
+
+  assertDisabled(assert, 'disabled-select');
+  assertDisabled(assert, 'inherits-disabled-2');
+});
+
+QUnit.test('disabled should inherit from fieldset unless in legend', function(assert) {
+  assertEnabled(assert, 'enabled-legend-button');
+  if ((goog.userAgent.GECKO && !bot.userAgent.isEngineVersion(2)) ||
+      (goog.userAgent.WEBKIT && !bot.userAgent.isEngineVersion(535)) ||
+      (goog.userAgent.product.ANDROID && !bot.userAgent.isProductVersion(5))) {
+    assertEnabled(assert, 'disabled-legend-button');
+    assertEnabled(assert, 'disabled-fieldset-button');
+  } else {
+    assertDisabled(assert, 'disabled-legend-button');
+    assertDisabled(assert, 'disabled-fieldset-button');
+  }
+});
+
+QUnit.test('enabled should respond to disabled property', function(assert) {
+  var element = goog.dom.$('enabled-button-a');
+  element.disabled = true;
+  assertDisabled(assert, 'enabled-button-a');
+  element.disabled = false;
+  assertEnabled(assert, 'enabled-button-a');
+});
+    </script>
+  </head>
+  <body>
+    <div id="qunit"></div>
+    <div id="qunit-fixture"></div>
+    <form>
+      <button id="enabled-button-a" value="Enabled A"></button>
+      <button id="disabled-button-b" value="Enabled B" disabled></button>
+      <button id="disabled-button-c" value="Enabled C" disabled="disabled">
+      </button>
+      <button id="disabled-button-d" value="Enabled D" disabled="true">
+      </button>
+      <button id="disabled-button-e" value="Enabled E" disabled="false">
+      </button>
+
+      <select id="enabled-select">
+        <option id="enabled-option">foo</option>
+        <optgroup id="disabled-optgroup" disabled>
+          <option id="inherits-disabled">bar</option>
+        </optgroup>
+      </select>
+
+      <select id="disabled-select" disabled>
+        <optgroup>
+          <option id="inherits-disabled-2">baz</option>
+        </optgroup>
+      </select>
+
+      <fieldset id="disabled-fieldset" disabled="disabled">
+        <legend>
+          <button id="enabled-legend-button">Enabled Legend Button</button>
+        </legend>
+        <legend>
+          <button id="disabled-legend-button">Disabled Legend Button</button>
+        </legend>
+        <button id="disabled-fieldset-button">Disabled Fieldset Button</button>
+      </fieldset>
+    </form>
+  </body>
+</html>

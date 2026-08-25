@@ -1,0 +1,89 @@
+# Licensed to the Software Freedom Conservancy (SFC) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The SFC licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+
+
+module Selenium
+  module WebDriver
+    module Remote
+      class Capabilities
+        @capabilities: untyped
+
+        KNOWN: Array[Symbol]
+
+        def self.always_match: (untyped capabilities) -> untyped
+
+        def self.first_match: (*untyped capabilities) -> untyped
+
+        def self.json_create: (untyped data) -> untyped
+
+        def self.camel_case: (untyped str_or_sym) -> untyped
+
+        private
+
+        def self.process_timeouts: (untyped caps, untyped timeouts) -> untyped?
+
+        public
+
+        def initialize: (?::Hash[untyped, untyped] opts) -> void
+
+        def []=: (untyped key, untyped value) -> untyped
+
+        def []: (untyped key) -> untyped
+
+        def merge!: (untyped other) -> untyped
+
+        def proxy: () -> untyped
+
+        def proxy=: (untyped proxy) -> untyped
+
+        def timeouts: () -> Hash[Symbol, Integer]
+
+        def timeouts=: (Hash[Symbol, Integer] | untyped timeouts) -> untyped
+
+        def implicit_timeout: () -> untyped
+
+        def implicit_timeout=: (untyped timeout) -> untyped
+
+        def page_load_timeout: () -> untyped
+
+        def page_load_timeout=: (untyped timeout) -> untyped
+
+        def script_timeout: () -> untyped
+
+        def script_timeout=: (untyped timeout) -> untyped
+
+        def as_json: (*untyped) -> untyped
+
+        def to_json: (*untyped) -> untyped
+
+        def ==: (untyped other) -> (bool | untyped)
+
+        alias eql? ==
+
+        attr_reader capabilities: untyped
+
+        private
+
+        def process_capabilities: (untyped key, untyped value, untyped hash) -> untyped
+
+        def convert_key: (untyped key) -> untyped
+
+        def convert_value: (untyped key, untyped value) -> untyped
+      end
+    end
+  end
+end

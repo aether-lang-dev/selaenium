@@ -1,0 +1,19 @@
+load("//dotnet:defs.bzl", "csharp_binary", "nuget_package")
+
+csharp_binary(
+    name = "generator",
+    srcs = glob(["**/*.cs"]),
+    nullable = "enable",
+    # Used as a tool in our build, so just target one framework
+    target_frameworks = ["net8.0"],
+    visibility = [
+        "//dotnet:__subpackages__",
+    ],
+    deps = [
+        nuget_package("CommandLineParser"),
+        nuget_package("Handlebars.Net"),
+        nuget_package("Humanizer.Core"),
+        nuget_package("Microsoft.Extensions.DependencyInjection"),
+        nuget_package("Microsoft.Extensions.DependencyInjection.Abstractions"),
+    ],
+)

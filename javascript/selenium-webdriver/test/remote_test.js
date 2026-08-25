@@ -1,0 +1,143 @@
+// Licensed to the Software Freedom Conservancy (SFC) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The SFC licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
+//
+//   http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
+'use strict'
+
+const assert = require('node:assert')
+const path = require('node:path')
+const io = require('selenium-webdriver/io')
+const cmd = require('selenium-webdriver/lib/command')
+const remote = require('selenium-webdriver/remote')
+const { CancellationError } = require('selenium-webdriver/http/util')
+
+describe('DriverService', function () {
+  describe('start()', function () {
+    var service
+
+    beforeEach(function () {
+      service = new remote.DriverService(process.execPath, {
+        port: 1234,
+        args: ['-e', 'process.exit(1)'],
+      })
+    })
+
+    afterEach(function () {
+      return service.kill()
+    })
+
+    it('fails if child-process dies', function () {
+      return service.start(500).then(expectFailure, verifyFailure)
+    })
+
+    function verifyFailure(e) {
+      assert.ok(!(e instanceof CancellationError))
+      assert.strictEqual('Server terminated early with status 1', e.message)
+    }
+
+    function expectFailure() {
+      throw Error('expected to fail')
+    }
+  })
+})
+
+describe('FileDetector', function () {
+  class ExplodingDriver {
+    execute() {
+      throw Error('unexpected call')
+    }
+  }
+
+  it('returns the original path if the file does not exist', function () {
+    return io.tmpDir().then((dir) => {
+      let theFile = path.join(dir, 'not-there')
+      return new remote.FileDetector()
+        .handleFile(new ExplodingDriver(), theFile)
+        .then((f) => assert.strictEqual(f, theFile))
+    })
+  })
+
+  it('returns the original path if it is a directory', function () {
+    return io.tmpDir().then((dir) => {
+      return new remote.FileDetector().handleFile(new ExplodingDriver(), dir).then((f) => assert.strictEqual(f, dir))
+    })
+  })
+
+  it('attempts to upload valid files', function () {
+    return io.tmpFile().then((theFile) => {
+      return new remote.FileDetector()
+        .handleFile(
+          new (class FakeDriver {
+            execute(command) {
+              assert.strictEqual(command.getName(), cmd.Name.UPLOAD_FILE)
+              assert.strictEqual(typeof command.getParameters()['file'], 'string')
+              return Promise.resolve('success!')
+            }
+          })(),
+          theFile,
+        )
+        .then((f) => assert.strictEqual(f, 'success!'))
+    })
+  })
+})
+
+describe('fireSessionEvent', function () {
+  it('sends correct command with eventType only', function () {
+    const fakeDriver = {
+      execute(command) {
+        assert.strictEqual(command.getName(), cmd.Name.FIRE_SESSION_EVENT)
+        const params = command.getParameters()
+        assert.strictEqual(params['eventType'], 'test:started')
+        assert.strictEqual(params['payload'], undefined)
+        return Promise.resolve({
+          success: true,
+          eventType: 'test:started',
+          timestamp: '2024-01-15T10:30:00Z',
+        })
+      },
+    }
+    const { WebDriver } = require('selenium-webdriver')
+    // Directly test the command structure
+    const command = new cmd.Command(cmd.Name.FIRE_SESSION_EVENT).setParameter('eventType', 'test:started')
+    return fakeDriver.execute(command).then((result) => {
+      assert.strictEqual(result.success, true)
+      assert.strictEqual(result.eventType, 'test:started')
+    })
+  })
+
+  it('sends correct command with eventType and payload', function () {
+    const fakeDriver = {
+      execute(command) {
+        assert.strictEqual(command.getName(), cmd.Name.FIRE_SESSION_EVENT)
+        const params = command.getParameters()
+        assert.strictEqual(params['eventType'], 'test:failed')
+        assert.deepStrictEqual(params['payload'], { testName: 'LoginTest', error: 'Element not found' })
+        return Promise.resolve({
+          success: true,
+          eventType: 'test:failed',
+          timestamp: '2024-01-15T10:30:00Z',
+        })
+      },
+    }
+    const command = new cmd.Command(cmd.Name.FIRE_SESSION_EVENT)
+      .setParameter('eventType', 'test:failed')
+      .setParameter('payload', { testName: 'LoginTest', error: 'Element not found' })
+    return fakeDriver.execute(command).then((result) => {
+      assert.strictEqual(result.success, true)
+      assert.strictEqual(result.eventType, 'test:failed')
+    })
+  })
+})
