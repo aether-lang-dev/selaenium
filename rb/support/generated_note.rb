@@ -26,10 +26,25 @@ module GeneratedNote
     end
   end
 
-  # Resolves a Bazel rlocation key to a real path. Fail loud: a generator has no non-Bazel
-  # fallback, and rlocation returns nil when not running under a runfiles tree.
+  # Resolves a Bazel rlocation key to a real path. Under Bazel, uses the runfiles
+  # tree. Off Bazel (aeb build), falls back to a repo-root-relative path derived
+  # from the key (which is of the form \"_main/<repo-relative-path>\"). The
+  # Bazel-runfiles path is kept so this still works during the Bazel->aeb
+  # coexistence window; the fallback is what an aeb build uses.
   def self.rlocation(key)
-    runfiles.rlocation(key) || raise("Could not resolve runfile #{key.inspect}")
+    begin
+      p = runfiles.rlocation(key)
+      return p if p
+    rescue LoadError
+      # bazel/runfiles gem absent (not running under Bazel) - fall through.
+    end
+    # key looks like \"_main/scripts/generated_note_template.txt\"; strip the
+    # leading \"_main/\" and resolve against the repo root (four dirs up from
+    # rb/support/generated_note.rb: rb/support -> rb -> <repo root>).
+    rel = key.start_with?("_main/") ? key[("_main/".length)..] : key
+    repo_root = File.expand_path("../..", __dir__)
+    path = File.join(repo_root, rel)
+    File.exist?(path) ? path : raise("Could not resolve #{key.inspect} (tried Bazel runfiles and #{path})")
   end
 
   # Renders the standard two-line generated-file marker in the given comment style.

@@ -1,0 +1,6 @@
+
+# aeb build output (Bazel->aeb migration)
+/target/
+# Staged from repo root by .tests.ae (Bazel copy_file equivalent)
+/LICENSE
+/NOTICE

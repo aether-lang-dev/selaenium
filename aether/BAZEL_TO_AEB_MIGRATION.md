@@ -227,3 +227,41 @@ hard shared problems: codegen + packaging). It will surface exactly which aeb
 features are missing, at a scale we can finish and validate, before committing to
 the java/ and javascript/ mountains. I would NOT touch `MODULE.bazel` or delete
 any BUILD file until at least one language tree fully builds + tests under aeb.
+
+## Ruby tree — DONE (build+test parity under aeb, on Ruby 3.4 / catchyos)
+
+Landed 2026-08-26 on catchyos (ruby 3.4; this dev box has only 3.1, below the
+gemspec's required 3.3). The rb UNIT specs now run under aeb, no Bazel:
+
+- `rb/.tests.ae` reproduces, in order, what Bazel did: (1) stage LICENSE+NOTICE
+  from the repo root into rb/ (Bazel `copy_file`; the gemspec file list needs
+  them); (2) `bundle install` (with the development group, so rspec/erb resolve);
+  (3) the CDP devtools codegen; (4) `ruby.rspec(b) { rspec_arg("spec/unit/") }`.
+  Result: **878 examples, 0 failures, 17 pending** (the pendings are guard-test
+  placeholders), 35s from clean.
+
+Two pieces of real Bazel-REMOVAL work (not just a wrapper):
+
+1. **De-Bazelized the codegen's `generated_note.rb`.** It located its template
+   via `Bazel::Runfiles` (`require 'bazel/runfiles'`) and the comment said "a
+   generator has no non-Bazel fallback." Added a fallback: try runfiles first
+   (so it still works under Bazel during coexistence), else strip the `_main/`
+   rlocation prefix and resolve the template against the repo root
+   (`scripts/generated_note_template.txt`). This is the exact shape of
+   Bazel-coupling the migration has to unwind.
+2. **Reproduced the multi-step CDP codegen off Bazel** (`rb/generate-devtools.sh`):
+   for each of v150/v151/v152, `common/devtools/convert_protocol_to_json.py`
+   turns the checked-in `.pdl` into `.json`, then the gem's
+   `cdp_client_generator.rb` emits `vNNN.rb` + a `vNNN/` dir of domain modules.
+   One unit spec (`devtools_spec.rb` version-fallback) `require`s a generated
+   version at load time, so this is load-bearing for the suite, not just for the
+   separate selenium-devtools gem.
+
+Generated `devtools/vNNN*` and the staged `rb/LICENSE`/`rb/NOTICE` are gitignored
+(build outputs). No reverse-dep blocker (the `//rb:*` refs elsewhere are
+visibility grants), so rb's BUILD.bazel can be deleted once Bazel is gone.
+
+**Not yet done for rb:** the `gem build` package proof (parity bar is build+test;
+gem *publish* is out of scope) and the integration specs (browser-gated). The
+`selenium-devtools` gem's own build is the codegen above; wiring it as its own
+node is a follow-up if we package it.
