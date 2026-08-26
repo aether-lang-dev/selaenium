@@ -63,12 +63,13 @@ trap 'rm -f "$LOG"' EXIT
 aeb "$TARGET" 2>&1 | tee "$LOG"
 RC="${PIPESTATUS[0]}"
 
-# IMPORTANT: aeb currently does NOT propagate a node's non-zero return to its own
-# exit code (a failing .tests.ae still lets `aeb` exit 0 — filed as REQUEST 4 in
-# ~/scm/aeb/selenium-porting-needs-for-aeb.md). So we do NOT trust RC alone: we
-# scan every per-node log for a FAILED marker and fail the run ourselves. This
-# keeps the gate honest today; once aeb propagates, RC becomes sufficient and
-# this stays as belt-and-suspenders.
+# aeb DOES propagate a node's non-zero return to its own exit code (fixed in aeb
+# 97e189d — a `.tests.ae` that `return`s non-zero now reddens the run; this had
+# been silently swallowed, filed + resolved as REQUEST 4 in
+# ~/scm/aeb/selenium-porting-needs-for-aeb.md). So RC is now authoritative. As
+# belt-and-suspenders we ALSO scan every per-node log for a FAILED marker and
+# fail on it — cheap insurance against a node that prints failure but returns 0,
+# and against running on an older aeb that predates the fix.
 LOGDIR="target/.aeb/logs"
 FAILS=""
 SKIPS=""
