@@ -1,432 +1,218 @@
-<h1 align="center">
-  <br/>
-  <a href="https://selenium.dev"><img src="common/images/selenium_logo_mark_green.svg" alt="Selenium" width="100"></a>
-  <br/>
-  Selenium
-  <br/>
-</h1>
+# Selenium WebDriver — Aether core
 
-<h3 align="center">Automates browsers. That's it!</h3>
+The core of Selenium WebDriver, ported to [Aether](https://github.com/aether-lang-dev)
+as **one pure-Aether engine + thin per-language bindings**, built with
+[`aeb`](https://github.com/aether-lang-dev/aeb) instead of Bazel. Same shape as
+[`servirtium-vcr`](https://github.com/servirtium/servirtium-vcr) and
+[`html-sanitizer`](https://github.com/…/html-sanitizer): the protocol logic
+lives once, every language re-glues to it over a C ABI.
 
-<p align="center">
-  <a href="#contributing">Contributing</a> •
-  <a href="#installing">Installing</a> •
-  <a href="#building">Building</a> •
-  <a href="#developing">Developing</a> •
-  <a href="#testing">Testing</a> •
-  <a href="#documenting">Documenting</a> •
-  <a href="#releasing">Releasing</a>
-</p>
+## The one rule
 
-<br>
+**Bindings carry no protocol logic.** The command catalog, the W3C
+command→(method, path) route table, path templating, By/capabilities
+normalization, the W3C error-envelope decode, and the HTTP round-trip to the
+driver/Grid all live in `selenium_core/selenium_core.ae`. A binding opens a session,
+issues commands by name with JSON params, reads back the result value or a typed
+error, and closes. Anything smarter than marshalling belongs in `selenium_core/`.
 
-Selenium is an umbrella project encapsulating a variety of tools and
-libraries enabling web browser automation. Selenium specifically
-provides an infrastructure for the [W3C WebDriver specification](https://w3c.github.io/webdriver/)
-— a platform and language-neutral coding interface compatible with all
-major web browsers.
-
-The project is made possible by volunteer contributors who've
-generously donated thousands of hours in code development and upkeep.
-
-This README is for developers interested in contributing to the project.
-For people looking to get started using Selenium, please check out
-our [User Manual](https://selenium.dev/documentation/) for detailed examples and descriptions, and if you
-get stuck, there are several ways to [Get Help](https://www.selenium.dev/support/).
-
-[![CI](https://github.com/SeleniumHQ/selenium/actions/workflows/ci.yml/badge.svg?event=push)](https://github.com/SeleniumHQ/selenium/actions/workflows/ci.yml)
-[![CI - RBE](https://github.com/SeleniumHQ/selenium/actions/workflows/ci-rbe.yml/badge.svg?event=push)](https://github.com/SeleniumHQ/selenium/actions/workflows/ci-rbe.yml)
-[![Releases downloads](https://img.shields.io/github/downloads/SeleniumHQ/selenium/total.svg)](https://github.com/SeleniumHQ/selenium/releases)
-
-## Contributing
-
-Please read [CONTRIBUTING.md](https://github.com/SeleniumHQ/selenium/blob/trunk/CONTRIBUTING.md)
-before submitting your pull requests.
-
-## Installing
-
-These are the requirements to create your own local dev environment to contribute to Selenium.
-
-### All Platforms
-
-* [Bazelisk](https://github.com/bazelbuild/bazelisk), a Bazel wrapper that automatically downloads
-  the version of Bazel specified in `.bazelversion` file and transparently passes through all
-  command-line arguments to the real Bazel binary.
-* Java JDK version 17 or greater (e.g., [Java 17 Temurin](https://adoptium.net/temurin/releases/?version=17))
-  * Set `JAVA_HOME` environment variable to location of Java executable (the JDK not the JRE)
-  * To test this, try running the command `javac`. This command won't exist if you only have the JRE
-  installed. If you're met with a list of command-line options, you're referencing the JDK properly.
-
-### MacOS
-
-  * Xcode including the command-line tools. Install the latest version using: `xcode-select --install`
-  * Rosetta for Apple Silicon Macs. Add `build --host_platform=//:rosetta` to the `.bazelrc.local` file. We are working
-  to make sure this isn't required in the long run.
-
-### Windows
-
-Several years ago [Jim Evans](https://www.linkedin.com/in/jimevansmusic/) published a great article on
-[Setting Up a Windows Development Environment for the Selenium .NET Language Bindings](https://jimevansmusic.blogspot.com/2020/04/setting-up-windows-development.html);
-This article is out of date, but it includes more detailed descriptions and screenshots that some people might find useful.
-
-<details>
-<summary>Click to see Current Windows Setup Requirements</summary>
-
-#### Option 1: Automatic Installation from Scratch
-
-This script will ensure a complete ready to execute developer environment.
-(nothing is installed or set that is already present unless otherwise prompted)
-
-1. Open Powershell as an Administrator
-2. Execute: `Set-ExecutionPolicy Bypass -Scope Process -Force` to allow running the script in the process
-3. Navigate to the directory you want to clone Selenium in, or the parent directory of an already cloned Selenium repo
-4. Download and execute this script in the powershell terminal: [scripts/dev-environment-setup.ps1]`
-
-#### Option 2: Manual Installation
-
-1. Allow running scripts in Selenium in general:
-    ```
-    Set-ExecutionPolicy -ExecutionPolicy RemoteSigned
-    ```
-2. Enable Developer Mode:
-    ```
-    reg add "HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\AppModelUnlock" /t REG_DWORD /f /v "AllowDevelopmentWithoutDevLicense" /d "1"
-    ```
-3. Install [MSYS2](https://www.msys2.org/), which is an alternative shell environment that provides Unix-like commands
-    * Add bin directory to `PATH` environment variable (e.g., `"C:\tools\msys64\usr\bin"`)
-    * Add `bash.exe` location as the `BAZEL_SH` environment variable (e.g., `"C:\tools\msys64\usr\bin\bash.exe"`)
-4. Install the latest version of [Visual Studio Community](https://visualstudio.microsoft.com/vs/community/)
-    * Use the visual studio installer to modify and add the "Desktop development with C++" Workload
-    * Add Visual C++ build tools installation directory location to `BAZEL_VC` environment variable (e.g. `"C:\Program Files\Microsoft Visual Studio\2022\Community\VC"`)
-    * Add Visual C++ Build tools version to `BAZEL_VC_FULL_VERSION` environment variable (this can be discovered from the directory name in `"$BAZEL_VC\Tools\MSVC\<BAZEL_VC_FULL_VERSION>"`)
-5. Add support for long file names (bazel has a lot of nested directories that can exceed default limits in Windows)
-    * Enable Long Paths support with these 2 registry commands:
-    ```shell
-    reg add "HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Command Processor" /t REG_DWORD /f /v "DisableUNCCheck" /d "1"
-    reg add "HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\FileSystem" /t REG_DWORD /f /v "LongPathsEnabled" /d "1"
-    ```
-    * Allow Bazel to create short name versions of long file paths: `fsutil 8dot3name set 0`
-    * Set bazel output to `C:/tmp` instead of nested inside project directory:
-        * Create a file `selenium/.bazelrc.windows.local`
-        * Add "startup --output_user_root=C:/tmp" to the file
-
-</details>
-
-### Alternative Dev Environments
-
-If you want to contribute to the project, but do not want to set up your own local dev environment,
-there are two alternatives available.
-
-#### Using GitPod
-
-Rather than creating your own local dev environment, GitPod provides a ready to use environment for you.
-
-[![Open in Gitpod](https://gitpod.io/button/open-in-gitpod.svg)](https://gitpod.io/#https://github.com/SeleniumHQ/selenium)
-
-#### Using Dev Container
-
-As an alternative you can build a [Dev Container](https://containers.dev/) - basically a docker container -
-suitable for building and testing Selenium using the devcontainer.json in the
-[.devcontainer](.devcontainer/devcontainer.json) directory. Supporting IDEs like VS Code or IntelliJ IDEA
-should point you to how such a container can be created.
-
-#### Using Docker Image
-
-You can also build a Docker image suitable
-for building and testing Selenium using the Dockerfile in the
-[dev image](scripts/dev-image/Dockerfile) directory.
-
-### Using Worktrees
-
-Bazel keeps its build outputs and downloaded dependencies under each checkout by default, which means
-working from multiple worktrees re-downloads dependencies and rebuilds artifacts. 
-Pointing Bazel at user-level caches avoids that.
-
-Add the following to `/path/to/your/home/.bazelrc`
+## Layout
 
 ```
-common --disk_cache=/path/to/your/home/.cache/bazel-disk
-common --repository_cache=/path/to/your/home/.cache/bazel-repo
+selenium_core/
+  selenium_core.ae   the engine: route table, path templating, By, error map,
+                     capabilities, and the std.http.client round-trip
+  embed.ae           the flat C ABI (aether_sel_embed_*), handle-based
+  _embed_strdup.c    the ~15-line caller-owned-string bridge (the only C)
+  .build.ae          aeb node -> selenium_core/native/libselenium_core.so
+selenium_core/tests/
+  probe.ae           pure-Aether engine probe (no browser, no FFI)
+  .tests.ae          aeb node that builds + runs the probe
+python/
+  selenium_core/     the Python binding (ctypes over the .so — runtime load)
+    _native.py       library loader + ctypes prototypes (1:1 with embed.ae)
+    _webdriver.py    the ergonomic surface: WebDriver, WebElement, By, errors
+    __init__.py
+  test/
+    test_ffi.py         no-browser FFI test (loads the .so, marshals, error path)
+    test_live_chrome.py live headless-Chrome end-to-end smoke test
+  setup.py           wheel packaging; bundles native/*.so via package_data
+  .package.ae        aeb node → builds the wheel with the engine .so inside
+  .example.ae        aeb node → installs the wheel into a clean site + runs it
+  example/
+    consumer_example.py  runs from the INSTALLED package (ffi/discovery/live)
+go/
+  selenium.go        the Go binding (cgo over the .so — link-time)
+  ffi_test.go        no-browser FFI test (Route/ErrorCode/Locator, transport err)
+  live_test.go       live headless-Chrome end-to-end smoke test
+  native/            bundled .so (cgo rpath self-locates ../selenium_core/native or here)
+  .package.ae        aeb node → stages the engine .so into go/native/
+  .example.ae        aeb node → a consumer module with NO selenium_core/ sibling go-runs it
+  example/           the standalone consumer program (go.mod + main.go)
+ruby/
+  lib/selenium_core.rb            the require entry point
+  lib/selenium_core/native.rb     Fiddle loader + prototypes (1:1 with embed.ae)
+  lib/selenium_core/webdriver.rb  the ergonomic surface: WebDriver, WebElement, By
+  selenium_core.gemspec           gem packaging; bundles lib/**/* incl. native/*.so
+  spec/{ffi_test,live_test}.rb    minitest suites (no-browser + live Chrome)
+  .tests.ae / .package.ae / .example.ae   aeb nodes
+  example/consumer_example.rb     runs from the INSTALLED gem (ffi/discovery/live)
+javascript/
+  index.js                        the require entry point
+  lib/native.js                   koffi loader + prototypes (1:1 with embed.ae)
+  lib/webdriver.js                the ergonomic surface (synchronous; see note)
+  package.json                    npm packaging; bundles native/ + lib/; koffi dep
+  test/{ffi_test,live_test}.js    node:test suites (no-browser + live+surface)
+  test/content_server.js          out-of-process content server for the live test
+  .tests.ae / .package.ae / .example.ae   aeb nodes
+  example/consumer_example.js     runs from the INSTALLED package (ffi/discovery/live)
+java/
+  src/org/seleniumhq/aether/*.java  Panama FFM binding: Native, Json (dep-free),
+                                    WebDriver, WebElement, By, WebDriverError
+  test/{TestFfi,TestLive}.java      JUnit-free main() harnesses (no-browser + live)
+  .tests.ae / .package.ae / .example.ae   aeb nodes (plain javac + jar, no Maven)
+  example/ConsumerExample.java      runs from the INSTALLED jar (ffi/discovery/live)
+dotnet/
+  SeleniumCore/*.cs                 P/Invoke binding: NativeMethods, NativeLoader,
+                                    WebDriver, WebElement, By, WebDriverError
+  SeleniumCore/SeleniumCore.csproj  class lib; packs the .so as a runtime asset
+  SeleniumCore.Tests/Program.cs     console harness (no xunit): ffi + live+surface
+  .tests.ae / .package.ae / .example.ae   aeb nodes (dotnet build/pack; net8.0)
+  example/                          NuGet consumer app (Program.cs + Consumer.csproj)
+rust/
+  src/lib.rs                        extern "C" binding + WebDriver/WebElement/By
+  src/json.rs                       hand-rolled JSON (no serde → fully offline)
+  build.rs                          links the .so + publishes native_dir metadata
+  Cargo.toml                        links = "selenium_core"; zero dependencies
+  tests/{ffi_test,live_test}.rs     cargo tests (no-browser + live+surface)
+  .tests.ae / .package.ae / .example.ae   aeb nodes
+  example/                          consumer crate (path dep + rpath-propagating build.rs)
 ```
 
-`--disk_cache` stores compiled action outputs; `--repository_cache` stores downloaded external
-dependencies (e.g. `http_archive` tarballs). Both directories grow unbounded over time — prune them
-periodically if disk space matters. Keep the cache on the same filesystem as your checkouts so Bazel
-can hardlink instead of copy.
+## Two test layers, and what each proves
 
-Bazel also creates a separate **output base** (compiled outputs, analysis cache, and the Bazel
-server) per checkout path. Unlike the caches above, it is **not** removed when you delete a worktree —
-so frequently created and discarded worktrees leak gigabytes of stale output.
+- **`.tests.ae`** (per binding): the binding works against the source tree with
+  the engine `.so` handed in via `SELENIUM_CORE_LIB`. Proves the *binding*.
+- **`.package.ae` + `.example.ae`** (per binding): the distributable — a wheel /
+  a Go module — with the engine `.so` **bundled inside**, installed into a clean
+  environment (no source tree on the path, `SELENIUM_CORE_LIB` unset), then run.
+  Proves a naive `pip install` / `go get` actually works. Both drive real
+  headless Chrome from the *installed* artifact.
 
-On macOS/Linux, make a worktree self-cleaning by pointing its output base inside the worktree. Add
-this to that worktree's `.bazelrc.local`:
+## The C ABI (`aether_sel_embed_*`)
+
+Handle-based: N independent sessions per process. `open(base_url)` returns an
+opaque handle; `execute(h, name, params_json)` runs one command, returning 0 on
+success, a W3C error code on a protocol error, or -1 on transport failure;
+drain the result via `last_value` (JSON payload), `last_error_code`,
+`last_error`, `last_status`, `session_id`. Pure helpers `by_locator`, `route`,
+`error_code` are also exported so a binding shares the ONE normalization path.
+Returned `char*` are caller-owned — free with `free_string`.
+
+## Build & test
 
 ```
-startup --output_base=.local/output-base
+aeb selenium_core/.build.ae        # -> selenium_core/native/libselenium_core.so
+aeb selenium_core/tests/.tests.ae  # pure-Aether engine probe (fast, no browser)
+
+# Python binding (needs the .so via SELENIUM_CORE_LIB during dev):
+SELENIUM_CORE_LIB="$PWD/selenium_selenium_core/native/libselenium_core.so" python3 python/test/test_ffi.py
+SELENIUM_CORE_LIB="$PWD/selenium_selenium_core/native/libselenium_core.so" python3 python/test/test_live_chrome.py
 ```
 
-`.local/` is gitignored and excluded in `.bazelignore`, so removing the worktree removes its output
-base with it. The shared `--disk_cache`/`--repository_cache` above still keep downloads and action
-outputs shared across worktrees.
-
-(Windows users should instead keep `startup --output_user_root=C:/tmp` in `.bazelrc.windows.local` as
-described above, to avoid path-length limits — do not nest the output base deeper inside the repo on
-Windows.)
-
-## Building
-
-Selenium is built using a common build tool called [Bazel](https://bazel.build/), to
-allow us to easily manage dependency downloads, generate required binaries, build and release packages, and execute tests;
-all in a fast, efficient manner. For a more detailed discussion, read Simon Stewart's article on [Building Selenium](https://www.selenium.dev/blog/2023/building-selenium/)
-
-Often we wrap Bazel commands with our custom [Rake](http://rake.rubyforge.org/) wrapper. These are run with the `./go` command.
-
-The common Bazel commands are:
-* `bazel build` — evaluates dependencies, compiles source files and generates output files for the specified target.
-It's used to create executable binaries, libraries, or other artifacts.
-* `bazel run` — builds the target and then executes it.
-It's typically used for targets that produce executable binaries.
-* `bazel test` — builds and runs the target in a context with additional testing functionality
-* `bazel query` — identifies available targets for the provided path.
-
-Each module that can be built is defined in a `BUILD.bazel` file. To execute the module you refer to it starting with a
-`//`, then include the relative path to the file that defines it, then `:`, then the name of the target.
-For example, the target to build the Grid is named `executable-grid` and it is
-defined in the `'selenium/java/src/org/openqa/selenium/grid/BAZEL.build'` file.
-So to build the grid you would run: `bazel build //java/src/org/openqa/selenium/grid:executable-grid`.
-
-The Bazel documentation has a [handy guide](https://bazel.build/run/build#specifying-build-targets)
-for various shortcuts and all the ways to build multiple targets, which Selenium makes frequent use of.
-
-To build everything for a given language:
-
-```shell
-bazel build //<language>/...
-```
-
-To build just the grid there is an alias name to use (the log will show where the output jar is located):
-
-```shell
-bazel build grid
-```
-
-To make things more simple, building each of the bindings is available with this `./go` command:
-
-```shell
-./go <language>:build
-```
-
-## Developing
-
-### Java
-
-#### IntelliJ
-
-Most of the team uses Intellij for their day-to-day editing. If you're
-working in IntelliJ, then we highly recommend installing the [Bazel IJ
-plugin](https://plugins.jetbrains.com/plugin/8609-bazel) which is documented on
-[its own site](https://plugins.jetbrains.com/plugin/8609-bazel).
-
-To use Selenium with the IntelliJ Bazel plugin, import the repository as a Bazel project, and select the project
-view file from the [scripts](scripts) directory. `ij.bazelproject` for Mac/Linux and `ij-win.bazelproject` for Windows.
-
-#### Linting
-
-We also use Google Java Format for linting, so using the Google Java Formatter Plugin is useful;
-there are a few steps to get it working, so read their [configuration documentation](https://github.com/google/google-java-format/blob/master/README.md#intellij-jre-config).
-There is also an auto-formatting script that can be run: `./scripts/format.sh`
-
-#### Local Installation
-
-While Selenium is not built with Maven, you can build and install the Selenium pieces
-for Maven to use locally by deploying to your local maven repository (`~/.m2/repository`), using:
-
-```shell
-./go java:install
-```
-
-#### Updating Dependencies
-
-Dependencies are defined in the file [MODULE.bazel](https://github.com/SeleniumHQ/selenium/blob/trunk/MODULE.bazel).
-
-To update a dependency, modify the version in the `MODULE.bazel` file and run:
-
-```shell
-RULES_JVM_EXTERNAL_REPIN=1 bazel run @maven//:pin
-```
-
-To automatically update and pin new dependencies, run:
-
-```shell
-./go java:update
-```
-
-### Python
-
-#### Linting and Formatting
-
-We follow the [PEP8 Style Guide for Python Code](https://peps.python.org/pep-0008) (except we use a 120 character line length).
-This is checked and enforced with [ruff](https://docs.astral.sh/ruff/), a linting/formatting tool.
-There is also an auto-formatting script that can be run: `./scripts/format.sh`
-
-#### Local Installation
-
-To run Python code locally without building/installing the package, you must first install the dependencies:
-
-```shell
-pip install -r py/requirements_lock.txt
-```
-
-Then, build the generated files and copy them into your local source tree:
-
-```shell
-./go py:local_dev
-```
-
-After that, you can import the selenium package directly from source from the `py` directory.
-
-Instead of running from source, you can build and install the selenium package (wheel) locally:
-
-```shell
-./go py:install
-```
-
-This will attempt to install into the global Python `site-packages` directory,
-which might not be writable. To avoid this, you should create and activate a
-[virtual environment](https://packaging.python.org/en/latest/tutorials/installing-packages/#creating-virtual-environments)
-before installing.
-
-
-### Ruby
-
-Instead of using `irb`, you can create an interactive REPL with all gems loaded using: `bazel run //rb:console`
-
-If you want to debug code, you can do it via [`debug`](https://github.com/ruby/debug) gem:
-
-1. Add `binding.break` to the code where you want the debugger to start.
-2. Run tests with  `ruby_debug` configuration: `bazel test --config ruby_debug <test>`.
-3. When debugger starts, run the following in a separate terminal to connect to debugger:
-
-```shell
-bazel-selenium/external/bundle/bin/rdbg -A
-```
-
-If you want to use [RubyMine](https://www.jetbrains.com/ruby/) for development,
-you can configure it use Bazel artifacts:
-
-1. Open `rb/` as a main project directory.
-2. From the `selenium` (parent) directory, run `./go rb:local_dev` to create up-to-date artifacts.
-3. In <kbd>Settings / Languages & Frameworks / Ruby SDK and Gems</kbd> add new <kbd>Interpreter</kbd> pointing to `../bazel-selenium/external/rules_ruby++ruby+ruby/dist/bin/ruby`.
-4. You should now be able to run and debug any spec. It uses Chrome by default, but you can alter it using environment variables specified in [Ruby Testing](#ruby-2) section below.
-
-### Rust
-
-Rust Bazel dependencies are generated directly from `rust/Cargo.toml` and `rust/Cargo.lock`.
-
-## Testing
-
-There are a number of bazel configurations specific for testing.
-
-### Common Options Examples
-
-Here are examples of arguments we make use of in testing the Selenium code:
-* `--pin_browsers=false` - use Selenium Manager to locate browsers/drivers
-* `--headless` - run browsers in headless mode (supported be Chrome, Edge and Firefox)
-* `--flaky_test_attempts 3` - re-run failed tests up to 3 times
-* `--local_test_jobs 1` - control parallelism of tests
-* `--cache_test_results=no`, `-t-` - disable caching of test results and re-runs all of them
-* `--test_output all` - print all output from the tests, not just errors
-* `--test_output streamed` - run all tests one by one and print its output immediately
-* `--test_env FOO=bar` - pass extra environment variable to test process
-* `--run_under="xvfb-run -a"` - prefix to insert before the execution
-
-### Filtering
-
-Selenium tests can be filtered by size:
-* small — typically unit tests where no browser is opened
-* large — typically tests that actually drive a browser
-* medium — tests that are more involved than simple unit tests, but not fully driving a browser
-
-These can be filtered using the `test_size_filters` argument like this:
-
-```shell
-bazel test //<language>/... --test_size_filters=small
-```
-
-Tests can also be filtered by tag like:
-
-```shell
-bazel test //<language>/... --test_tag_filters=this,-not-this
-```
-
-If there are multiple `--test_tag_filters`, only the last one is considered,
-so be careful if also using an inherited config
-
-Language specific testing guides can be found in a `TESTING.md` file in the applicable directory.
-
-### Linux
-
-<details>
-<summary>Click to see Linux Testing Requirements</summary>
-
-By default, Bazel runs these tests in your current X-server UI. If you prefer, you can
-alternatively run them in a virtual or nested X-server.
-
-1. Run the X server `Xvfb :99` or `Xnest :99`
-2. Run a window manager, for example, `DISPLAY=:99 jwm`
-3. Run the tests you are interested in:
-
-```shell
-bazel test --test_env=DISPLAY=:99 //java/... --test_tag_filters=chrome
-```
-
-An easy way to run tests in a virtual X-server is to use Bazel's `--run_under`
-functionality:
-
-```
-bazel test --run_under="xvfb-run -a" //java/...
-```
-</details>
-
-
-## Documenting
-
-API documentation can be found here:
-
-* [C#](https://seleniumhq.github.io/selenium/docs/api/dotnet/)
-* [JavaScript](https://seleniumhq.github.io/selenium/docs/api/javascript/)
-* [Java](https://seleniumhq.github.io/selenium/docs/api/java/index.html)
-* [Python](https://seleniumhq.github.io/selenium/docs/api/py/)
-* [Ruby](https://seleniumhq.github.io/selenium/docs/api/rb/)
-
-To update API documentation for a specific language: `./go <language>:docs`
-
-To update all documentation: `./go all:docs`
-
-
-## Releasing
-
-The full process for doing a release can be found in [the wiki](https://github.com/SeleniumHQ/selenium/wiki/Releasing-Selenium)
-
-Releasing is a combination of building and publishing, which often requires coordination of multiple executions
-and additional processing.
-As discussed in the [Building](#building) section, we use Rake tasks with the `./go` command for these things.
-These `./go` commands include the `--stamp` argument to provide necessary information about the constructed asset.
-
-You can build and release everything with:
-
-```shell
-./go all:release
-```
-
-To build and release a specific language:
-
-```shell
-./go <language>:release
-```
-
-If you have access to the Selenium EngFlow repository, you can have the assets built remotely and downloaded locally using:
-
-```shell
-./go all:release['--config', 'release']
-```
+## Status — end-to-end green ✅
+
+Needs **Aether ≥ 0.558** (the `std.http.client` `Connection: close` framing fix;
+without it the client hangs on chromedriver responses).
+
+- **Engine** (`selenium_core/selenium_core.ae`): full W3C command map, path templating,
+  By normalization, W3C error decode, HTTP round-trip. ✅ builds, ✅ 31/31 probes.
+- **ABI** (`selenium_core/embed.ae`) + C bridge: ✅ builds to `libselenium_core.so`,
+  13 exports.
+- **Python binding** (ctypes, runtime load): ✅ FFI marshalling + error path
+  (`test_ffi.py`, 7 cases), ✅ **live headless Chrome** (`test_live_chrome.py`).
+- **Go binding** (cgo, link-time): ✅ FFI (`ffi_test.go`, 5 cases), ✅ **live
+  headless Chrome** (`live_test.go`).
+- **Ruby binding** (Fiddle, runtime load): ✅ FFI (`spec/ffi_test.rb`, 5 cases),
+  ✅ **live headless Chrome** (`spec/live_test.rb`).
+- **Node binding** (koffi / N-API, runtime load): ✅ FFI (`test/ffi_test.js`,
+  5 cases), ✅ **live headless Chrome + surface** (`test/live_test.js`). The API
+  is synchronous (the engine's FFI round-trip blocks) — the honest shape for a
+  linked-in synchronous core; a note in `lib/webdriver.js` explains it, and the
+  live test runs its content server out-of-process so a blocking `get()` can't
+  freeze the server the browser fetches from.
+- **Java binding** (Panama FFM — `java.lang.foreign`, no JNI/C shim): ✅ FFI
+  (`test/TestFfi.java`, 7 checks), ✅ **live headless Chrome + surface**
+  (`test/TestLive.java`). Pure `javac` (no Maven); a tiny dependency-free JSON
+  codec keeps it library-free. Needs a JDK ≥ 22 and `--enable-native-access`.
+- **.NET binding** (P/Invoke — `System.Runtime.InteropServices`): ✅ FFI
+  (7 checks), ✅ **live headless Chrome + surface**. Uses `System.Text.Json`; a
+  `[ModuleInitializer]` `DllImportResolver` handles library discovery. net8.0.
+- **Rust binding** (link-time `extern "C"` + `build.rs`): ✅ FFI (5 cases), ✅
+  **live headless Chrome + surface**. Zero external crates — a hand-rolled JSON
+  module + a std-only content server keep it fully offline. A consumer's rpath is
+  propagated across the crate edge via `links` + `DEP_SELENIUM_CORE_NATIVE_DIR`.
+- **Dart binding** (dart:ffi, runtime load): ✅ FFI (5 cases), ✅ **live headless
+  Chrome + surface**. Synchronous (FFI blocks the isolate), so the live test runs
+  its content server out-of-process; the consumer self-locates its bundled `.so`
+  via `Isolate.resolvePackageUri`.
+- **BEAM family** (Erlang / Elixir / Gleam): one shared C NIF (`selenium_nif`)
+  that Erlang owns and Elixir + Gleam load over the BEAM — the SAME compiled
+  module, no second C source (exactly as the JVM family would layer over one jar).
+  - **Erlang** (NIF): ✅ FFI + **live headless Chrome + surface** — live-verified.
+  - **Elixir** (defdelegate to the NIF): authored; ✅ verify on a box with Elixir.
+  - **Gleam** (`@external` to the NIF): authored; ✅ verify on a box with Gleam.
+- **Nim binding** (importc + link-time): ✅ FFI + **live headless Chrome +
+  surface**. std/json; `{.passL.}` links the engine with rpath.
+- **Zig binding** (`@extern` + link-time, Zig 0.16): ✅ FFI + **live headless
+  Chrome + surface**. std.json; build.zig links + rpaths the engine.
+- **Lua binding** (Lua 5.4 C extension): ✅ FFI + **live headless Chrome +
+  surface**. A real C extension (Lua has no stdlib FFI) that dlopen's the engine;
+  hand-rolled JSON. Builds a bundled 5.4 host on boxes whose interpreter is 5.3.
+- **JVM family** (Kotlin, Clojure): consume the ONE Java FFM jar over seamless
+  JVM interop — **no second FFI, no second `.so`** (one Java jar backs the whole
+  JVM family, exactly as one Erlang NIF backs the BEAM family).
+  - **Kotlin**: ✅ FFI + **live headless Chrome + surface** — live-verified.
+    Needs Kotlin ≥ 1.9 (a modern kotlinc; Debian's 1.3 can't read JDK-22+ FFM
+    bytecode). Adds a `headlessChrome { }` builder + element extensions.
+  - **Clojure**: ✅ FFI + **live headless Chrome + surface** — live-verified.
+    Adds a `with-chrome` macro + keyword `by`.
+  - **Groovy**: a `withHeadlessChrome { }` closure form. Authored here; verified
+    on a box with a modern Groovy (≥ 4) + JDK ≥ 22 — Debian's 2.4/JVM17 can't
+    read the FFM binding, so it skips green here.
+- **Haskell binding** (`foreign import ccall` + link-time): FFI + live surface.
+  Dependency-light (base + bytestring; params/values as JSON strings). Authored
+  here; verified on a box with GHC (skips green without it).
+- Fifteen languages across eleven FFI mechanisms (ctypes / cgo / Fiddle / koffi /
+  Panama FFM / P/Invoke / Rust extern-C / dart:ffi / Erlang NIF / Nim importc /
+  Zig extern / Lua C-extension — the BEAM three share the NIF, the JVM family
+  shares the Java jar) all drive the byte-identical `libselenium_core.so`.
+  Thirteen are live-verified here; the two BEAM wrappers (Elixir, Gleam) are
+  authored here and verified on a box with their compilers (catchyos).
+- **Consumer install** (all three): ✅ the packaged wheel / Go module / gem
+  stands alone with the `.so` bundled inside — clean-env install, no source tree,
+  no env var — and drives real headless Chrome from the installed artifact
+  (`*/.example.ae`).
+- **Live browser** (all three bindings): ✅ a real headless Chrome session driven
+  entirely through the pure-Aether core. The whole pipeline: {Python ctypes | Go
+  cgo | Ruby Fiddle} → libselenium_core.so → std.http.client → chromedriver →
+  Chrome.
+  - **Smoke**: newSession, get, find_element (By.ID + By.CLASS_NAME→CSS), click,
+    send_keys, get_property, execute_script, typed NoSuchElement error, quit.
+  - **Surface** (against a local HTTP server for a real cookie/nav origin):
+    timeouts, back/forward history, cookies (add/get/get-one/delete), window
+    handles + set/get rect, execute_script return shapes (scalar/array/object/
+    args), W3C actions (a real pointer-click), and screenshots (valid PNG).
+    Exhaustive in Python; a representative subset in Go and Ruby.
+
+Two engine bugs found and fixed via the live test (both browser-only, invisible
+to the offline probe until then): a dangling borrowed `base_url` FFI string in
+the heap-boxed session struct (fixed with an owned copy), and a wrong JSON type
+code in the error-envelope check (`== 4` ARRAY instead of `== 3` STRING) that
+silently swallowed every WebDriver error as success — now pinned by the
+`response_error_code` probe cases.
+
+## Upstream siblings
+
+`../aether` (the language), `../aeb` (the build runner), `../servirtium-vcr` and
+`../html-sanitizer` (the one-engine-many-bindings layout this repo copies).

@@ -1,0 +1,26 @@
+// Third-party-consumer PACKAGE stage for the Go binding.
+//
+// Go consumes selenium-aether-go as a module (source-consumed via `go get` / a
+// replace). cgo links the engine .so at the consumer's build time; the module's
+// LDFLAGS include `${SRCDIR}/native`, so the .so must ship inside the module.
+// This stages the freshly-built engine .so into go/native/. Deps core/.build.ae;
+// publishes the go module dir on "module_dir".
+import build
+import std.os
+
+aeb(cap) {
+    b = build.start()
+    build.dep(b, "selenium_core/.build.ae")
+    lib = build.dep_artifact(b, "selenium_core/.build.ae", "shared_lib")
+    root = build._get(b, "root")
+    godir = "${root}/go"
+
+    rc = os.system("mkdir -p \"${godir}/native\" && cp \"${lib}\" \"${godir}/native/libselenium_core.so\"")
+    if rc != 0 {
+        println("go package: failed to stage engine .so into go/native/")
+        return 1
+    }
+    build.publish_artifact(b, "module_dir", "${godir}")
+    println("go package: staged engine .so into go/native/ (Go module ready)")
+    return 0
+}

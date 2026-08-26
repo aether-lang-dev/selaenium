@@ -1,20 +1,30 @@
-// aeb tests for Selenium Manager — the Rust library unit tests, matching the
-// old Bazel `:unit` target (rust_test with crate = ":selenium_manager", which
-// runs the library's #[test]s). `--lib` restricts cargo to the lib unit tests,
-// not the integration tests under rust/tests/ (those drive real browsers/network
-// and were a separate, browser-gated Bazel target).
-//
-// Uses the idiomatic `extra("--lib")` setter (aeb rust SDK, landed 4f9d60a). Pin
-// AEB_REF past 4f9d60a (or a release including it) for CI reproducibility.
+// Rust binding tests. The engine .so is linked at BUILD time via build.rs
+// (cargo:rustc-link-* + rpath); build.rs finds it via SELENIUM_CORE_LIB (which
+// we point at the shared engine artifact this node deps) or the bundled native/
+// dir. Zero external crates → builds fully offline. The live test spawns its own
+// chromedriver + std-only content server and self-skips if chromedriver is
+// absent.
 import build
-import rust
-import rust (extra)
+import std.os
 
 aeb(cap) {
     b = build.start()
-    build.dep(b, ".build.ae")
-    rust.cargo_test_existing(b) {
-        extra("--lib")
+    build.dep(b, "selenium_core/.build.ae")
+    lib = build.dep_artifact(b, "selenium_core/.build.ae", "shared_lib")
+    root = build._get(b, "root")
+    rsdir = "${root}/rust"
+    cargo = "PATH=\"$HOME/.cargo/bin:$PATH\""
+
+    rc = os.system("cd \"${rsdir}\" && ${cargo} SELENIUM_CORE_LIB=\"${lib}\" cargo test --offline 2>&1")
+    if rc != 0 {
+        // Retry without --offline in case the registry index needs a touch
+        // (the crate itself has no deps, so this should still be network-free).
+        rc = os.system("cd \"${rsdir}\" && ${cargo} SELENIUM_CORE_LIB=\"${lib}\" cargo test 2>&1")
+        if rc != 0 {
+            println("rust tests: cargo test FAILED")
+            return 1
+        }
     }
+    println("rust tests: PASSED (ffi + live+surface)")
     return 0
 }

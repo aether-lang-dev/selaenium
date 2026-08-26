@@ -1,0 +1,22 @@
+// Third-party-consumer PACKAGE stage for the Zig binding.
+//
+// Zig consumes selenium_core as source (a module, linked at the consumer's
+// build time). build.zig links the engine .so from the package's own native/
+// dir, so the .so must ship inside the package. This stages the freshly-built
+// engine .so into zig/native/. Deps core/.build.ae; publishes the package dir.
+import build
+import std.os
+
+aeb(cap) {
+    b = build.start()
+    build.dep(b, "selenium_core/.build.ae")
+    lib = build.dep_artifact(b, "selenium_core/.build.ae", "shared_lib")
+    root = build._get(b, "root")
+    zdir = "${root}/zig"
+
+    rc = os.system("mkdir -p \"${zdir}/native\" && cp \"${lib}\" \"${zdir}/native/libselenium_core.so\"")
+    if rc != 0 { println("zig package: failed to stage engine .so into zig/native/"); return 1 }
+    build.publish_artifact(b, "package_dir", "${zdir}")
+    println("zig package: staged engine .so into zig/native/ (zig package ready)")
+    return 0
+}

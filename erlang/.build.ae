@@ -1,0 +1,45 @@
+// Erlang owns the canonical Aether Selenium NIF for the WHOLE BEAM family. This
+// node builds it ONCE as the OTP app `selenium_nif` — the C NIF .so + the
+// `selenium_nif` loader module + the idiomatic `selenium` wrapper — into
+// _build/selenium_nif/{ebin,priv}. The Elixir and Gleam bindings consume this
+// same artifact via ERL_LIBS (no second NIF, no copied C source), exactly as the
+// JVM family layers over the one Java jar.
+//
+// Deps the shared engine; the NIF links it and embeds the engine dir as an rpath
+// so it resolves at runtime. The engine dir is derived from the dep's published
+// shared_lib artifact, not hardcoded. erl_nif.h comes from the running OTP root.
+import build
+import std.os
+import std.path
+
+aeb(cap) {
+    b = build.start()
+    build.dep(b, "selenium_core/.build.ae")
+    root = build._get(b, "root")
+    lib = build.dep_artifact(b, "selenium_core/.build.ae", "shared_lib")
+    native = path.dirname(lib)
+    erl = "${root}/erlang"
+    app = "${erl}/_build/selenium_nif"
+
+    mkdirs = os.system("mkdir -p \"${app}/ebin\" \"${app}/priv\"")
+    if mkdirs != 0 { println("erlang: mkdir failed"); return 1 }
+
+    // The C NIF .so (links the engine; rpath the engine dir).
+    mk = "ERTS_INC=$(erl -noshell -eval 'io:format(\"~s/usr/include\",[code:root_dir()]),halt()') && cc -O2 -std=c11 -fPIC -Wno-unused-parameter -I\"$ERTS_INC\" -shared \"${erl}/c_src/selenium_nif.c\" -L\"${native}\" -lselenium_core -Wl,-rpath,\"${native}\" -o \"${app}/priv/selenium_nif.so\""
+    rc = os.system(mk)
+    if rc != 0 { println("erlang: NIF cc failed"); return 1 }
+
+    // The BEAM modules (erlc — no rebar3 needed).
+    rc2 = os.system("erlc -o \"${app}/ebin\" \"${erl}/src/selenium_nif.erl\" \"${erl}/src/selenium.erl\"")
+    if rc2 != 0 { println("erlang: erlc failed"); return 1 }
+
+    // The .app resource so code:priv_dir(selenium_nif) resolves via ERL_LIBS.
+    _cp = os.system("cp \"${erl}/src/selenium_nif.app\" \"${app}/ebin/selenium_nif.app\"")
+
+    // Publish the derived NIF artifact so the BEAM consumers (elixir/gleam) read
+    // it back rather than reconstructing erlang/_build paths.
+    build.publish_artifact(b, "erl_libs", "${erl}/_build")
+    build.publish_artifact(b, "nif_ebin", "${app}/ebin")
+    println("erlang: built selenium_nif OTP app (ebin + priv/selenium_nif.so)")
+    return 0
+}

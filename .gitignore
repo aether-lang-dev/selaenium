@@ -187,3 +187,99 @@ GEMINI.local.md
 # Mempalace
 mempalace.yaml
 entities.json
+
+
+# ===== Aether port (aeb build outputs + bindings) =====
+# aeb build outputs
+/target/
+
+# Engine artifact (built by selenium_core/.build.ae; also staged into bindings)
+/selenium_core/native/*.so
+/selenium_core/native/*.dylib
+/selenium_core/native/*.dll
+
+# Bindings' bundled engine copies (staged by .package.ae)
+/python/selenium_core/native/
+/go/native/
+/ruby/lib/selenium_core/native/
+
+# Ruby packaging
+/ruby/pkg/
+
+# JavaScript
+/javascript/native/
+/javascript/node_modules/
+/javascript/pkgout/
+/javascript/package-lock.json
+
+# Java
+/java/native/
+/java/out/
+/java/pkgout/
+
+# .NET
+/dotnet/**/bin/
+/dotnet/**/obj/
+/dotnet/SeleniumCore/native/
+/dotnet/SeleniumCore/nupkg/
+
+# Rust
+/rust/native/
+/rust/target/
+/rust/Cargo.lock
+/rust/example/target/
+/rust/example/Cargo.lock
+
+# Dart
+/dart/native/
+/dart/.dart_tool/
+/dart/pubspec.lock
+/dart/example/.dart_tool/
+/dart/example/pubspec.lock
+
+# Nim
+/nim/native/
+/nim/nimcache/
+/nim/tests/tffi
+/nim/tests/tlive
+/nim/example/consumer
+
+# Zig
+/zig/native/
+/zig/.zig-cache/
+/zig/zig-out/
+
+# Lua
+/lua/native/
+/lua/selenium_core_native.so
+/lua/lua54
+
+# JVM family (Kotlin/Clojure/Groovy consume the Java jar; compiled output only)
+/kotlin/out/
+/kotlin/jout/
+/clojure/jout/
+/groovy/jout/
+/groovy/gout/
+
+# Haskell
+/haskell/native/
+/haskell/dist-newstyle/
+
+# BEAM family (Erlang owns the shared NIF; Elixir/Gleam ride it)
+/erlang/_build/
+/erlang/erl_crash.dump
+/gleam/build/
+/gleam/manifest.toml
+/elixir/_build/
+/elixir/deps/
+
+# Python packaging + caches
+/python/dist/
+/python/build/
+/python/*.egg-info/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# PHP
+/php/native/

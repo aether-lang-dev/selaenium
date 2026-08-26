@@ -1,0 +1,23 @@
+// Third-party-consumer PACKAGE stage for the Nim binding.
+//
+// Nim consumes selenium_core as a nimble package (source, linked at the
+// consumer's build time). src/selenium_core.nim's {.passL.} links the engine
+// .so from the package's own native/ dir, so the .so must ship inside the
+// package. This stages the freshly-built engine .so into nim/native/.
+// Deps core/.build.ae; publishes the package dir on "package_dir".
+import build
+import std.os
+
+aeb(cap) {
+    b = build.start()
+    build.dep(b, "selenium_core/.build.ae")
+    lib = build.dep_artifact(b, "selenium_core/.build.ae", "shared_lib")
+    root = build._get(b, "root")
+    ndir = "${root}/nim"
+
+    rc = os.system("mkdir -p \"${ndir}/native\" && cp \"${lib}\" \"${ndir}/native/libselenium_core.so\"")
+    if rc != 0 { println("nim package: failed to stage engine .so into nim/native/"); return 1 }
+    build.publish_artifact(b, "package_dir", "${ndir}")
+    println("nim package: staged engine .so into nim/native/ (nimble package ready)")
+    return 0
+}

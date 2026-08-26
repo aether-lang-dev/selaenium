@@ -1,0 +1,33 @@
+// Ruby binding tests (Fiddle). The loader honors SELENIUM_CORE_LIB, which we
+// point at the shared engine artifact this node deps. The tests are minitest
+// (stdlib, no bundler/gems), so we run them directly with `ruby` rather than
+// via aeb's ruby.rspec/bundle path. The live-Chrome spec skips cleanly if
+// chromedriver is absent.
+import build
+import std.os
+
+aeb(cap) {
+    b = build.start()
+    build.dep(b, "selenium_core/.build.ae")
+    lib = build.dep_artifact(b, "selenium_core/.build.ae", "shared_lib")
+    root = build._get(b, "root")
+    rbdir = "${root}/ruby"
+
+    rc = os.system("cd \"${rbdir}\" && SELENIUM_CORE_LIB=\"${lib}\" ruby spec/ffi_test.rb")
+    if rc != 0 {
+        println("ruby tests: ffi_test FAILED")
+        return 1
+    }
+    rc2 = os.system("cd \"${rbdir}\" && SELENIUM_CORE_LIB=\"${lib}\" ruby spec/live_test.rb")
+    if rc2 != 0 {
+        println("ruby tests: live_test FAILED")
+        return 1
+    }
+    rc3 = os.system("cd \"${rbdir}\" && SELENIUM_CORE_LIB=\"${lib}\" ruby spec/surface_test.rb")
+    if rc3 != 0 {
+        println("ruby tests: surface_test FAILED")
+        return 1
+    }
+    println("ruby tests: PASSED (ffi + live + surface)")
+    return 0
+}

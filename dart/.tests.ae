@@ -1,0 +1,29 @@
+// Dart binding tests (dart:ffi). The loader honors SELENIUM_CORE_LIB, which we
+// point at the shared engine artifact this node deps. `dart pub get --offline`
+// then `dart test`. The live test spawns its own out-of-process content server
+// (dart:ffi is synchronous, so an in-isolate server would deadlock) + its own
+// chromedriver, and self-skips if chromedriver is absent. dart is under flutter.
+import build
+import std.os
+
+aeb(cap) {
+    b = build.start()
+    build.dep(b, "selenium_core/.build.ae")
+    lib = build.dep_artifact(b, "selenium_core/.build.ae", "shared_lib")
+    root = build._get(b, "root")
+    ddir = "${root}/dart"
+    dart = "PATH=\"/home/paul/development/flutter/bin:$PATH\""
+
+    pg = os.system("cd \"${ddir}\" && ${dart} dart pub get --offline")
+    if pg != 0 {
+        println("dart tests: pub get failed")
+        return 1
+    }
+    rc = os.system("cd \"${ddir}\" && ${dart} SELENIUM_CORE_LIB=\"${lib}\" dart test test/ffi_test.dart test/live_test.dart")
+    if rc != 0 {
+        println("dart tests: dart test FAILED")
+        return 1
+    }
+    println("dart tests: PASSED (ffi + live+surface)")
+    return 0
+}

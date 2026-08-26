@@ -1,0 +1,45 @@
+// Third-party-consumer PACKAGE stage for the Python binding.
+//
+// Builds the `selenium-core` wheel exactly as a downstream user receives it: the
+// freshly-built engine .so bundled INSIDE the wheel (via setup.py's
+// package_data={'selenium_core': ['native/*.so', ...]}), using the idiomatic
+// `python -m build`. We deliberately do NOT use aeb's python.package builder —
+// it generates/overwrites pyproject.toml from DSL metadata and would drop the
+// native-lib bundling setup.py encodes.
+//
+// Deps core/.build.ae for the engine .so; publishes the built wheel dir on the
+// "wheel_dir" edge, which python/.example.ae consumes.
+import build
+import std.os
+
+aeb(cap) {
+    b = build.start()
+    build.dep(b, "selenium_core/.build.ae")
+    lib = build.dep_artifact(b, "selenium_core/.build.ae", "shared_lib")
+    root = build._get(b, "root")
+    pydir = "${root}/python"
+
+    // 1. Bundle the engine .so into the package tree (what the wheel ships).
+    rc = os.system("mkdir -p \"${pydir}/selenium_core/native\" && cp \"${lib}\" \"${pydir}/selenium_core/native/libselenium_core.so\"")
+    if rc != 0 {
+        println("python package: failed to stage engine .so into selenium_core/native/")
+        return 1
+    }
+
+    // 2. Build the wheel from setup.py (isolated build backend).
+    rc2 = os.system("cd \"${pydir}\" && rm -rf dist build selenium_core.egg-info && python3 -m build --wheel")
+    if rc2 != 0 {
+        println("python package: `python3 -m build --wheel` failed (is python3-build installed?)")
+        return 1
+    }
+
+    // 3. Publish the dist/ dir (holds exactly one wheel — dist was wiped above).
+    rc3 = os.system("ls \"${pydir}/dist\"/*.whl >/dev/null 2>&1")
+    if rc3 != 0 {
+        println("python package: no wheel produced under python/dist/")
+        return 1
+    }
+    build.publish_artifact(b, "wheel_dir", "${pydir}/dist")
+    println("python package: built wheel with engine .so bundled → python/dist/")
+    return 0
+}

@@ -80,10 +80,10 @@ Bazel working for the rest until each is proven. Ordered by tractability:
 1. **Python** (2 BUILD files, aeb has a python SDK). *But* it pulls
    `generate_bidi`/`generate_devtools` (codegen) + `py_wheel` (publish). Do the
    codegen as an aeb `regen`-shelled generator; wheel via `setup.py`/`build`
-   (like the `aether/python` consumer layer already does). **First milestone:
+   (like the `python` consumer layer already does). **First milestone:
    `aeb py/.build.ae` produces the same wheel Bazel does, byte-comparable.**
 2. **Ruby** (18 files) — `rb_library` → aeb `ruby` SDK; gem build already proven
-   in `aether/ruby`.
+   in `ruby`.
 3. **Rust / Selenium Manager** (3 files) — aeb `rust` SDK; a self-contained cargo
    crate, the cleanest corner.
 4. **.NET** (10 files) — aeb `dotnet` SDK; NuGet publish is the gap.
@@ -148,7 +148,7 @@ than the smallest self-contained corner promised. Two ways forward:
 - **P-B (migrate a truly self-contained corner first):** do **Rust / Selenium
   Manager** as the actual pathfinder (a standalone cargo crate, 3 BUILD files,
   no codegen, no cross-tree deps — aeb `rust` SDK already proven in
-  `aether/rust`), then return to Python with the codegen story worked out.
+  `rust`), then return to Python with the codegen story worked out.
 
 ## Rust / Selenium Manager pathfinder — DONE (build+test parity under aeb)
 

@@ -1,5 +1,0 @@
-exports_files([
-    "nuget/README.md",
-    "nuget/build/Selenium.WebDriver.props",
-    "nuget/buildTransitive/Selenium.WebDriver.props",
-])

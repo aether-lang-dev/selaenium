@@ -1,0 +1,83 @@
+import build
+import std.string
+import std.io
+import std.os
+import std.file
+import std.fs
+import std.list
+import std.map
+import std.path
+import std.dir
+
+extern exit(code: int)
+
+extern ae_D_tests_D_ae(s: ptr) -> int
+
+main() {
+    s = build.session(aether_args_get(1))
+    _root = aether_args_get(1)
+    _sel = string.concat("", "")
+    if aether_args_count() > 2 { _sel = aether_args_get(2) }
+    _records = list.new()
+    _session_start = clock_ns()
+    _run = 0
+    if string.length(_sel) == 0 { _run = 1 }
+    if string.equals(_sel, "tests:.") == 1 { _run = 1 }
+    if _run == 1 {
+    _start = clock_ns()
+    ae_D_tests_D_ae(s)
+    build.done(s, "tests:.")
+    _end = clock_ns()
+    _rec = map.new()
+    map.put(_rec, "label", "tests:.")
+    map.put(_rec, "type", "tests")
+    map.put(_rec, "wall_ms", string.from_int((_end - _start) / 1000000))
+    _st = build.status_of(s, "tests:.")
+    if string.length(_st) == 0 { _st = "passed" }
+    map.put(_rec, "status", _st)
+    _rc = "0"
+    if string.equals(_st, "failed") == 1 { _rc = "1" }
+    map.put(_rec, "rc", _rc)
+    _td = build._label_to_target_dir(_root, "tests:.")
+    map.put(_rec, "cache", build._read_cache_outcome(_td))
+    _tp, _tf, _tsk, _thr = build._read_test_result(_td)
+    if _thr == 1 {
+        map.put(_rec, "test_passed", string.from_int(_tp))
+        map.put(_rec, "test_failed", string.from_int(_tf))
+        map.put(_rec, "test_skipped", string.from_int(_tsk))
+        map.put(_rec, "test_has_report", string.from_int(build._read_test_report_flag(_td)))
+    }
+    _tfn = build._read_test_failures(_td)
+    if string.length(_tfn) > 0 {
+        map.put(_rec, "test_failed_names", _tfn)
+    }
+    list.add(_records, _rec)
+    }
+    _session_end = clock_ns()
+    _total_ms = (_session_end - _session_start) / 1000000
+    if string.length(_sel) == 0 {
+    _telemetry_json = os.getenv("AEB_TELEMETRY_JSON")
+    if string.length(_telemetry_json) > 0 {
+        _tj_dir = path.dirname(_telemetry_json)
+        if string.length(_tj_dir) > 0 { build._mkdirs(_tj_dir) }
+        _tj_body = build.render_telemetry_json(_records, _total_ms)
+        _tj_err = fs.write_atomic(_telemetry_json, _tj_body, string.length(_tj_body))
+    }
+    _tests_json = os.getenv("AEB_TESTS_JSON")
+    if string.length(_tests_json) > 0 {
+        _testj_dir = path.dirname(_tests_json)
+        if string.length(_testj_dir) > 0 { build._mkdirs(_testj_dir) }
+        _testj_body = build.render_tests_json(_records)
+        _testj_err = fs.write_atomic(_tests_json, _testj_body, string.length(_testj_body))
+    }
+    _artifacts_json = os.getenv("AEB_ARTIFACTS_JSON")
+    if string.length(_artifacts_json) > 0 {
+        _artj_dir = path.dirname(_artifacts_json)
+        if string.length(_artj_dir) > 0 { build._mkdirs(_artj_dir) }
+        _artj_body = build.render_artifacts_json(_root, _records)
+        _artj_err = fs.write_atomic(_artifacts_json, _artj_body, string.length(_artj_body))
+    }
+    println(build.render_telemetry(_records, _total_ms))
+    }
+    if build.any_failed(s) == 1 { exit(1) }
+}

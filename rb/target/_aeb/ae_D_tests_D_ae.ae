@@ -1,0 +1,42 @@
+import std.string
+import std.io
+import std.file
+import std.fs
+import std.list
+import std.map
+import std.path
+import std.dir
+// aeb tests for the Ruby binding — the RSpec UNIT specs (spec/unit/), matching
+// the old Bazel //rb/spec/unit:unit rb_test target. Integration specs drive real
+// browsers and were a separate, browser-gated target — out of scope for
+// build+test parity.
+//
+// Reproduces off Bazel, in order: (1) stage LICENSE+NOTICE from the repo root
+// into rb/ (Bazel copy_file; the gemspec file list references them); (2) bundle
+// install (so erb/json/rspec are in scope); (3) CDP devtools codegen
+// (generate-devtools.sh: .pdl -> .json -> vNNN.rb) which one unit spec requires
+// at load time — its generated_note.rb was de-Bazelized (repo-relative template
+// fallback, no bazel/runfiles). Needs Ruby >= 3.3; verified on 3.4.
+//
+// NOTE: ${root} here is the rb/ dir (aeb project root when run from rb/); the
+// repo root is ${root}/.. .
+import build
+import ruby
+import ruby (rspec_arg)
+import std.os
+
+ae_D_tests_D_ae(s: ptr) {
+    b = build.begin(s, "tests:.")
+    if b == 0 { return 0 }
+    root = build._get(b, "root")
+    s1 = os.system("cp ${root}/../LICENSE ${root}/../NOTICE ${root}/")
+    if s1 != 0 { println("rb tests: staging LICENSE/NOTICE failed"); return 1 }
+    s2 = os.system("cd ${root} && bundle config set --local with development >/dev/null 2>&1; bundle install >/dev/null 2>&1")
+    if s2 != 0 { println("rb tests: bundle install failed"); return 1 }
+    s3 = os.system("cd ${root} && bash generate-devtools.sh")
+    if s3 != 0 { println("rb tests: devtools codegen failed"); return 1 }
+    ruby.rspec(b) {
+        rspec_arg("spec/unit/")
+    }
+    return 0
+}

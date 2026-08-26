@@ -1,0 +1,25 @@
+// Pure-Aether engine probe — compiles selenium_core/tests/probe.ae against the
+// LOCAL selenium_core module (selenium_core/selenium_core.ae) and runs it.
+// Proves the shared protocol logic (route table, path templating, By
+// normalization, error map) with no browser and no FFI. The live-browser
+// end-to-end test lives in the per-binding suites (e.g. python/.tests.ae).
+import build
+import std.os
+
+aeb(cap) {
+    b = build.start()
+    root = build._get(b, "root")
+    bin = "${root}/target/selenium_core_probe"
+    rc = os.system("cd \"${root}\" && ae build --with=net selenium_core/tests/probe.ae --lib selenium_core -o \"${bin}\"")
+    if rc != 0 {
+        println("selenium_core probe: failed to build")
+        return 1
+    }
+    rc2 = os.system("\"${bin}\"")
+    if rc2 != 0 {
+        println("selenium_core probe: engine probe FAILED")
+        return 1
+    }
+    println("selenium_core probe: engine probe passed")
+    return 0
+}
