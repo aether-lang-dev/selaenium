@@ -1,0 +1,17 @@
+// aeb tests for Selenium Manager — the Rust library unit tests, matching the
+// old Bazel `:unit` target (rust_test with crate = ":selenium_manager", which
+// runs the library's #[test]s). `--lib` restricts cargo to the lib unit tests,
+// not the integration tests under rust/tests/ (those drive real browsers/network
+// and were a separate, browser-gated Bazel target).
+import build
+import rust
+import rust (extra)
+
+aeb(cap) {
+    b = build.start()
+    build.dep(b, ".build.ae")
+    rust.cargo_test_existing(b) {
+        extra("--lib")
+    }
+    return 0
+}

@@ -1,0 +1,25 @@
+// aeb build for Selenium Manager (the Rust CLI that manages browser/driver
+// binaries for Selenium). This is the first tree migrated off Bazel to
+// idiomatic aeb (see aether/BAZEL_TO_AEB_MIGRATION.md — the Rust pathfinder).
+//
+// Selenium Manager already ships a plain Cargo.toml + Cargo.lock; the old Bazel
+// rust_binary/rust_library targets were thin wrappers over standard cargo. So
+// the aeb build is: cargo build against the EXISTING manifest (never
+// regenerate it) and publish the produced binary on the `cargo_binary` artifact
+// edge for downstream consumers (the client bindings' Selenium Manager step).
+//
+// Toolchain: aeb selects whatever `cargo`/`rustc` is on PATH (rustc >= 1.85 for
+// edition 2024). Bazel pinned the toolchain; this is the documented aeb
+// divergence (PATH-selected, not hermetic).
+import build
+import rust
+import rust (binary_name)
+
+aeb(cap) {
+    b = build.start()
+    // Build the selenium-manager binary from the upstream Cargo.toml in this dir.
+    rust.cargo_project_existing(b) {
+        binary_name("selenium-manager")
+    }
+    return 0
+}

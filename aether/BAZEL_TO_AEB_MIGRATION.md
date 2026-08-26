@@ -150,6 +150,37 @@ than the smallest self-contained corner promised. Two ways forward:
   no codegen, no cross-tree deps — aeb `rust` SDK already proven in
   `aether/rust`), then return to Python with the codegen story worked out.
 
+## Rust / Selenium Manager pathfinder — DONE (build+test parity under aeb)
+
+Landed 2026-08-26. Selenium Manager now builds and tests under aeb, no Bazel:
+
+- `rust/.build.ae` → `rust.cargo_project_existing(b) { binary_name("selenium-manager") }`
+  builds the binary against the **existing** Cargo.toml/Cargo.lock (never
+  regenerates), and publishes it on the `cargo_binary` artifact edge. Verified:
+  `selenium-manager 0.4.48-nightly` runs.
+- `rust/.tests.ae` → `rust.cargo_test_existing(b) { extra("--lib") }` runs the
+  library unit tests — **45 passed** — matching the old Bazel `:unit` target
+  (`--lib` = lib unit tests only, not the browser/network integration tests
+  under `rust/tests/`).
+
+**aeb feature driven upstream:** the rust SDK's `cargo_build_cmd`/`cargo_test_cmd`
+already *read* an `"extra"` option but had no **setter** for it — so `--lib`
+couldn't be passed. Added an `extra(args)` setter to `aeb/lib/rust/module.ae`
+(mirrors `jobs`/`features`). This is exactly the "drive aeb feature development"
+the directive calls for. (Committed to the aeb repo separately; the installed
+SDK at `~/.local/share/aeb/lib` was patched to match.)
+
+### The deletion-order rule this surfaced (important)
+
+You **cannot delete a tree's BUILD.bazel until every Bazel target that depends
+on it is also off Bazel** — else the remaining Bazel build breaks. `//rust:*` is
+consumed by `//common/manager` (the manager binary) and `//py` (srcs), so
+**rust's BUILD files stay until common/manager + py are migrated (or Bazel is
+gone entirely).** aeb building the tree and *deleting* its Bazel files are two
+separate milestones; the deletion is bottom-up (leaves with no Bazel dependents
+first). Concretely: aeb `.build.ae`/`.tests.ae` land NOW and coexist with Bazel;
+the `rm BUILD.bazel` happens at the end, per reverse-dependency order.
+
 ## Recommendation
 
 Start with **Python as a pathfinder** (smallest tree that still exercises the
