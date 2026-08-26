@@ -16,6 +16,46 @@ driver/Grid all live in `selenium_core/selenium_core.ae`. A binding opens a sess
 issues commands by name with JSON params, reads back the result value or a typed
 error, and closes. Anything smarter than marshalling belongs in `selenium_core/`.
 
+## Bindings
+
+Eighteen language bindings drive the byte-identical `libselenium_core.so`.
+Classic Selenium shipped five official clients (Java, Python, Ruby, JavaScript,
+.NET), each a full reimplementation of the protocol. Here all five are re-glued
+as thin FFI layers over the shared engine — and thirteen new languages come
+along, several of them essentially free: the three BEAM languages share one
+Erlang NIF, and the three extra JVM languages share one Java FFM jar.
+
+### New languages (13 — not in classic Selenium)
+
+| Language | FFI mechanism                          |
+|----------|----------------------------------------|
+| Go       | cgo (link-time)                        |
+| Rust     | `extern "C"` + `build.rs` (link-time)  |
+| Dart     | `dart:ffi`                             |
+| Erlang   | Erlang NIF                             |
+| Elixir   | rides the Erlang NIF (BEAM)            |
+| Gleam    | rides the Erlang NIF (BEAM)            |
+| Nim      | `importc` (link-time)                  |
+| Zig      | `@extern` (link-time)                  |
+| Lua      | Lua 5.4 C extension                    |
+| Kotlin   | JVM interop over the Java FFM jar      |
+| Clojure  | JVM interop over the Java FFM jar      |
+| Groovy   | JVM interop over the Java FFM jar      |
+| Haskell  | `foreign import ccall` (link-time)     |
+
+### Carried over from classic (5 — now thin FFI bindings)
+
+| Language          | FFI mechanism                        |
+|-------------------|--------------------------------------|
+| Java              | Panama FFM (`java.lang.foreign`)     |
+| Python            | ctypes (runtime load)                |
+| Ruby              | Fiddle (runtime load)                |
+| JavaScript (Node) | koffi / N-API (runtime load)         |
+| .NET (C#)         | P/Invoke                             |
+
+Twelve distinct FFI mechanisms in all — the BEAM three share the NIF and the
+JVM family shares the jar, so one engine reaches eighteen languages.
+
 ## Layout
 
 ```
