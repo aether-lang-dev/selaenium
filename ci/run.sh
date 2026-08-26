@@ -55,29 +55,53 @@ echo "=================================================================="
 # Always (re)build the engine first — every binding deps its .so.
 aeb selenium_core/.build.ae >/dev/null 2>&1 || { echo "ci/run: FATAL — engine build failed"; aeb selenium_core/.build.ae; exit 1; }
 
+# Fresh per-node logs each run, so the summary can't read a stale FAILED.
+rm -rf target/.aeb/logs 2>/dev/null || true
+
 LOG="$(mktemp)"
 trap 'rm -f "$LOG"' EXIT
 aeb "$TARGET" 2>&1 | tee "$LOG"
 RC="${PIPESTATUS[0]}"
 
+# IMPORTANT: aeb currently does NOT propagate a node's non-zero return to its own
+# exit code (a failing .tests.ae still lets `aeb` exit 0 — filed as REQUEST 4 in
+# ~/scm/aeb/selenium-porting-needs-for-aeb.md). So we do NOT trust RC alone: we
+# scan every per-node log for a FAILED marker and fail the run ourselves. This
+# keeps the gate honest today; once aeb propagates, RC becomes sufficient and
+# this stays as belt-and-suspenders.
+LOGDIR="target/.aeb/logs"
+FAILS=""
+SKIPS=""
+if [ -d "$LOGDIR" ]; then
+  # A node marks failure by printing "<name> ... FAILED" (see the .tests.ae
+  # nodes). SKIPPED (toolchain/driver absent) is green and only listed.
+  FAILS="$(grep -rliE '(tests|example|package|build)[^:]*: .*FAILED|: FAILED' "$LOGDIR" 2>/dev/null || true)"
+  SKIPS="$(grep -riE 'SKIPPED' "$LOGDIR" 2>/dev/null || true)"
+fi
+
 echo
 echo "------------------------------- summary --------------------------"
-# Node self-reports carry these markers in their stdout (captured above and in
-# target/.aeb/logs/*). Count them for an at-a-glance executed/skipped/failed view.
-ran=$(grep -ciE 'PASS(ED)?[:) ]|green|examples,' "$LOG" || true)
-skipped=$(grep -ciE 'SKIPPED' "$LOG" || true)
-failed=$(grep -ciE 'FAIL(ED)?[: ]' "$LOG" || true)
-printf '  executed/green markers : %s\n' "$ran"
-printf '  skipped (toolchain gap): %s\n' "$skipped"
-printf '  failure markers        : %s\n' "$failed"
-if grep -qiE 'SKIPPED' "$LOG"; then
-  echo "  --- skipped nodes (verify these on a box with the toolchain) ---"
-  grep -iE 'SKIPPED' "$LOG" | sed 's/^/    /' | head -30
+node_logs=$(find "$LOGDIR" -name '*.log' 2>/dev/null | wc -l | tr -d ' ')
+fail_ct=$(printf '%s' "$FAILS" | grep -c . || true)
+skip_ct=$(printf '%s' "$SKIPS" | grep -c . || true)
+printf '  node logs written : %s\n' "$node_logs"
+printf '  failed nodes      : %s\n' "$fail_ct"
+printf '  skip markers      : %s (toolchain/driver absent — green, verify elsewhere)\n' "$skip_ct"
+if [ -n "$SKIPS" ]; then
+  echo "  --- skips ---"
+  printf '%s\n' "$SKIPS" | sed 's/^/    /' | head -30
+fi
+if [ -n "$FAILS" ]; then
+  echo "  --- FAILED nodes (log → offending line) ---"
+  for f in $FAILS; do
+    echo "    $f:"
+    grep -iE 'FAILED|Error|No module|not found' "$f" | sed 's/^/      /' | head -4
+  done
 fi
 echo "------------------------------------------------------------------"
 
-if [ "$RC" -ne 0 ]; then
-  echo "ci/run: FAILED (aeb exit $RC)"
-  exit "$RC"
+if [ "$RC" -ne 0 ] || [ -n "$FAILS" ]; then
+  echo "ci/run: FAILED (aeb exit $RC; failed node logs: ${fail_ct})"
+  exit 1
 fi
-echo "ci/run: GREEN (aeb exit 0)"
+echo "ci/run: GREEN (all nodes passed or skipped)"

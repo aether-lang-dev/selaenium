@@ -6,6 +6,8 @@
 // actions, screenshots). The live scripts self-skip (exit 0) if chromedriver is
 // absent. We run them directly (they are main() scripts, not pytest cases) and
 // disable pytest's plugin autoload to dodge the box's broken anyio plugin chain.
+// SKIPS LOUDLY if python3 or pytest is unavailable (matches php's convention;
+// a missing test runner is an under-provisioned box, not a binding failure).
 import build
 import std.os
 
@@ -16,6 +18,12 @@ aeb(cap) {
     root = build._get(b, "root")
     pydir = "${root}/python"
     envp = "SELENIUM_CORE_LIB=\"${lib}\" PYTEST_DISABLE_PLUGIN_AUTOLOAD=1"
+
+    have = os.system("command -v python3 >/dev/null 2>&1 && python3 -c 'import pytest' >/dev/null 2>&1")
+    if have != 0 {
+        println("python tests: SKIPPED — python3 with pytest not available")
+        return 0
+    }
 
     rc = os.system("cd \"${pydir}\" && ${envp} python3 -m pytest -q test/test_ffi.py")
     if rc != 0 {

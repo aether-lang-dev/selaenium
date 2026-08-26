@@ -1,8 +1,9 @@
 // Ruby binding tests (Fiddle). The loader honors SELENIUM_CORE_LIB, which we
-// point at the shared engine artifact this node deps. The tests are minitest
-// (stdlib, no bundler/gems), so we run them directly with `ruby` rather than
-// via aeb's ruby.rspec/bundle path. The live-Chrome spec skips cleanly if
-// chromedriver is absent.
+// point at the shared engine artifact this node deps. The tests are minitest,
+// so we run them directly with `ruby` rather than via aeb's ruby.rspec/bundle
+// path. The live-Chrome spec skips cleanly if chromedriver is absent.
+// SKIPS LOUDLY if ruby or the minitest gem is unavailable (a missing test
+// runner is an under-provisioned box, not a binding failure — matches php).
 import build
 import std.os
 
@@ -12,6 +13,12 @@ aeb(cap) {
     lib = build.dep_artifact(b, "selenium_core/.build.ae", "shared_lib")
     root = build._get(b, "root")
     rbdir = "${root}/ruby"
+
+    have = os.system("command -v ruby >/dev/null 2>&1 && ruby -e 'require \"minitest/autorun\"' >/dev/null 2>&1")
+    if have != 0 {
+        println("ruby tests: SKIPPED — ruby with minitest not available")
+        return 0
+    }
 
     rc = os.system("cd \"${rbdir}\" && SELENIUM_CORE_LIB=\"${lib}\" ruby spec/ffi_test.rb")
     if rc != 0 {
