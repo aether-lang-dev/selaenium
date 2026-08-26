@@ -2,6 +2,10 @@
 
 Design notes for the Selenium-on-Aether port.
 
+- **[Architecture](./Architecture.md)** — what the repo is: one pure-Aether
+  engine + 18 thin FFI bindings, aeb not Bazel, why a reboot rather than a
+  migration, and the remaining capability gaps vs classic.
+
 ## WASM binding — three parked directions
 
 The pure-Aether engine can compile to `wasm32` and run in a browser tab. Because
