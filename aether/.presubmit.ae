@@ -23,6 +23,7 @@ aeb(cap) {
     build.dep(b, "nim/.tests.ae")
     build.dep(b, "zig/.tests.ae")
     build.dep(b, "lua/.tests.ae")
+    build.dep(b, "php/.tests.ae")
     // JVM family: Kotlin + Clojure consume the ONE Java FFM jar over JVM interop
     // (no second FFI). They need a JVM-24-capable toolchain: Kotlin >= 1.9 (a
     // modern kotlinc, not Debian's 1.3) and clojure; each skips green otherwise.

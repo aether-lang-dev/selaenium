@@ -1,0 +1,35 @@
+// PHP binding tests (ext-ffi). The FFI binding loads libselenium_core.so via
+// FFI::cdef; the loader honors SELENIUM_CORE_LIB, which we point at the shared
+// engine artifact this node deps. PHP's ext-ffi must be enabled (it ships in
+// the arch php package as ffi.so but is off by default), so we pass
+// -d extension=ffi -d ffi.enable=1. The live test self-skips if chromedriver is
+// absent. SKIPS LOUDLY if php or the ffi module is unavailable.
+import build
+import std.os
+
+aeb(cap) {
+    b = build.start()
+    build.dep(b, "core/.build.ae")
+    lib = build.dep_artifact(b, "core/.build.ae", "shared_lib")
+    root = build._get(b, "root")
+    pdir = "${root}/php"
+    php = "php -d extension=ffi -d ffi.enable=1"
+
+    have = os.system("command -v php >/dev/null 2>&1 && php -d extension=ffi -d ffi.enable=1 -r 'exit(class_exists(\"FFI\")?0:1);' >/dev/null 2>&1")
+    if have != 0 {
+        println("php tests: SKIPPED — php with ext-ffi not available")
+        return 0
+    }
+    rc = os.system("cd \"${pdir}\" && SELENIUM_CORE_LIB=\"${lib}\" ${php} test/ffi_test.php")
+    if rc != 0 {
+        println("php tests: ffi_test FAILED")
+        return 1
+    }
+    rc2 = os.system("cd \"${pdir}\" && SELENIUM_CORE_LIB=\"${lib}\" ${php} test/live_test.php")
+    if rc2 != 0 {
+        println("php tests: live_test FAILED")
+        return 1
+    }
+    println("php tests: PASSED (ffi + live+surface)")
+    return 0
+}

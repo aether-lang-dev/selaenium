@@ -88,3 +88,6 @@
 __pycache__/
 *.pyc
 .pytest_cache/
+
+# PHP
+/php/native/
