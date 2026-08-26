@@ -181,6 +181,45 @@ separate milestones; the deletion is bottom-up (leaves with no Bazel dependents
 first). Concretely: aeb `.build.ae`/`.tests.ae` land NOW and coexist with Bazel;
 the `rm BUILD.bazel` happens at the end, per reverse-dependency order.
 
+## Ruby tree — reconnaissance (2026-08-26)
+
+Next after Rust (aeb sibling's pick — the `ruby` SDK has only seen a synthetic
+gemspec). Findings:
+
+- **18 BUILD files**; rules `rb_library` ×27, `rb_binary` ×11, `rb_test` /
+  `rb_integration_test`, `copy_file` ×11, `filegroup`, `rb_gem_push` ×4 (publish
+  — out of scope). **No reverse-dep blocker:** the `//rb:*` refs from other trees
+  are `visibility` grants (`__pkg__`/`__subpackages__`), not build deps — so
+  rb's BUILD files can be deleted once rb is off Bazel, unlike rust.
+- **Codegen is LOCAL and isolated to the separate `selenium-devtools` gem.** The
+  CDP generator is a plain Ruby script (`support/cdp_client_generator.rb` +
+  `.erb` templates) over the in-tree `common/devtools` `.pdl` files — no
+  web-fetched CDDL, no cross-tree JS schema (unlike Python). And the **main
+  `selenium-webdriver` gemspec doesn't reference devtools at all** — so the main
+  gem's build+test is codegen-free; only `selenium-devtools` needs the generator.
+
+Two obstacles for build+test parity **on this box** (neither fatal, but they
+shape the milestone):
+
+1. **Ruby version.** The gemspec declares `required_ruby_version >= 3.3`; this
+   box has **3.1.2**, and there's no newer ruby (rbenv/rvm/sdkman) here. Same
+   class as kotlin-1.3 / groovy-2.4: the binding is fine, the box is
+   under-provisioned. Options: (a) get the aeb build to the point of
+   staging+`gem build` and **skip-loudly** on the 3.3 gate here, verifying on a
+   3.3+ box (catchyos); or (b) do it wherever a 3.3 ruby is.
+2. **File staging.** `gem build` is NOT a clean one-shot from the source tree:
+   LICENSE/NOTICE live at the repo ROOT and Bazel copies them into `rb/` via
+   `copy_file` (the gemspec's file list expects them present), plus the
+   selenium-manager third-party notices. aeb must reproduce that staging (aeb
+   `copy` + then `ruby.gem`) before the gem builds. Straightforward, but it means
+   the rb `.build.ae` is stage-then-build, not a bare `gem build`.
+
+**Shape of the rb aeb build:** `rb/.build.ae` = stage the root LICENSE/NOTICE
+(+ manager notices) into rb/, then `ruby` SDK gem build; `rb/.tests.ae` = rspec
+unit specs (`rb/spec/unit`, the `rb_test` target — integration specs drive real
+browsers and were separately gated). The devtools codegen is a second node only
+if we also migrate the `selenium-devtools` gem.
+
 ## Recommendation
 
 Start with **Python as a pathfinder** (smallest tree that still exercises the
