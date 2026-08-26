@@ -111,6 +111,45 @@ coexist during the transition (aeb ignores BUILD.bazel; Bazel ignores .build.ae)
   divergence), or is hermeticity a requirement (which aeb does not do today)?
 - **Order.** Agree with "Python first as the pathfinder," or start elsewhere?
 
+## Python tree — concrete findings (traced 2026-08-26)
+
+Decisions locked: **build+test parity** (no publish); **Python first**; the JS
+Closure atoms get a **feature request to the aeb sibling**, not a local hack.
+
+The Python package is **NOT source-complete** — three code generators run at
+build time and their output is never committed (`git ls-files
+py/.../devtools/` → 0). Reproducing them is the core of the Python migration.
+All three generators are **plain Python scripts** (`py/generate.py`,
+`py/generate_bidi.py`, `py/generate_bidi_protocol.py`), which aeb can shell to
+via `regen(...)` — the mechanism is easy. The inputs are the issue:
+
+1. **DevTools / CDP client** (`generate_devtools`): `python generate.py
+   <browser_protocol.pdl> <js_protocol.pdl> <outdir>`, once per
+   `BROWSER_VERSIONS` (v150/v151/v152). Inputs are **checked in**
+   (`common/devtools/chromium/vNNN/*.pdl`). ✅ Fully local, straightforward.
+2. **BiDi client** (`generate_bidi`): needs **web-fetched CDDL specs** from
+   w3c/webref at a pinned commit (`webdriver_bidi_all_cddl`, `permissions_…`,
+   `prefetch_…`, `ua_client_hints_…`, `web_bluetooth_…`) plus local enhancement
+   scripts. ⚠️ Network inputs (Bazel's `http_file`); no bazel cache on this box.
+3. **Internal `_bidi` protocol** (`generate_bidi_protocol`): generates from
+   `//javascript/selenium-webdriver:create-bidi-src_schema` — a **schema built by
+   the JavaScript tree's** BiDi generator. ⚠️ Cross-tree dependency: Python's
+   build is not self-contained; it needs a JS-tree codegen artifact.
+
+**Consequence for the pathfinder choice:** "Python first" is entangled — (2)
+needs a spec-fetch story and (3) drags in the javascript/ tree. That is more
+than the smallest self-contained corner promised. Two ways forward:
+
+- **P-A (vendor the specs):** pin + check in the fetched CDDL specs and the
+  JS-produced BiDi schema as committed inputs (a `scripts/update_cddl`-style
+  repin already exists on the Bazel side), so `aeb py/.build.ae` runs fully
+  offline against in-tree inputs. Cleanest for a PATH-based, non-hermetic aeb
+  build; decouples Python from the JS tree for the build.
+- **P-B (migrate a truly self-contained corner first):** do **Rust / Selenium
+  Manager** as the actual pathfinder (a standalone cargo crate, 3 BUILD files,
+  no codegen, no cross-tree deps — aeb `rust` SDK already proven in
+  `aether/rust`), then return to Python with the codegen story worked out.
+
 ## Recommendation
 
 Start with **Python as a pathfinder** (smallest tree that still exercises the
