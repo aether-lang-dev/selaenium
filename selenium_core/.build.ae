@@ -1,15 +1,16 @@
 // The shared Selenium WebDriver engine, built ONCE for the whole monorepo.
 //
-// Output: core/native/libselenium_core.so — every binding's .tests.ae deps
-// this node and then loads (ctypes/Fiddle/koffi/FFM) or links (cgo/NIF) that
-// single artifact via SELENIUM_CORE_LIB.
+// Output: selenium_core/native/libselenium_core.so — every binding's .tests.ae
+// deps this node and then loads (ctypes/Fiddle/koffi/FFM) or links (cgo/NIF)
+// that single artifact via SELENIUM_CORE_LIB.
 //
-// Source: core/embed.ae (the aether_sel_embed_* C ABI) imports the local
-// `selenium_core` module (core/selenium_core.ae) — the WHOLE protocol runtime
-// (command catalog, W3C route table, path templating, By/capabilities
-// normalization, W3C error decode, and the HTTP round-trip) is PURE AETHER.
-// The only C left is core/_embed_strdup.c (~15 lines): the caller-owned-string
-// bridge, linked via `--extra`. The engine uses std.http.client (--with=net).
+// Source: selenium_core/embed.ae (the aether_sel_embed_* C ABI) imports the
+// local `selenium_core` module (selenium_core/selenium_core.ae) — the WHOLE
+// protocol runtime (command catalog, W3C route table, path templating,
+// By/capabilities normalization, W3C error decode, and the HTTP round-trip) is
+// PURE AETHER. The only C left is selenium_core/_embed_strdup.c (~15 lines): the
+// caller-owned-string bridge, linked via `--extra`. The engine uses
+// std.http.client (--with=net).
 
 import build
 import std.os
@@ -17,14 +18,14 @@ import std.os
 aeb(cap) {
     b = build.start()
     root = build._get(b, "root")
-    dest = "${root}/core/native"
+    dest = "${root}/selenium_core/native"
     _m = os.system("mkdir -p \"${dest}\"")
-    rc = os.system("cd \"${root}/core\" && ae build --emit=lib --with=net embed.ae --extra _embed_strdup.c -o \"${dest}/libselenium_core.so\"")
+    rc = os.system("cd \"${root}/selenium_core\" && ae build --emit=lib --with=net embed.ae --extra _embed_strdup.c -o \"${dest}/libselenium_core.so\"")
     if rc != 0 {
-        println("engine: failed to build libselenium_core.so from core")
+        println("engine: failed to build libselenium_core.so from selenium_core")
         return 1
     }
-    println("engine: built core/native/libselenium_core.so")
+    println("engine: built selenium_core/native/libselenium_core.so")
     build.publish_artifact(b, "shared_lib", "${dest}/libselenium_core.so")
     return 0
 }

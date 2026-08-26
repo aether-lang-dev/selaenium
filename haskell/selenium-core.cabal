@@ -7,9 +7,12 @@ author:             Paul Hammant
 build-type:         Simple
 
 -- This binding LINKS the engine rather than dlopen'ing it, so
--- libselenium_core.so must exist at BUILD time. haskell/.tests.ae stages the
--- artifact into haskell/native/ before invoking the compiler; ../core/native is
--- the in-tree monorepo path. Both are on the lib path and baked in as rpath.
+-- libselenium_core.so must exist at BUILD time. The .so's directory and the
+-- rpath are supplied on the cabal command line by haskell/run-tests.sh
+-- (--extra-lib-dirs=<abs dir> and --ghc-options=-optl-Wl,-rpath,<abs dir>):
+-- cabal 2.4/9.10 rejects a bare relative extra-lib-dirs at the register step
+-- and does not expand ${pkgroot} at configure time, so absolute paths passed by
+-- the harness are the portable choice. Only the library NAME lives here.
 
 library
   hs-source-dirs:   src
@@ -19,11 +22,7 @@ library
                   , bytestring >=0.10 && <0.13
   default-language: Haskell2010
   ghc-options:      -Wall
-  extra-lib-dirs:   native
   extra-libraries:  selenium_core
-  -- ld-options is a whitespace-separated token list (unlike the comma list
-  -- extra-lib-dirs is). Each -Wl,... reaches the linker verbatim for the rpath.
-  ld-options:       -Wl,-rpath,native -Wl,-rpath,../core/native
 
 test-suite live
   type:             exitcode-stdio-1.0
@@ -33,6 +32,4 @@ test-suite live
                   , selenium-core
   default-language: Haskell2010
   ghc-options:      -threaded -rtsopts
-  extra-lib-dirs:   native
   extra-libraries:  selenium_core
-  ld-options:       -Wl,-rpath,native -Wl,-rpath,../core/native

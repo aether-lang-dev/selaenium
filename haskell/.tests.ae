@@ -14,7 +14,7 @@ aeb(cap) {
     root = build._get(b, "root")
     hdir = "${root}/haskell"
 
-    rc = os.system("bash \"${hdir}/run-tests.sh\" \"${lib}\"")
+    rc = os.system("SELENIUM_CORE_LIB=\"${lib}\" bash \"${hdir}/run-tests.sh\" \"${lib}\"")
     if rc != 0 {
         println("haskell tests: FAILED")
         return 1

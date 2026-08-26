@@ -5,7 +5,7 @@
 # is not installed. Args: <engine .so path>
 set -u
 HERE="$(cd "$(dirname "$0")" && pwd)"
-ENGINE="${1:?}"
+ENGINE="${1:-${SELENIUM_CORE_LIB:?need engine .so via arg or SELENIUM_CORE_LIB}}"
 
 if ! command -v cabal >/dev/null 2>&1 || ! command -v ghc >/dev/null 2>&1; then
   echo "haskell tests: SKIPPED — GHC/cabal not on PATH (authored here, verify on a box with GHC)"
@@ -16,9 +16,22 @@ fi
 mkdir -p "$HERE/native"
 cp "$ENGINE" "$HERE/native/libselenium_core.so"
 
+# The engine .so lives in two candidate dirs: the staged copy under
+# $HERE/native and the in-tree build output next to $ENGINE. cabal 9.10 rejects
+# a bare relative extra-lib-dirs and won't expand ${pkgroot} at configure time,
+# so we pass both dirs (absolute) and their rpaths on the command line.
+ENGINE_DIR="$(cd "$(dirname "$ENGINE")" && pwd)"
+NATIVE_DIR="$HERE/native"
+CABAL_LIBFLAGS=(
+  --extra-lib-dirs="$NATIVE_DIR"
+  --extra-lib-dirs="$ENGINE_DIR"
+  --ghc-options="-optl-Wl,-rpath,$NATIVE_DIR"
+  --ghc-options="-optl-Wl,-rpath,$ENGINE_DIR"
+)
+
 # Build the test executable (offline; no external deps beyond base).
-( cd "$HERE" && cabal build --offline test:live 2>&1 ) || {
-  ( cd "$HERE" && cabal build test:live ) || { echo "haskell tests: cabal build FAILED"; exit 1; }
+( cd "$HERE" && cabal build --offline "${CABAL_LIBFLAGS[@]}" test:live 2>&1 ) || {
+  ( cd "$HERE" && cabal build "${CABAL_LIBFLAGS[@]}" test:live ) || { echo "haskell tests: cabal build FAILED"; exit 1; }
 }
 
 BIN="$(cd "$HERE" && cabal list-bin test:live 2>/dev/null)"
