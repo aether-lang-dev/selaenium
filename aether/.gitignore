@@ -67,6 +67,7 @@
 /kotlin/jout/
 /clojure/jout/
 /groovy/jout/
+/groovy/gout/
 
 # Haskell
 /haskell/native/
