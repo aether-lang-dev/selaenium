@@ -21,7 +21,7 @@ aeb(cap) {
     // Use the machine's global NuGet cache (it already holds the framework ref
     // packs, so restore stays offline); SeleniumCore itself resolves only from
     // the local feed added by the generated nuget.config below.
-    dnet = "PATH=\"$HOME/.dotnet:$PATH\" DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1"
+    dnet = "DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1"
 
     // Fresh consumer project: copy the example + csproj, restore/build against
     // the local feed only (LocalFeed = the nupkg dir). Isolated NUGET_PACKAGES
@@ -54,7 +54,7 @@ aeb(cap) {
         return 1
     }
 
-    pfx = "cd \"${consumer}\" && ${dnet} env -u SELENIUM_CORE_LIB dotnet \"${dll}\""
+    pfx = "cd \"${consumer}\" && ${dnet} env -u SELENIUM_CORE_LIB dotnet exec --roll-forward Major \"${dll}\""
     rc2 = os.system("${pfx} ffi")
     if rc2 != 0 {
         println("dotnet example: ffi-mode consumer run failed")

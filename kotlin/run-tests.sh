@@ -35,7 +35,25 @@ KOTLINC="$(find_kotlinc)" || {
   exit 0
 }
 KHOME="$(dirname "$(dirname "$KOTLINC")")"
-STDLIB="$KHOME/lib/kotlin-stdlib.jar"
+# The stdlib jar's location depends on how kotlinc was installed: next to the
+# compiler ($KHOME/lib) for sdkman/manual installs, but under share/ for a
+# system package (e.g. /usr/bin/kotlinc -> /usr/share/kotlin/lib). Probe the
+# known layouts rather than assuming $KHOME/lib.
+STDLIB=""
+for cand in \
+  "$KHOME/lib/kotlin-stdlib.jar" \
+  "$KHOME/libexec/lib/kotlin-stdlib.jar" \
+  "/usr/share/kotlin/lib/kotlin-stdlib.jar" \
+  "/usr/share/java/kotlin/kotlin-stdlib.jar"; do
+  [ -f "$cand" ] && { STDLIB="$cand"; break; }
+done
+if [ -z "$STDLIB" ]; then
+  STDLIB="$(find "$KHOME" /usr/share/kotlin /usr/share/java -name kotlin-stdlib.jar 2>/dev/null | head -1)"
+fi
+if [ -z "$STDLIB" ] || [ ! -f "$STDLIB" ]; then
+  echo "kotlin tests: SKIPPED — kotlin-stdlib.jar not found (looked under $KHOME and /usr/share)"
+  exit 0
+fi
 
 OUT="$KDIR/out"
 JOUT="$KDIR/jout"

@@ -14,10 +14,19 @@ aeb(cap) {
     ddir = "${root}/dart"
     dart = "PATH=\"/home/paul/development/flutter/bin:$PATH\""
 
+    have = os.system("command -v dart >/dev/null 2>&1 || [ -x /home/paul/development/flutter/bin/dart ]")
+    if have != 0 {
+        println("dart tests: SKIPPED — dart not available")
+        return 0
+    }
     pg = os.system("cd \"${ddir}\" && ${dart} dart pub get --offline")
     if pg != 0 {
-        println("dart tests: pub get failed")
-        return 1
+        // offline cache missing a dep (e.g. `test`) — resolve over the network.
+        pg = os.system("cd \"${ddir}\" && ${dart} dart pub get")
+        if pg != 0 {
+            println("dart tests: pub get failed (offline and online)")
+            return 1
+        }
     }
     rc = os.system("cd \"${ddir}\" && ${dart} SELENIUM_CORE_LIB=\"${lib}\" dart test test/ffi_test.dart test/live_test.dart")
     if rc != 0 {
