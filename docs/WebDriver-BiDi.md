@@ -24,9 +24,9 @@ Reviewed with Simon; two rulings shape everything below:
    proposed — see [The real design question](#the-real-design-question-a-concurrent-client-over-a-synchronous-ffi)
    below, now reframed around multiplexing.
 
-Spec: the W3C WebDriver-BiDi specification (Simon was pointing us at the hosted
-spec — **TODO: paste the exact URL he gave**; it's the normative reference for
-the command/event catalog and framing).
+Spec: **<https://w3c.github.io/webdriver-bidi/>** — the W3C WebDriver-BiDi
+specification (the link Simon gave). This is the normative reference for the
+command/event catalog, the JSON-RPC framing, and the session/subscription model.
 
 ## What's already true
 
