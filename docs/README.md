@@ -5,6 +5,10 @@ Design notes for the Selenium-on-Aether port.
 - **[Architecture](./Architecture.md)** — what the repo is: one pure-Aether
   engine + 18 thin FFI bindings, aeb not Bazel, why a reboot rather than a
   migration, and the remaining capability gaps vs classic.
+- **[WebDriver-BiDi](./WebDriver-BiDi.md)** — design note for the BiDi layer
+  (the persistent-WebSocket, event-driven protocol). Transport + model proven
+  live (`selenium_core/bidi_probe.ae`); the engine-layer + ABI plan awaits
+  review — the open question is async events over a synchronous FFI.
 
 ## WASM binding — three parked directions
 
