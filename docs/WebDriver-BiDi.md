@@ -2,14 +2,37 @@
 
 *Status: design, pre-implementation. The transport + protocol model are
 **proven** (`selenium_core/bidi_probe.ae`, green live against Chrome 152); this
-note is the plan for the committed engine layer, put up for review before the
-build. BiDi/wire semantics are flagged high-risk in AGENTS.md, so this is
-deliberately design-first.*
+note is the plan for the committed engine layer. BiDi/wire semantics are flagged
+high-risk in AGENTS.md, so this is deliberately design-first.*
+
+## Guidance from Simon Stewart (WebDriver/BiDi's creator), 2026-08
+
+Reviewed with Simon; two rulings shape everything below:
+
+1. **Strategic — "BiDi support is the way forwards. Classic will disappear."**
+   BiDi is not an additive extra beside classic W3C-HTTP; it is the *future
+   primary protocol*, and the classic HTTP surface is on a path to obsolescence.
+   The reboot should treat BiDi as a first-class peer to the W3C engine now and
+   the eventual successor — not a bolt-on. (We still keep the W3C engine: it
+   works, it ships today, and classic won't vanish overnight. But new design
+   weight goes to BiDi.)
+
+2. **Technical — BiDi is genuinely concurrent.** "WebSockets are asynchronous by
+   nature. A single BiDi client can issue **multiple commands and await multiple
+   events simultaneously**. The client manages timeout semantics." This rules
+   out the simple "one logical caller / poll-drain" model an earlier draft
+   proposed — see [The real design question](#the-real-design-question-a-concurrent-client-over-a-synchronous-ffi)
+   below, now reframed around multiplexing.
+
+Spec: the W3C WebDriver-BiDi specification (Simon was pointing us at the hosted
+spec — **TODO: paste the exact URL he gave**; it's the normative reference for
+the command/event catalog and framing).
 
 ## What's already true
 
 - The classic **W3C engine is complete** (143 routes, HTTP round-trip, 18
-  bindings) — BiDi is additive, not a replacement.
+  bindings) and keeps working — but per Simon it is the *legacy* surface;
+  BiDi is where new capability and design attention go.
 - Aether shipped a **WebSocket client** (`std.http.ws_connect`, v0.590.0),
   which was the sole blocker.
 - The **vertical slice is proven live**: W3C `newSession` with
@@ -50,62 +73,88 @@ struct BidiSession {
 }
 ```
 
-Core operations, all pure Aether over `ws_send_text` / `ws_recv` / `ws_message`:
+Core operations, all pure Aether over `ws_send_text` / `ws_recv` / `ws_message`.
+**These signatures are provisional** — they show the *shape*, but their exact
+form (blocking vs non-blocking, who owns the id) is decided by the concurrency
+model below (A/B/C), because Simon's multiplexing ruling means `bidi_command`
+cannot simply "read until my reply arrives" while another command is also in
+flight:
 
 - `bidi_open(ws_url) -> BidiSession`  — `ws_connect`, ready to command
-- `bidi_command(s, method, params_json) -> reply_json` — assign next id, send,
-  read frames until the reply with that id arrives (buffering any events seen
-  along the way — see below), return `result` or a typed BiDi error
+- `bidi_send(s, id, method, params_json)` — frame + send one command (caller
+  supplies `id` so concurrent commands stay distinct)
+- `bidi_await_reply(s, id, timeout_ms) -> reply_json` — the reply for that id
+  (or a typed BiDi error / timeout) — form depends on A/B/C
 - `bidi_subscribe(s, events[])` / `bidi_unsubscribe(...)`
-- `bidi_next_event(s) -> event_json | ""` — hand the caller the next buffered
-  or freshly-arrived event
+- `bidi_next_event(s, timeout_ms) -> event_json | ""` — next event, concurrently
+  with any in-flight commands
 
 The W3C engine is **untouched**. A binding that wants BiDi first does a normal
 `newSession` (with `webSocketUrl:true` in caps), reads the `webSocketUrl`, and
 calls `bidi_open` — the two channels coexist for the same browser session.
 
-## The one real design question: async events over a synchronous FFI
+## The real design question: a concurrent client over a synchronous FFI
 
-This is the crux and the reason for the review. Our whole architecture is a
-**synchronous C ABI** — a binding calls `execute(...)`, blocks, gets a result.
-BiDi events arrive **whenever the browser feels like it**, interleaved with
-command replies on the one socket. `ws_recv` is itself blocking. So:
+This is the crux. Simon's technical ruling settles what the client must *be* and
+kills the easy way out:
 
-- While `bidi_command` waits for its reply, **events can arrive first** on the
-  same socket. They must be **buffered**, not dropped, so a later
-  `bidi_next_event` can return them.
-- A binding wanting *only* events (a listener loop) needs a call that blocks for
-  the next event — but must not block forever if none comes.
+> A single BiDi client can issue **multiple commands and await multiple events
+> simultaneously.** The client manages timeout semantics.
 
-**Proposed model — a drain/poll queue, no threads, no callbacks:**
+So a conforming BiDi client is **multiplexed**: many commands in flight at once
+(each awaited independently, matched by `id`), plus events streaming
+concurrently — all on the one WebSocket. The earlier draft's "single logical
+caller, poll-drain the socket" model is **retired**: it cannot express two
+commands outstanding at once, and it starves events behind a blocking command
+read.
 
-1. `bidi_command` reads frames in a loop; a frame with our `id` is the reply
-   (return it); any `{type:"event"}` frame seen meanwhile is **appended to an
-   in-session event queue**.
-2. `bidi_next_event(s, timeout_ms)`:
-   - if the queue is non-empty, pop and return immediately;
-   - else `ws_recv` with a bounded wait; a command reply that arrives here
-     (shouldn't, if the binding is disciplined) is queued by id;
-   - return `""` on timeout so the caller's loop stays responsive.
+The tension is now sharp, and real:
 
-This keeps the FFI **synchronous and callback-free** — the binding drives an
-event loop by *polling* `bidi_next_event` on its own thread/timer, exactly the
-shape the ctypes/Fiddle/cgo bindings already handle for blocking calls. No
-async ABI, no reentrancy, no engine-owned threads. The cost is that events are
-delivered when the binding *asks*, not pushed — acceptable, and arguably
-clearer, for a linked-in synchronous core.
+- **BiDi wants concurrency** — a reader continuously draining the socket,
+  routing each frame to *either* the waiter for its `id` (a pending-command
+  table) *or* the event stream.
+- **Our engine speaks through a synchronous, callback-free C ABI** — a binding
+  calls, blocks, gets one result. There is no natural place in that ABI for
+  "and also, at any time, here is an event" or "three commands are in flight."
 
-**Questions for review (Simon especially):**
-- Is a **poll/drain** model acceptable for BiDi events in a client, or do real
-  consumers need push (a background reader thread surfacing events via a
-  callback)? The latter is doable but drags threads across the FFI boundary and
-  raises reentrancy — a real step up in complexity.
-- `bidi_command` buffering events while awaiting a reply assumes a **single
-  logical caller** on the socket. Is multiplexing concurrent commands from
-  multiple binding threads a requirement, or can we say "one BiDi conversation
-  per connection, open more connections for concurrency"?
-- Timeout semantics: bound every `ws_recv`? BiDi has no per-command timeout in
-  the spec; the client imposes one.
+Reconciling those is the design work. Two broad shapes, to be chosen at review:
+
+**A. Concurrency in the engine (a reader thread behind the ABI).**
+The engine owns a background thread that drains the socket into a mutex-guarded
+pending-command table (keyed by `id`) and an event queue. `bidi_command`
+registers an id, blocks on its slot's condition; `bidi_next_event(timeout_ms)`
+pops the queue. Multiplexing "just works" and every binding gets it for free.
+*Cost:* threads + locks inside the engine, crossing the FFI boundary — the
+high-risk area AGENTS.md flags; reentrancy and lifetime become real concerns;
+Aether's threading story has to support it.
+
+**B. Concurrency in the binding (engine stays a thin frame relay).**
+The engine exposes only framing — `bidi_send(json)`, `bidi_recv(timeout_ms) ->
+frame_json` — and each binding owns the reader loop + id-dispatch in its *native*
+async (asyncio for Python, goroutines for Go, the event loop for Node, …). The
+engine holds no threads and no state beyond the socket. *Cost:* every binding
+reimplements the multiplexer, so the "one brain, thin bindings" property erodes
+exactly where it's hardest to get right (concurrent dispatch, cancellation,
+timeouts) — the drift risk we built this architecture to avoid.
+
+**C. A hybrid** — the engine does frame demux (id-table + event queue, single
+reader) but exposes it through *non-blocking* poll calls (`bidi_poll_reply(id)`,
+`bidi_poll_event()` returning immediately), leaving the *waiting/scheduling* to
+the binding's own loop. No engine threads; multiplexing preserved centrally;
+each binding only adapts polling to its async primitive. This looks like the
+sweet spot but needs validation.
+
+**Open questions for the build:**
+- Which of A / B / C? (Leaning C — central demux, no engine threads, bindings
+  own only the wait — but it hinges on how cleanly each FFI family drives a poll
+  loop.)
+- Timeout semantics are **the client's** (Simon confirmed): where do they live —
+  per-command in the demux, or in the binding's wait? Probably the binding, with
+  the engine offering a bounded `recv`.
+- Cancellation: a command whose waiter gives up must not leak its id-table slot
+  or mis-route a late reply.
+- Does the ABI need a stable per-command id the *caller* supplies, or does the
+  engine mint and return it? (Caller-supplied composes better with async.)
 
 ## The C ABI extension (`aether_sel_embed_bidi_*`)
 
