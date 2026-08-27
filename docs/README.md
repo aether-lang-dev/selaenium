@@ -24,8 +24,10 @@ yet:
   transport (`fetch` / WebSocket-BiDi) to a real remote browser. *RC-over-BiDi.*
 - **[Same-Origin DOM Driver](./Same-Origin_DOM_Driver.md)** — WASM brain drives
   the hosting page's own `document` directly. *Selenium 1.0, with the real brain.*
-- **[Embedded Test Runtime](./Embedded_Test_Runtime.md)** — WASM hosts a 3GL
-  (Lua / QuickJS / Aether) so the test script runs *inside* the browser.
+- **[Embedded Test Runtime](./Embedded_Test_Runtime.md)** — a browser-native HLL
+  runs *inside* the page and drives it through the engine. Strongest candidate:
+  **RexxJS**, whose `ADDRESS` verb *is* the RC dispatch model — re-scoped to "one
+  `ADDRESS SELENIUM` handler", not "a language runtime in WASM".
   *RC done right — control flow local, only actions cross the wire.*
 
 Parked pending a decision; see each note for the smallest proof if picked.
