@@ -1,0 +1,160 @@
+// WebDriver-BiDi vertical-slice probe — proves the whole BiDi pipe end to end
+// in pure Aether, against a real chromedriver + Chrome. This is the proof that
+// backs the BiDi engine layer (see docs/WebDriver-BiDi.md): the transport
+// (std.http.ws_connect), the JSON-RPC command-by-id model, subscriptions, and
+// async event receipt all work before we commit to the ABI + bindings.
+//
+// It exercises:
+//   1. classic W3C newSession with `webSocketUrl: true` — the driver hands back
+//      a `webSocketUrl` (at value.capabilities.webSocketUrl) for this session
+//   2. ws_connect to that endpoint
+//   3. command-by-id: send {id, method, params}, receive the reply whose id matches
+//   4. session.subscribe to an event, then RECEIVE that async event (not just
+//      the subscribe ack) — the part that makes BiDi bidirectional
+//
+// Run (needs a driver + browser):
+//   SEL_CHROMEDRIVER_URL=http://127.0.0.1:9515 \
+//   SEL_CHROME_BINARY=/path/to/chrome \
+//   ae run --with=net selenium_core/bidi_probe.ae
+//
+// Self-skips (exit 0) when SEL_CHROMEDRIVER_URL is unset — so it is safe in CI
+// on a box with no driver, and only runs live where one is provided.
+import std.http
+import std.http.client
+import std.json
+import std.string
+import std.os
+
+fn getenv_or(name: string, dflt: string) -> string {
+    v = os.getenv(name)
+    if v == "" { return dflt }
+    return v
+}
+
+// Send a BiDi command {id, method, params}; block until the reply whose "id"
+// matches arrives. Frames that are not our reply (events, other ids) are
+// skipped here — event *receipt* is proven separately by await_event().
+fn bidi_call(w: ptr, id: int, method: string, params_json: string) -> string {
+    msg = "${"{"}\"id\":${string.from_int(id)},\"method\":\"${method}\",\"params\":${params_json}${"}"}"
+    if http.ws_send_text(w, msg) != 0 { return "" }
+    guard = 0
+    while guard < 500 {
+        guard = guard + 1
+        kind = http.ws_recv(w)
+        if kind == -1 { return "" }
+        if kind != 1 { continue }
+        text = http.ws_message(w)
+        parsed, _p = json.parse(text)
+        if parsed == null { continue }
+        idv, _i = json.object_get(parsed, "id")
+        if idv != null {
+            if json.get_int(idv) == id { json.free(parsed); return text }
+        }
+        json.free(parsed)
+    }
+    return ""
+}
+
+// Block until an async event of the given method arrives (a frame with
+// "type":"event" and matching "method"). Returns the event JSON, or "" on
+// timeout/closed. This is the bidirectional half BiDi exists for.
+fn await_event(w: ptr, method: string) -> string {
+    guard = 0
+    while guard < 500 {
+        guard = guard + 1
+        kind = http.ws_recv(w)
+        if kind == -1 { return "" }
+        if kind != 1 { continue }
+        text = http.ws_message(w)
+        parsed, _p = json.parse(text)
+        if parsed == null { continue }
+        mv, _m = json.object_get(parsed, "method")
+        if mv != null {
+            mname, _mn = json.get_string(mv)
+            if mname == method { json.free(parsed); return text }
+        }
+        json.free(parsed)
+    }
+    return ""
+}
+
+main() {
+    base = os.getenv("SEL_CHROMEDRIVER_URL")
+    if string.length(base) == 0 {
+        println("bidi probe: SKIPPED — SEL_CHROMEDRIVER_URL not set (no driver)")
+        return
+    }
+    chrome = getenv_or("SEL_CHROME_BINARY", "")
+    binpart = ""
+    if chrome != "" { binpart = "\"binary\":\"${chrome}\"," }
+    println("bidi probe: driver ${base}")
+
+    // --- 1. W3C newSession with webSocketUrl:true ---
+    caps = "${"{"}\"capabilities\":${"{"}\"alwaysMatch\":${"{"}\"webSocketUrl\":true,\"goog:chromeOptions\":${"{"}${binpart}\"args\":[\"--headless=new\",\"--no-sandbox\",\"--disable-gpu\",\"--disable-dev-shm-usage\"]${"}"}${"}"}${"}"}${"}"}"
+    req = client.request("POST", "${base}/session")
+    _h = client.set_header(req, "Content-Type", "application/json")
+    _b = client.set_body(req, caps, string.length(caps), "application/json")
+    _t = client.set_timeout(req, 60000000000ns)
+    resp, err = client.send_request(req)
+    client.request_free(req)
+    if err != "" { println("bidi probe: FAIL newSession transport: ${err}"); os.exit(1) }
+    body = client.response_body(resp)
+    client.response_free(resp)
+
+    parsed, _pp = json.parse(body)
+    if parsed == null { println("bidi probe: FAIL newSession JSON"); os.exit(1) }
+    value, _v = json.object_get(parsed, "value")
+    if value == null { println("bidi probe: FAIL no value: ${body}"); os.exit(1) }
+    capsv, _cv = json.object_get(value, "capabilities")
+    wsurlv, _w = json.object_get(capsv, "webSocketUrl")
+    if wsurlv == null { println("bidi probe: FAIL no webSocketUrl (driver too old?): ${body}"); os.exit(1) }
+    wsurl, _wu = json.get_string(wsurlv)
+    sidv, _s = json.object_get(value, "sessionId")
+    sid, _sd = json.get_string(sidv)
+    println("  session ${sid}")
+
+    // --- 2. ws_connect ---
+    w = http.ws_connect(wsurl)
+    if w == null { println("bidi probe: FAIL ws_connect null"); os.exit(1) }
+
+    fails = 0
+
+    // --- 3. command-by-id ---
+    statusr = bidi_call(w, 1, "session.status", "{}")
+    if string.contains(statusr, "\"type\":\"success\"") == 1 { println("  ok: session.status (command-by-id)") }
+    else { println("  FAIL: session.status -> ${statusr}"); fails = fails + 1 }
+
+    // --- 4. subscribe, then RECEIVE the event ---
+    _sub = bidi_call(w, 2, "session.subscribe", "${"{"}\"events\":[\"browsingContext.load\"]${"}"}")
+
+    treer = bidi_call(w, 3, "browsingContext.getTree", "{}")
+    tparsed, _tp = json.parse(treer)
+    tres, _tr = json.object_get(tparsed, "result")
+    ctxs, _cx = json.object_get(tres, "contexts")
+    ctx0, _c0 = json.array_get(ctxs, 0)
+    ctxidv, _ci = json.object_get(ctx0, "context")
+    ctxid, _cid = json.get_string(ctxidv)
+
+    // navigate WITHOUT waiting-complete so the load event arrives after the ack,
+    // letting await_event prove async receipt.
+    navparams = "${"{"}\"context\":\"${ctxid}\",\"url\":\"data:text/html,<h1>bidi</h1>\",\"wait\":\"none\"${"}"}"
+    _nav = bidi_call(w, 4, "browsingContext.navigate", navparams)
+
+    ev = await_event(w, "browsingContext.load")
+    if string.contains(ev, "browsingContext.load") == 1 { println("  ok: browsingContext.load event received (async/bidirectional)") }
+    else { println("  FAIL: no load event"); fails = fails + 1 }
+
+    // --- clean up ---
+    http.ws_close(w, 1000, "done")
+    http.ws_client_free(w)
+    dreq = client.request("DELETE", "${base}/session/${sid}")
+    _dr, _de = client.send_request(dreq)
+    client.request_free(dreq)
+
+    if fails == 0 {
+        println("PASS: BiDi vertical slice green (ws_connect + command-by-id + subscribe + async event)")
+        return
+    }
+    println("bidi probe: FAILED (${string.from_int(fails)})")
+    os.exit(1)
+}
