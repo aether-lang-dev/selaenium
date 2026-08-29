@@ -11,7 +11,7 @@ aeb(cap) {
     build.dep(b, "ruby/.tests.ae")
     build.dep(b, "javascript/.tests.ae")
     build.dep(b, "java/.tests.ae")
-    build.dep(b, "dotnet/.tests.ae")
+    build.dep(b, "dotnet/SeleniumCore.Tests/.tests.ae")
     build.dep(b, "rust/.tests.ae")
     build.dep(b, "dart/.tests.ae")
     // BEAM family: Erlang owns the shared NIF; Elixir + Gleam ride the SAME

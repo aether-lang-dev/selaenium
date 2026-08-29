@@ -1,31 +1,26 @@
 // The shared Selenium WebDriver engine, built ONCE for the whole monorepo.
 //
-// Output: selenium_core/native/libselenium_core.so — every binding's .tests.ae
-// deps this node and then loads (ctypes/Fiddle/koffi/FFM) or links (cgo/NIF)
-// that single artifact via SELENIUM_CORE_LIB.
+// Output: selenium_core/native/libselenium_core.so — every binding's node deps
+// this and loads (ctypes/Fiddle/koffi/FFM) or links (cgo/NIF) that single
+// artifact. aether.shared_lib() compiles embed.ae with `--emit=lib` and
+// publishes the `shared_lib` artifact edge that the bindings dep_artifact.
 //
-// Source: selenium_core/embed.ae (the aether_sel_embed_* C ABI) imports the
-// local `selenium_core` module (selenium_core/selenium_core.ae) — the WHOLE
-// protocol runtime (command catalog, W3C route table, path templating,
-// By/capabilities normalization, W3C error decode, and the HTTP round-trip) is
-// PURE AETHER. The only C left is selenium_core/_embed_strdup.c (~15 lines): the
-// caller-owned-string bridge, linked via `--extra`. The engine uses
-// std.http.client (--with=net).
-
-import build
-import std.os
+// Source: embed.ae (the aether_sel_embed_* C ABI) imports the local
+// `selenium_core` module (selenium_core.ae) — the WHOLE protocol runtime
+// (command catalog, W3C route table, path templating, By/capabilities
+// normalization, W3C error decode, and the HTTP round-trip) is PURE AETHER.
+// The only C left is _embed_strdup.c (~15 lines): the caller-owned-string
+// bridge, linked via extra_source. The engine uses std.http.client (caps net).
+import bldr
+import aether
 
 aeb(cap) {
-    b = build.start()
-    root = build._get(b, "root")
-    dest = "${root}/selenium_core/native"
-    _m = os.system("mkdir -p \"${dest}\"")
-    rc = os.system("cd \"${root}/selenium_core\" && ae build --emit=lib --with=net embed.ae --extra _embed_strdup.c -o \"${dest}/libselenium_core.so\"")
-    if rc != 0 {
-        println("engine: failed to build libselenium_core.so from selenium_core")
-        return 1
+    bldr.build() {
+        aether.shared_lib() {
+            source("embed.ae")
+            caps("net")
+            extra_source("_embed_strdup.c")
+            output("libselenium_core.so")
+        }
     }
-    println("engine: built selenium_core/native/libselenium_core.so")
-    build.publish_artifact(b, "shared_lib", "${dest}/libselenium_core.so")
-    return 0
 }

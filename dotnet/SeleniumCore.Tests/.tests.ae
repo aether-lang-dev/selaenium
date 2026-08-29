@@ -1,0 +1,33 @@
+// .NET binding tests (P/Invoke, xUnit). The FFI facts + the live headless-Chrome
+// surface fact run under `dotnet test`. The DllImport resolver finds the engine
+// via SELENIUM_CORE_LIB, injected into the test process by env(); the live fact
+// self-skips (Assert.Skip) when chromedriver is absent. The test project is
+// generated from these declarations + the xunit dep; it ProjectReferences the
+// binding library (dep on SeleniumCore/.build.ae, which builds the hand-written
+// SeleniumCore.csproj). SKIPPED cleanly by preflight when dotnet is absent
+// (prereq dotnet:8).
+import bldr
+import dotnet
+
+aeb(cap) {
+    bldr.build() {
+        prereq("dotnet:8")
+        dep("selenium_core/.build.ae")
+        dep("dotnet/SeleniumCore/.build.ae")
+        dep("libs/dotnet/xunit/.xunit.nupkg.ae")
+        native_lib = dep_artifact("selenium_core/.build.ae", "shared_lib")
+
+        // Generate the xUnit test project (net8.0) that references the binding
+        // library (from the dep above) and the xunit packages (from the dep).
+        dotnet.build_project() {
+            target_framework("net10.0")
+            root_namespace("SeleniumCore.Tests")
+            assembly_name("SeleniumCore.Tests")
+            test_project()
+        }
+
+        // The DllImport resolver reads SELENIUM_CORE_LIB to find the engine .so.
+        env("SELENIUM_CORE_LIB", native_lib)
+        dotnet.test()
+    }
+}

@@ -1,0 +1,20 @@
+// .NET binding library (SeleniumCore) — the P/Invoke surface over the shared
+// engine. Built from the hand-written SeleniumCore.csproj (which doubles as the
+// packaged library and an end-user reference), so we use build_project_existing
+// rather than generating a csproj. The freshly-built engine .so is staged as a
+// linux-x64 native runtime asset so it ships inside the NuGet package and lands
+// next to a consumer's app.
+import bldr
+import dotnet
+
+aeb(cap) {
+    bldr.build() {
+        prereq("dotnet:8")
+        dep("selenium_core/.build.ae")
+        native_lib = dep_artifact("selenium_core/.build.ae", "shared_lib")
+        dotnet.build_project_existing() {
+            csproj_path("SeleniumCore.csproj")
+            native_runtime("linux-x64", native_lib)
+        }
+    }
+}
