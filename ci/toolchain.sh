@@ -6,11 +6,12 @@
 # ci/versions.env (override via the AETHER_REF / AEB_REF env vars).
 #
 # Prerequisites: curl, tar, GNU make, a C compiler (Aether compiles to C, so no
-# chicken-and-egg). aeb ships prebuilt release BINARIES (v0.286+): when one
-# exists for this platform+tag AND `unzip` is present we install it (fast, no
-# aeb compile — bin/aeb is a script and its Makefile install needs no cc),
-# otherwise we fall back to the public no-clone curl-pipe SOURCE build (aether
-# get.sh, aeb install.sh). Both are pinnable.
+# chicken-and-egg). aeb ships prebuilt release BINARIES (v0.287+ carry a
+# per-platform .tar.gz + a .sha256 each): when one exists for this platform+tag
+# we verify its checksum and install it (fast, no aeb compile — bin/aeb is a
+# script and the bundled install.sh needs no cc), otherwise we fall back to the
+# public no-clone curl-pipe SOURCE build (aether get.sh, aeb install.sh). Both
+# are pinnable.
 #
 # Usage:  ci/toolchain.sh                 # install if missing, print versions
 #         FORCE=1 ci/toolchain.sh         # reinstall even if present
@@ -52,35 +53,51 @@ platform_slug() {
   esac
 }
 
-# Install a PREBUILT aeb from the GitHub release for $AEB_REF. The platform asset
-# (aeb-{slug}.zip) is a full install tree — bin/aeb (a bash script, so no C
-# compiler needed) + share/aeb/ (the SDK runtime) — plus a Makefile whose
-# `install` target stages it into $PREFIX and writes an AEB_HOME wrapper (this is
-# what stamps it; a bare bin/aeb warns it is an "un-installed tree"). Returns 0
-# on success (aeb runnable at $PREFIX/bin), non-zero to fall back to source.
-# Fully defensive: missing asset / no unzip / bad tree / non-runnable -> non-zero.
+# Install a PREBUILT aeb from the GitHub release for $AEB_REF. Each platform
+# asset (aeb-{slug}.tar.gz, published since v0.287 with a companion .sha256) is a
+# full install tree — bin/aeb (a script, no C compiler needed) + share/aeb/ (the
+# SDK runtime) + install.sh (wraps `make -C share/aeb install`, which stages it
+# into $PREFIX and writes the AEB_HOME wrapper that stamps it; a bare bin/aeb
+# warns it is an "un-installed tree"). We fetch the .tar.gz (tar is already a
+# prerequisite — no unzip needed), VERIFY it against its .sha256, then run the
+# bundled install.sh. Returns 0 on success (aeb runnable at $PREFIX/bin), non-zero
+# to fall back to source. Defensive: missing asset / checksum mismatch / bad tree
+# / non-runnable -> non-zero.
 install_aeb_binary() {
   [ "${NO_BINARY:-0}" = "1" ] && return 1
   case "$AEB_REF" in v*) ;; *) return 1 ;; esac   # binaries are per-tag only
-  have unzip || { say "no unzip; using source build for aeb"; return 1; }
   slug=$(platform_slug)
   [ -n "$slug" ] || return 1
-  url="https://github.com/aether-lang-dev/aeb/releases/download/${AEB_REF}/aeb-${slug}.zip"
+  base="https://github.com/aether-lang-dev/aeb/releases/download/${AEB_REF}"
+  asset="aeb-${slug}.tar.gz"
   tmp=$(mktemp -d)
-  if ! curl -fsSL "$url" -o "$tmp/aeb.zip" 2>/dev/null; then rm -rf "$tmp"; return 1; fi
-  # TODO(release-eng ask): no per-asset .sha256 published for the platform zips
-  # yet, so the download is unverified. Verify here once checksums ship.
-  if ! unzip -q "$tmp/aeb.zip" -d "$tmp" 2>/dev/null; then rm -rf "$tmp"; return 1; fi
+  if ! curl -fsSL "${base}/${asset}" -o "$tmp/$asset" 2>/dev/null; then rm -rf "$tmp"; return 1; fi
+  # Verify against the published checksum before trusting the bytes. A missing
+  # .sha256 (older tag) is tolerated with a warning; a MISMATCH always aborts.
+  if curl -fsSL "${base}/${asset}.sha256" -o "$tmp/$asset.sha256" 2>/dev/null; then
+    if command -v sha256sum >/dev/null 2>&1; then
+      if ! ( cd "$tmp" && sha256sum -c "$asset.sha256" >/dev/null 2>&1 ); then
+        say "aeb ${asset}: SHA256 MISMATCH — refusing the binary, using source build"
+        rm -rf "$tmp"; return 1
+      fi
+    fi
+  else
+    say "aeb ${asset}: no published .sha256 — download unverified"
+  fi
+  if ! tar -xzf "$tmp/$asset" -C "$tmp" 2>/dev/null; then rm -rf "$tmp"; return 1; fi
   tree=$(find "$tmp" -maxdepth 1 -type d -name "aeb-${slug}" | head -1)
-  [ -n "$tree" ] && [ -f "$tree/share/aeb/Makefile" ] || { rm -rf "$tmp"; return 1; }
-  # Install via the bundled Makefile (stages files + writes the wrapper; the
-  # binary is prebuilt, so this needs no compiler).
-  if ! make -C "$tree/share/aeb" install PREFIX="$PREFIX" >/dev/null 2>&1; then
+  [ -n "$tree" ] || { rm -rf "$tmp"; return 1; }
+  # Prefer the bundled install.sh; fall back to the Makefile target it wraps.
+  if [ -f "$tree/install.sh" ]; then
+    sh "$tree/install.sh" "$PREFIX" >/dev/null 2>&1 || { rm -rf "$tmp"; return 1; }
+  elif [ -f "$tree/share/aeb/Makefile" ]; then
+    make -C "$tree/share/aeb" install PREFIX="$PREFIX" >/dev/null 2>&1 || { rm -rf "$tmp"; return 1; }
+  else
     rm -rf "$tmp"; return 1
   fi
   rm -rf "$tmp"
   if "$PREFIX/bin/aeb" --version >/dev/null 2>&1; then
-    say "installed aeb ${AEB_REF} from the prebuilt release binary (aeb-${slug}.zip)"
+    say "installed aeb ${AEB_REF} from the verified prebuilt release binary (${asset})"
     return 0
   fi
   return 1
