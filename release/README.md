@@ -23,6 +23,20 @@ Outputs into `release/dist/` (gitignored):
 
 Each is stripped (`--size`). `so`=linux ELF, `dylib`=macOS Mach-O, `dll`=Windows.
 
+## Cut a GitHub release (manual, no repo settings needed)
+
+```sh
+release/publish.sh v1.2.3            # build the matrix + create the release, assets attached
+release/publish.sh v1.2.3 --draft    # create as a draft to review first
+release/publish.sh v1.2.3 --no-build # attach whatever is already in release/dist
+```
+
+`publish.sh` builds (unless `--no-build`), then `gh release create <tag>` with
+every artifact, its `.sha256`, and `SHA256SUMS`. It uses your existing `gh` auth
+— **nothing in GitHub Settings, no Actions, no secrets.** (Registry publishing —
+PyPI/npm/Maven/… — is deliberately out of scope here; that would need per-registry
+secrets.)
+
 ## Why build-here / test-elsewhere
 
 The **build** is deterministic and platform-agnostic (zig cross-compiles the
