@@ -24,7 +24,7 @@ green.
 | File | Role |
 |------|------|
 | `versions.env`  | the pinned `AETHER_REF` (ae) + `AEB_REF` (aeb) — the one place to bump |
-| `toolchain.sh`  | idempotently install ae + aeb at the pins (public curl-pipe installers; needs only curl/tar/make/cc) |
+| `toolchain.sh`  | idempotently install ae + aeb at the pins — a prebuilt aeb release binary when one exists for this platform+tag (fast, no compile), else the public curl-pipe source build; needs only curl/tar/make/cc. `NO_BINARY=1` forces source. |
 | `run.sh`        | the entry point: toolchain → engine → target set → summary |
 
 ## The target sets (aeb `.build.ae` / `.tests.ae` edges)
