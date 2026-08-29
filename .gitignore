@@ -283,3 +283,6 @@ __pycache__/
 
 # PHP
 /php/native/
+
+# Release build outputs
+/release/dist/
