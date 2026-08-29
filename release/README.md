@@ -23,6 +23,14 @@ Outputs into `release/dist/` (gitignored):
 
 Each is stripped (`--size`). `so`=linux ELF, `dylib`=macOS Mach-O, `dll`=Windows.
 
+**Windows:** both `x86_64-windows` and `aarch64-windows` cross-build to real
+PE32+ DLLs (via `RELEASE_EXTRA_TARGETS=1`). Each DLL also gets a `<dll>.lib`
+import library beside it — needed only by a consumer that *links* the DLL at
+build time; our FFI bindings `dlopen` at runtime and don't use it, but it is
+checksummed and shipped so Windows is first-class. So a full run with extras
+produces 4 core + 2 Windows (× 2 files each) artifacts. FreeBSD still needs
+`AETHER_SYSROOT` and skips loudly without it.
+
 ## Cut a GitHub release (manual, no repo settings needed)
 
 ```sh

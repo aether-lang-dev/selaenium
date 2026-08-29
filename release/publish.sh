@@ -47,13 +47,15 @@ fi
 # nullglob makes an unmatched glob expand to nothing (not a literal), so an empty
 # dist yields an empty list rather than bogus filenames.
 shopt -s nullglob
-bins=( "$DIST"/*.so "$DIST"/*.dylib "$DIST"/*.dll )
+bins=( "$DIST"/*.so "$DIST"/*.dylib "$DIST"/*.dll "$DIST"/*.dll.lib )
 sums=( "$DIST"/*.sha256 )
 manifest=( "$DIST"/SHA256SUMS )   # nullglob: empty if it doesn't exist
 shopt -u nullglob
 [ "${#bins[@]}" -gt 0 ] || die "no engine artifacts in release/dist — run release/build.sh (or drop --no-build)"
 assets=( "${bins[@]}" "${sums[@]}" "${manifest[@]}" )
-nbin="${#bins[@]}"
+# Count only the loadable libraries (not the Windows .dll.lib import stubs) for
+# the "N platform artifacts" note.
+nbin=0; for f in "${bins[@]}"; do case "$f" in *.dll.lib) ;; *) nbin=$((nbin+1)) ;; esac; done
 
 notes="Cross-built \`libselenium_core\` engine, ${nbin} platform artifact(s), each with a \`.sha256\` (and a combined \`SHA256SUMS\`).
 

@@ -72,6 +72,13 @@ for t in $MATRIX; do
        && ae build --emit=lib --with=net --size --target="$t" \
             embed.ae --extra _embed_strdup.c -o "$out" ) >"$log" 2>&1; then
     ( cd "$DIST" && sha256sum "$name" > "$name.sha256" )
+    # Windows emits an import library (<dll>.lib) beside the DLL — needed by a
+    # consumer that LINKS against the DLL at build time (our FFI bindings dlopen
+    # at runtime and don't need it, but ship it so Windows is first-class).
+    # Checksum it too.
+    if [ "$os" = "windows" ] && [ -f "$out.lib" ]; then
+      ( cd "$DIST" && sha256sum "$name.lib" > "$name.lib.sha256" )
+    fi
     printf 'ok  (%s)\n' "$(file -b "$out" 2>/dev/null | cut -c1-42)"
     built=$((built+1))
     rm -f "$log"
@@ -83,7 +90,7 @@ for t in $MATRIX; do
 done
 
 # A combined checksum manifest over every artifact (not the .sha256 sidecars).
-( cd "$DIST" && sha256sum ./*.so ./*.dylib ./*.dll 2>/dev/null > SHA256SUMS || true )
+( cd "$DIST" && sha256sum ./*.so ./*.dylib ./*.dll ./*.dll.lib 2>/dev/null > SHA256SUMS || true )
 
 echo
 say "built $built artifact(s) into release/dist/ ($failed failed)"
