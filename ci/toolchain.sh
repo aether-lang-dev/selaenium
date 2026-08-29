@@ -5,11 +5,12 @@
 # it found — so it is cheap to call at the top of every CI lane. Pins come from
 # ci/versions.env (override via the AETHER_REF / AEB_REF env vars).
 #
-# Aether compiles to C, so the only host prerequisites are curl, tar, GNU make,
-# and a C compiler — no chicken-and-egg. aeb ships release BINARIES (v0.286+);
-# when one exists for this platform+tag we install it (fast, no compile),
-# otherwise we fall back to the public no-clone curl-pipe SOURCE build
-# (aether get.sh, aeb install.sh). Both are pinnable.
+# Prerequisites: curl, tar, GNU make, a C compiler (Aether compiles to C, so no
+# chicken-and-egg). aeb ships prebuilt release BINARIES (v0.286+): when one
+# exists for this platform+tag AND `unzip` is present we install it (fast, no
+# aeb compile — bin/aeb is a script and its Makefile install needs no cc),
+# otherwise we fall back to the public no-clone curl-pipe SOURCE build (aether
+# get.sh, aeb install.sh). Both are pinnable.
 #
 # Usage:  ci/toolchain.sh                 # install if missing, print versions
 #         FORCE=1 ci/toolchain.sh         # reinstall even if present
@@ -30,52 +31,58 @@ for tool in curl tar make cc; do
   have "$tool" || { say "MISSING prerequisite: $tool (need curl, tar, GNU make, a C compiler)"; exit 1; }
 done
 
-# uname -> the {os}-{arch} slug a release asset is named for.
+# uname -> the {os}-{arch} slug the release assets are named for
+# (aeb-{os}-{arch}.zip: os in linux/macos/freebsd/windows, arch in amd64/arm64,
+# with -musl variants on linux). Empty for an unrecognised platform.
 platform_slug() {
-  os=$(uname -s | tr '[:upper:]' '[:lower:]')
   arch=$(uname -m)
   case "$arch" in
-    x86_64|amd64) arch=x86_64 ;;
-    aarch64|arm64) arch=aarch64 ;;
+    x86_64|amd64) arch=amd64 ;;
+    aarch64|arm64) arch=arm64 ;;
+    *) return 0 ;;
   esac
-  printf '%s-%s' "$os" "$arch"
+  case "$(uname -s)" in
+    Linux)
+      # musl vs glibc: ldd's banner names the libc. Prefer the matching build.
+      if ldd --version 2>&1 | grep -qi musl; then printf 'linux-%s-musl' "$arch"
+      else printf 'linux-%s' "$arch"; fi ;;
+    Darwin)  printf 'macos-%s' "$arch" ;;
+    FreeBSD) printf 'freebsd-%s' "$arch" ;;
+    *) return 0 ;;
+  esac
 }
 
-# Try to install a prebuilt aeb from the GitHub release for $AEB_REF. Returns 0
-# on success (aeb now on PATH at $PREFIX/bin), non-zero to signal "fall back to
-# source build". Defensive: any missing asset / bad download / non-runnable
-# binary just returns non-zero — never aborts the script.
+# Install a PREBUILT aeb from the GitHub release for $AEB_REF. The platform asset
+# (aeb-{slug}.zip) is a full install tree — bin/aeb (a bash script, so no C
+# compiler needed) + share/aeb/ (the SDK runtime) — plus a Makefile whose
+# `install` target stages it into $PREFIX and writes an AEB_HOME wrapper (this is
+# what stamps it; a bare bin/aeb warns it is an "un-installed tree"). Returns 0
+# on success (aeb runnable at $PREFIX/bin), non-zero to fall back to source.
+# Fully defensive: missing asset / no unzip / bad tree / non-runnable -> non-zero.
 install_aeb_binary() {
   [ "${NO_BINARY:-0}" = "1" ] && return 1
   case "$AEB_REF" in v*) ;; *) return 1 ;; esac   # binaries are per-tag only
+  have unzip || { say "no unzip; using source build for aeb"; return 1; }
   slug=$(platform_slug)
-  base="https://github.com/aether-lang-dev/aeb/releases/download/${AEB_REF}"
+  [ -n "$slug" ] || return 1
+  url="https://github.com/aether-lang-dev/aeb/releases/download/${AEB_REF}/aeb-${slug}.zip"
   tmp=$(mktemp -d)
-  # Try the conventional asset names in order; stop at the first that downloads.
-  for name in "aeb-${AEB_REF}-${slug}.tar.gz" "aeb-${slug}.tar.gz" \
-              "aeb-${AEB_REF}-${slug}" "aeb-${slug}"; do
-    url="${base}/${name}"
-    if curl -fsSL "$url" -o "$tmp/asset" 2>/dev/null; then
-      mkdir -p "$PREFIX/bin"
-      case "$name" in
-        *.tar.gz) tar -xzf "$tmp/asset" -C "$tmp" 2>/dev/null || { rm -rf "$tmp"; return 1; }
-                  bin=$(find "$tmp" -type f -name aeb | head -1)
-                  [ -n "$bin" ] || { rm -rf "$tmp"; return 1; }
-                  cp "$bin" "$PREFIX/bin/aeb" ;;
-        *)        cp "$tmp/asset" "$PREFIX/bin/aeb" ;;
-      esac
-      chmod +x "$PREFIX/bin/aeb"
-      rm -rf "$tmp"
-      # Prove it actually runs on this box before trusting it.
-      if "$PREFIX/bin/aeb" --version >/dev/null 2>&1; then
-        say "installed aeb ${AEB_REF} from a release binary (${name})"
-        return 0
-      fi
-      rm -f "$PREFIX/bin/aeb"
-      return 1
-    fi
-  done
+  if ! curl -fsSL "$url" -o "$tmp/aeb.zip" 2>/dev/null; then rm -rf "$tmp"; return 1; fi
+  # TODO(release-eng ask): no per-asset .sha256 published for the platform zips
+  # yet, so the download is unverified. Verify here once checksums ship.
+  if ! unzip -q "$tmp/aeb.zip" -d "$tmp" 2>/dev/null; then rm -rf "$tmp"; return 1; fi
+  tree=$(find "$tmp" -maxdepth 1 -type d -name "aeb-${slug}" | head -1)
+  [ -n "$tree" ] && [ -f "$tree/share/aeb/Makefile" ] || { rm -rf "$tmp"; return 1; }
+  # Install via the bundled Makefile (stages files + writes the wrapper; the
+  # binary is prebuilt, so this needs no compiler).
+  if ! make -C "$tree/share/aeb" install PREFIX="$PREFIX" >/dev/null 2>&1; then
+    rm -rf "$tmp"; return 1
+  fi
   rm -rf "$tmp"
+  if "$PREFIX/bin/aeb" --version >/dev/null 2>&1; then
+    say "installed aeb ${AEB_REF} from the prebuilt release binary (aeb-${slug}.zip)"
+    return 0
+  fi
   return 1
 }
 
