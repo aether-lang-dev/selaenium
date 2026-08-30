@@ -1,0 +1,79 @@
+// Live BiDi vertical slice (shape C): launch Chrome via the driver manager,
+// newSession(webSocketUrl:true), bidi_open, and drive commands through the pump
+// + demux. Proves the shape-C demux against REAL Chrome, incl. concurrency.
+import driver
+import bidi
+import std.http.client
+import std.json
+import std.string
+
+extern exit(code: int)
+
+main() {
+    // 1. transparent driver launch (the driver manager finds/downloads it).
+    dh = driver.ensure("chrome", "", 15000)
+    if dh == null { println("SKIPPED: no chromedriver resolvable"); exit(0) }
+    base = driver.url_of(dh)
+
+    // 2. newSession with webSocketUrl:true (+ cached CfT chrome binary).
+    chromebin = "/home/paul/.cache/selenium/chrome/linux64/152.0.7977.64/chrome"
+    caps = "{\"capabilities\":{\"alwaysMatch\":{\"webSocketUrl\":true,\"goog:chromeOptions\":{\"binary\":\"${chromebin}\",\"args\":[\"--headless=new\",\"--no-sandbox\",\"--disable-gpu\",\"--disable-dev-shm-usage\"]}}}}"
+    req = client.request("POST", "${base}/session")
+    _h = client.set_header(req, "Content-Type", "application/json")
+    _b = client.set_body(req, caps, string.length(caps), "application/json")
+    _t = client.set_timeout(req, 60000000000ns)
+    resp, err = client.send_request(req)
+    client.request_free(req)
+    if err != "" { println("FAIL newSession: ${err}"); driver.stop(dh); exit(1) }
+    body = client.response_body(resp)
+    client.response_free(resp)
+    parsed, _pp = json.parse(body)
+    value, _v = json.object_get(parsed, "value")
+    capsv, _cv = json.object_get(value, "capabilities")
+    wsurlv, _w = json.object_get(capsv, "webSocketUrl")
+    if wsurlv == null { println("FAIL no webSocketUrl: ${body}"); driver.stop(dh); exit(1) }
+    wsurl, _wu = json.get_string(wsurlv)
+    println("  ok: newSession -> webSocketUrl")
+
+    // 3. open BiDi over shape-C session.
+    s = bidi.bidi_open(wsurl)
+    if s == null { println("FAIL bidi_open"); driver.stop(dh); exit(1) }
+
+    fails = 0
+
+    // 4. a command via pump+demux.
+    r1 = bidi.bidi_command(s, 1, "session.status", "{}", 10000)
+    fails = fails + ck("session.status via demux", string.contains(r1, "\"type\":\"success\""))
+
+    // 5. subscribe + a second command (browsingContext.getTree).
+    r2 = bidi.bidi_command(s, 2, "browsingContext.getTree", "{}", 10000)
+    fails = fails + ck("browsingContext.getTree via demux", string.contains(r2, "context"))
+
+    // 6. CONCURRENCY: two commands in flight, then pump; both replies correlate.
+    bidi.bidi_send(s, 10, "session.status", "{}")
+    bidi.bidi_send(s, 11, "browsingContext.getTree", "{}")
+    // pump until both replies are in (bounded).
+    got10 = ""
+    got11 = ""
+    waited = 0
+    while waited < 10000 {
+        if string.length(got10) == 0 { got10 = bidi.bidi_poll_reply(s, 10) }
+        if string.length(got11) == 0 { got11 = bidi.bidi_poll_reply(s, 11) }
+        if string.length(got10) > 0 { if string.length(got11) > 0 { waited = 99999 } }
+        if waited < 99999 { bidi.bidi_pump(s, 50); waited = waited + 50 }
+    }
+    fails = fails + ck("concurrent id 10 correlates", string.contains(got10, "\"type\":\"success\""))
+    fails = fails + ck("concurrent id 11 correlates", string.contains(got11, "context"))
+
+    bidi.bidi_close(s)
+    driver.stop(dh)
+
+    if fails == 0 { println("PASS: BiDi shape-C live slice green (demux drove real Chrome, concurrent)") ; exit(0) }
+    println("FAILED: ${string.from_int(fails)}")
+    exit(1)
+}
+
+ck(label: string, cond: int) -> int {
+    if cond == 1 { println("  ok: ${label}"); return 0 }
+    println("FAIL: ${label}"); return 1
+}

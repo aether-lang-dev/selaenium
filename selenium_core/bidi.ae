@@ -1,0 +1,136 @@
+// bidi.ae — the live BiDi session (shape C): a WebSocket handle + the pure demux
+// (bidi_demux.ae), wired via Aether's non-blocking ws primitives (ws_recv_timeout
+// / ws_poll / ws_fd, ae 0.606+). The engine holds NO thread: bidi_pump advances
+// the single demux one step (bounded by timeout_ms), and the caller drives the
+// wait with its own loop, draining replies/events via the demux poll calls. See
+// docs/WebDriver-BiDi.md.
+//
+// Lifecycle: bidi_open(ws_url) -> send(id, method, params) -> pump / poll_reply
+// (its own timeout) / poll_event -> close. The caller supplies each command id so
+// concurrent commands stay distinct.
+import bidi_demux
+import std.http
+import std.json
+import std.string
+import std.heap
+
+struct BidiSession {
+    ws: ptr            // std.http ws_connect handle
+    demux: ptr         // the pure frame router (bidi_demux.Demux)
+}
+
+// bidi_open(ws_url) — ws_connect to a session's webSocketUrl, ready to command.
+// Returns null if the connection fails.
+bidi_open(ws_url: string) -> ptr {
+    w = http.ws_connect(ws_url)
+    if w == null { return null }
+    s = heap.new(BidiSession)
+    s.ws = w
+    s.demux = bidi_demux.demux_new()
+    return s as ptr
+}
+
+bidi_close(sp: ptr) {
+    if sp == null { return }
+    s = sp as *BidiSession
+    if s.ws != null { http.ws_close(s.ws, 1000, "bye") }
+    if s.demux != null { bidi_demux.demux_free(s.demux) }
+    heap.free(sp)
+}
+
+// bidi_send(session, id, method, params_json) — frame + send one command; the
+// caller-supplied id registers a pending-reply slot in the demux so its reply is
+// kept (not dropped). Returns 0 sent, -1 on a send error.
+bidi_send(sp: ptr, id: int, method: string, params_json: string) -> int {
+    if sp == null { return -1 }
+    s = sp as *BidiSession
+    p = params_json
+    if string.length(p) == 0 { p = "{}" }
+    frame = "{\"id\":${string.from_int(id)},\"method\":${_qjson(method)},\"params\":${p}}"
+    bidi_demux.demux_register(s.demux, id)
+    return http.ws_send_text(s.ws, frame)
+}
+
+// bidi_pump(session, timeout_ms) — advance the demux ONE step: read up to one
+// frame off the socket (bounded by timeout_ms via ws_recv_timeout) and route it
+// through the demux (reply -> id-table, event -> bounded queue). Returns 1 if a
+// frame was routed, 0 on timeout (nothing arrived), -1 on close/error. The
+// engine holds no thread — the caller loops this (or waits on bidi_fd) then
+// drains via poll_reply/poll_event.
+bidi_pump(sp: ptr, timeout_ms: int) -> int {
+    if sp == null { return -1 }
+    s = sp as *BidiSession
+    kind = http.ws_recv_timeout(s.ws, timeout_ms)
+    if kind == 0 { return 0 }       // nothing arrived in time
+    if kind < 0 { return -1 }       // closed / error
+    // 1 text / 2 binary — BiDi is text JSON.
+    text = http.ws_message(s.ws)
+    _r = bidi_demux.demux_ingest(s.demux, text)
+    return 1
+}
+
+// bidi_fd(session) — the readable socket fd, for a binding that integrates with
+// a native event loop (asyncio.add_reader / epoll). Readiness is a HINT: on a
+// wake, always drain via bidi_pump(session, 0) until it returns 0, because a
+// complete frame can be buffered above the socket (see ws_poll's contract).
+bidi_fd(sp: ptr) -> int {
+    if sp == null { return -1 }
+    s = sp as *BidiSession
+    return http.ws_fd(s.ws)
+}
+
+// ---- drain (immediate; the caller calls these after its wait) ----
+
+bidi_poll_reply(sp: ptr, id: int) -> string {
+    if sp == null { return "" }
+    s = sp as *BidiSession
+    return bidi_demux.demux_poll_reply(s.demux, id)
+}
+bidi_poll_event(sp: ptr) -> string {
+    if sp == null { return "" }
+    s = sp as *BidiSession
+    return bidi_demux.demux_poll_event(s.demux)
+}
+bidi_lost_events(sp: ptr) -> int {
+    if sp == null { return 0 }
+    s = sp as *BidiSession
+    return bidi_demux.demux_lost_count(s.demux)
+}
+bidi_cancel(sp: ptr, id: int) {
+    if sp == null { return }
+    s = sp as *BidiSession
+    bidi_demux.demux_cancel(s.demux, id)
+}
+
+// ---- convenience: send + wait for one reply (a binding's own timeout policy) ----
+
+// bidi_command(session, id, method, params, timeout_ms) — send, then pump/poll
+// until this id's reply arrives or timeout_ms elapses. Returns the reply JSON, or
+// "" on timeout/error. Events that arrive meanwhile are queued (drain via
+// poll_event). This is the simple synchronous shape; a truly concurrent caller
+// interleaves send/pump/poll across many ids itself.
+bidi_command(sp: ptr, id: int, method: string, params_json: string, timeout_ms: int) -> string {
+    if bidi_send(sp, id, method, params_json) != 0 { return "" }
+    waited = 0
+    step = 50
+    done = 0
+    out = ""
+    while done == 0 {
+        r = bidi_poll_reply(sp, id)
+        if string.length(r) > 0 {
+            out = r
+            done = 1
+        } else {
+            pr = bidi_pump(sp, step)
+            if pr < 0 { done = 1 }
+            waited = waited + step
+            if waited >= timeout_ms { done = 1 }
+        }
+    }
+    return out
+}
+
+_qjson(str_val: string) -> string {
+    j, _e = json.stringify(json.str(str_val))
+    return j
+}
