@@ -144,9 +144,19 @@ class WebElement:
     def tag_name(self) -> str:
         return self._exec("getElementTagName")
 
+    def is_displayed(self) -> bool:
+        """Whether the element is shown (the isDisplayed atom, run in-page by the
+        engine — the visibility algorithm, not a naive style check)."""
+        return bool(self._driver._atom_bool("is_displayed", self._id))
+
     def get_attribute(self, name: str) -> Any:
-        # DOM attribute (W3C native endpoint). The atom-based getAttribute
-        # (property-or-attribute) is a binding/engine follow-up.
+        """The classic getAttribute(name): property-or-attribute (boolean attrs,
+        live properties like value/checked), via the shared engine atom. Use
+        get_dom_attribute() for the raw W3C DOM attribute."""
+        return self._driver._atom_get_attribute(self._id, name)
+
+    def get_dom_attribute(self, name: str) -> Any:
+        """The literal DOM attribute (W3C getDomAttribute), no property fallback."""
         return self._exec("getDomAttribute", {"name": name})
 
     def get_property(self, name: str) -> Any:
@@ -231,6 +241,41 @@ class WebDriver:
         if raw == "":
             return None
         return json.loads(raw)
+
+    # ---- atom-backed commands (run a shared JS atom in-page via the engine) ----
+
+    def _atom_result(self, rc: int) -> Any:
+        """Drain the last_value after an atom call, raising a typed error on rc!=0."""
+        if rc != 0:
+            code = _native.last_error_code(self._handle)
+            message = _native.take_string(_native.last_error(self._handle))
+            if rc == -1 and code == 0:
+                raise WebDriverError(message or "transport failure", -1)
+            _raise_for(code, message)
+        raw = _native.take_string(_native.last_value(self._handle))
+        return None if raw == "" else json.loads(raw)
+
+    def _atom_bool(self, verb: str, element_id: str) -> bool:
+        fn = getattr(_native, verb)
+        return bool(self._atom_result(fn(self._handle, _native.encode(element_id))))
+
+    def _atom_get_attribute(self, element_id: str, name: str) -> Any:
+        rc = _native.get_attribute(
+            self._handle, _native.encode(element_id), _native.encode(name)
+        )
+        return self._atom_result(rc)
+
+    def find_relative(self, base_css: str, *filters: dict) -> list["WebElement"]:
+        """Relative locators: elements matching ``base_css`` filtered by spatial
+        relation to anchors, nearest first. Each filter is a dict
+        ``{"kind": "above"|"below"|"left"|"right"|"near", "sel": "<css>"}``
+        (``near`` also accepts ``"dist"``). Returns a list of WebElement."""
+        rc = _native.find_relative(
+            self._handle, _native.encode(base_css), _native.encode(json.dumps(list(filters)))
+        )
+        result = self._atom_result(rc)
+        refs = result or []
+        return [WebElement(self, r[_W3C_ELEMENT_KEY]) for r in refs]
 
     # ---- navigation ----
 

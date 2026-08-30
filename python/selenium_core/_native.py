@@ -150,6 +150,20 @@ def _ensure_loaded() -> None:
     )
     g["error_code"] = _decl("aether_sel_embed_error_code", ctypes.c_int, [ctypes.c_char_p])
 
+    # ---- atom-backed commands (isDisplayed/getAttribute/getText, run in-page) ----
+    g["execute_atom"] = _decl(
+        "aether_sel_embed_execute_atom", ctypes.c_int,
+        [_HANDLE, ctypes.c_char_p, ctypes.c_char_p, ctypes.c_char_p],
+    )
+    g["is_displayed"] = _decl("aether_sel_embed_is_displayed", ctypes.c_int, [_HANDLE, ctypes.c_char_p])
+    g["get_attribute"] = _decl(
+        "aether_sel_embed_get_attribute", ctypes.c_int, [_HANDLE, ctypes.c_char_p, ctypes.c_char_p]
+    )
+    g["atom_str_arg"] = _decl("aether_sel_embed_atom_str_arg", _CSTR, [ctypes.c_char_p])
+    g["find_relative"] = _decl(
+        "aether_sel_embed_find_relative", ctypes.c_int, [_HANDLE, ctypes.c_char_p, ctypes.c_char_p]
+    )
+
     # ---- WebDriver-BiDi (over the session's webSocketUrl) ----
     # An opaque BiDi channel handle, independent of the W3C session handle.
     g["bidi_open"] = _decl("aether_sel_embed_bidi_open", _HANDLE, [ctypes.c_char_p])

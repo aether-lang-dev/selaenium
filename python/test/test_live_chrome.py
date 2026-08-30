@@ -125,6 +125,62 @@ def test_live_chrome():
             proc.kill()
 
 
+def test_live_atoms():
+    """Atom-backed commands (isDisplayed / getAttribute / relative locators) run
+    in-page via the shared engine atoms, from Python through the C ABI."""
+    driver_bin = shutil.which("chromedriver")
+    if not driver_bin:
+        pytest.skip("chromedriver not on PATH")
+
+    port = _free_port()
+    proc = subprocess.Popen(
+        [driver_bin, f"--port={port}"],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    )
+    try:
+        if not _wait_up(port):
+            pytest.skip("chromedriver did not come up")
+
+        options = {"goog:chromeOptions": {"args": ["--headless=new", "--no-sandbox",
+                   "--disable-gpu", "--disable-dev-shm-usage"]}}
+        chrome_bin = os.environ.get("SEL_CHROME_BINARY")
+        if chrome_bin:
+            options["goog:chromeOptions"]["binary"] = chrome_bin
+        from selenium_core import By  # noqa: E402
+        driver = Chrome(f"http://127.0.0.1:{port}", options=options)
+        try:
+            page = ("data:text/html;charset=utf-8," + urllib.parse.quote(
+                "<h1 id='hdr'>H</h1>"
+                "<button id='btn'>b</button>"
+                "<p id='gone' style='display:none'>x</p>"
+                "<a id='lnk' href='https://example.com/x'>l</a>"))
+            driver.get(page)
+
+            assert driver.find_element(By.ID, "hdr").is_displayed() is True
+            print("  ok: is_displayed True for visible #hdr")
+            assert driver.find_element(By.ID, "gone").is_displayed() is False
+            print("  ok: is_displayed False for display:none #gone")
+
+            href = driver.find_element(By.ID, "lnk").get_attribute("href")
+            assert "example.com/x" in href, f"href={href!r}"
+            print("  ok: get_attribute('href') resolves the URL (property semantics)")
+
+            rel = driver.find_relative("button", {"kind": "below", "sel": "#hdr"})
+            assert len(rel) >= 1, "relative below #hdr found nothing"
+            assert rel[0].tag_name.lower() == "button"
+            print(f"  ok: find_relative below #hdr -> {len(rel)} element(s)")
+
+            print("PASS: live atoms test green")
+        finally:
+            driver.quit()
+    finally:
+        proc.terminate()
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+
+
 def test_live_bidi():
     """WebDriver-BiDi over the same engine: subscribe to console log entries,
     emit one via the classic script channel, and receive the event
