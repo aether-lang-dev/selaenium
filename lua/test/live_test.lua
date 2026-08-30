@@ -86,6 +86,23 @@ local ok, err = pcall(function()
   local nok, nerr = pcall(function() return d:find_element(s.By.ID, "does-not-exist") end)
   assert((not nok) and nerr.code == 17, "no such element error")
   print("  ok: no such element error")
+
+  -- WebDriver-BiDi: subscribe to console log entries, emit one via the classic
+  -- script channel, and receive the event asynchronously over the demux — the
+  -- bidirectional half, over this session's negotiated webSocketUrl.
+  assert(d:bidi_available(), "bidi available (webSocketUrl negotiated)")
+  local ack = d:bidi():subscribe(s.BidiEvent.LOG_ENTRY_ADDED)
+  assert_eq(ack.type, "success", "bidi subscribe ack")
+  d:execute_script("console.log('bidi-hello');")
+  local ev = d:bidi():next_event(s.BidiEvent.LOG_ENTRY_ADDED, 8000)
+  assert(ev ~= nil, "log.entryAdded event received")
+  assert_eq(ev.method, s.BidiEvent.LOG_ENTRY_ADDED, "event method")
+  -- the logged text rides in params.args[1].value (Lua 1-indexed)
+  local logged = ev.params and ev.params.args and ev.params.args[1] and ev.params.args[1].value
+  assert_eq(logged, "bidi-hello", "event carries logged text")
+  local status = d:bidi():command("session.status")
+  assert_eq(status.type, "success", "bidi session.status command")
+  print("  ok: BiDi (log.entryAdded event + session.status command)")
 end)
 
 d:quit()

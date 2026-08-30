@@ -137,6 +137,49 @@ namespace SeleniumCore.Tests
             }
         }
 
+        // WebDriver-BiDi over the same engine: subscribe to console log entries,
+        // emit one via the classic script channel, and receive the event
+        // asynchronously over the demux — the bidirectional half, driven from C#.
+        [SkippableFact]
+        public void HeadlessChromeBidi()
+        {
+            string? driver = Which("chromedriver");
+            Skip.If(driver is null, "chromedriver not on PATH");
+
+            int cdPort = FreePort();
+            var cd = Process.Start(new ProcessStartInfo(driver!, $"--port={cdPort}")
+                { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true })!;
+            try
+            {
+                Skip.IfNot(WaitUp(cdPort, 10000), "chromedriver did not come up");
+
+                var d = WebDriver.HeadlessChrome($"http://127.0.0.1:{cdPort}");
+                try
+                {
+                    d.BidiAvailable.ShouldBeTrue();
+                    d.Get("data:text/html,<!doctype html><title>BiDi</title><h1>bidi</h1>");
+
+                    var ack = d.Bidi.Subscribe(BidiEvent.LogEntryAdded);
+                    ack["type"].ShouldBe("success");
+
+                    d.ExecuteScript("console.log('bidi-hello');");
+
+                    var ev = d.Bidi.NextEvent(BidiEvent.LogEntryAdded, 8000);
+                    ev.ShouldNotBeNull();
+                    ev!["method"].ShouldBe(BidiEvent.LogEntryAdded);
+                    JsonSerializer.Serialize(ev).ShouldContain("bidi-hello");
+
+                    var status = d.Bidi.Command("session.status");
+                    status["type"].ShouldBe("success");
+                }
+                finally { d.Quit(); }
+            }
+            finally
+            {
+                try { cd.Kill(); } catch { /* already gone */ }
+            }
+        }
+
         // --- in-process content server (two pages: /one links to /two) -------
         private static void StartContentServer(int port, System.Threading.CancellationToken ct)
         {
