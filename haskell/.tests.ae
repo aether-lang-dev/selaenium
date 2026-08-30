@@ -1,24 +1,27 @@
 // Haskell binding tests (foreign import ccall + link-time). The engine .so is
-// LINKED at build time via the .cabal (extra-libraries + ld-options rpath).
-// This node deps the engine; run-tests.sh stages the .so into haskell/native/,
-// builds with cabal, and runs the test (chromedriver + a content server are
-// started by the harness, URLs passed via env). SKIPS LOUDLY if GHC/cabal is
-// absent — authored here, verified on a box with GHC (catchyos).
-import build
-import std.os
+// LINKED at build time via the .cabal (extra-libraries: selenium_core). cabal
+// 9.10 rejects a bare relative extra-lib-dirs and won't expand ${pkgroot}, so
+// link_dir passes the engine's ABSOLUTE dir as --extra-lib-dirs + an rpath
+// ghc-option; the dir is derived from the engine's shared_lib artifact (not
+// hardcoded). SELENIUM_CORE_LIB is injected for the run. The test:live binary
+// self-skips the live-surface leg when chromedriver is absent (the live
+// orchestration moves to the driver ABI in the retrofit pass). Skipped by
+// preflight when GHC/cabal is absent (prereq ghc); verified on catchyos (GHC).
+import bldr
+import haskell
+import haskell (link_dir, target)
+import std.path
 
 aeb(cap) {
-    b = build.start()
-    build.dep(b, "selenium_core/.build.ae")
-    lib = build.dep_artifact(b, "selenium_core/.build.ae", "shared_lib")
-    root = build._get(b, "root")
-    hdir = "${root}/haskell"
-
-    rc = os.system("SELENIUM_CORE_LIB=\"${lib}\" bash \"${hdir}/run-tests.sh\" \"${lib}\"")
-    if rc != 0 {
-        println("haskell tests: FAILED")
-        return 1
+    bldr.build() {
+        prereq("ghc")
+        dep("selenium_core/.build.ae")
+        lib = dep_artifact("selenium_core/.build.ae", "shared_lib")
+        engine_dir = path.dirname(lib)
+        haskell.test() {
+            env("SELENIUM_CORE_LIB", lib)
+            link_dir(engine_dir)
+            target("test:live")
+        }
     }
-    println("haskell tests: PASSED (ffi + live+surface, or SKIPPED if no GHC)")
-    return 0
 }
