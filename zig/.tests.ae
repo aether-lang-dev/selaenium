@@ -1,30 +1,23 @@
-// Zig binding tests (@extern + link-time, Zig 0.16). The engine .so is LINKED
-// at build time via build.zig (-L nim-style search + rpath). This node deps the
-// engine, stages the .so into zig/native/, runs `zig build test` (FFI unit
-// tests) and then the live-surface binary via run-live.sh (which starts the
-// content server + chromedriver and passes their URLs in env — Zig 0.16's
-// reworked std.net stays out of the test). The live step self-skips if
-// chromedriver is absent.
-import build
-import std.os
+// Zig binding tests (@extern + link-time, Zig 0.16). The engine .so is LINKED at
+// build time via build.zig, which searches ../selenium_core/native/ (+ rpath) —
+// exactly where the engine node's copy.file() stages the .so — so no per-binding
+// staging is needed, just a dep on the engine. zig.test runs `zig build test`
+// (the FFI unit tests). Skipped by preflight when zig is absent (prereq zig).
+//
+// The live-surface leg previously used an external run-live.sh (python content
+// server + chromedriver, passed via SEL_* env) because Zig 0.16's std.net was
+// mid-rework. With the engine's driver-orchestration ABI now shipped
+// (sel_embed_ensure_driver, docs/Driver-Orchestration-ABI.md), that leg will
+// self-orchestrate in-process like the other bindings — a focused follow-up.
+// The FFI units are the live-verified surface here.
+import bldr
+import zig
 
 aeb(cap) {
-    b = build.start()
-    build.dep(b, "selenium_core/.build.ae")
-    lib = build.dep_artifact(b, "selenium_core/.build.ae", "shared_lib")
-    root = build._get(b, "root")
-    zdir = "${root}/zig"
-    zig = "PATH=\"$HOME/.local/bin:$PATH\""
-
-    st = os.system("mkdir -p \"${zdir}/native\" && cp \"${lib}\" \"${zdir}/native/libselenium_core.so\"")
-    if st != 0 { println("zig tests: failed to stage engine .so"); return 1 }
-
-    // FFI unit tests + build the live/example binaries.
-    rc = os.system("cd \"${zdir}\" && ${zig} zig build test")
-    if rc != 0 { println("zig tests: `zig build test` (FFI) FAILED"); return 1 }
-    // Live-surface test (skips green without chromedriver).
-    rc2 = os.system("cd \"${zdir}\" && ${zig} bash run-live.sh zig-out/bin/selenium-live")
-    if rc2 != 0 { println("zig tests: live-surface FAILED"); return 1 }
-    println("zig tests: PASSED (ffi + live+surface)")
-    return 0
+    bldr.build() {
+        prereq("zig")
+        dep("selenium_core/.build.ae")
+        zig.test() {
+        }
+    }
 }

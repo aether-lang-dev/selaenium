@@ -1,50 +1,59 @@
-// Aggregate target set: everything that must be green before pushing the
-// Aether Selenium core. A named set is just build.dep() edges (see aeb LLM.md).
-import build
+// Aggregate target set: everything that must be green before pushing the Aether
+// Selenium core. A named set is just dep() edges — bldr.build() with no builders,
+// only prerequisites. Running `aeb .presubmit.ae` from the repo root builds the
+// engine + drives every binding's test node (each skips green where its
+// toolchain is absent).
+//
+// 24 language bindings over ONE pure-Aether engine (libselenium_core.so, the flat
+// aether_sel_embed_* C ABI) — see README.md for the whole picture. The native
+// Aether client is the only no-FFI binding; the JVM/CLR/BEAM families ride one
+// shared binding each (Java jar / C# P/Invoke / Erlang NIF).
+//
+// The .example.ae consumer-install proofs are NOT yet migrated to bldr (they
+// remain on the old build.* API pending an aeb consumer_example() builder) and
+// are therefore omitted here; add them back once migrated.
+import bldr
 
 aeb(cap) {
-    b = build.start()
-    build.dep(b, "selenium_core/.build.ae")
-    build.dep(b, "selenium_core/tests/.tests.ae")
-    build.dep(b, "python/.tests.ae")
-    build.dep(b, "go/.tests.ae")
-    build.dep(b, "ruby/.tests.ae")
-    build.dep(b, "javascript/.tests.ae")
-    build.dep(b, "java/.tests.ae")
-    build.dep(b, "dotnet/SeleniumCore.Tests/.tests.ae")
-    build.dep(b, "rust/.tests.ae")
-    build.dep(b, "dart/.tests.ae")
-    // BEAM family: Erlang owns the shared NIF; Elixir + Gleam ride the SAME
-    // compiled NIF. Erlang is live-verified here; gleam/elixir skip green when
-    // their compiler is absent (verified on a box that has them).
-    build.dep(b, "erlang/.tests.ae")
-    build.dep(b, "gleam/.tests.ae")
-    build.dep(b, "elixir/.tests.ae")
-    build.dep(b, "nim/.tests.ae")
-    build.dep(b, "zig/.tests.ae")
-    build.dep(b, "lua/.tests.ae")
-    build.dep(b, "php/.tests.ae")
-    // JVM family: Kotlin + Clojure consume the ONE Java FFM jar over JVM interop
-    // (no second FFI). They need a JVM-24-capable toolchain: Kotlin >= 1.9 (a
-    // modern kotlinc, not Debian's 1.3) and clojure; each skips green otherwise.
-    build.dep(b, "kotlin/.tests.ae")
-    build.dep(b, "clojure/.tests.ae")
-    build.dep(b, "groovy/.tests.ae")
-    // Haskell (foreign import ccall, link-time). Authored here; skips green
-    // without GHC (verified on a box with GHC).
-    build.dep(b, "haskell/.tests.ae")
-    // Consumer-install proofs: the packaged wheel / Go module / gem / npm
-    // tarball / jar / nupkg / crate / pub package standing alone with the .so.
-    build.dep(b, "python/.example.ae")
-    build.dep(b, "go/.example.ae")
-    build.dep(b, "ruby/.example.ae")
-    build.dep(b, "javascript/.example.ae")
-    build.dep(b, "java/.example.ae")
-    build.dep(b, "dotnet/.example.ae")
-    build.dep(b, "rust/.example.ae")
-    build.dep(b, "dart/.example.ae")
-    build.dep(b, "nim/.example.ae")
-    build.dep(b, "zig/.example.ae")
-    build.dep(b, "lua/.example.ae")
-    return 0
+    bldr.build() {
+        // engine + its no-browser probe
+        dep("selenium_core/.build.ae")
+        dep("selenium_core/tests/.tests.ae")
+
+        // the native Aether client (no FFI — drives the engine in-process)
+        dep("aether/.tests.ae")
+
+        // FFI bindings
+        dep("python/.tests.ae")
+        dep("go/.tests.ae")
+        dep("ruby/.tests.ae")
+        dep("javascript/.tests.ae")
+        dep("java/.tests.ae")
+        dep("dotnet/SeleniumCore.Tests/.tests.ae")
+        dep("rust/.tests.ae")
+        dep("dart/.tests.ae")
+        dep("nim/.tests.ae")
+        dep("zig/.tests.ae")
+        dep("lua/.tests.ae")
+        dep("php/.tests.ae")
+        dep("haskell/.tests.ae")
+        dep("swift/.tests.ae")
+        dep("julia/.tests.ae")
+        dep("crystal/.tests.ae")
+
+        // JVM family — ride the ONE Java FFM jar over JVM interop (no second FFI).
+        dep("kotlin/.tests.ae")
+        dep("clojure/.tests.ae")
+        dep("groovy/.tests.ae")
+        dep("scala/.tests.ae")
+
+        // CLR family — ride the ONE C# P/Invoke binding.
+        dep("fsharp/.tests.ae")
+
+        // BEAM family — Erlang owns the shared NIF; Elixir/Gleam/LFE ride it.
+        dep("erlang/.tests.ae")
+        dep("gleam/.tests.ae")
+        dep("elixir/.tests.ae")
+        dep("lfe/.tests.ae")
+    }
 }
