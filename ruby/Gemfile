@@ -1,0 +1,16 @@
+# frozen_string_literal: true
+
+# Ruby 3.4 unbundled several former default gems from the stdlib; the specs
+# need them declared so bundler resolves them into .aeb/bundle:
+#   - minitest : the test framework (minitest/autorun)
+#   - base64   : used by the surface spec (dropped from stdlib in 3.4)
+#   - webrick  : the live/surface content server (dropped from stdlib in 3.0)
+# cgi, json, socket remain bundled and need no entry.
+source "https://rubygems.org"
+
+gem "minitest", "~> 5.0"
+gem "base64"
+gem "webrick"
+# webrick eagerly requires erb (its erbhandler); erb is itself an unbundled
+# gem in Ruby 3.4, so it must be declared even though our server never uses it.
+gem "erb"

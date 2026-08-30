@@ -1,40 +1,25 @@
-// Ruby binding tests (Fiddle). The loader honors SELENIUM_CORE_LIB, which we
-// point at the shared engine artifact this node deps. The tests are minitest,
-// so we run them directly with `ruby` rather than via aeb's ruby.rspec/bundle
-// path. The live-Chrome spec skips cleanly if chromedriver is absent.
-// SKIPS LOUDLY if ruby or the minitest gem is unavailable (a missing test
-// runner is an under-provisioned box, not a binding failure — matches php).
-import build
-import std.os
+// Ruby binding tests (Fiddle, minitest). The loader honors SELENIUM_CORE_LIB,
+// injected from the engine's shared_lib artifact. Three minitest specs: the
+// no-browser FFI facts (ffi_test) + the live-Chrome smoke (live_test) and broad
+// surface (surface_test), which skip cleanly when chromedriver is absent.
+// Ruby 3.4 unbundled minitest/base64/webrick from the stdlib, so the Gemfile
+// declares them and ruby.install() resolves them into .aeb/bundle; minitest()
+// then runs `bundle exec ruby` so the specs see the bundled gems.
+// Skipped by preflight when ruby is absent (prereq ruby:3).
+import bldr
+import ruby
 
 aeb(cap) {
-    b = build.start()
-    build.dep(b, "selenium_core/.build.ae")
-    lib = build.dep_artifact(b, "selenium_core/.build.ae", "shared_lib")
-    root = build._get(b, "root")
-    rbdir = "${root}/ruby"
-
-    have = os.system("command -v ruby >/dev/null 2>&1 && ruby -e 'require \"minitest/autorun\"' >/dev/null 2>&1")
-    if have != 0 {
-        println("ruby tests: SKIPPED — ruby with minitest not available")
-        return 0
+    bldr.build() {
+        prereq("ruby:3")
+        dep("selenium_core/.build.ae")
+        lib = dep_artifact("selenium_core/.build.ae", "shared_lib")
+        ruby.install()
+        ruby.minitest() {
+            minitest_file("spec/ffi_test.rb")
+            minitest_file("spec/live_test.rb")
+            minitest_file("spec/surface_test.rb")
+            env("SELENIUM_CORE_LIB", lib)
+        }
     }
-
-    rc = os.system("cd \"${rbdir}\" && SELENIUM_CORE_LIB=\"${lib}\" ruby spec/ffi_test.rb")
-    if rc != 0 {
-        println("ruby tests: ffi_test FAILED")
-        return 1
-    }
-    rc2 = os.system("cd \"${rbdir}\" && SELENIUM_CORE_LIB=\"${lib}\" ruby spec/live_test.rb")
-    if rc2 != 0 {
-        println("ruby tests: live_test FAILED")
-        return 1
-    }
-    rc3 = os.system("cd \"${rbdir}\" && SELENIUM_CORE_LIB=\"${lib}\" ruby spec/surface_test.rb")
-    if rc3 != 0 {
-        println("ruby tests: surface_test FAILED")
-        return 1
-    }
-    println("ruby tests: PASSED (ffi + live + surface)")
-    return 0
 }
