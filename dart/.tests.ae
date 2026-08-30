@@ -1,38 +1,24 @@
-// Dart binding tests (dart:ffi). The loader honors SELENIUM_CORE_LIB, which we
-// point at the shared engine artifact this node deps. `dart pub get --offline`
-// then `dart test`. The live test spawns its own out-of-process content server
-// (dart:ffi is synchronous, so an in-isolate server would deadlock) + its own
-// chromedriver, and self-skips if chromedriver is absent. dart is under flutter.
-import build
-import std.os
+// Dart binding tests (dart:ffi). The loader honors SELENIUM_CORE_LIB, injected
+// here from the engine's shared_lib artifact. dart.test() resolves deps
+// (pub_get_first, offline against the local pub cache) then runs `dart test`
+// over the FFI facts (ffi_test) + the live-Chrome smoke+surface (live_test).
+// The live test spawns its own out-of-process content server (dart:ffi is
+// synchronous, so an in-isolate server would deadlock) + chromedriver, and
+// self-skips when chromedriver is absent. Skipped by preflight when dart is
+// absent (prereq dart).
+import bldr
+import dart
 
 aeb(cap) {
-    b = build.start()
-    build.dep(b, "selenium_core/.build.ae")
-    lib = build.dep_artifact(b, "selenium_core/.build.ae", "shared_lib")
-    root = build._get(b, "root")
-    ddir = "${root}/dart"
-    dart = "PATH=\"/home/paul/development/flutter/bin:$PATH\""
-
-    have = os.system("command -v dart >/dev/null 2>&1 || [ -x /home/paul/development/flutter/bin/dart ]")
-    if have != 0 {
-        println("dart tests: SKIPPED — dart not available")
-        return 0
-    }
-    pg = os.system("cd \"${ddir}\" && ${dart} dart pub get --offline")
-    if pg != 0 {
-        // offline cache missing a dep (e.g. `test`) — resolve over the network.
-        pg = os.system("cd \"${ddir}\" && ${dart} dart pub get")
-        if pg != 0 {
-            println("dart tests: pub get failed (offline and online)")
-            return 1
+    bldr.build() {
+        prereq("dart")
+        dep("selenium_core/.build.ae")
+        lib = dep_artifact("selenium_core/.build.ae", "shared_lib")
+        dart.test() {
+            env("SELENIUM_CORE_LIB", lib)
+            pub_get_first("1")
+            offline("1")
+            test_path("test/ffi_test.dart test/live_test.dart")
         }
     }
-    rc = os.system("cd \"${ddir}\" && ${dart} SELENIUM_CORE_LIB=\"${lib}\" dart test test/ffi_test.dart test/live_test.dart")
-    if rc != 0 {
-        println("dart tests: dart test FAILED")
-        return 1
-    }
-    println("dart tests: PASSED (ffi + live+surface)")
-    return 0
 }
