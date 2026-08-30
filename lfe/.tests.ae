@@ -1,0 +1,31 @@
+// LFE (Lisp Flavoured Erlang) binding tests. LFE is a BEAM-family binding: it
+// consumes the SAME shared NIF the Erlang binding owns (selenium_nif) — no
+// second FFI, no second .so (one Erlang NIF backs the BEAM family: Erlang,
+// Elixir, Gleam, LFE), exactly as one Java jar backs the JVM family. It deps
+// erlang/.build.ae for the NIF app (erl_libs) and runs the no-browser FFI facts
+// (src/selenium.lfe + test/ffi_test.lfe) via lfec + `lfe -eval 'ffi_test:main([])'`
+// with ERL_LIBS pointed at the NIF _build and -pa at the NIF ebin.
+//
+// Skipped by preflight when LFE is absent (prereq lfe) — authored here, verified
+// on a box with the LFE compiler; this box (catchyos) has Erlang/BEAM + the NIF
+// but not lfe, so it SKIPs loudly. Uses aeb's lfe.run_main (an lfe-compile +
+// run-main builder mirroring erlang.eunit's run_main) when available.
+import bldr
+import lfe
+import lfe (src, test_src, run_main, pa)
+
+aeb(cap) {
+    bldr.build() {
+        prereq("lfe")
+        dep("erlang/.build.ae")
+        libs = dep_artifact("erlang/.build.ae", "erl_libs")
+        ebin = dep_artifact("erlang/.build.ae", "nif_ebin")
+        lfe.test() {
+            env("ERL_LIBS", libs)
+            src("src/selenium.lfe")
+            test_src("test/ffi_test.lfe")
+            pa(ebin)
+            run_main("ffi_test")
+        }
+    }
+}
