@@ -1,45 +1,22 @@
 // Python binding tests (ctypes). The Fiddle-free loader honors SELENIUM_CORE_LIB,
-// which we point at the shared engine artifact this node deps.
-//
-// Three suites: the no-browser FFI test (pytest), and two live-Chrome scripts —
-// the find/click smoke and the broad surface test (cookies, windows, navigation,
-// actions, screenshots). The live scripts self-skip (exit 0) if chromedriver is
-// absent. We run them directly (they are main() scripts, not pytest cases) and
-// disable pytest's plugin autoload to dodge the box's broken anyio plugin chain.
-// SKIPS LOUDLY if python3 or pytest is unavailable (matches php's convention;
-// a missing test runner is an under-provisioned box, not a binding failure).
-import build
-import std.os
+// injected here from the engine's shared_lib artifact. pytest discovers all
+// test/test_*.py: the no-browser FFI facts, plus the two live-Chrome suites
+// (find/click smoke + broad surface) which pytest.skip when chromedriver is
+// absent. PYTEST_DISABLE_PLUGIN_AUTOLOAD dodges the box's broken anyio plugin
+// chain. Skipped cleanly by preflight when python is absent (prereq python:3).
+import bldr
+import python
 
 aeb(cap) {
-    b = build.start()
-    build.dep(b, "selenium_core/.build.ae")
-    lib = build.dep_artifact(b, "selenium_core/.build.ae", "shared_lib")
-    root = build._get(b, "root")
-    pydir = "${root}/python"
-    envp = "SELENIUM_CORE_LIB=\"${lib}\" PYTEST_DISABLE_PLUGIN_AUTOLOAD=1"
-
-    have = os.system("command -v python3 >/dev/null 2>&1 && python3 -c 'import pytest' >/dev/null 2>&1")
-    if have != 0 {
-        println("python tests: SKIPPED — python3 with pytest not available")
-        return 0
+    bldr.build() {
+        prereq("python:3")
+        dep("selenium_core/.build.ae")
+        lib = dep_artifact("selenium_core/.build.ae", "shared_lib")
+        python.pip("pytest")
+        python.install()
+        python.pytest() {
+            env("SELENIUM_CORE_LIB", lib)
+            env("PYTEST_DISABLE_PLUGIN_AUTOLOAD", "1")
+        }
     }
-
-    rc = os.system("cd \"${pydir}\" && ${envp} python3 -m pytest -q test/test_ffi.py")
-    if rc != 0 {
-        println("python tests: FFI (pytest) FAILED")
-        return 1
-    }
-    rc2 = os.system("cd \"${pydir}\" && ${envp} python3 test/test_live_chrome.py")
-    if rc2 != 0 {
-        println("python tests: live-chrome FAILED")
-        return 1
-    }
-    rc3 = os.system("cd \"${pydir}\" && ${envp} python3 test/test_live_surface.py")
-    if rc3 != 0 {
-        println("python tests: live-surface FAILED")
-        return 1
-    }
-    println("python tests: PASSED (ffi + live-chrome + live-surface)")
-    return 0
 }

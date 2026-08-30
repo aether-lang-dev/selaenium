@@ -9,6 +9,7 @@ and tears everything down. Skips loudly if chromedriver is absent.
 """
 
 import os
+import pytest
 import shutil
 import socket
 import subprocess
@@ -52,11 +53,10 @@ _HTML = (
 PAGE = "data:text/html;charset=utf-8," + urllib.parse.quote(_HTML)
 
 
-def main() -> int:
+def test_live_chrome():
     driver_bin = shutil.which("chromedriver")
     if not driver_bin:
-        print("SKIPPED: chromedriver not on PATH")
-        return 0
+        pytest.skip("chromedriver not on PATH")
 
     port = _free_port()
     proc = subprocess.Popen(
@@ -65,8 +65,7 @@ def main() -> int:
     )
     try:
         if not _wait_up(port):
-            print("SKIPPED: chromedriver did not come up")
-            return 0
+            pytest.skip("chromedriver did not come up")
 
         options = {
             "goog:chromeOptions": {
@@ -113,7 +112,7 @@ def main() -> int:
                 print("  ok: NoSuchElementError raised for missing element")
 
             print("PASS: live Chrome smoke test green")
-            return 0
+            return
         finally:
             driver.quit()
             print("  ok: quit")
@@ -124,6 +123,3 @@ def main() -> int:
         except subprocess.TimeoutExpired:
             proc.kill()
 
-
-if __name__ == "__main__":
-    sys.exit(main())

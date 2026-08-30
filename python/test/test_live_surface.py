@@ -11,6 +11,7 @@ if chromedriver is absent.
 import base64
 import http.server
 import os
+import pytest
 import shutil
 import socket
 import socketserver
@@ -63,11 +64,10 @@ def _wait_up(port, timeout=10.0):
     return False
 
 
-def main() -> int:
+def test_live_surface():
     driver_bin = shutil.which("chromedriver")
     if not driver_bin:
-        print("SKIPPED: chromedriver not on PATH")
-        return 0
+        pytest.skip("chromedriver not on PATH")
 
     # Local content server.
     web_port = _free_port()
@@ -81,8 +81,7 @@ def main() -> int:
                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     try:
         if not _wait_up(cd_port):
-            print("SKIPPED: chromedriver did not come up")
-            return 0
+            pytest.skip("chromedriver did not come up")
         opts = {"goog:chromeOptions": {"args": ["--headless=new", "--no-sandbox",
                                                 "--disable-gpu", "--disable-dev-shm-usage"]}}
         d = Chrome(f"http://127.0.0.1:{cd_port}", options=opts)
@@ -158,7 +157,7 @@ def main() -> int:
             print(f"  ok: screenshot ({len(raw)} bytes PNG)")
 
             print("PASS: live surface test green")
-            return 0
+            return
         finally:
             d.quit()
     finally:
@@ -169,6 +168,3 @@ def main() -> int:
             proc.kill()
         httpd.shutdown()
 
-
-if __name__ == "__main__":
-    sys.exit(main())
