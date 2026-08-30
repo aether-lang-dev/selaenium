@@ -1,0 +1,133 @@
+// cft.ae — Chrome-for-Testing driver-version resolution (the CfT algorithm from
+// docs/Selenium-Manager-chromedriver-algorithm.md). Given a detected Chrome
+// version, resolve the matching chromedriver version + its per-platform download
+// URL by consulting the CfT JSON endpoints.
+//
+// The NET fetch is injected as a `fetch` closure (fn) so the PURE navigation is
+// unit-testable offline — the injectable-adapter seam from the port design. A
+// caller passes a real HTTPS fetcher; a test passes canned JSON.
+import version
+import std.json
+import std.string
+import std.heap
+
+// The CfT endpoints (see spec — the names are counter-intuitive).
+CFT_URL() -> string { return "https://googlechromelabs.github.io/chrome-for-testing/" }
+GOOD_VERSIONS_ENDPOINT() -> string { return "known-good-versions-with-downloads.json" }
+LATEST_VERSIONS_ENDPOINT() -> string { return "last-known-good-versions-with-downloads.json" }
+MIN_CHROMEDRIVER_CFT() -> int { return 115 }
+
+// A resolved driver: its version + the platform download URL. url "" if the
+// resolution found a version but no matching platform download (caller handles).
+struct Resolved {
+    version: string
+    url: string
+}
+
+resolved_version(r: ptr) -> string {
+    if r == null { return "" }
+    x = r as *Resolved
+    return x.version
+}
+resolved_url(r: ptr) -> string {
+    if r == null { return "" }
+    x = r as *Resolved
+    return x.url
+}
+
+// The URLs the orchestrator fetches, exposed so the NET fetch lives at the edge
+// (this module stays PURE: it navigates already-fetched JSON, unit-testable with
+// canned bodies — the injectable-adapter seam).
+latest_versions_url() -> string { return string.concat(CFT_URL(), LATEST_VERSIONS_ENDPOINT()) }
+known_good_url() -> string { return string.concat(CFT_URL(), GOOD_VERSIONS_ENDPOINT()) }
+
+// which_endpoint(browser_version) — which URL the orchestrator must fetch for a
+// given detected browser version: "latest" (Path A) or "good" (Path C), or ""
+// when below the CfT floor (legacy, out of this slice's scope).
+which_endpoint(browser_version: string) -> string {
+    if string.length(browser_version) == 0 { return "latest" }
+    maj = version.major(browser_version)
+    if maj >= 0 {
+        if maj < MIN_CHROMEDRIVER_CFT() { return "" }
+    }
+    return "good"
+}
+
+// resolve_latest_stable_from(body, platform_label) — PURE: navigate a fetched
+// last-known-good-*.json, read channels.Stable, return a *Resolved or null.
+resolve_latest_stable_from(body: string, platform_label: string) -> ptr {
+    root, perr = json.parse(body)
+    if string.length(perr) > 0 { return null }
+    channels, _c = json.object_get(root, "channels")
+    stable, _s = json.object_get(channels, "Stable")
+    verv, _vv = json.object_get(stable, "version")
+    ver, _v = json.get_string(verv)
+    dl, _d = json.object_get(stable, "downloads")
+    cd, _cd = json.object_get(dl, "chromedriver")
+    durl = _platform_url(cd, platform_label)
+    return _mk(ver, durl)
+}
+
+// resolve_known_good_from(body, browser_version, platform_label) — PURE:
+// navigate a fetched known-good-*.json, filter versions[] by MAJOR prefix, take
+// the highest (.last of the ascending list). Returns a *Resolved or null.
+resolve_known_good_from(body: string, browser_version: string, platform_label: string) -> ptr {
+    major = string.from_int(version.major(browser_version))
+    root, perr = json.parse(body)
+    if string.length(perr) > 0 { return null }
+    versions, _vs = json.object_get(root, "versions")
+    n = json.array_size(versions)
+    // Ascending list: scan forward, keep the LAST whose version starts with the
+    // major (prefix match, exactly as the Rust filter+last()).
+    best_ver = ""
+    best_cd = null
+    i = 0
+    while i < n {
+        e, _e = json.array_get(versions, i)
+        evv, _ev = json.object_get(e, "version")
+        ev, _e2 = json.get_string(evv)
+        if _starts_with_major(ev, major) == 1 {
+            best_ver = ev
+            dl, _d = json.object_get(e, "downloads")
+            cd, _cd = json.object_get(dl, "chromedriver")
+            best_cd = cd
+        }
+        i = i + 1
+    }
+    if string.length(best_ver) == 0 { return null }
+    durl = _platform_url(best_cd, platform_label)
+    return _mk(best_ver, durl)
+}
+
+// The download URL for `platform_label` in a chromedriver downloads array, or "".
+_platform_url(cd_arr: ptr, platform_label: string) -> string {
+    if cd_arr == null { return "" }
+    n = json.array_size(cd_arr)
+    i = 0
+    while i < n {
+        e, _e = json.array_get(cd_arr, i)
+        pv, _p = json.object_get(e, "platform")
+        plat, _pl = json.get_string(pv)
+        if string.equals(plat, platform_label) == 1 {
+            uv, _u = json.object_get(e, "url")
+            u, _uu = json.get_string(uv)
+            return u
+        }
+        i = i + 1
+    }
+    return ""
+}
+
+// version starts with "<major>." — a full-major prefix match (guards the
+// "1" matches "1xx" trap by requiring the trailing dot).
+_starts_with_major(ver: string, major: string) -> int {
+    prefix = string.concat(major, ".")
+    return string.starts_with(ver, prefix)
+}
+
+_mk(ver: string, url: string) -> ptr {
+    r = heap.new(Resolved)
+    r.version = string.concat(ver, "")
+    r.url = string.concat(url, "")
+    return r as ptr
+}

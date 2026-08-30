@@ -1,0 +1,114 @@
+// browser.ae — locate the installed browser + detect its version (the PROC
+// steps of the Selenium-Manager pipeline). Ports the detection from the classic
+// Rust chrome.rs/lib.rs (see docs/Selenium-Manager-chromedriver-algorithm.md).
+// Linux-first (the box we target); the path tables are PURE data a later pass
+// extends for macOS/Windows. Version PARSING is delegated to version.ae (pure).
+import version
+import std.os
+import std.list
+import std.string
+import std.file
+
+// chrome_path() — the installed Chrome/Chromium binary, or "". Scans the known
+// dirs × names (name-major, per first_existing_path), then falls back to PATH.
+chrome_path() -> string {
+    // (a) fixed known locations — Linux (CHROME_KNOWN_DIRS × CHROME_KNOWN_NAMES).
+    p = _scan_known()
+    if string.length(p) > 0 { return p }
+    // (b) channel default path.
+    if file.exists("/usr/bin/google-chrome") == 1 { return "/usr/bin/google-chrome" }
+    // (c) PATH fallback via `command -v`.
+    return _which_first()
+}
+
+// chrome_version(path) — run `<path> --version` and extract MAJOR.MINOR.BUILD
+// .PATCH, or "" on failure. `error`-containing output is treated as no version.
+chrome_version(browser_path: string) -> string {
+    if string.length(browser_path) == 0 { return "" }
+    argv = list.new()
+    list.add(argv, "--version")
+    out, status, err = os.run_capture(browser_path, argv, null)
+    list.free(argv)
+    if string.length(err) > 0 { return "" }
+    // "Wrong browser/driver version" guard: an "error" in output → no version.
+    if string.contains(string.to_lower(out), "error") == 1 { return "" }
+    return version.version_extract(out)
+}
+
+// ---- internals ----
+
+// CHROME_KNOWN_DIRS × CHROME_KNOWN_NAMES, name-major (every dir for a name
+// before the next name), matching Rust's first_existing_path.
+_scan_known() -> string {
+    names = list.new()
+    list.add(names, "chrome")
+    list.add(names, "google-chrome")
+    list.add(names, "chromium")
+    list.add(names, "chromium-browser")
+
+    dirs = list.new()
+    list.add(dirs, "/usr/local/sbin")
+    list.add(dirs, "/usr/local/bin")
+    list.add(dirs, "/usr/sbin")
+    list.add(dirs, "/usr/bin")
+    list.add(dirs, "/sbin")
+    list.add(dirs, "/bin")
+    list.add(dirs, "/opt/google/chrome")
+    list.add(dirs, "/opt/chromium.org/chromium")
+
+    found = ""
+    nn = list.size(names)
+    nd = list.size(dirs)
+    ni = 0
+    while ni < nn {
+        nm, _ = list.get(names, ni)
+        di = 0
+        while di < nd {
+            d, _ = list.get(dirs, di)
+            cand = string.concat(d, string.concat("/", nm))
+            if file.exists(cand) == 1 {
+                if string.length(found) == 0 { found = cand }
+            }
+            di = di + 1
+        }
+        ni = ni + 1
+    }
+    list.free(names)
+    list.free(dirs)
+    return found
+}
+
+// `command -v` over the PATH browser names; the snap link is substituted for the
+// real snap binary (CHROMIUM_SNAP_LINK -> CHROMIUM_SNAP_BINARY).
+_which_first() -> string {
+    names = list.new()
+    list.add(names, "chrome")
+    list.add(names, "google-chrome")
+    list.add(names, "chromium")
+    list.add(names, "chromium-browser")
+    out = ""
+    n = list.size(names)
+    i = 0
+    while i < n {
+        nm, _ = list.get(names, i)
+        if string.length(out) == 0 {
+            p = _which(nm)
+            if string.length(p) > 0 { out = p }
+        }
+        i = i + 1
+    }
+    list.free(names)
+    if string.equals(out, "/snap/bin/chromium") == 1 {
+        return "/snap/chromium/current/usr/lib/chromium-browser/chrome"
+    }
+    return out
+}
+
+_which(exe: string) -> string {
+    argv = list.new()
+    list.add(argv, "-c")
+    list.add(argv, string.concat("command -v ", exe))
+    out, _s, _e = os.run_capture("/bin/sh", argv, null)
+    list.free(argv)
+    return string.trim(out)
+}
