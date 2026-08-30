@@ -1,35 +1,21 @@
 // JavaScript/Node binding tests (koffi). The loader honors SELENIUM_CORE_LIB,
-// which we point at the shared engine artifact this node deps. Tests use the
-// built-in node:test runner (no jest), so we run them directly with `node
-// --test`. The live test spawns its own out-of-process content server and
-// chromedriver, and self-skips if chromedriver is absent. Ensures koffi is
-// installed first.
-import build
-import std.os
+// injected here from the engine's shared_lib artifact. The tests are real
+// node:test suites (no jest): the no-browser FFI facts (ffi_test) plus the
+// live-Chrome smoke+surface (live_test), which spawns its own content server +
+// chromedriver and self-skips when chromedriver is absent. `npm test` runs
+// `node --test test/`; npm_install() resolves koffi (offline if cached) first.
+// Skipped by preflight when node is absent (prereq node:18).
+import bldr
+import javascript
 
 aeb(cap) {
-    b = build.start()
-    build.dep(b, "selenium_core/.build.ae")
-    lib = build.dep_artifact(b, "selenium_core/.build.ae", "shared_lib")
-    root = build._get(b, "root")
-    jsdir = "${root}/javascript"
-
-    // Ensure koffi is present (offline if cached). node_modules is gitignored.
-    ins = os.system("cd \"${jsdir}\" && (test -d node_modules/koffi || npm install --silent --no-audit --no-fund)")
-    if ins != 0 {
-        println("js tests: npm install (koffi) failed")
-        return 1
+    bldr.build() {
+        prereq("node:18")
+        dep("selenium_core/.build.ae")
+        lib = dep_artifact("selenium_core/.build.ae", "shared_lib")
+        javascript.test() {
+            env("SELENIUM_CORE_LIB", lib)
+            npm_install("--silent --no-audit --no-fund")
+        }
     }
-    rc = os.system("cd \"${jsdir}\" && SELENIUM_CORE_LIB=\"${lib}\" node --test test/ffi_test.js")
-    if rc != 0 {
-        println("js tests: ffi_test FAILED")
-        return 1
-    }
-    rc2 = os.system("cd \"${jsdir}\" && SELENIUM_CORE_LIB=\"${lib}\" node --test test/live_test.js")
-    if rc2 != 0 {
-        println("js tests: live_test FAILED")
-        return 1
-    }
-    println("js tests: PASSED (ffi + live+surface)")
-    return 0
 }

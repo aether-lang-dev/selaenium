@@ -11,7 +11,7 @@
     "native/"
   ],
   "scripts": {
-    "test": "node test/ffi_test.js && node test/live_test.js"
+    "test": "node --test test/ffi_test.js test/live_test.js"
   },
   "dependencies": {
     "koffi": "^2.16.3"
