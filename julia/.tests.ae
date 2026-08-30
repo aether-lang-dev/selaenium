@@ -1,0 +1,24 @@
+// Julia binding tests. Julia's built-in `ccall` invokes the engine's flat C ABI
+// (aether_sel_embed_*) DIRECTLY — no glue, no second copy of the marshalling
+// rules. The idiomatic Julia surface (By constants, caller-owned-string handling,
+// typed error, WebDriver) is in src/SeleniumCore.jl. The engine .so is located
+// via SELENIUM_CORE_LIB (injected from the engine's shared_lib artifact) — ccall's
+// library handle is that absolute path. julia.test runs the no-browser FFI facts
+// (Test stdlib).
+//
+// Skipped by preflight/gate when Julia is absent (loud-skip) — authored here,
+// verified on a box with Julia; this box (catchyos) has no julia, so it SKIPs.
+import bldr
+import julia
+import julia (script)
+
+aeb(cap) {
+    bldr.build() {
+        dep("selenium_core/.build.ae")
+        lib = dep_artifact("selenium_core/.build.ae", "shared_lib")
+        julia.test() {
+            env("SELENIUM_CORE_LIB", lib)
+            script("test/ffi_test.jl")
+        }
+    }
+}
