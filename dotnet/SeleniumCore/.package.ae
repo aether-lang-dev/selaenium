@@ -1,0 +1,20 @@
+// .NET binding PACKAGE — the SeleniumCore NuGet package (.nupkg) as a downstream
+// user receives it: the engine .so bundled INSIDE under runtimes/linux-x64/
+// native/ (the hand-written csproj's <None Pack=..> item), so a consumer's
+// restore places the .so next to their app.
+//
+// The library .build.ae already staged the engine .so into native/ (via
+// native_runtime) and the csproj already declares <PackageId> + the native Pack
+// item, so pack() needs NO packaging setters — it reuses the existing
+// SeleniumCore.csproj and publishes the produced .nupkg on the `nupkg` edge,
+// which the consumer example (.example.ae) uses as a local feed.
+import bldr
+import dotnet
+
+aeb(cap) {
+    bldr.build() {
+        prereq("dotnet:8")
+        dep("dotnet/SeleniumCore/.build.ae")
+        dotnet.pack()
+    }
+}
