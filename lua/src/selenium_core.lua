@@ -203,7 +203,18 @@ local function new(command_executor, caps)
   local handle = native.open(command_executor)
   if not handle then raise(-1, "failed to open session handle") end
   local self = setmetatable({ handle = handle }, WebDriver)
-  self:execute("newSession", { capabilities = { alwaysMatch = caps } })
+  -- Request a BiDi channel so :bidi() is available on demand; the WebSocket
+  -- itself opens lazily (a classic script never opens it).
+  local bidi_caps = { webSocketUrl = true }
+  for k, v in pairs(caps) do bidi_caps[k] = v end
+  local result = self:execute("newSession", { capabilities = { alwaysMatch = bidi_caps } })
+  -- value.capabilities.webSocketUrl — the BiDi endpoint for this session.
+  self._ws_url = ""
+  if type(result) == "table" and type(result.capabilities) == "table" then
+    local url = result.capabilities.webSocketUrl
+    if type(url) == "string" then self._ws_url = url end
+  end
+  self._bidi = nil
   return self
 end
 
@@ -302,9 +313,125 @@ function WebDriver:clear_actions() self:execute("clearActions", {}) end
 function WebDriver:set_timeouts(timeouts) self:execute("setTimeout", timeouts) end
 function WebDriver:screenshot_base64() return self:execute("screenshot", {}) end
 
+-- ==== WebDriver-BiDi ====
+
+-- The common WebDriver-BiDi event names (W3C spec). Pass to
+-- driver:bidi():subscribe(...) and match in :next_event(...).
+M.BidiEvent = {
+  LOG_ENTRY_ADDED     = "log.entryAdded",
+  CONTEXT_CREATED     = "browsingContext.contextCreated",
+  CONTEXT_DESTROYED   = "browsingContext.contextDestroyed",
+  NAVIGATION_STARTED  = "browsingContext.navigationStarted",
+  DOM_CONTENT_LOADED  = "browsingContext.domContentLoaded",
+  LOAD                = "browsingContext.load",
+  DOWNLOAD_WILL_BEGIN = "browsingContext.downloadWillBegin",
+  BEFORE_REQUEST_SENT = "network.beforeRequestSent",
+  RESPONSE_STARTED    = "network.responseStarted",
+  RESPONSE_COMPLETED  = "network.responseCompleted",
+  FETCH_ERROR         = "network.fetchError",
+  REALM_CREATED       = "script.realmCreated",
+  REALM_DESTROYED     = "script.realmDestroyed",
+  MESSAGE             = "script.message",
+}
+
+-- The event-driven BiDi channel for a session (over the demux C ABI).
+-- Commands and events multiplex over one WebSocket via the engine's shape-C
+-- demux (single reader -> id-keyed replies + bounded event queue), so replies
+-- stay correlated while events stream. Command ids are supplied automatically.
+local BiDi = {}
+BiDi.__index = BiDi
+
+local function new_bidi(handle)
+  return setmetatable({ _handle = handle, _next_id = 1 }, BiDi)
+end
+
+function BiDi:_id()
+  local i = self._next_id
+  self._next_id = i + 1
+  return i
+end
+
+-- session.subscribe to one or more event names; wait for the ack. Returns the
+-- ack payload table. Matching events then arrive on the queue (drain via
+-- :next_event).
+function BiDi:subscribe(...)
+  local csv = table.concat({ ... }, ",")
+  local raw = native.bidi_subscribe(self._handle, self:_id(), csv, 10000)
+  if raw == "" then return {} end
+  return json.decode(raw)
+end
+
+function BiDi:unsubscribe(...)
+  local csv = table.concat({ ... }, ",")
+  local raw = native.bidi_unsubscribe(self._handle, self:_id(), csv, 10000)
+  if raw == "" then return {} end
+  return json.decode(raw)
+end
+
+-- Block until an event whose `method` matches arrives, or timeout. Returns the
+-- event table, or nil on timeout/close. (Subscribe first.)
+function BiDi:next_event(method, timeout_ms)
+  local raw = native.bidi_wait_event(self._handle, method, timeout_ms or 5000)
+  if raw == "" then return nil end
+  return json.decode(raw)
+end
+
+-- Issue any BiDi command and return its reply payload table. Reaches BiDi
+-- methods with no dedicated wrapper (script.evaluate, network.*, ...).
+function BiDi:command(method, params, timeout_ms)
+  timeout_ms = timeout_ms or 10000
+  local cid = self:_id()
+  if native.bidi_send(self._handle, cid, method, json.encode(params or {})) ~= 0 then
+    raise(-1, "BiDi send failed: " .. method)
+  end
+  local waited, step = 0, 50
+  while waited < timeout_ms do
+    local reply = native.bidi_poll_reply(self._handle, cid)
+    if reply ~= "" then return json.decode(reply) end
+    if native.bidi_pump(self._handle, step) < 0 then break end
+    waited = waited + step
+  end
+  raise(24, "BiDi command timed out: " .. method)
+end
+
+-- How many events the bounded queue dropped since the last call (then resets).
+function BiDi:lost_events() return native.bidi_lost_events(self._handle) end
+
+function BiDi:close()
+  if self._handle then
+    native.bidi_close(self._handle)
+    self._handle = nil
+  end
+end
+
+-- The event-driven BiDi surface for this session, opened lazily over the
+-- negotiated webSocketUrl. Raises if the remote end granted no BiDi URL.
+--
+--   driver:bidi():subscribe(M.BidiEvent.LOG_ENTRY_ADDED)
+--   driver:get(url)
+--   local ev = driver:bidi():next_event(M.BidiEvent.LOG_ENTRY_ADDED, 5000)
+function WebDriver:bidi()
+  if self._bidi == nil then
+    if self._ws_url == "" then
+      raise(0, "BiDi not available: the session negotiated no webSocketUrl")
+    end
+    local handle = native.bidi_open(self._ws_url)
+    if not handle then raise(-1, "BiDi channel failed to open") end
+    self._bidi = new_bidi(handle)
+  end
+  return self._bidi
+end
+
+-- True if this session negotiated a webSocketUrl (BiDi usable).
+function WebDriver:bidi_available() return self._ws_url ~= "" end
+
 -- lifecycle
 function WebDriver:session_id() return native.session_id(self.handle) end
 function WebDriver:quit()
+  if self._bidi ~= nil then
+    self._bidi:close()
+    self._bidi = nil
+  end
   local ok, err = pcall(function() self:execute("quit", {}) end)
   native.close(self.handle)
   self.handle = nil

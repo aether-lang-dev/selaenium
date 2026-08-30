@@ -39,6 +39,21 @@ extern "C" {
     fn aether_sel_embed_route(name: *const c_char) -> *mut c_char;
     fn aether_sel_embed_error_code(w3c_error: *const c_char) -> c_int;
     fn aether_sel_embed_free_string(s: *mut c_char);
+
+    // ---- WebDriver-BiDi (over the session's webSocketUrl) ----
+    // An opaque BiDi channel handle, independent of the W3C session handle.
+    fn aether_sel_embed_bidi_open(ws_url: *const c_char) -> Handle;
+    fn aether_sel_embed_bidi_close(h: Handle);
+    fn aether_sel_embed_bidi_send(h: Handle, id: c_int, method: *const c_char, params_json: *const c_char) -> c_int;
+    fn aether_sel_embed_bidi_pump(h: Handle, timeout_ms: c_int) -> c_int;
+    fn aether_sel_embed_bidi_fd(h: Handle) -> c_int;
+    fn aether_sel_embed_bidi_poll_reply(h: Handle, id: c_int) -> *mut c_char;
+    fn aether_sel_embed_bidi_poll_event(h: Handle) -> *mut c_char;
+    fn aether_sel_embed_bidi_lost_events(h: Handle) -> c_int;
+    fn aether_sel_embed_bidi_cancel(h: Handle, id: c_int);
+    fn aether_sel_embed_bidi_subscribe(h: Handle, id: c_int, events_csv: *const c_char, timeout_ms: c_int) -> *mut c_char;
+    fn aether_sel_embed_bidi_unsubscribe(h: Handle, id: c_int, events_csv: *const c_char, timeout_ms: c_int) -> *mut c_char;
+    fn aether_sel_embed_bidi_wait_event(h: Handle, method: *const c_char, timeout_ms: c_int) -> *mut c_char;
 }
 
 /// Copy a caller-owned native `char*` into a Rust `String`, then free it per the
@@ -160,6 +175,10 @@ const W3C_ELEMENT_KEY: &str = "element-6066-11e4-a52e-4f735466cecf";
 #[derive(Debug)]
 pub struct WebDriver {
     handle: Handle,
+    // The negotiated BiDi endpoint (value.capabilities.webSocketUrl), or "" if
+    // the remote end granted none. The channel is opened lazily on first use.
+    ws_url: String,
+    bidi: Option<BiDi>,
 }
 
 // The handle is a plain pointer into the engine; sessions are used from one
@@ -197,18 +216,30 @@ impl WebDriver {
         WebDriver::chrome(command_executor, Some(opts))
     }
 
-    fn new(command_executor: &str, capabilities: Json) -> Result<WebDriver> {
+    fn new(command_executor: &str, mut capabilities: Json) -> Result<WebDriver> {
         let cu = cstr(command_executor);
         let handle = unsafe { aether_sel_embed_open(cu.as_ptr()) };
         if handle.is_null() {
             return Err(WebDriverError::classify(-1, "failed to open session handle".into()));
         }
-        let d = WebDriver { handle };
+        // Request a BiDi channel so `.bidi()` is available on demand; the channel
+        // itself is opened lazily (a classic script never opens the WebSocket).
+        if let Json::Obj(ref mut m) = capabilities {
+            m.insert("webSocketUrl".into(), Json::Bool(true));
+        }
+        let mut d = WebDriver { handle, ws_url: String::new(), bidi: None };
         let payload = json::obj(vec![(
             "capabilities",
             json::obj(vec![("alwaysMatch", capabilities)]),
         )]);
-        d.execute("newSession", payload)?;
+        let result = d.execute("newSession", payload)?;
+        // value.capabilities.webSocketUrl — the BiDi endpoint for this session.
+        d.ws_url = result
+            .get("capabilities")
+            .and_then(|c| c.get("webSocketUrl"))
+            .and_then(|u| u.as_str())
+            .unwrap_or("")
+            .to_string();
         Ok(d)
     }
 
@@ -344,10 +375,47 @@ impl WebDriver {
     pub fn session_id(&self) -> String {
         take_string(unsafe { aether_sel_embed_session_id(self.handle) })
     }
-    pub fn quit(self) -> Result<()> {
+    pub fn quit(mut self) -> Result<()> {
+        // Close the BiDi channel first, then end the session.
+        self.bidi = None;
         let r = self.execute("quit", json::obj(vec![]));
         // Dropping self closes the handle.
         r.map(|_| ())
+    }
+
+    // ---- WebDriver-BiDi ----
+
+    /// True if this session negotiated a webSocketUrl (BiDi usable).
+    pub fn bidi_available(&self) -> bool {
+        !self.ws_url.is_empty()
+    }
+
+    /// The event-driven BiDi surface for this session, opened lazily over the
+    /// negotiated webSocketUrl. Errors if the remote end granted no BiDi URL.
+    ///
+    /// ```no_run
+    /// # use selenium_core::{WebDriver, BidiEvent};
+    /// # let mut d = WebDriver::headless_chrome("http://127.0.0.1:9515").unwrap();
+    /// d.bidi().unwrap().subscribe(&[BidiEvent::LOG_ENTRY_ADDED]).unwrap();
+    /// d.get("https://example.com").unwrap();
+    /// let ev = d.bidi().unwrap().next_event(BidiEvent::LOG_ENTRY_ADDED, 5000).unwrap();
+    /// ```
+    pub fn bidi(&mut self) -> Result<&mut BiDi> {
+        if self.bidi.is_none() {
+            if self.ws_url.is_empty() {
+                return Err(WebDriverError::classify(
+                    0,
+                    "BiDi not available: the session negotiated no webSocketUrl".into(),
+                ));
+            }
+            let url = cstr(&self.ws_url);
+            let handle = unsafe { aether_sel_embed_bidi_open(url.as_ptr()) };
+            if handle.is_null() {
+                return Err(WebDriverError::classify(-1, "BiDi channel failed to open".into()));
+            }
+            self.bidi = Some(BiDi { handle, next_id: 1 });
+        }
+        Ok(self.bidi.as_mut().unwrap())
     }
 }
 
@@ -417,5 +485,139 @@ impl<'a> WebElement<'a> {
     }
     pub fn rect(&self) -> Result<Json> {
         self.exec("getElementRect", json::obj(vec![]))
+    }
+}
+
+// ---- WebDriver-BiDi ----
+
+/// The common WebDriver-BiDi event names (W3C spec). Pass to
+/// [`BiDi::subscribe`] and match in [`BiDi::next_event`].
+pub struct BidiEvent;
+impl BidiEvent {
+    pub const LOG_ENTRY_ADDED: &'static str = "log.entryAdded";
+    pub const CONTEXT_CREATED: &'static str = "browsingContext.contextCreated";
+    pub const CONTEXT_DESTROYED: &'static str = "browsingContext.contextDestroyed";
+    pub const NAVIGATION_STARTED: &'static str = "browsingContext.navigationStarted";
+    pub const DOM_CONTENT_LOADED: &'static str = "browsingContext.domContentLoaded";
+    pub const LOAD: &'static str = "browsingContext.load";
+    pub const DOWNLOAD_WILL_BEGIN: &'static str = "browsingContext.downloadWillBegin";
+    pub const BEFORE_REQUEST_SENT: &'static str = "network.beforeRequestSent";
+    pub const RESPONSE_STARTED: &'static str = "network.responseStarted";
+    pub const RESPONSE_COMPLETED: &'static str = "network.responseCompleted";
+    pub const FETCH_ERROR: &'static str = "network.fetchError";
+    pub const REALM_CREATED: &'static str = "script.realmCreated";
+    pub const REALM_DESTROYED: &'static str = "script.realmDestroyed";
+    pub const MESSAGE: &'static str = "script.message";
+}
+
+/// The event-driven BiDi channel for a session (over the demux C ABI).
+///
+/// Commands and events multiplex over one WebSocket via the engine's shape-C
+/// demux (a single reader routes replies to an id table and events to a bounded
+/// queue), so replies stay correlated while events stream. Command ids are
+/// supplied automatically from a monotonic per-channel counter (from 1).
+#[derive(Debug)]
+pub struct BiDi {
+    handle: Handle,
+    next_id: c_int,
+}
+
+// The handle is a plain pointer into the engine; used from one thread at a time.
+unsafe impl Send for BiDi {}
+
+impl BiDi {
+    fn next_id(&mut self) -> c_int {
+        let id = self.next_id;
+        self.next_id += 1;
+        id
+    }
+
+    /// `session.subscribe` to one or more event names; wait for the ack. Returns
+    /// the ack payload. Matching events then arrive on the queue (drain via
+    /// [`BiDi::next_event`]).
+    pub fn subscribe(&mut self, events: &[&str]) -> Result<Json> {
+        self.subscribe_timeout(events, 10000)
+    }
+
+    pub fn subscribe_timeout(&mut self, events: &[&str], timeout_ms: i32) -> Result<Json> {
+        let id = self.next_id();
+        let csv = cstr(&events.join(","));
+        let raw = take_string(unsafe {
+            aether_sel_embed_bidi_subscribe(self.handle, id, csv.as_ptr(), timeout_ms)
+        });
+        Self::decode(&raw)
+    }
+
+    pub fn unsubscribe(&mut self, events: &[&str]) -> Result<Json> {
+        self.unsubscribe_timeout(events, 10000)
+    }
+
+    pub fn unsubscribe_timeout(&mut self, events: &[&str], timeout_ms: i32) -> Result<Json> {
+        let id = self.next_id();
+        let csv = cstr(&events.join(","));
+        let raw = take_string(unsafe {
+            aether_sel_embed_bidi_unsubscribe(self.handle, id, csv.as_ptr(), timeout_ms)
+        });
+        Self::decode(&raw)
+    }
+
+    /// Block until an event whose `method` matches arrives, or timeout. Returns
+    /// the event, or `None` on timeout/close. (Subscribe first.)
+    pub fn next_event(&mut self, method: &str, timeout_ms: i32) -> Result<Option<Json>> {
+        let m = cstr(method);
+        let raw = take_string(unsafe {
+            aether_sel_embed_bidi_wait_event(self.handle, m.as_ptr(), timeout_ms)
+        });
+        if raw.is_empty() {
+            return Ok(None);
+        }
+        Self::decode(&raw).map(Some)
+    }
+
+    /// Issue any BiDi command and return its reply payload. Reaches BiDi methods
+    /// with no dedicated wrapper (script.evaluate, network.*, ...). Sends, then
+    /// pumps until this id's reply arrives or the timeout elapses.
+    pub fn command(&mut self, method: &str, params: Json, timeout_ms: i32) -> Result<Json> {
+        let cid = self.next_id();
+        let m = cstr(method);
+        let pj = cstr(&params.encode());
+        if unsafe { aether_sel_embed_bidi_send(self.handle, cid, m.as_ptr(), pj.as_ptr()) } != 0 {
+            return Err(WebDriverError::classify(-1, format!("BiDi send failed: {method}")));
+        }
+        let mut waited = 0;
+        let step = 50;
+        while waited < timeout_ms {
+            let reply = take_string(unsafe { aether_sel_embed_bidi_poll_reply(self.handle, cid) });
+            if !reply.is_empty() {
+                return Self::decode(&reply);
+            }
+            if unsafe { aether_sel_embed_bidi_pump(self.handle, step) } < 0 {
+                break;
+            }
+            waited += step;
+        }
+        Err(WebDriverError::classify(21, format!("BiDi command timed out: {method}")))
+    }
+
+    /// How many events the bounded queue has dropped since the last call (then
+    /// resets) — so a consumer knows it missed events.
+    pub fn lost_events(&self) -> i32 {
+        unsafe { aether_sel_embed_bidi_lost_events(self.handle) }
+    }
+
+    fn decode(raw: &str) -> Result<Json> {
+        if raw.is_empty() {
+            return Ok(Json::Null);
+        }
+        json::parse(raw).map_err(|e| WebDriverError::classify(1, format!("bad BiDi JSON: {e}")))
+    }
+}
+
+impl Drop for BiDi {
+    fn drop(&mut self) {
+        if !self.handle.is_null() {
+            unsafe { aether_sel_embed_bidi_close(self.handle) };
+            self.handle = std::ptr::null_mut();
+        }
     }
 }

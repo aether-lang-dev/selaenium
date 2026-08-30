@@ -46,6 +46,34 @@ typedef _StrToInt = int Function(ffi.Pointer<pkgffi.Utf8>);
 typedef _FreeStringC = ffi.Void Function(ffi.Pointer<pkgffi.Utf8>);
 typedef _FreeString = void Function(ffi.Pointer<pkgffi.Utf8>);
 
+// ---- WebDriver-BiDi (over the session's webSocketUrl) ----
+// The BiDi channel handle (void*) is opaque and independent of the W3C handle.
+typedef _BidiPumpC = ffi.Int Function(ffi.Pointer<ffi.Void>, ffi.Int32);
+typedef _BidiPump = int Function(ffi.Pointer<ffi.Void>, int);
+
+typedef _BidiSendC = ffi.Int Function(ffi.Pointer<ffi.Void>, ffi.Int32,
+    ffi.Pointer<pkgffi.Utf8>, ffi.Pointer<pkgffi.Utf8>);
+typedef _BidiSend = int Function(
+    ffi.Pointer<ffi.Void>, int, ffi.Pointer<pkgffi.Utf8>, ffi.Pointer<pkgffi.Utf8>);
+
+typedef _BidiPollReplyC = ffi.Pointer<pkgffi.Utf8> Function(
+    ffi.Pointer<ffi.Void>, ffi.Int32);
+typedef _BidiPollReply = ffi.Pointer<pkgffi.Utf8> Function(
+    ffi.Pointer<ffi.Void>, int);
+
+typedef _BidiCancelC = ffi.Void Function(ffi.Pointer<ffi.Void>, ffi.Int32);
+typedef _BidiCancel = void Function(ffi.Pointer<ffi.Void>, int);
+
+typedef _BidiSubC = ffi.Pointer<pkgffi.Utf8> Function(
+    ffi.Pointer<ffi.Void>, ffi.Int32, ffi.Pointer<pkgffi.Utf8>, ffi.Int32);
+typedef _BidiSub = ffi.Pointer<pkgffi.Utf8> Function(
+    ffi.Pointer<ffi.Void>, int, ffi.Pointer<pkgffi.Utf8>, int);
+
+typedef _BidiWaitEventC = ffi.Pointer<pkgffi.Utf8> Function(
+    ffi.Pointer<ffi.Void>, ffi.Pointer<pkgffi.Utf8>, ffi.Int32);
+typedef _BidiWaitEvent = ffi.Pointer<pkgffi.Utf8> Function(
+    ffi.Pointer<ffi.Void>, ffi.Pointer<pkgffi.Utf8>, int);
+
 /// A loaded engine: the [ffi.DynamicLibrary] plus every symbol bound once.
 class Native {
   final _Open open;
@@ -60,6 +88,20 @@ class Native {
   final _StrToStr route;
   final _StrToInt errorCode;
   final _FreeString freeString;
+
+  // ---- WebDriver-BiDi ----
+  final _Open bidiOpen;
+  final _Close bidiClose;
+  final _BidiSend bidiSend;
+  final _BidiPump bidiPump;
+  final _HandleToInt bidiFd;
+  final _BidiPollReply bidiPollReply;
+  final _HandleToStr bidiPollEvent;
+  final _HandleToInt bidiLostEvents;
+  final _BidiCancel bidiCancel;
+  final _BidiSub bidiSubscribe;
+  final _BidiSub bidiUnsubscribe;
+  final _BidiWaitEvent bidiWaitEvent;
 
   Native._(ffi.DynamicLibrary lib)
       : open = lib.lookupFunction<_OpenC, _Open>('aether_sel_embed_open'),
@@ -83,7 +125,31 @@ class Native {
         errorCode = lib.lookupFunction<_StrToIntC, _StrToInt>(
             'aether_sel_embed_error_code'),
         freeString = lib.lookupFunction<_FreeStringC, _FreeString>(
-            'aether_sel_embed_free_string');
+            'aether_sel_embed_free_string'),
+        bidiOpen =
+            lib.lookupFunction<_OpenC, _Open>('aether_sel_embed_bidi_open'),
+        bidiClose =
+            lib.lookupFunction<_CloseC, _Close>('aether_sel_embed_bidi_close'),
+        bidiSend = lib.lookupFunction<_BidiSendC, _BidiSend>(
+            'aether_sel_embed_bidi_send'),
+        bidiPump = lib.lookupFunction<_BidiPumpC, _BidiPump>(
+            'aether_sel_embed_bidi_pump'),
+        bidiFd = lib.lookupFunction<_HandleToIntC, _HandleToInt>(
+            'aether_sel_embed_bidi_fd'),
+        bidiPollReply = lib.lookupFunction<_BidiPollReplyC, _BidiPollReply>(
+            'aether_sel_embed_bidi_poll_reply'),
+        bidiPollEvent = lib.lookupFunction<_HandleToStrC, _HandleToStr>(
+            'aether_sel_embed_bidi_poll_event'),
+        bidiLostEvents = lib.lookupFunction<_HandleToIntC, _HandleToInt>(
+            'aether_sel_embed_bidi_lost_events'),
+        bidiCancel = lib.lookupFunction<_BidiCancelC, _BidiCancel>(
+            'aether_sel_embed_bidi_cancel'),
+        bidiSubscribe = lib.lookupFunction<_BidiSubC, _BidiSub>(
+            'aether_sel_embed_bidi_subscribe'),
+        bidiUnsubscribe = lib.lookupFunction<_BidiSubC, _BidiSub>(
+            'aether_sel_embed_bidi_unsubscribe'),
+        bidiWaitEvent = lib.lookupFunction<_BidiWaitEventC, _BidiWaitEvent>(
+            'aether_sel_embed_bidi_wait_event');
 
   static Native? _instance;
   static String? _explicitPath;

@@ -19,6 +19,8 @@ export 'src/webdriver.dart'
         By,
         WebDriver,
         WebElement,
+        BiDi,
+        BidiEvent,
         WebDriverError,
         NoSuchElementError,
         StaleElementReferenceError,

@@ -85,6 +85,21 @@ const route = lazy('void* aether_sel_embed_route(const char* name)')
 const buildRequest = lazy('void* aether_sel_embed_build_request(const char* name, const char* session_id, const char* params_json)')
 const errorCode = lazy('int aether_sel_embed_error_code(const char* w3c_error)')
 
+// ---- WebDriver-BiDi (over the session's webSocketUrl) ----
+// An opaque BiDi channel handle, independent of the W3C session handle.
+const bidiOpen = lazy('void* aether_sel_embed_bidi_open(const char* ws_url)')
+const bidiClose = lazy('void aether_sel_embed_bidi_close(void* h)')
+const bidiSend = lazy('int aether_sel_embed_bidi_send(void* h, int id, const char* method, const char* params_json)')
+const bidiPump = lazy('int aether_sel_embed_bidi_pump(void* h, int timeout_ms)')
+const bidiFd = lazy('int aether_sel_embed_bidi_fd(void* h)')
+const bidiPollReply = lazy('void* aether_sel_embed_bidi_poll_reply(void* h, int id)')
+const bidiPollEvent = lazy('void* aether_sel_embed_bidi_poll_event(void* h)')
+const bidiLostEvents = lazy('int aether_sel_embed_bidi_lost_events(void* h)')
+const bidiCancel = lazy('void aether_sel_embed_bidi_cancel(void* h, int id)')
+const bidiSubscribe = lazy('void* aether_sel_embed_bidi_subscribe(void* h, int id, const char* events_csv, int timeout_ms)')
+const bidiUnsubscribe = lazy('void* aether_sel_embed_bidi_unsubscribe(void* h, int id, const char* events_csv, int timeout_ms)')
+const bidiWaitEvent = lazy('void* aether_sel_embed_bidi_wait_event(void* h, const char* method, int timeout_ms)')
+
 // ---- string ownership ----
 const freeString = lazy('void aether_sel_embed_free_string(void* s)')
 
@@ -116,6 +131,18 @@ module.exports = {
   route,
   buildRequest,
   errorCode,
+  bidiOpen,
+  bidiClose,
+  bidiSend,
+  bidiPump,
+  bidiFd,
+  bidiPollReply,
+  bidiPollEvent,
+  bidiLostEvents,
+  bidiCancel,
+  bidiSubscribe,
+  bidiUnsubscribe,
+  bidiWaitEvent,
   takeString,
   isNull,
 }

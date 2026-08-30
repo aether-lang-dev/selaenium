@@ -119,7 +119,13 @@ class WebDriver {
     if (native.isNull(this._handle)) {
       throw new WebDriverError('failed to open session handle', -1)
     }
-    this._execute('newSession', { capabilities: { alwaysMatch: capabilities } })
+    // Request a BiDi channel so `.bidi` is available on demand; the channel
+    // itself is opened lazily (a classic script never opens the WebSocket).
+    const caps = { ...capabilities, webSocketUrl: true }
+    const result = this._execute('newSession', { capabilities: { alwaysMatch: caps } })
+    // value.capabilities.webSocketUrl — the BiDi endpoint for this session.
+    this._wsUrl = (result && result.capabilities && result.capabilities.webSocketUrl) || ''
+    this._bidi = null
   }
 
   static chrome(commandExecutor = 'http://127.0.0.1:9515', options = null) {
@@ -243,12 +249,42 @@ class WebDriver {
     return this._execute('screenshot')
   }
 
+  // ---- WebDriver-BiDi ----
+  // The event-driven BiDi surface for this session, lazily opened over the
+  // negotiated webSocketUrl. Throws if the remote end granted no BiDi URL.
+  //
+  //   driver.bidi.subscribe('log.entryAdded')
+  //   driver.get(url)
+  //   const ev = driver.bidi.nextEvent('log.entryAdded', 5000)
+  get bidi() {
+    if (this._bidi === null) {
+      if (!this._wsUrl) {
+        throw new WebDriverError('BiDi not available: the session negotiated no webSocketUrl', 0)
+      }
+      const handle = native.bidiOpen(this._wsUrl)
+      if (native.isNull(handle)) {
+        throw new WebDriverError('BiDi channel failed to open', -1)
+      }
+      this._bidi = new BiDi(handle)
+    }
+    return this._bidi
+  }
+
+  // True if this session can use BiDi (a webSocketUrl was negotiated).
+  bidiAvailable() {
+    return !!this._wsUrl
+  }
+
   // ---- lifecycle ----
   get sessionId() {
     return native.takeString(native.sessionId(this._handle))
   }
   quit() {
     try {
+      if (this._bidi !== null) {
+        this._bidi.close()
+        this._bidi = null
+      }
       this._execute('quit')
     } finally {
       this._closeHandle()
@@ -257,6 +293,98 @@ class WebDriver {
   _closeHandle() {
     if (this._handle && !native.isNull(this._handle)) {
       native.close(this._handle)
+      this._handle = null
+    }
+  }
+}
+
+// The common WebDriver-BiDi event names (W3C spec). Pass to
+// driver.bidi.subscribe(...) and match in nextEvent(...).
+const BidiEvent = {
+  LOG_ENTRY_ADDED: 'log.entryAdded',
+  CONTEXT_CREATED: 'browsingContext.contextCreated',
+  CONTEXT_DESTROYED: 'browsingContext.contextDestroyed',
+  NAVIGATION_STARTED: 'browsingContext.navigationStarted',
+  DOM_CONTENT_LOADED: 'browsingContext.domContentLoaded',
+  LOAD: 'browsingContext.load',
+  DOWNLOAD_WILL_BEGIN: 'browsingContext.downloadWillBegin',
+  BEFORE_REQUEST_SENT: 'network.beforeRequestSent',
+  RESPONSE_STARTED: 'network.responseStarted',
+  RESPONSE_COMPLETED: 'network.responseCompleted',
+  FETCH_ERROR: 'network.fetchError',
+  REALM_CREATED: 'script.realmCreated',
+  REALM_DESTROYED: 'script.realmDestroyed',
+  MESSAGE: 'script.message',
+}
+
+// The event-driven BiDi channel for a session (over the demux C ABI).
+//
+// Commands and events multiplex over one WebSocket via the engine's shape-C
+// demux (a single reader routes replies to an id table and events to a bounded
+// queue), so replies stay correlated while events stream. Command ids are
+// supplied automatically from a monotonic per-channel counter. The calls are
+// SYNCHRONOUS blocking FFI round-trips, matching the rest of this binding.
+class BiDi {
+  constructor(handle) {
+    this._handle = handle
+    this._nextId = 1
+  }
+
+  _id() {
+    return this._nextId++
+  }
+
+  // session.subscribe to one or more event names; wait for the ack. Returns the
+  // parsed ack payload. After this, matching events arrive on the queue (drain
+  // via nextEvent).
+  subscribe(...events) {
+    const csv = events.join(',')
+    const raw = native.takeString(native.bidiSubscribe(this._handle, this._id(), csv, 10000))
+    return raw ? JSON.parse(raw) : {}
+  }
+
+  unsubscribe(...events) {
+    const csv = events.join(',')
+    const raw = native.takeString(native.bidiUnsubscribe(this._handle, this._id(), csv, 10000))
+    return raw ? JSON.parse(raw) : {}
+  }
+
+  // Block until an event whose method matches arrives, or timeout. Returns the
+  // parsed event object, or null on timeout/close. (Subscribe first.)
+  nextEvent(method, timeoutMs = 5000) {
+    const raw = native.takeString(native.bidiWaitEvent(this._handle, method, timeoutMs))
+    return raw ? JSON.parse(raw) : null
+  }
+
+  // Issue any BiDi command and return its parsed reply payload. Lets a caller
+  // reach BiDi methods with no dedicated wrapper (script.evaluate,
+  // browsingContext.captureScreenshot, network.*, …).
+  command(method, params = {}, timeoutMs = 10000) {
+    // send + pump until this id's reply arrives (the engine's convenience).
+    const cid = this._id()
+    if (native.bidiSend(this._handle, cid, method, JSON.stringify(params)) !== 0) {
+      throw new WebDriverError(`BiDi send failed: ${method}`, -1)
+    }
+    let waited = 0
+    const step = 50
+    while (waited < timeoutMs) {
+      const reply = native.takeString(native.bidiPollReply(this._handle, cid))
+      if (reply) return JSON.parse(reply)
+      if (native.bidiPump(this._handle, step) < 0) break
+      waited += step
+    }
+    throw new TimeoutError(`BiDi command timed out: ${method}`, 0)
+  }
+
+  // How many events the bounded queue has dropped since the last call (then
+  // resets) — so a consumer knows it missed events.
+  lostEvents() {
+    return native.bidiLostEvents(this._handle)
+  }
+
+  close() {
+    if (this._handle && !native.isNull(this._handle)) {
+      native.bidiClose(this._handle)
       this._handle = null
     }
   }
@@ -277,6 +405,8 @@ module.exports = {
   By,
   WebDriver,
   WebElement,
+  BiDi,
+  BidiEvent,
   WebDriverError,
   NoSuchElementError,
   StaleElementReferenceError,

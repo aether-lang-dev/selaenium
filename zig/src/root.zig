@@ -27,6 +27,21 @@ const c = struct {
     extern "c" fn aether_sel_embed_route(name: [*c]const u8) [*c]u8;
     extern "c" fn aether_sel_embed_error_code(w3c_error: [*c]const u8) c_int;
     extern "c" fn aether_sel_embed_free_string(s: [*c]u8) void;
+
+    // ---- WebDriver-BiDi (over the session's webSocketUrl) ----
+    // An opaque BiDi channel handle, independent of the W3C session handle.
+    extern "c" fn aether_sel_embed_bidi_open(ws_url: [*c]const u8) ?*anyopaque;
+    extern "c" fn aether_sel_embed_bidi_close(h: ?*anyopaque) void;
+    extern "c" fn aether_sel_embed_bidi_send(h: ?*anyopaque, id: c_int, method: [*c]const u8, params_json: [*c]const u8) c_int;
+    extern "c" fn aether_sel_embed_bidi_pump(h: ?*anyopaque, timeout_ms: c_int) c_int;
+    extern "c" fn aether_sel_embed_bidi_fd(h: ?*anyopaque) c_int;
+    extern "c" fn aether_sel_embed_bidi_poll_reply(h: ?*anyopaque, id: c_int) [*c]u8;
+    extern "c" fn aether_sel_embed_bidi_poll_event(h: ?*anyopaque) [*c]u8;
+    extern "c" fn aether_sel_embed_bidi_lost_events(h: ?*anyopaque) c_int;
+    extern "c" fn aether_sel_embed_bidi_cancel(h: ?*anyopaque, id: c_int) void;
+    extern "c" fn aether_sel_embed_bidi_subscribe(h: ?*anyopaque, id: c_int, events_csv: [*c]const u8, timeout_ms: c_int) [*c]u8;
+    extern "c" fn aether_sel_embed_bidi_unsubscribe(h: ?*anyopaque, id: c_int, events_csv: [*c]const u8, timeout_ms: c_int) [*c]u8;
+    extern "c" fn aether_sel_embed_bidi_wait_event(h: ?*anyopaque, method: [*c]const u8, timeout_ms: c_int) [*c]u8;
 };
 
 pub const w3c_element_key = "element-6066-11e4-a52e-4f735466cecf";
@@ -88,6 +103,26 @@ fn classifyKind(code: i32) ErrorKind {
     };
 }
 
+/// Pull `capabilities.webSocketUrl` out of a newSession `value` as an owned
+/// slice (empty if absent — the remote end granted no BiDi channel).
+fn extractWsUrl(allocator: std.mem.Allocator, value: std.json.Value) Error![]u8 {
+    switch (value) {
+        .object => |o| {
+            if (o.get("capabilities")) |caps| switch (caps) {
+                .object => |co| {
+                    if (co.get("webSocketUrl")) |wu| switch (wu) {
+                        .string => |s| return allocator.dupe(u8, s) catch Error.OutOfMemory,
+                        else => {},
+                    };
+                },
+                else => {},
+            };
+        },
+        else => {},
+    }
+    return allocator.dupe(u8, "") catch Error.OutOfMemory;
+}
+
 /// Copy an ABI-returned string into an owned slice and free the original.
 fn takeString(allocator: std.mem.Allocator, ptr: [*c]u8) Error![]u8 {
     if (ptr == null) return allocator.dupe(u8, "") catch return Error.OutOfMemory;
@@ -141,6 +176,11 @@ pub const WebDriver = struct {
     /// The rich error from the most recent failing command (owned; replaced
     /// each failure). Read after a command returns `error.WebDriver`.
     last: ?WebDriverError = null,
+    /// The negotiated BiDi endpoint for this session (owned; "" if none). The
+    /// WebSocket is not opened until `bidi` is first called.
+    ws_url: []u8 = &.{},
+    /// The lazily-opened BiDi channel for this session (opened on first `bidi`).
+    bidi_channel: ?BiDi = null,
 
     pub fn chrome(allocator: std.mem.Allocator, command_executor: []const u8, options_json: []const u8) Error!WebDriver {
         const cu = try cstr(allocator, command_executor);
@@ -148,9 +188,21 @@ pub const WebDriver = struct {
         const handle = c.aether_sel_embed_open(cu.ptr);
         if (handle == null) return Error.WebDriver;
         var d = WebDriver{ .allocator = allocator, .handle = handle };
-        // {"capabilities":{"alwaysMatch":<merged caps>}}
+        // Request a BiDi channel so `bidi` is available on demand; the WebSocket
+        // itself opens lazily (a classic script never opens it). options_json is
+        // a JSON object, so merge `"webSocketUrl":true` by stripping the leading
+        // `{`.
+        // `tail` is the caps object's body plus its closing brace, e.g.
+        // `"browserName":"chrome"}` (empty object -> just `}`).
+        const trimmed = std.mem.trim(u8, options_json, " \t\r\n");
+        const tail: []const u8 = if (trimmed.len >= 2 and trimmed[0] == '{')
+            trimmed[1..]
+        else
+            "}";
+        const sep: []const u8 = if (std.mem.eql(u8, tail, "}")) "" else ",";
+        // {"capabilities":{"alwaysMatch":{"webSocketUrl":true[,<caps>]}}}
         const caps = try std.fmt.allocPrint(allocator,
-            "{{\"capabilities\":{{\"alwaysMatch\":{s}}}}}", .{options_json});
+            "{{\"capabilities\":{{\"alwaysMatch\":{{\"webSocketUrl\":true{s}{s}}}}}", .{ sep, tail });
         defer allocator.free(caps);
         var v = d.execute("newSession", caps) catch |e| {
             c.aether_sel_embed_close(handle);
@@ -158,6 +210,8 @@ pub const WebDriver = struct {
             if (d.last) |*l| l.deinit(allocator); // free the failure message
             return e;
         };
+        // value.capabilities.webSocketUrl — the BiDi endpoint for this session.
+        d.ws_url = extractWsUrl(allocator, v.value) catch &.{};
         v.deinit();
         return d;
     }
@@ -170,11 +224,17 @@ pub const WebDriver = struct {
     }
 
     pub fn deinit(self: *WebDriver) void {
+        if (self.bidi_channel) |*b| {
+            b.close();
+            self.bidi_channel = null;
+        }
         if (self.handle) |h| {
             c.aether_sel_embed_close(h);
             self.handle = null;
         }
         if (self.last) |*l| l.deinit(self.allocator);
+        self.allocator.free(self.ws_url);
+        self.ws_url = &.{};
     }
 
     fn setLast(self: *WebDriver, code: i32, message: []u8) void {
@@ -363,7 +423,44 @@ pub const WebDriver = struct {
         return takeString(self.allocator, c.aether_sel_embed_session_id(self.handle));
     }
 
+    // ---- WebDriver-BiDi ----
+
+    /// True if this session negotiated a webSocketUrl (BiDi usable).
+    pub fn bidiAvailable(self: *WebDriver) bool {
+        return self.ws_url.len > 0;
+    }
+
+    /// The event-driven BiDi surface for this session, opened lazily over the
+    /// negotiated webSocketUrl. Returns `error.WebDriver` if the remote end
+    /// granted no BiDi URL or the channel fails to open (read `driver.last`).
+    ///
+    ///     const bidi = try driver.bidi();
+    ///     _ = try bidi.subscribe(&.{BidiEvent.log_entry_added});
+    ///     try driver.get(url);
+    ///     if (try bidi.nextEvent(BidiEvent.log_entry_added, 5000)) |ev| { ... }
+    pub fn bidi(self: *WebDriver) Error!*BiDi {
+        if (self.bidi_channel == null) {
+            if (self.ws_url.len == 0) {
+                self.setLast(0, self.allocator.dupe(u8, "BiDi not available: no webSocketUrl negotiated") catch "");
+                return Error.WebDriver;
+            }
+            const wc = try cstr(self.allocator, self.ws_url);
+            defer self.allocator.free(wc);
+            const handle = c.aether_sel_embed_bidi_open(wc.ptr);
+            if (handle == null) {
+                self.setLast(-1, self.allocator.dupe(u8, "BiDi channel failed to open") catch "");
+                return Error.WebDriver;
+            }
+            self.bidi_channel = BiDi{ .allocator = self.allocator, .handle = handle };
+        }
+        return &self.bidi_channel.?;
+    }
+
     pub fn quit(self: *WebDriver) Error!void {
+        if (self.bidi_channel) |*b| {
+            b.close();
+            self.bidi_channel = null;
+        }
         var v = self.execute("quit", "{}") catch |e| {
             if (self.handle) |h| {
                 c.aether_sel_embed_close(h);
@@ -378,6 +475,123 @@ pub const WebDriver = struct {
         }
     }
 };
+
+/// The common WebDriver-BiDi event names (W3C spec). Pass to
+/// `bidi.subscribe(...)` and match in `nextEvent(...)`.
+pub const BidiEvent = struct {
+    pub const log_entry_added = "log.entryAdded";
+    pub const context_created = "browsingContext.contextCreated";
+    pub const context_destroyed = "browsingContext.contextDestroyed";
+    pub const navigation_started = "browsingContext.navigationStarted";
+    pub const dom_content_loaded = "browsingContext.domContentLoaded";
+    pub const load = "browsingContext.load";
+    pub const download_will_begin = "browsingContext.downloadWillBegin";
+    pub const before_request_sent = "network.beforeRequestSent";
+    pub const response_started = "network.responseStarted";
+    pub const response_completed = "network.responseCompleted";
+    pub const fetch_error = "network.fetchError";
+    pub const realm_created = "script.realmCreated";
+    pub const realm_destroyed = "script.realmDestroyed";
+    pub const message = "script.message";
+};
+
+/// The event-driven BiDi channel for a session (over the demux C ABI).
+///
+/// Commands and events multiplex over one WebSocket via the engine's shape-C
+/// demux (a single reader routes replies to an id table and events to a bounded
+/// queue), so replies stay correlated while events stream. Command ids are
+/// supplied automatically from a per-channel monotonic counter (from 1).
+///
+/// Every parsed reply/event/ack is owned (`std.json.Parsed`; call `.deinit()`).
+pub const BiDi = struct {
+    allocator: std.mem.Allocator,
+    handle: ?*anyopaque,
+    next_id: c_int = 1,
+
+    fn takeId(self: *BiDi) c_int {
+        const i = self.next_id;
+        self.next_id += 1;
+        return i;
+    }
+
+    /// Parse an owned ABI string into JSON, or `null` for an empty string.
+    fn parseOwned(self: *BiDi, ptr: [*c]u8) Error!?std.json.Parsed(std.json.Value) {
+        const raw = try takeString(self.allocator, ptr);
+        defer self.allocator.free(raw);
+        if (raw.len == 0) return null;
+        return std.json.parseFromSlice(std.json.Value, self.allocator, raw, .{}) catch Error.BadResponse;
+    }
+
+    /// session.subscribe to one or more event names; wait for the ack. Returns
+    /// the parsed ack (owned; `.deinit()`), or `null` if none. Matching events
+    /// then arrive on the queue (drain via `nextEvent`).
+    pub fn subscribe(self: *BiDi, events: []const []const u8, timeout_ms: c_int) Error!?std.json.Parsed(std.json.Value) {
+        const csv = try joinCsv(self.allocator, events);
+        defer self.allocator.free(csv);
+        const cc = try cstr(self.allocator, csv);
+        defer self.allocator.free(cc);
+        return self.parseOwned(c.aether_sel_embed_bidi_subscribe(self.handle, self.takeId(), cc.ptr, timeout_ms));
+    }
+
+    pub fn unsubscribe(self: *BiDi, events: []const []const u8, timeout_ms: c_int) Error!?std.json.Parsed(std.json.Value) {
+        const csv = try joinCsv(self.allocator, events);
+        defer self.allocator.free(csv);
+        const cc = try cstr(self.allocator, csv);
+        defer self.allocator.free(cc);
+        return self.parseOwned(c.aether_sel_embed_bidi_unsubscribe(self.handle, self.takeId(), cc.ptr, timeout_ms));
+    }
+
+    /// Block until an event whose `method` matches arrives, or timeout. Returns
+    /// the parsed event (owned; `.deinit()`), or `null` on timeout/close.
+    /// (Subscribe first.)
+    pub fn nextEvent(self: *BiDi, method: []const u8, timeout_ms: c_int) Error!?std.json.Parsed(std.json.Value) {
+        const mc = try cstr(self.allocator, method);
+        defer self.allocator.free(mc);
+        return self.parseOwned(c.aether_sel_embed_bidi_wait_event(self.handle, mc.ptr, timeout_ms));
+    }
+
+    /// Issue any BiDi command and return its parsed reply (owned; `.deinit()`).
+    /// Reaches BiDi methods with no dedicated wrapper (script.evaluate,
+    /// network.*, ...). Sends then pumps until this id's reply arrives.
+    pub fn command(self: *BiDi, method: []const u8, params_json: []const u8, timeout_ms: c_int) Error!std.json.Parsed(std.json.Value) {
+        const mc = try cstr(self.allocator, method);
+        defer self.allocator.free(mc);
+        const pc = try cstr(self.allocator, params_json);
+        defer self.allocator.free(pc);
+        const cid = self.takeId();
+        if (c.aether_sel_embed_bidi_send(self.handle, cid, mc.ptr, pc.ptr) != 0) {
+            return Error.WebDriver;
+        }
+        var waited: c_int = 0;
+        const step: c_int = 50;
+        while (waited < timeout_ms) {
+            if (try self.parseOwned(c.aether_sel_embed_bidi_poll_reply(self.handle, cid))) |reply| {
+                return reply;
+            }
+            if (c.aether_sel_embed_bidi_pump(self.handle, step) < 0) break;
+            waited += step;
+        }
+        return Error.WebDriver;
+    }
+
+    /// How many events the bounded queue has dropped since the last call (then
+    /// resets) — so a consumer knows it missed events.
+    pub fn lostEvents(self: *BiDi) i32 {
+        return @intCast(c.aether_sel_embed_bidi_lost_events(self.handle));
+    }
+
+    pub fn close(self: *BiDi) void {
+        if (self.handle) |h| {
+            c.aether_sel_embed_bidi_close(h);
+            self.handle = null;
+        }
+    }
+};
+
+/// Join event names with commas into an owned slice (`bidi_*` events_csv arg).
+fn joinCsv(allocator: std.mem.Allocator, events: []const []const u8) Error![]u8 {
+    return std.mem.join(allocator, ",", events) catch Error.OutOfMemory;
+}
 
 test {
     _ = @import("ffi_test.zig");

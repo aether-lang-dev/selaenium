@@ -39,12 +39,28 @@ char*  aether_sel_embed_route(const char* name);
 char*  aether_sel_embed_build_request(const char* name, const char* session_id, const char* params_json);
 int    aether_sel_embed_error_code(const char* w3c_error);
 void   aether_sel_embed_free_string(char* s);
+
+// ---- WebDriver-BiDi (over the session's negotiated webSocketUrl) ----
+// An opaque BiDi channel handle, independent of the W3C session handle.
+void*  aether_sel_embed_bidi_open(const char* ws_url);
+void   aether_sel_embed_bidi_close(void* h);
+int    aether_sel_embed_bidi_send(void* h, int id, const char* method, const char* params_json);
+int    aether_sel_embed_bidi_pump(void* h, int timeout_ms);
+int    aether_sel_embed_bidi_fd(void* h);
+char*  aether_sel_embed_bidi_poll_reply(void* h, int id);
+char*  aether_sel_embed_bidi_poll_event(void* h);
+int    aether_sel_embed_bidi_lost_events(void* h);
+void   aether_sel_embed_bidi_cancel(void* h, int id);
+char*  aether_sel_embed_bidi_subscribe(void* h, int id, const char* events_csv, int timeout_ms);
+char*  aether_sel_embed_bidi_unsubscribe(void* h, int id, const char* events_csv, int timeout_ms);
+char*  aether_sel_embed_bidi_wait_event(void* h, const char* method, int timeout_ms);
 */
 import "C"
 
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"unsafe"
 )
 
@@ -123,6 +139,12 @@ func codeIs(err error, code int) bool {
 // WebDriver is a live (or nascent) WebDriver session over the shared engine.
 type WebDriver struct {
 	h unsafe.Pointer
+	// wsURL is the session's negotiated BiDi endpoint (value.capabilities.webSocketUrl),
+	// captured at newSession. Empty if the remote end granted no BiDi channel.
+	wsURL string
+	// bidi is the BiDi channel, opened lazily on first use so a classic script
+	// never opens the WebSocket.
+	bidi *BiDi
 }
 
 // Option configures the capabilities used to create a session.
@@ -160,12 +182,28 @@ func NewRemote(commandExecutor string, capabilities map[string]interface{}) (*We
 		return nil, &Error{Code: -1, Message: "failed to open session handle"}
 	}
 	d := &WebDriver{h: unsafe.Pointer(h)}
-	payload := map[string]interface{}{
-		"capabilities": map[string]interface{}{"alwaysMatch": capabilities},
+	// Request a BiDi channel so Bidi() is available on demand; the WebSocket
+	// itself opens lazily (a classic script never opens it).
+	caps := make(map[string]interface{}, len(capabilities)+1)
+	for k, v := range capabilities {
+		caps[k] = v
 	}
-	if _, err := d.execute("newSession", payload); err != nil {
+	caps["webSocketUrl"] = true
+	payload := map[string]interface{}{
+		"capabilities": map[string]interface{}{"alwaysMatch": caps},
+	}
+	v, err := d.execute("newSession", payload)
+	if err != nil {
 		d.closeHandle()
 		return nil, err
+	}
+	// value.capabilities.webSocketUrl — the BiDi endpoint for this session.
+	if m, ok := v.(map[string]interface{}); ok {
+		if c, ok := m["capabilities"].(map[string]interface{}); ok {
+			if u, ok := c["webSocketUrl"].(string); ok {
+				d.wsURL = u
+			}
+		}
 	}
 	return d, nil
 }
@@ -344,8 +382,43 @@ func (d *WebDriver) SessionID() string {
 	return takeString(C.aether_sel_embed_session_id(d.h))
 }
 
+// ---- WebDriver-BiDi ----
+
+// BidiAvailable reports whether this session negotiated a webSocketUrl and can
+// therefore use BiDi.
+func (d *WebDriver) BidiAvailable() bool { return d.wsURL != "" }
+
+// Bidi returns the event-driven BiDi surface for this session, opened lazily
+// over the negotiated webSocketUrl. It returns an error if the remote end
+// granted no BiDi URL or the channel fails to open.
+//
+//	bidi, _ := drv.Bidi()
+//	bidi.Subscribe(selenium.BidiEvent.LogEntryAdded)
+//	drv.Get(url)
+//	ev, _ := bidi.NextEvent(selenium.BidiEvent.LogEntryAdded, 5000)
+func (d *WebDriver) Bidi() (*BiDi, error) {
+	if d.bidi != nil {
+		return d.bidi, nil
+	}
+	if d.wsURL == "" {
+		return nil, &Error{Code: 0, Message: "BiDi not available: the session negotiated no webSocketUrl"}
+	}
+	cURL := cstr(d.wsURL)
+	defer C.free(unsafe.Pointer(cURL))
+	h := C.aether_sel_embed_bidi_open(cURL)
+	if h == nil {
+		return nil, &Error{Code: -1, Message: "BiDi channel failed to open"}
+	}
+	d.bidi = &BiDi{h: unsafe.Pointer(h), nextID: 1}
+	return d.bidi, nil
+}
+
 // Quit ends the browser session and releases the handle.
 func (d *WebDriver) Quit() error {
+	if d.bidi != nil {
+		d.bidi.Close()
+		d.bidi = nil
+	}
 	_, err := d.execute("quit", nil)
 	d.closeHandle()
 	return err
@@ -479,6 +552,157 @@ func Locator(by By, value string) string {
 	defer C.free(unsafe.Pointer(cs))
 	defer C.free(unsafe.Pointer(cv))
 	return takeString(C.aether_sel_embed_by_locator(cs, cv))
+}
+
+// ---- WebDriver-BiDi ---------------------------------------------------------
+
+// bidiEventNames holds the common WebDriver-BiDi event names (W3C spec). Pass
+// them to BiDi.Subscribe and match them in BiDi.NextEvent.
+type bidiEventNames struct {
+	LogEntryAdded     string
+	ContextCreated    string
+	ContextDestroyed  string
+	NavigationStarted string
+	DomContentLoaded  string
+	Load              string
+	DownloadWillBegin string
+	BeforeRequestSent string
+	ResponseStarted   string
+	ResponseCompleted string
+	FetchError        string
+	RealmCreated      string
+	RealmDestroyed    string
+	Message           string
+}
+
+// BidiEvent is the set of common WebDriver-BiDi event names.
+var BidiEvent = bidiEventNames{
+	LogEntryAdded:     "log.entryAdded",
+	ContextCreated:    "browsingContext.contextCreated",
+	ContextDestroyed:  "browsingContext.contextDestroyed",
+	NavigationStarted: "browsingContext.navigationStarted",
+	DomContentLoaded:  "browsingContext.domContentLoaded",
+	Load:              "browsingContext.load",
+	DownloadWillBegin: "browsingContext.downloadWillBegin",
+	BeforeRequestSent: "network.beforeRequestSent",
+	ResponseStarted:   "network.responseStarted",
+	ResponseCompleted: "network.responseCompleted",
+	FetchError:        "network.fetchError",
+	RealmCreated:      "script.realmCreated",
+	RealmDestroyed:    "script.realmDestroyed",
+	Message:           "script.message",
+}
+
+// BiDi is the event-driven BiDi channel for a session (over the demux C ABI).
+//
+// Commands and events multiplex over one WebSocket via the engine's shape-C
+// demux (a single reader routes replies to an id table and events to a bounded
+// queue), so replies stay correlated while events stream. Command ids are
+// supplied automatically by a monotonic counter starting at 1.
+type BiDi struct {
+	h      unsafe.Pointer
+	nextID int
+}
+
+func (b *BiDi) id() C.int {
+	i := b.nextID
+	b.nextID++
+	return C.int(i)
+}
+
+// Subscribe issues session.subscribe for one or more event names and waits for
+// the ack, returning the ack payload. After this, matching events arrive on the
+// queue (drain via NextEvent).
+func (b *BiDi) Subscribe(events ...string) (map[string]interface{}, error) {
+	csv := cstr(strings.Join(events, ","))
+	defer C.free(unsafe.Pointer(csv))
+	return decodeBidiAck(takeString(C.aether_sel_embed_bidi_subscribe(b.h, b.id(), csv, C.int(10000))))
+}
+
+// Unsubscribe issues session.unsubscribe for one or more event names and waits
+// for the ack, returning the ack payload.
+func (b *BiDi) Unsubscribe(events ...string) (map[string]interface{}, error) {
+	csv := cstr(strings.Join(events, ","))
+	defer C.free(unsafe.Pointer(csv))
+	return decodeBidiAck(takeString(C.aether_sel_embed_bidi_unsubscribe(b.h, b.id(), csv, C.int(10000))))
+}
+
+func decodeBidiAck(raw string) (map[string]interface{}, error) {
+	if raw == "" {
+		return map[string]interface{}{}, nil
+	}
+	var m map[string]interface{}
+	if err := json.Unmarshal([]byte(raw), &m); err != nil {
+		return nil, fmt.Errorf("unmarshal bidi ack: %w", err)
+	}
+	return m, nil
+}
+
+// NextEvent blocks until an event whose method matches arrives, or timeoutMs
+// elapses. It returns the event map, or nil on timeout/close. (Subscribe first.)
+func (b *BiDi) NextEvent(method string, timeoutMs int) (map[string]interface{}, error) {
+	cMethod := cstr(method)
+	defer C.free(unsafe.Pointer(cMethod))
+	raw := takeString(C.aether_sel_embed_bidi_wait_event(b.h, cMethod, C.int(timeoutMs)))
+	if raw == "" {
+		return nil, nil
+	}
+	var m map[string]interface{}
+	if err := json.Unmarshal([]byte(raw), &m); err != nil {
+		return nil, fmt.Errorf("unmarshal bidi event: %w", err)
+	}
+	return m, nil
+}
+
+// Command issues any BiDi command and returns its reply payload. It lets a
+// caller reach BiDi methods with no dedicated wrapper (script.evaluate,
+// browsingContext.captureScreenshot, network.*, …). The command id is supplied
+// automatically; the call sends then pump-polls until this id's reply arrives.
+func (b *BiDi) Command(method string, params map[string]interface{}, timeoutMs int) (map[string]interface{}, error) {
+	if params == nil {
+		params = map[string]interface{}{}
+	}
+	pj, err := json.Marshal(params)
+	if err != nil {
+		return nil, fmt.Errorf("marshal bidi params: %w", err)
+	}
+	cMethod := cstr(method)
+	cParams := cstr(string(pj))
+	defer C.free(unsafe.Pointer(cMethod))
+	defer C.free(unsafe.Pointer(cParams))
+	cid := b.id()
+	if int(C.aether_sel_embed_bidi_send(b.h, cid, cMethod, cParams)) != 0 {
+		return nil, &Error{Code: -1, Message: "BiDi send failed: " + method}
+	}
+	const step = 50
+	for waited := 0; waited < timeoutMs; waited += step {
+		reply := takeString(C.aether_sel_embed_bidi_poll_reply(b.h, cid))
+		if reply != "" {
+			var m map[string]interface{}
+			if err := json.Unmarshal([]byte(reply), &m); err != nil {
+				return nil, fmt.Errorf("unmarshal bidi reply: %w", err)
+			}
+			return m, nil
+		}
+		if int(C.aether_sel_embed_bidi_pump(b.h, C.int(step))) < 0 {
+			break
+		}
+	}
+	return nil, &Error{Code: codeTimeout, Message: "BiDi command timed out: " + method}
+}
+
+// LostEvents reports how many events the bounded queue has dropped since the
+// last call (then resets) — so a consumer knows it missed events.
+func (b *BiDi) LostEvents() int {
+	return int(C.aether_sel_embed_bidi_lost_events(b.h))
+}
+
+// Close shuts the BiDi channel and releases its handle.
+func (b *BiDi) Close() {
+	if b.h != nil {
+		C.aether_sel_embed_bidi_close(b.h)
+		b.h = nil
+	}
 }
 
 // ---- result decoding helpers ----

@@ -38,6 +38,19 @@ typedef char* (*fn_str)(const char*);  /* cstr -> owned string */
 typedef int   (*fn_strint)(const char*);
 typedef void  (*fn_free)(char*);
 
+/* ---- WebDriver-BiDi ABI (over the session's negotiated webSocketUrl) ---- */
+typedef void* (*fn_bidi_open)(const char*);              /* ws_url -> handle */
+typedef void  (*fn_bidi_close)(void*);
+typedef int   (*fn_bidi_send)(void*, int, const char*, const char*);
+typedef int   (*fn_bidi_pump)(void*, int);
+typedef int   (*fn_bidi_fd)(void*);
+typedef char* (*fn_bidi_poll_reply)(void*, int);         /* -> owned string */
+typedef char* (*fn_bidi_poll_event)(void*);              /* -> owned string */
+typedef int   (*fn_bidi_lost_events)(void*);
+typedef void  (*fn_bidi_cancel)(void*, int);
+typedef char* (*fn_bidi_sub)(void*, int, const char*, int);   /* -> owned string */
+typedef char* (*fn_bidi_wait)(void*, const char*, int);       /* -> owned string */
+
 static struct {
     void* handle;
     char  path[4096];
@@ -53,6 +66,19 @@ static struct {
     fn_str     route;
     fn_strint  error_code;
     fn_free    free_string;
+    /* ---- WebDriver-BiDi ---- */
+    fn_bidi_open        bidi_open;
+    fn_bidi_close       bidi_close;
+    fn_bidi_send        bidi_send;
+    fn_bidi_pump        bidi_pump;
+    fn_bidi_fd          bidi_fd;
+    fn_bidi_poll_reply  bidi_poll_reply;
+    fn_bidi_poll_event  bidi_poll_event;
+    fn_bidi_lost_events bidi_lost_events;
+    fn_bidi_cancel      bidi_cancel;
+    fn_bidi_sub         bidi_subscribe;
+    fn_bidi_sub         bidi_unsubscribe;
+    fn_bidi_wait        bidi_wait_event;
 } ENGINE;
 
 static int load_symbols(lua_State* L, void* lib, const char* path) {
@@ -79,6 +105,19 @@ static int load_symbols(lua_State* L, void* lib, const char* path) {
     SYM(route,           "aether_sel_embed_route");
     SYM(error_code,      "aether_sel_embed_error_code");
     SYM(free_string,     "aether_sel_embed_free_string");
+
+    SYM(bidi_open,        "aether_sel_embed_bidi_open");
+    SYM(bidi_close,       "aether_sel_embed_bidi_close");
+    SYM(bidi_send,        "aether_sel_embed_bidi_send");
+    SYM(bidi_pump,        "aether_sel_embed_bidi_pump");
+    SYM(bidi_fd,          "aether_sel_embed_bidi_fd");
+    SYM(bidi_poll_reply,  "aether_sel_embed_bidi_poll_reply");
+    SYM(bidi_poll_event,  "aether_sel_embed_bidi_poll_event");
+    SYM(bidi_lost_events, "aether_sel_embed_bidi_lost_events");
+    SYM(bidi_cancel,      "aether_sel_embed_bidi_cancel");
+    SYM(bidi_subscribe,   "aether_sel_embed_bidi_subscribe");
+    SYM(bidi_unsubscribe, "aether_sel_embed_bidi_unsubscribe");
+    SYM(bidi_wait_event,  "aether_sel_embed_bidi_wait_event");
 #undef SYM
 
     ENGINE.handle = lib;
@@ -204,6 +243,94 @@ static int l_configure(lua_State* L) {
     return 0;
 }
 
+/* ---- WebDriver-BiDi ---- */
+/* A BiDi channel handle is a light userdata (the void* directly), independent
+ * of the W3C session handle. */
+
+static int l_bidi_open(lua_State* L) {
+    const char* ws_url = luaL_checkstring(L, 1);
+    void* h = ENGINE.bidi_open(ws_url);
+    if (!h) { lua_pushnil(L); return 1; }
+    lua_pushlightuserdata(L, h);
+    return 1;
+}
+
+static int l_bidi_close(lua_State* L) {
+    ENGINE.bidi_close(check_handle(L, 1));
+    return 0;
+}
+
+static int l_bidi_send(lua_State* L) {
+    void* h = check_handle(L, 1);
+    int id = (int)luaL_checkinteger(L, 2);
+    const char* method = luaL_checkstring(L, 3);
+    const char* params = luaL_checkstring(L, 4);
+    lua_pushinteger(L, ENGINE.bidi_send(h, id, method, params));
+    return 1;
+}
+
+static int l_bidi_pump(lua_State* L) {
+    void* h = check_handle(L, 1);
+    int timeout_ms = (int)luaL_checkinteger(L, 2);
+    lua_pushinteger(L, ENGINE.bidi_pump(h, timeout_ms));
+    return 1;
+}
+
+static int l_bidi_fd(lua_State* L) {
+    lua_pushinteger(L, ENGINE.bidi_fd(check_handle(L, 1)));
+    return 1;
+}
+
+static int l_bidi_poll_reply(lua_State* L) {
+    void* h = check_handle(L, 1);
+    int id = (int)luaL_checkinteger(L, 2);
+    push_owned(L, ENGINE.bidi_poll_reply(h, id));
+    return 1;
+}
+
+static int l_bidi_poll_event(lua_State* L) {
+    push_owned(L, ENGINE.bidi_poll_event(check_handle(L, 1)));
+    return 1;
+}
+
+static int l_bidi_lost_events(lua_State* L) {
+    lua_pushinteger(L, ENGINE.bidi_lost_events(check_handle(L, 1)));
+    return 1;
+}
+
+static int l_bidi_cancel(lua_State* L) {
+    void* h = check_handle(L, 1);
+    int id = (int)luaL_checkinteger(L, 2);
+    ENGINE.bidi_cancel(h, id);
+    return 0;
+}
+
+static int l_bidi_subscribe(lua_State* L) {
+    void* h = check_handle(L, 1);
+    int id = (int)luaL_checkinteger(L, 2);
+    const char* events = luaL_checkstring(L, 3);
+    int timeout_ms = (int)luaL_checkinteger(L, 4);
+    push_owned(L, ENGINE.bidi_subscribe(h, id, events, timeout_ms));
+    return 1;
+}
+
+static int l_bidi_unsubscribe(lua_State* L) {
+    void* h = check_handle(L, 1);
+    int id = (int)luaL_checkinteger(L, 2);
+    const char* events = luaL_checkstring(L, 3);
+    int timeout_ms = (int)luaL_checkinteger(L, 4);
+    push_owned(L, ENGINE.bidi_unsubscribe(h, id, events, timeout_ms));
+    return 1;
+}
+
+static int l_bidi_wait_event(lua_State* L) {
+    void* h = check_handle(L, 1);
+    const char* method = luaL_checkstring(L, 2);
+    int timeout_ms = (int)luaL_checkinteger(L, 3);
+    push_owned(L, ENGINE.bidi_wait_event(h, method, timeout_ms));
+    return 1;
+}
+
 static const luaL_Reg MODULE[] = {
     {"open",            l_open},
     {"close",           l_close},
@@ -217,6 +344,18 @@ static const luaL_Reg MODULE[] = {
     {"route",           l_route},
     {"error_code",      l_error_code},
     {"configure",       l_configure},
+    {"bidi_open",         l_bidi_open},
+    {"bidi_close",        l_bidi_close},
+    {"bidi_send",         l_bidi_send},
+    {"bidi_pump",         l_bidi_pump},
+    {"bidi_fd",           l_bidi_fd},
+    {"bidi_poll_reply",   l_bidi_poll_reply},
+    {"bidi_poll_event",   l_bidi_poll_event},
+    {"bidi_lost_events",  l_bidi_lost_events},
+    {"bidi_cancel",       l_bidi_cancel},
+    {"bidi_subscribe",    l_bidi_subscribe},
+    {"bidi_unsubscribe",  l_bidi_unsubscribe},
+    {"bidi_wait_event",   l_bidi_wait_event},
     {NULL, NULL},
 };
 

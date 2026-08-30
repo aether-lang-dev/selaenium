@@ -108,6 +108,12 @@ class WebElement {
 class WebDriver {
   ffi.Pointer<ffi.Void> _handle;
 
+  // The BiDi endpoint negotiated at newSession (webSocketUrl), and the channel
+  // opened lazily over it on first `.bidi` use — a classic script never opens
+  // the WebSocket.
+  String _wsUrl = '';
+  BiDi? _bidi;
+
   WebDriver._(this._handle);
 
   factory WebDriver.chrome(String commandExecutor,
@@ -129,9 +135,20 @@ class WebDriver {
       throw WebDriverError('failed to open session handle', -1);
     }
     final d = WebDriver._(handle);
-    d.execute('newSession', {
-      'capabilities': {'alwaysMatch': caps}
+    // Request a BiDi channel so `.bidi` is available on demand; the channel
+    // itself is opened lazily.
+    final matched = <String, dynamic>{...caps, 'webSocketUrl': true};
+    final result = d.execute('newSession', {
+      'capabilities': {'alwaysMatch': matched}
     });
+    // value.capabilities.webSocketUrl — the BiDi endpoint for this session.
+    if (result is Map<String, dynamic>) {
+      final sessionCaps = result['capabilities'];
+      if (sessionCaps is Map<String, dynamic>) {
+        final url = sessionCaps['webSocketUrl'];
+        if (url is String) d._wsUrl = url;
+      }
+    }
     return d;
   }
 
@@ -206,20 +223,157 @@ class WebDriver {
   // ---- screenshots ----
   String screenshotBase64() => execute('screenshot') as String;
 
+  // ---- WebDriver-BiDi ----
+
+  /// The event-driven BiDi surface for this session, lazily opened over the
+  /// negotiated webSocketUrl. Throws if the remote end granted no BiDi URL.
+  ///
+  /// ```dart
+  /// driver.bidi.subscribe([BidiEvent.logEntryAdded]);
+  /// driver.get(url);
+  /// final ev = driver.bidi.nextEvent(BidiEvent.logEntryAdded, timeoutMs: 5000);
+  /// ```
+  BiDi get bidi {
+    var channel = _bidi;
+    if (channel == null) {
+      if (_wsUrl.isEmpty) {
+        throw WebDriverError(
+            'BiDi not available: the session negotiated no webSocketUrl', 0);
+      }
+      final handle = _withCStr(_wsUrl, (c) => Native.instance.bidiOpen(c));
+      if (handle == ffi.nullptr) {
+        throw WebDriverError('BiDi channel failed to open', -1);
+      }
+      channel = BiDi._(handle);
+      _bidi = channel;
+    }
+    return channel;
+  }
+
+  /// True if this session can use BiDi (a webSocketUrl was negotiated).
+  bool get bidiAvailable => _wsUrl.isNotEmpty;
+
   // ---- lifecycle ----
   String get sessionId => Native.instance.takeString(Native.instance.sessionId(_handle));
 
   void quit() {
     try {
+      _closeBidi();
       execute('quit');
     } finally {
       _close();
     }
   }
 
+  void _closeBidi() {
+    _bidi?.close();
+    _bidi = null;
+  }
+
   void _close() {
     if (_handle != ffi.nullptr) {
       Native.instance.close(_handle);
+      _handle = ffi.nullptr;
+    }
+  }
+}
+
+/// The common WebDriver-BiDi event names (W3C spec). Pass to
+/// [BiDi.subscribe] and match in [BiDi.nextEvent].
+class BidiEvent {
+  static const String logEntryAdded = 'log.entryAdded';
+  static const String contextCreated = 'browsingContext.contextCreated';
+  static const String contextDestroyed = 'browsingContext.contextDestroyed';
+  static const String navigationStarted = 'browsingContext.navigationStarted';
+  static const String domContentLoaded = 'browsingContext.domContentLoaded';
+  static const String load = 'browsingContext.load';
+  static const String downloadWillBegin = 'browsingContext.downloadWillBegin';
+  static const String beforeRequestSent = 'network.beforeRequestSent';
+  static const String responseStarted = 'network.responseStarted';
+  static const String responseCompleted = 'network.responseCompleted';
+  static const String fetchError = 'network.fetchError';
+  static const String realmCreated = 'script.realmCreated';
+  static const String realmDestroyed = 'script.realmDestroyed';
+  static const String message = 'script.message';
+}
+
+/// The event-driven BiDi channel for a session (over the demux C ABI).
+///
+/// Commands and events multiplex over one WebSocket via the engine's shape-C
+/// demux (a single reader routes replies to an id table and events to a bounded
+/// queue), so replies stay correlated while events stream. Command ids are
+/// supplied automatically from a per-channel monotonic counter.
+class BiDi {
+  ffi.Pointer<ffi.Void> _handle;
+  int _nextId = 1;
+
+  BiDi._(this._handle);
+
+  int _id() => _nextId++;
+
+  /// session.subscribe to one or more event names; wait for the ack and return
+  /// its payload. After this, matching events arrive on the queue (drain via
+  /// [nextEvent]).
+  Map<String, dynamic> subscribe(List<String> events, {int timeoutMs = 10000}) {
+    final csv = events.join(',');
+    final raw = _withCStr(csv,
+        (c) => Native.instance.takeString(
+            Native.instance.bidiSubscribe(_handle, _id(), c, timeoutMs)));
+    return raw.isEmpty ? {} : jsonDecode(raw) as Map<String, dynamic>;
+  }
+
+  Map<String, dynamic> unsubscribe(List<String> events,
+      {int timeoutMs = 10000}) {
+    final csv = events.join(',');
+    final raw = _withCStr(csv,
+        (c) => Native.instance.takeString(
+            Native.instance.bidiUnsubscribe(_handle, _id(), c, timeoutMs)));
+    return raw.isEmpty ? {} : jsonDecode(raw) as Map<String, dynamic>;
+  }
+
+  /// Block until an event whose [method] matches arrives, or timeout. Returns
+  /// the event map, or null on timeout/close. (Subscribe first.)
+  Map<String, dynamic>? nextEvent(String method, {int timeoutMs = 5000}) {
+    final raw = _withCStr(method,
+        (m) => Native.instance.takeString(
+            Native.instance.bidiWaitEvent(_handle, m, timeoutMs)));
+    return raw.isEmpty ? null : jsonDecode(raw) as Map<String, dynamic>;
+  }
+
+  /// Issue any BiDi command and return its reply payload. Lets a caller reach
+  /// BiDi methods with no dedicated wrapper (script.evaluate,
+  /// browsingContext.captureScreenshot, network.*, …).
+  Map<String, dynamic> command(String method,
+      {Map<String, dynamic>? params, int timeoutMs = 10000}) {
+    final paramsJson = jsonEncode(params ?? {});
+    final cid = _id();
+    // send + pump until this id's reply arrives (the engine's convenience).
+    final rc = _withCStr(
+        method,
+        (m) => _withCStr(
+            paramsJson, (p) => Native.instance.bidiSend(_handle, cid, m, p)));
+    if (rc != 0) {
+      throw WebDriverError('BiDi send failed: $method', -1);
+    }
+    var waited = 0;
+    const step = 50;
+    while (waited < timeoutMs) {
+      final reply =
+          Native.instance.takeString(Native.instance.bidiPollReply(_handle, cid));
+      if (reply.isNotEmpty) return jsonDecode(reply) as Map<String, dynamic>;
+      if (Native.instance.bidiPump(_handle, step) < 0) break;
+      waited += step;
+    }
+    throw TimeoutError('BiDi command timed out: $method', 0);
+  }
+
+  /// How many events the bounded queue has dropped since the last call (then
+  /// resets) — so a consumer knows it missed events.
+  int lostEvents() => Native.instance.bidiLostEvents(_handle);
+
+  void close() {
+    if (_handle != ffi.nullptr) {
+      Native.instance.bidiClose(_handle);
       _handle = ffi.nullptr;
     }
   }
