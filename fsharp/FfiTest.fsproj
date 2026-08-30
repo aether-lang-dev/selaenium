@@ -1,0 +1,36 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- F# binding tests. References the ONE C# P/Invoke binding
+       (dotnet/SeleniumCore) — no second FFI. Real xUnit facts (no browser);
+       SELENIUM_CORE_LIB (env) points the DllImport resolver at the engine .so. -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RollForward>Major</RollForward>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="SeleniumCore.fs" />
+    <Compile Include="FfiTest.fs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
+    <PackageReference Include="xunit" Version="2.9.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../dotnet/SeleniumCore/SeleniumCore.csproj" />
+  </ItemGroup>
+
+  <!-- Stage the engine .so (put here by .tests.ae's copy.file) next to the test
+       assembly so the C# NativeLoader's native/ + BaseDirectory search finds it
+       (block env() isn't threaded into `dotnet test` by aeb's test_existing). -->
+  <ItemGroup Condition="Exists('native/libselenium_core.so')">
+    <None Include="native/libselenium_core.so">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+</Project>

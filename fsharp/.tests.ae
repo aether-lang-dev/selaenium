@@ -1,0 +1,34 @@
+// F# binding tests. F# is a CLR-family binding: it consumes the ONE C# P/Invoke
+// binding's classes over .NET interop — no second FFI, no second .so (one C#
+// binding backs the CLR family: F#, VB.NET), exactly as one Java jar backs the
+// JVM family. FfiTest.fsproj ProjectReferences dotnet/SeleniumCore (the library)
+// and runs the no-browser FFI facts as real xUnit tests. SELENIUM_CORE_LIB (env)
+// points the DllImport resolver at the engine's shared_lib artifact. Skipped by
+// preflight when dotnet is absent (prereq dotnet:8).
+import bldr
+import dotnet
+import dotnet (csproj_path)
+import copy
+
+aeb(cap) {
+    bldr.build() {
+        prereq("dotnet:8")
+        dep("selenium_core/.build.ae")
+        dep("dotnet/SeleniumCore/.build.ae")
+        native_lib = dep_artifact("selenium_core/.build.ae", "shared_lib")
+        // Stage the engine .so into native/ so the C# NativeLoader's `native/`
+        // search finds it (test_existing runs `dotnet test`, whose block env()
+        // aeb doesn't thread into the run — the native/ layout is the portable
+        // path the NativeLoader already supports).
+        copy.file() {
+            from(native_lib)
+            to("native/libselenium_core.so")
+        }
+        dotnet.build_project_existing() {
+            csproj_path("FfiTest.fsproj")
+        }
+        dotnet.test_existing() {
+            csproj_path("FfiTest.fsproj")
+        }
+    }
+}
