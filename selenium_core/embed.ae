@@ -34,6 +34,7 @@
 import selenium_core
 import selenium_core (Session)
 import driver
+import bidi
 import std.string
 
 // Caller-owned-string helper (core/_embed_strdup.c): malloc/strdup a C string
@@ -181,6 +182,71 @@ sel_embed_driver_pid(dh: ptr) -> int {
 // Kill + reap the driver process and free the handle. NULL-safe.
 sel_embed_stop_driver(dh: ptr) {
     driver.stop(dh)
+}
+
+// ---- WebDriver-BiDi (shape C: central demux, non-blocking poll) ----
+//
+// The multiplexed BiDi transport over the session's webSocketUrl. The engine
+// owns the ONE demux (single reader → id-keyed reply table + bounded event
+// queue) exposed through non-blocking poll calls; the engine holds NO thread —
+// a binding drives the wait with its own event loop (poll the fd / pump), then
+// drains replies+events. See docs/WebDriver-BiDi.md. Append-only; strings
+// caller-owned. Needs the ws primitives in ae 0.607+ (ws_recv_timeout/poll/fd).
+//
+// Flow: a W3C newSession with webSocketUrl:true (over the existing execute ABI)
+// yields a webSocketUrl → bidi_open(url) → send(id, method, params) → wait on
+// bidi_fd / pump → poll_reply(id) / poll_event → close.
+
+// Open the BiDi channel to a session's webSocketUrl. Returns an opaque handle
+// (null on connect failure), independent of the W3C session handle.
+sel_embed_bidi_open(ws_url: string) -> ptr {
+    return bidi.bidi_open(ws_url)
+}
+
+sel_embed_bidi_close(h: ptr) {
+    bidi.bidi_close(h)
+}
+
+// Frame + send one command; the CALLER supplies the id (so concurrent commands
+// stay distinct and compose with the binding's async). Returns 0 sent / -1 err.
+sel_embed_bidi_send(h: ptr, id: int, method: string, params_json: string) -> int {
+    return bidi.bidi_send(h, id, method, params_json)
+}
+
+// Advance the single demux ONE step: read up to one frame (bounded by
+// timeout_ms via ws_recv_timeout) and route it (reply→id-table, event→queue).
+// Returns 1 routed / 0 timed out / -1 closed. No engine thread — the binding
+// loops this (or waits on the fd) then drains via the poll calls below.
+sel_embed_bidi_pump(h: ptr, timeout_ms: int) -> int {
+    return bidi.bidi_pump(h, timeout_ms)
+}
+
+// The readable socket fd, for a native event loop (asyncio.add_reader/epoll).
+// Readiness is a HINT: on wake, always drain via bidi_pump(h, 0) until 0.
+sel_embed_bidi_fd(h: ptr) -> int {
+    return bidi.bidi_fd(h)
+}
+
+// The reply JSON for a command id if it has arrived (and consume it), else "".
+// Returns immediately. Caller frees.
+sel_embed_bidi_poll_reply(h: ptr, id: int) -> string {
+    return sel_embed_dup(bidi.bidi_poll_reply(h, id))
+}
+
+// The next queued event JSON (and dequeue), or "". Returns immediately. Frees.
+sel_embed_bidi_poll_event(h: ptr) -> string {
+    return sel_embed_dup(bidi.bidi_poll_event(h))
+}
+
+// How many events the bounded queue dropped, then resets to 0 (so a consumer
+// knows it missed events — BEEP's flow-control lesson).
+sel_embed_bidi_lost_events(h: ptr) -> int {
+    return bidi.bidi_lost_events(h)
+}
+
+// A waiter gave up: drop its pending-reply slot so a late reply is discarded.
+sel_embed_bidi_cancel(h: ptr, id: int) {
+    bidi.bidi_cancel(h, id)
 }
 
 // ---- string ownership ----
