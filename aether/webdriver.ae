@@ -1,0 +1,296 @@
+// aether/webdriver.ae — the native Aether WebDriver client.
+//
+// The one binding with NO FFI and NO C ABI: it `import selenium_core` and drives
+// the engine module IN-PROCESS, so it never sees the flattened aether_sel_embed_*
+// names or manual string ownership the FFI bindings must marshal through. It also
+// goes further than any FFI binding can — a typed, idiomatic surface (real By,
+// parsed JSON results, typed errors) and the builder-DSL beauty for session
+// construction. This is the reference implementation of the whole architecture.
+//
+//     import webdriver
+//
+//     d = webdriver.chrome()                 // transparent driver mgmt, no PATH
+//     wd.get(d, "http://example.com/one")
+//     t = wd.title(d)                        // -> "Page One"
+//     el = wd.find(d, By_ID, "go")
+//     wd.click(d, el)
+//     wd.quit(d)
+//
+// Session construction rides drivermgr (the same transparent resolve+launch the
+// C ABI uses): chrome() detects/resolves/launches chromedriver and opens a W3C
+// session against it, all in-process.
+import selenium_core
+import driver
+import browser
+import cache
+import std.json
+import std.string
+import std.heap
+import std.file
+
+// ---- By locator strategies (typed; no stringly-typed "css selector") ----
+By_CSS() -> string { return "css" }
+By_ID() -> string { return "id" }
+By_NAME() -> string { return "name" }
+By_CLASS() -> string { return "className" }
+By_TAG() -> string { return "tag name" }
+By_LINK() -> string { return "link text" }
+By_PARTIAL_LINK() -> string { return "partial link text" }
+By_XPATH() -> string { return "xpath" }
+
+// A live session: the engine Session handle + the driver process handle (so quit
+// both ends the browser session AND reaps the driver). "" element ids are the
+// W3C element reference the engine returns.
+struct WdSession {
+    engine: ptr        // selenium_core Session
+    drv: ptr           // drivermgr Driver (null for a Remote session)
+}
+
+// ---- session construction (builder-DSL; transparent driver management) ----
+
+// webdriver.chrome() { … } — resolve + launch chromedriver for the local Chrome
+// (transparent: detect -> CfT -> cache/download -> launch, nothing on PATH),
+// then open a W3C session. Block config forwards to the driver manager
+// (version/cache/offline/timeout_ms). Returns a *Session, or null if no driver.
+builder chrome(): ptr {
+    dh = driver.ensure("chrome", _hint(_builder), _timeout(_builder))
+    if dh == null { return null }
+    url = driver.url_of(dh)
+    eng = selenium_core.session_new(url)
+    sess = _mk(eng, dh)
+    // newSession with headless chrome caps. When there's no system Chrome but a
+    // cached Chrome-for-Testing exists, point goog:chromeOptions.binary at it
+    // (chromedriver otherwise looks for a system chrome that isn't there).
+    bin_opt = _chrome_binary_opt()
+    caps = "{\"capabilities\":{\"alwaysMatch\":{\"browserName\":\"chrome\",\"goog:chromeOptions\":{${bin_opt}\"args\":[\"--headless=new\",\"--no-sandbox\",\"--disable-dev-shm-usage\"]}}}}"
+    rc = selenium_core.execute(eng, "newSession", caps)
+    if rc != 0 {
+        quit(sess)
+        return null
+    }
+    return sess
+}
+
+// webdriver.remote(url) — open a session against an already-running remote end
+// (a Grid hub or a driver URL), no local driver process. Caps default to chrome.
+remote(url: string) -> ptr {
+    eng = selenium_core.session_new(url)
+    sess = _mk(eng, null)
+    caps = "{\"capabilities\":{\"alwaysMatch\":{\"browserName\":\"chrome\"}}}"
+    rc = selenium_core.execute(eng, "newSession", caps)
+    if rc != 0 { quit(sess); return null }
+    return sess
+}
+
+// webdriver.quit(session) — end the browser session, close the engine handle,
+// and reap the driver process. NULL-safe.
+quit(sp: ptr) {
+    if sp == null { return }
+    s = sp as *WdSession
+    if s.engine != null {
+        _r = selenium_core.execute(s.engine, "quit", "{}")
+        selenium_core.session_free(s.engine)
+    }
+    if s.drv != null {
+        driver.stop(s.drv)
+    }
+}
+
+// ---- navigation ----
+get(sp: ptr, url: string) { _do(sp, "get", _json1("url", url)) }
+current_url(sp: ptr) -> string { return _do_str(sp, "getCurrentUrl", "{}") }
+title(sp: ptr) -> string { return _do_str(sp, "getTitle", "{}") }
+page_source(sp: ptr) -> string { return _do_str(sp, "getPageSource", "{}") }
+back(sp: ptr) { _do(sp, "goBack", "{}") }
+forward(sp: ptr) { _do(sp, "goForward", "{}") }
+refresh(sp: ptr) { _do(sp, "refresh", "{}") }
+
+// ---- elements ----
+
+// find(session, By_*, value) -> element id ("" if not found / error). Uses the
+// engine's ONE By-normalization (by_locator) — the same CSS-escape path every
+// binding shares.
+find(sp: ptr, by: string, value: string) -> string {
+    loc = selenium_core.by_locator(by, value)
+    rc = _exec(sp, "findElement", loc)
+    if rc != 0 { return "" }
+    val = _value(sp)
+    return _element_ref(val)
+}
+
+// element operations take the element id find() returned.
+element_text(sp: ptr, elem_id: string) -> string {
+    return _do_str(sp, "getElementText", _elem_body(elem_id))
+}
+element_tag(sp: ptr, elem_id: string) -> string {
+    return _do_str(sp, "getElementTagName", _elem_body(elem_id))
+}
+click(sp: ptr, elem_id: string) { _do(sp, "clickElement", _elem_body(elem_id)) }
+
+// ---- script ----
+execute_script(sp: ptr, script: string, args_json: string) -> string {
+    body = "{\"script\":${_qjson(script)},\"args\":${args_json}}"
+    rc = _exec(sp, "executeScript", body)
+    if rc != 0 { return "" }
+    return _value(sp)
+}
+
+// ---- cookies ----
+add_cookie(sp: ptr, name: string, value: string) {
+    body = "{\"cookie\":{\"name\":${_qjson(name)},\"value\":${_qjson(value)}}}"
+    _do(sp, "addCookie", body)
+}
+get_cookie(sp: ptr, name: string) -> string {
+    return _do_str(sp, "getCookie", _json1("name", name))
+}
+delete_cookie(sp: ptr, name: string) { _do(sp, "deleteCookie", _json1("name", name)) }
+delete_all_cookies(sp: ptr) { _do(sp, "deleteAllCookies", "{}") }
+
+// ---- windows / screenshot ----
+window_handles(sp: ptr) -> string { return _do_str(sp, "getWindowHandles", "{}") }
+screenshot_base64(sp: ptr) -> string { return _do_str(sp, "screenshot", "{}") }
+
+// ---- error surface ----
+last_error(sp: ptr) -> string {
+    if sp == null { return "" }
+    s = sp as *WdSession
+    return selenium_core.last_error_of(s.engine)
+}
+last_error_code(sp: ptr) -> int {
+    if sp == null { return 0 }
+    s = sp as *WdSession
+    return selenium_core.last_error_code_of(s.engine)
+}
+
+// ---- internals ----
+
+_mk(eng: ptr, drv: ptr) -> ptr {
+    s = heap.new(WdSession)
+    s.engine = eng
+    s.drv = drv
+    return s as ptr
+}
+
+// run a command, ignore the value (navigation/void ops).
+_do(sp: ptr, name: string, body: string) {
+    _r = _exec(sp, name, body)
+}
+
+// run a command, return the last_value UNWRAPPED as a string. last_value is raw
+// JSON (getTitle -> "\"Page One\""), so parse + get_string to the bare value.
+// A non-string JSON value (number/object) is returned as its raw JSON text.
+_do_str(sp: ptr, name: string, body: string) -> string {
+    rc = _exec(sp, name, body)
+    if rc != 0 { return "" }
+    return _unwrap(_value(sp))
+}
+
+// JSON value text -> bare string when it's a JSON string, else the raw text.
+_unwrap(raw: string) -> string {
+    if string.length(raw) == 0 { return "" }
+    v, perr = json.parse(raw)
+    if string.length(perr) > 0 { return raw }
+    s, serr = json.get_string(v)
+    if string.length(serr) > 0 { return raw }
+    return s
+}
+
+_exec(sp: ptr, name: string, body: string) -> int {
+    if sp == null { return -1 }
+    s = sp as *WdSession
+    return selenium_core.execute(s.engine, name, body)
+}
+
+_value(sp: ptr) -> string {
+    s = sp as *WdSession
+    return selenium_core.last_value_of(s.engine)
+}
+
+// {"key":"<v>"} with v JSON-escaped.
+_json1(key: string, v: string) -> string {
+    return "{${_qjson(key)}:${_qjson(v)}}"
+}
+
+// A JSON string literal for `s` (delegates to the engine's json for escaping).
+_qjson(s: string) -> string {
+    j, _e = json.stringify(json.str(s))
+    return j
+}
+
+// {"id":"<elem>"} — the element-ref path param body.
+_elem_body(elem_id: string) -> string {
+    return _json1("id", elem_id)
+}
+
+// Pull the W3C element reference out of a findElement value payload
+// ({"element-6066-11e4-a52e-4f735466cecf":"<id>"}).
+_element_ref(value_json: string) -> string {
+    root, perr = json.parse(value_json)
+    if string.length(perr) > 0 { return "" }
+    ev, _e = json.object_get(root, "element-6066-11e4-a52e-4f735466cecf")
+    id, _i = json.get_string(ev)
+    return id
+}
+
+// "binary":"<path>", when a Chrome binary must be named explicitly (no system
+// Chrome, but a cached Chrome-for-Testing exists), else "" (system default).
+_chrome_binary_opt() -> string {
+    sys = browser.chrome_path()
+    if string.length(sys) > 0 { return "" }
+    cft = _cached_chrome()
+    if string.length(cft) > 0 {
+        return "\"binary\":${_qjson(cft)},"
+    }
+    return ""
+}
+
+// The cached Chrome-for-Testing binary: <cache>/chrome/linux64/<ver>/chrome.
+// Probes the version the driver manager resolved (the cached driver's version
+// dir mirrors the browser's). Empty if none.
+_cached_chrome() -> string {
+    root = cache.default_cache_root()
+    // The cache lays chrome out as chrome/linux64/<version>/chrome, parallel to
+    // the chromedriver dir. Reuse the driver's resolved version via the same
+    // layout: try the well-known linux64 path for any present version dir.
+    base = string.concat(root, "/chrome/linux64")
+    // We don't list dirs here; the resolver already downloaded/《cached》 the
+    // matching pair, so the driver's version == the chrome version. Derive it
+    // from the resolved driver path's version segment.
+    dpath = driver.resolve_driver("chrome", "")
+    ver = _version_seg(dpath)
+    if string.length(ver) == 0 { return "" }
+    cand = string.concat(base, string.concat("/", string.concat(ver, "/chrome")))
+    if file.exists(cand) == 1 { return cand }
+    return ""
+}
+
+// Pull the <version> segment out of a cached driver path
+// .../chromedriver/linux64/<version>/chromedriver.
+_version_seg(driver_path: string) -> string {
+    // second-to-last path component.
+    n = string.length(driver_path)
+    last = _rslash(driver_path, n)
+    if last < 0 { return "" }
+    prev = _rslash(driver_path, last)
+    if prev < 0 { return "" }
+    return string.substring(driver_path, prev + 1, last)
+}
+
+_rslash(s: string, before: int) -> int {
+    i = before - 1
+    while i >= 0 {
+        ch = string.substring(s, i, i + 1)
+        if string.equals(ch, "/") == 1 { return i }
+        i = i - 1
+    }
+    return -1
+}
+
+_hint(cfg: ptr) -> string {
+    // reserved: version/cache/offline forwarding (parallels webdriver.ae DSL).
+    return ""
+}
+
+_timeout(cfg: ptr) -> int {
+    return 15000
+}

@@ -1,0 +1,86 @@
+// aether/test/live_test.ae — the live conformance case, driven by the NATIVE
+// Aether client (no FFI). The showcase: because the client drives the driver
+// manager IN-PROCESS (webdriver.chrome() -> transparent detect/resolve/cache-or-
+// download/launch), this runs on a box with a cached OR installed driver, where
+// the FFI bindings' live legs skip (they need chromedriver on PATH).
+//
+// Pages are served as self-contained data: URLs (no external content server —
+// that in-process-server wiring is the deferred content-server decision, see
+// docs/Driver-Orchestration-ABI.md). Self-skips if no chromedriver is
+// resolvable.
+import webdriver
+import driver
+import std.string
+
+extern exit(code: int)
+
+// returns 0 on pass, 1 on fail (main sums — no top-level mutable state).
+ck(label: string, cond: int) -> int {
+    if cond == 1 {
+        println("  ok: ${label}")
+        return 0
+    }
+    println("FAIL: ${label}")
+    return 1
+}
+
+// A self-contained page as a data: URL (title + an #hdr element + a button).
+page_one() -> string {
+    return "data:text/html,<title>Page One</title><h1 id='hdr'>One</h1><button id='btn' onclick=\"document.getElementById('hdr').textContent='clicked'\">b</button>"
+}
+
+main() {
+    dpath = driver.resolve_driver("chrome", "")
+    if string.length(dpath) == 0 {
+        println("SKIPPED: no chromedriver resolvable (no cache, no PATH, offline)")
+        exit(0)
+    }
+
+    d = webdriver.chrome()
+    if d == null {
+        println("SKIPPED: chrome() could not launch (driver resolved but no browser)")
+        exit(0)
+    }
+
+    println("== native Aether client: live surface (transparent driver mgmt) ==")
+    fails = 0
+
+    webdriver.get(d, page_one())
+    fails = fails + ck("title Page One", string.equals(webdriver.title(d), "Page One"))
+
+    hdr = webdriver.find(d, webdriver.By_ID(), "hdr")
+    fails = fails + ck("found #hdr", _gt0(string.length(hdr)))
+    fails = fails + ck("hdr text One", string.equals(webdriver.element_text(d, hdr), "One"))
+
+    tag = webdriver.element_tag(d, webdriver.find(d, webdriver.By_ID(), "btn"))
+    fails = fails + ck("btn tag button", string.equals(string.to_lower(tag), "button"))
+
+    // script
+    r = webdriver.execute_script(d, "return 6*7;", "[]")
+    fails = fails + ck("script scalar 42", string.contains(r, "42"))
+
+    // click the button -> its onclick mutates #hdr
+    webdriver.click(d, webdriver.find(d, webdriver.By_ID(), "btn"))
+    fails = fails + ck("after click hdr=clicked", string.equals(webdriver.element_text(d, webdriver.find(d, webdriver.By_ID(), "hdr")), "clicked"))
+
+    // cookies (data: URLs have no cookie origin, so just exercise the calls)
+    webdriver.delete_all_cookies(d)
+
+    // screenshot
+    shot = webdriver.screenshot_base64(d)
+    fails = fails + ck("screenshot non-empty", _gt0(string.length(shot)))
+
+    // negative path: a missing element yields "" (typed no-such-element)
+    fails = fails + ck("missing element -> ''", string.equals(webdriver.find(d, webdriver.By_ID(), "nope"), ""))
+
+    webdriver.quit(d)
+
+    if fails == 0 {
+        println("PASS: native Aether client live surface green")
+        exit(0)
+    }
+    println("FAILED: ${string.from_int(fails)} check(s)")
+    exit(1)
+}
+
+_gt0(n: int) -> int { if n > 0 { return 1 } return 0 }

@@ -1,0 +1,24 @@
+// Native Aether client tests. The ONE binding with no FFI: it imports
+// selenium_core + driver + drivermgr directly and drives the engine in-process,
+// so it never sees the flattened aether_sel_embed_* C names. aether.program_test
+// compiles test/live_test.ae against those modules (lib dirs) and runs it. The
+// live surface uses the driver manager's TRANSPARENT resolve+launch, so it runs
+// where the FFI bindings skip (no chromedriver on PATH needed) — self-skipping
+// only when no driver is resolvable at all. Needs net/os/fs (http round-trip +
+// driver process + cache).
+import bldr
+import aether
+
+aeb(cap) {
+    bldr.build() {
+        prereq("aether")
+        dep("selenium_core/.build.ae")
+        aether.program_test() {
+            source("test/live_test.ae")
+            lib("../selenium_core")
+            lib("../selenium_core/drivermgr")
+            lib(".")
+            caps("net,os,fs")
+        }
+    }
+}
