@@ -1,26 +1,21 @@
-// Third-party-consumer PACKAGE stage for the Rust binding.
-//
-// Rust consumes selenium-core as a crate (source, linked at the consumer's
-// build time). build.rs links the engine .so; it looks in the crate's own
-// native/ dir, so the .so must ship inside the crate. This stages the freshly-
-// built engine .so into rust/native/. Deps core/.build.ae; publishes the crate
-// dir on "crate_dir".
-import build
-import std.os
+// Rust consumer package (the crate). The crate is consumed in-place (cargo reads
+// Cargo.toml + build.rs + src/ + the staged native/), so packaging is just
+// staging the engine .so into rust/native/ (where build.rs links it) and
+// publishing the crate dir on the "crate_dir" edge for the consumer-install
+// proof (rust/.example.ae). copy.file does the staging declaratively. Skipped by
+// preflight when rust is absent (prereq rust:1.75).
+import bldr
+import copy
 
 aeb(cap) {
-    b = build.start()
-    build.dep(b, "selenium_core/.build.ae")
-    lib = build.dep_artifact(b, "selenium_core/.build.ae", "shared_lib")
-    root = build._get(b, "root")
-    rsdir = "${root}/rust"
-
-    rc = os.system("mkdir -p \"${rsdir}/native\" && cp \"${lib}\" \"${rsdir}/native/libselenium_core.so\"")
-    if rc != 0 {
-        println("rust package: failed to stage engine .so into rust/native/")
-        return 1
+    bldr.build() {
+        prereq("rust:1.75")
+        dep("selenium_core/.build.ae")
+        lib = dep_artifact("selenium_core/.build.ae", "shared_lib")
+        copy.file() {
+            from(lib)
+            to("native/libselenium_core.so")
+        }
+        publish_artifact("crate_dir", bldr._get(builder_context(), "source_dir"))
     }
-    build.publish_artifact(b, "crate_dir", "${rsdir}")
-    println("rust package: staged engine .so into rust/native/ (crate ready)")
-    return 0
 }
