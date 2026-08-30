@@ -156,20 +156,88 @@ sweet spot but needs validation.
 - Does the ABI need a stable per-command id the *caller* supplies, or does the
   engine mint and return it? (Caller-supplied composes better with async.)
 
+## DECISION: C — central demux + non-blocking poll (2026-08-30)
+
+**Chosen: shape C.** The engine owns the ONE multiplexer — a single reader that
+drains the WebSocket and routes each frame to *either* the id-keyed
+pending-reply table *or* a bounded event queue — but exposes it through
+**non-blocking poll calls**, so the engine holds **no threads**. Each binding
+adapts polling to its own native async (asyncio, goroutines, the Node event
+loop, …) and owns only the *wait*. This keeps the multiplexer central and
+correct (the "one brain" property that is the whole point of the shared engine)
+without threads/reentrancy across the FFI boundary (the high-risk area
+AGENTS.md flags — which rules out A) and without 18 reimplementations of the
+hardest concurrent code (the drift that rules out B).
+
+**Prior art — BEEP (RFC 3080/3081, 2001).** BEEP solved this exact problem
+20 years ago: multiplex independent request/reply exchanges plus one-way
+notifications over a single connection, correlated by a per-message `msgno`
+(MSG→RPY/ERR for request/reply, MSG→ANS*→NUL for streamed answers, plus
+unsolicited). BiDi's `{id, result}` replies vs. unsolicited `{type:"event"}`
+are a strict subset of BEEP's model, and BEEP libraries universally put the
+correlation table in ONE place and let the application drive the I/O loop —
+i.e. exactly shape C. Two lessons borrowed:
+- **Bounded event queue with a defined overflow policy.** BEEP had explicit
+  per-channel flow control (SEQ/windows); BiDi dropped flow control (WebSocket
+  frames it), which risks an unbounded event queue if a binding drains slower
+  than events arrive. The demux's event queue is therefore **bounded**; on
+  overflow it drops the oldest event and sets a "lost events" marker the next
+  `poll_event` surfaces (never blocks the reader, never grows without bound).
+- **Skip the ceremony.** BEEP's weight (channel-management protocol, profiles,
+  tunneling) is why it never caught on. BiDi already dropped channels (one
+  WebSocket, `id` only); we keep only the correlation-table core.
+
+**Resolved sub-questions:**
+- **How the binding waits:** the engine exposes the WebSocket's readable fd
+  (`bidi_fd(h)`) so a binding can `select`/`epoll`/`asyncio.add_reader` on it,
+  AND a bounded `bidi_pump(h, timeout_ms)` that blocks up to `timeout_ms`
+  advancing the demux one step (for bindings that prefer a simple bounded recv
+  over fd integration). Poll calls (`poll_reply`/`poll_event`) always return
+  immediately. No busy-spin: the binding blocks on its own primitive, then
+  drains what's ready.
+- **Command id:** the **caller supplies** the id (`bidi_send(h, id, …)`) — it
+  composes better with async (the caller already has a future/task keyed by it)
+  and keeps the engine stateless about id generation.
+- **Timeouts:** the **binding's** (Simon confirmed) — the engine offers only the
+  bounded `pump`; per-command deadlines live in the binding's wait.
+- **Cancellation:** a waiter that gives up calls `bidi_cancel(h, id)` to drop its
+  pending-reply slot; a late reply for a cancelled/unknown id is discarded by the
+  demux (never mis-routed, never leaks).
+
 ## The C ABI extension (`aether_sel_embed_bidi_*`)
 
-Minimal, mirroring the handle-based W3C ABI, all strings caller-owned:
+Shape C — non-blocking demux, all strings caller-owned. The engine holds no
+threads; a binding drives the poll loop with its own async, waiting on `bidi_fd`
+or the bounded `bidi_pump`.
 
 ```
-aether_sel_embed_bidi_open(ws_url) -> handle        // or open from an existing session
-aether_sel_embed_bidi_command(h, method, params_json) -> int   // 0 ok / -1 err
-aether_sel_embed_bidi_last_result(h) -> char*        // reply `result` JSON
-aether_sel_embed_bidi_subscribe(h, events_json) -> int
-aether_sel_embed_bidi_next_event(h, timeout_ms) -> char*   // "" if none
+// lifecycle
+aether_sel_embed_bidi_open(ws_url) -> handle      // ws_connect to the session's webSocketUrl
 aether_sel_embed_bidi_close(h)
+
+// send (caller supplies the id → concurrent commands stay distinct)
+aether_sel_embed_bidi_send(h, id, method, params_json) -> int   // 0 queued / -1 err
+
+// advance the single demux one step, blocking up to timeout_ms (0 = non-blocking).
+// Reads any ready frames off the socket, routing replies → id-table, events →
+// bounded queue. Returns 1 if it made progress, 0 on timeout, -1 on socket error.
+aether_sel_embed_bidi_pump(h, timeout_ms) -> int
+// the readable socket fd, for a binding that selects/epolls/add_readers on it
+// instead of using pump's bounded wait.
+aether_sel_embed_bidi_fd(h) -> int
+
+// drain (both return immediately — the binding calls these after a wait)
+aether_sel_embed_bidi_poll_reply(h, id) -> char*   // reply `result`/`error` JSON, or "" if not yet in
+aether_sel_embed_bidi_poll_event(h) -> char*       // next queued event JSON, or "" if none
+aether_sel_embed_bidi_lost_events(h) -> int        // count dropped by the bounded queue, then resets
+
+// cancellation: drop a waiter's pending-reply slot (a late reply is discarded)
+aether_sel_embed_bidi_cancel(h, id)
 ```
 
-Append-only; the existing W3C exports are unchanged.
+Append-only; the existing W3C exports are unchanged. A typical binding loop:
+`send(id,…)` → wait on `fd`/`pump` → `poll_reply(id)` until non-empty (its own
+timeout), draining `poll_event` alongside for the subscribed event stream.
 
 ## Scope — what BiDi gives us that W3C can't
 

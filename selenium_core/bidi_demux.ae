@@ -1,0 +1,143 @@
+// bidi_demux.ae — the PURE frame-routing core of the BiDi multiplexer (shape C,
+// docs/WebDriver-BiDi.md). A single conceptual reader ingests each WebSocket
+// frame and routes it to EITHER the id-keyed pending-reply table (command
+// replies) OR a bounded event queue (unsolicited events) — the BEEP
+// correlation-table model. This module is PURE: it never touches a socket, so
+// its routing/queue/cancellation logic is unit-testable with fed-in frames. The
+// live wiring (ws_recv → ingest, and the non-blocking poll ABI) sits on top once
+// Aether exposes a non-blocking ws recv (asks/ws-client-nonblocking-recv-*).
+//
+// Frame classification (per the W3C BiDi JSON-RPC shape):
+//   {"id":N,"result":{…}}        -> reply for command N        (id-table)
+//   {"id":N,"error":"…",…}       -> error reply for command N  (id-table)
+//   {"type":"event","method":…}  -> event                       (event queue)
+// A reply whose id has no waiter (cancelled / unknown) is DROPPED, never
+// mis-routed. The event queue is BOUNDED; on overflow the oldest event is
+// dropped and a lost-events counter increments (never blocks, never unbounded).
+import std.json
+import std.string
+import std.list
+import std.map
+import std.heap
+
+// Max buffered events before the queue drops-oldest (BEEP's flow-control lesson,
+// since BiDi dropped per-channel windows). Generous; a binding draining its
+// event loop keeps well under it.
+EVENT_QUEUE_MAX() -> int { return 1024 }
+
+struct Demux {
+    replies: ptr       // map: id-string -> reply JSON (a completed command)
+    events: ptr        // list of event JSON strings (FIFO, bounded)
+    lost: int          // events dropped by the bound since last lost_count()
+    pending: ptr       // map: id-string -> "1" for ids a caller is awaiting
+}
+
+demux_new() -> ptr {
+    d = heap.new(Demux)
+    d.replies = map.new()
+    d.events = list.new()
+    d.lost = 0
+    d.pending = map.new()
+    return d as ptr
+}
+
+demux_free(dp: ptr) {
+    if dp == null { return }
+    heap.free(dp)
+}
+
+// register(id) — a caller announces it will await this command id (so a reply is
+// kept rather than dropped). Called at send time.
+demux_register(dp: ptr, id: int) {
+    if dp == null { return }
+    d = dp as *Demux
+    _e = map.put(d.pending, string.from_int(id), "1")
+}
+
+// ingest(frame_json) — classify one frame and route it. Returns:
+//   1 routed as a reply, 2 routed as an event, 0 dropped (unknown/uncorrelated),
+//   -1 unparseable. PURE — the single-reader loop calls this per frame.
+demux_ingest(dp: ptr, frame_json: string) -> int {
+    if dp == null { return -1 }
+    d = dp as *Demux
+    root, perr = json.parse(frame_json)
+    if string.length(perr) > 0 { return -1 }
+
+    idv, _i = json.object_get(root, "id")
+    if idv != null {
+        // A command reply (result or error), keyed by id.
+        id = json.get_int(idv)
+        idkey = string.from_int(id)
+        // Only keep it if a caller is (or was) awaiting this id; else drop a
+        // late/uncorrelated reply rather than mis-route it.
+        if map.has(d.pending, idkey) == 1 {
+            _r = map.put(d.replies, idkey, string.concat(frame_json, ""))
+            return 1
+        }
+        return 0
+    }
+
+    // No id -> an event (type:"event"). Enqueue, bounded.
+    if list.size(d.events) >= EVENT_QUEUE_MAX() {
+        // drop oldest, count the loss.
+        _drop, _de = list.get(d.events, 0)
+        list.remove(d.events, 0)
+        d.lost = d.lost + 1
+    }
+    _a = list.add(d.events, string.concat(frame_json, ""))
+    return 2
+}
+
+// poll_reply(id) — the reply JSON for a command id if it has arrived (and
+// consume it), else "". Returns immediately — the binding calls this after its
+// own wait. A consumed reply also clears the pending mark.
+demux_poll_reply(dp: ptr, id: int) -> string {
+    if dp == null { return "" }
+    d = dp as *Demux
+    idkey = string.from_int(id)
+    if map.has(d.replies, idkey) == 0 { return "" }
+    r, _ = map.get(d.replies, idkey)
+    out = string.concat(r, "")
+    map.remove(d.replies, idkey)
+    map.remove(d.pending, idkey)
+    return out
+}
+
+// poll_event() — the next queued event JSON (and dequeue), or "" if none.
+// Returns immediately.
+demux_poll_event(dp: ptr) -> string {
+    if dp == null { return "" }
+    d = dp as *Demux
+    if list.size(d.events) == 0 { return "" }
+    e, _ = list.get(d.events, 0)
+    out = string.concat(e, "")
+    list.remove(d.events, 0)
+    return out
+}
+
+// lost_count() — how many events the bounded queue dropped, then resets to 0.
+// A binding surfaces this so a consumer knows it missed events.
+demux_lost_count(dp: ptr) -> int {
+    if dp == null { return 0 }
+    d = dp as *Demux
+    n = d.lost
+    d.lost = 0
+    return n
+}
+
+// cancel(id) — a waiter gave up: drop its pending mark and any buffered reply, so
+// a late reply for this id is discarded by ingest rather than kept forever.
+demux_cancel(dp: ptr, id: int) {
+    if dp == null { return }
+    d = dp as *Demux
+    idkey = string.from_int(id)
+    map.remove(d.pending, idkey)
+    map.remove(d.replies, idkey)
+}
+
+// pending_count() / event_count() — introspection for tests.
+demux_event_count(dp: ptr) -> int {
+    if dp == null { return 0 }
+    d = dp as *Demux
+    return list.size(d.events)
+}
