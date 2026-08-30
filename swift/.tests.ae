@@ -1,0 +1,30 @@
+// Swift binding tests. Swift calls the engine's flat C ABI (aether_sel_embed_*)
+// DIRECTLY via the CSeleniumCore module map — no glue .c, no second copy of the
+// marshalling rules. The idiomatic Swift surface (typed By, caller-owned-string
+// handling, typed errors, WebDriver) is in Sources/SeleniumCore. The engine .so
+// is staged into native/ (copy.file) so Package.swift's -L native -lselenium_core
+// + rpath resolve it. swift.build_pkg compiles the SwiftPM package; swift.test
+// runs the no-browser XCTest FFI facts.
+//
+// Skipped by preflight when Swift is absent (prereq swift) — authored here,
+// verified on a box with the Swift toolchain; this box (catchyos) has no swiftc,
+// so it SKIPs cleanly.
+import bldr
+import swift
+import copy
+
+aeb(cap) {
+    bldr.build() {
+        prereq("swift")
+        dep("selenium_core/.build.ae")
+        native_lib = dep_artifact("selenium_core/.build.ae", "shared_lib")
+        copy.file() {
+            from(native_lib)
+            to("native/libselenium_core.so")
+        }
+        swift.build_pkg() {
+        }
+        swift.test() {
+        }
+    }
+}

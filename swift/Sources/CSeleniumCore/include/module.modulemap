@@ -1,0 +1,6 @@
+// Exposes the engine's flat C ABI header as a Swift-importable module. Swift
+// `import CSeleniumCore` then calls the aether_sel_embed_* symbols directly.
+module CSeleniumCore {
+    header "selenium_core.h"
+    export *
+}
