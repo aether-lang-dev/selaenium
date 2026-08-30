@@ -1,41 +1,23 @@
-// Third-party-consumer PACKAGE stage for the JavaScript/Node binding.
-//
-// Builds the `selenium-core` npm tarball as a downstream user would receive it:
-// the freshly-built engine .so bundled INSIDE the tarball (package.json `files`
-// includes `native/`), via `npm pack`. koffi stays a normal runtime dependency
-// (the consumer's `npm install` pulls it), matching how the package really ships.
-//
-// Deps core/.build.ae for the engine .so; publishes the pack output dir on the
-// "tarball_dir" edge (holds one *.tgz), which javascript/.example.ae consumes.
-import build
-import std.os
+// JavaScript/Node consumer package (the npm tarball). Bundles the engine .so
+// into native/ (in the package.json "files" whitelist, so npm pack ships it)
+// then packs the tarball via javascript.pack, which publishes the pkgout dir on
+// the "tarball_dir" edge for the consumer-install proof (javascript/.example.ae).
+// copy.file stages the .so declaratively. Skipped by preflight when node is
+// absent (prereq node:18).
+import bldr
+import javascript
+import copy
 
 aeb(cap) {
-    b = build.start()
-    build.dep(b, "selenium_core/.build.ae")
-    lib = build.dep_artifact(b, "selenium_core/.build.ae", "shared_lib")
-    root = build._get(b, "root")
-    jsdir = "${root}/javascript"
-
-    // 1. Bundle the engine .so into native/ (what `files: ["native/"]` ships).
-    rc = os.system("mkdir -p \"${jsdir}/native\" && cp \"${lib}\" \"${jsdir}/native/libselenium_core.so\"")
-    if rc != 0 {
-        println("javascript package: failed to stage engine .so into native/")
-        return 1
+    bldr.build() {
+        prereq("node:18")
+        dep("selenium_core/.build.ae")
+        lib = dep_artifact("selenium_core/.build.ae", "shared_lib")
+        copy.file() {
+            from(lib)
+            to("native/libselenium_core.so")
+        }
+        javascript.pack() {
+        }
     }
-
-    // 2. npm pack → *.tgz (no build step; plain JS).
-    rc2 = os.system("cd \"${jsdir}\" && mkdir -p pkgout && rm -f pkgout/*.tgz && npm pack --silent --pack-destination pkgout")
-    if rc2 != 0 {
-        println("javascript package: `npm pack` failed")
-        return 1
-    }
-    rc3 = os.system("ls \"${jsdir}/pkgout\"/*.tgz >/dev/null 2>&1")
-    if rc3 != 0 {
-        println("javascript package: no tarball produced under javascript/pkgout/")
-        return 1
-    }
-    build.publish_artifact(b, "tarball_dir", "${jsdir}/pkgout")
-    println("javascript package: built npm tarball with engine .so bundled → javascript/pkgout/")
-    return 0
 }

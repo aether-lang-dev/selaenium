@@ -1,23 +1,21 @@
-// Third-party-consumer PACKAGE stage for the Nim binding.
-//
-// Nim consumes selenium_core as a nimble package (source, linked at the
-// consumer's build time). src/selenium_core.nim's {.passL.} links the engine
-// .so from the package's own native/ dir, so the .so must ship inside the
-// package. This stages the freshly-built engine .so into nim/native/.
-// Deps core/.build.ae; publishes the package dir on "package_dir".
-import build
-import std.os
+// Nim consumer package. The nim module/package is consumed in-place (its build
+// tool reads the manifest + src + the staged native/), so packaging is just
+// staging the engine .so into native/ (where the binding links/loads it) and
+// publishing the module dir on the "package_dir" edge for the consumer-install proof
+// (nim/.example.ae). copy.file does the staging declaratively. Skipped by
+// preflight when nim is absent (prereq nim).
+import bldr
+import copy
 
 aeb(cap) {
-    b = build.start()
-    build.dep(b, "selenium_core/.build.ae")
-    lib = build.dep_artifact(b, "selenium_core/.build.ae", "shared_lib")
-    root = build._get(b, "root")
-    ndir = "${root}/nim"
-
-    rc = os.system("mkdir -p \"${ndir}/native\" && cp \"${lib}\" \"${ndir}/native/libselenium_core.so\"")
-    if rc != 0 { println("nim package: failed to stage engine .so into nim/native/"); return 1 }
-    build.publish_artifact(b, "package_dir", "${ndir}")
-    println("nim package: staged engine .so into nim/native/ (nimble package ready)")
-    return 0
+    bldr.build() {
+        prereq("nim")
+        dep("selenium_core/.build.ae")
+        lib = dep_artifact("selenium_core/.build.ae", "shared_lib")
+        copy.file() {
+            from(lib)
+            to("native/libselenium_core.so")
+        }
+        publish_artifact("package_dir", bldr._get(builder_context(), "source_dir"))
+    }
 }

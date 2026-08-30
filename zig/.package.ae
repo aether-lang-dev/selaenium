@@ -1,22 +1,21 @@
-// Third-party-consumer PACKAGE stage for the Zig binding.
-//
-// Zig consumes selenium_core as source (a module, linked at the consumer's
-// build time). build.zig links the engine .so from the package's own native/
-// dir, so the .so must ship inside the package. This stages the freshly-built
-// engine .so into zig/native/. Deps core/.build.ae; publishes the package dir.
-import build
-import std.os
+// Zig consumer package. The zig module/package is consumed in-place (its build
+// tool reads the manifest + src + the staged native/), so packaging is just
+// staging the engine .so into native/ (where the binding links/loads it) and
+// publishing the module dir on the "package_dir" edge for the consumer-install proof
+// (zig/.example.ae). copy.file does the staging declaratively. Skipped by
+// preflight when zig is absent (prereq zig).
+import bldr
+import copy
 
 aeb(cap) {
-    b = build.start()
-    build.dep(b, "selenium_core/.build.ae")
-    lib = build.dep_artifact(b, "selenium_core/.build.ae", "shared_lib")
-    root = build._get(b, "root")
-    zdir = "${root}/zig"
-
-    rc = os.system("mkdir -p \"${zdir}/native\" && cp \"${lib}\" \"${zdir}/native/libselenium_core.so\"")
-    if rc != 0 { println("zig package: failed to stage engine .so into zig/native/"); return 1 }
-    build.publish_artifact(b, "package_dir", "${zdir}")
-    println("zig package: staged engine .so into zig/native/ (zig package ready)")
-    return 0
+    bldr.build() {
+        prereq("zig")
+        dep("selenium_core/.build.ae")
+        lib = dep_artifact("selenium_core/.build.ae", "shared_lib")
+        copy.file() {
+            from(lib)
+            to("native/libselenium_core.so")
+        }
+        publish_artifact("package_dir", bldr._get(builder_context(), "source_dir"))
+    }
 }

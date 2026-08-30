@@ -1,26 +1,21 @@
-// Third-party-consumer PACKAGE stage for the Go binding.
-//
-// Go consumes selenium-aether-go as a module (source-consumed via `go get` / a
-// replace). cgo links the engine .so at the consumer's build time; the module's
-// LDFLAGS include `${SRCDIR}/native`, so the .so must ship inside the module.
-// This stages the freshly-built engine .so into go/native/. Deps core/.build.ae;
-// publishes the go module dir on "module_dir".
-import build
-import std.os
+// Go consumer package. The go module/package is consumed in-place (its build
+// tool reads the manifest + src + the staged native/), so packaging is just
+// staging the engine .so into native/ (where the binding links/loads it) and
+// publishing the module dir on the "module_dir" edge for the consumer-install proof
+// (go/.example.ae). copy.file does the staging declaratively. Skipped by
+// preflight when go is absent (prereq go:1.22).
+import bldr
+import copy
 
 aeb(cap) {
-    b = build.start()
-    build.dep(b, "selenium_core/.build.ae")
-    lib = build.dep_artifact(b, "selenium_core/.build.ae", "shared_lib")
-    root = build._get(b, "root")
-    godir = "${root}/go"
-
-    rc = os.system("mkdir -p \"${godir}/native\" && cp \"${lib}\" \"${godir}/native/libselenium_core.so\"")
-    if rc != 0 {
-        println("go package: failed to stage engine .so into go/native/")
-        return 1
+    bldr.build() {
+        prereq("go:1.22")
+        dep("selenium_core/.build.ae")
+        lib = dep_artifact("selenium_core/.build.ae", "shared_lib")
+        copy.file() {
+            from(lib)
+            to("native/libselenium_core.so")
+        }
+        publish_artifact("module_dir", bldr._get(builder_context(), "source_dir"))
     }
-    build.publish_artifact(b, "module_dir", "${godir}")
-    println("go package: staged engine .so into go/native/ (Go module ready)")
-    return 0
 }
