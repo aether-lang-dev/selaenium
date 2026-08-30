@@ -1,18 +1,6 @@
-// The shared Selenium WebDriver engine, built ONCE for the whole monorepo.
-//
-// Output: selenium_core/native/libselenium_core.so — every binding's node deps
-// this and loads (ctypes/Fiddle/koffi/FFM) or links (cgo/NIF) that single
-// artifact. aether.shared_lib() compiles embed.ae with `--emit=lib` and
-// publishes the `shared_lib` artifact edge that the bindings dep_artifact.
-//
-// Source: embed.ae (the aether_sel_embed_* C ABI) imports the local
-// `selenium_core` module (selenium_core.ae) — the WHOLE protocol runtime
-// (command catalog, W3C route table, path templating, By/capabilities
-// normalization, W3C error decode, and the HTTP round-trip) is PURE AETHER.
-// The only C left is _embed_strdup.c (~15 lines): the caller-owned-string
-// bridge, linked via extra_source. The engine uses std.http.client (caps net).
 import bldr
 import aether
+import copy
 
 aeb(cap) {
     bldr.build() {
@@ -21,6 +9,13 @@ aeb(cap) {
             caps("net")
             extra_source("_embed_strdup.c")
             output("libselenium_core.so")
+        }
+        // Stage an in-tree copy for link-time bindings' fixed -L path. The
+        // shared_lib .so lands at <repo>/target/build/selenium_core/lib/; from
+        // this node's source_dir (selenium_core/) that is ../target/build/...
+        copy.file() {
+            from("../target/build/selenium_core/lib/libselenium_core.so")
+            to("native/libselenium_core.so")
         }
     }
 }

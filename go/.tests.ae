@@ -1,14 +1,15 @@
-// Go binding tests. cgo links the shared engine (core/.build.ae output:
-// core/native/libselenium_core.so) via selenium.go's
-// `#cgo LDFLAGS: -L${SRCDIR}/../core/native ... -rpath ...`, so this deps the
-// engine node and the rpath self-locates the .so at test runtime. go.mod lives
-// in this dir, so go_test runs from source_dir (no pkg()). The live-Chrome test
+// Go binding tests. cgo links the shared engine via selenium.go's
+// `#cgo LDFLAGS: -L${SRCDIR}/../selenium_core/native ... -rpath ...`, so this
+// deps the engine node; the rpath self-locates the .so at test runtime. go.mod
+// lives in this dir, so go.go_test runs from source_dir. The live-Chrome test
 // (live_test.go) skips cleanly if chromedriver is absent.
-import build
+import bldr
 import go
 
 aeb(cap) {
-    b = build.start()
-    build.dep(b, "selenium_core/.build.ae")
-    go.go_test(b) { }
+    bldr.build() {
+        prereq("go:1.22")
+        dep("selenium_core/.build.ae")
+        go.go_test()
+    }
 }
