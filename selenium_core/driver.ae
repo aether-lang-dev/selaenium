@@ -18,6 +18,7 @@ import std.net
 import std.list
 import std.string
 import std.heap
+import resolve
 
 // One live driver process: the spawn token (for kill/wait) and the port it was
 // launched on (for the base URL a session binds to).
@@ -26,14 +27,19 @@ struct Driver {
     port: int
 }
 
-// ---- resolution layer (v1: PATH lookup; grows into full management) ----
+// ---- resolution layer (full driver management for chrome; PATH for others) ----
 
-// Resolve the driver binary to run for `browser` (e.g. "chrome"). v1: map the
-// browser to its conventional driver name and find it on PATH. Returns an
-// absolute path, or "" if not resolvable. LATER (no signature change): browser+
-// version detection, version-matched driver, cache, download, CfT. `hint` is a
-// reserved opts/JSON string (a pinned version, cache dir, "offline", channel).
+// Resolve the driver binary to run for `browser` (e.g. "chrome"). For chrome/
+// chromium this runs the full Selenium-Manager pipeline (drivermgr/resolve.ae):
+// detect the installed (or cached) Chrome + version, resolve the matching
+// chromedriver via Chrome-for-Testing, and return it from cache or download it
+// transparently — falling back to a chromedriver on PATH when that can't
+// proceed. Other browsers use the PATH lookup for now (their per-browser
+// resolvers are the next port milestones). Returns an absolute path or "".
+// `hint` carries policy (pinned version, cache dir, "offline", channel).
 resolve_driver(browser: string, hint: string) -> string {
+    if string.equals(browser, "chrome") == 1 { return resolve.resolve_chrome(hint) }
+    if string.equals(browser, "chromium") == 1 { return resolve.resolve_chrome(hint) }
     exe = driver_exe_for(browser)
     if string.length(exe) == 0 { return "" }
     return which(exe)

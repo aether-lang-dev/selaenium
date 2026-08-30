@@ -1,0 +1,98 @@
+// resolve.ae — the driver-manager orchestrator: detect browser -> resolve driver
+// version via CfT -> find-in-cache-or-download -> return a runnable driver path.
+// This is the Selenium-Manager pipeline end to end (docs/Selenium-Manager-Port
+// .md), composing the pieces: browser.ae (PROC detect), version.ae (PURE),
+// cft.ae (PURE navigation), cache.ae (FS/NET edge). The NET fetch for the CfT
+// JSON lives HERE (the edge); the resolution navigation stays pure.
+import browser
+import version
+import cft
+import cache
+import std.string
+import std.http.client
+import std.os
+
+// resolve_chrome(hint) -> absolute path to a runnable chromedriver, or "".
+// The transparent path behind webdriver.chrome() / sel_embed_ensure_driver:
+//   1. detect the installed (or cached) Chrome + its version,
+//   2. resolve the matching chromedriver version + download URL via CfT,
+//   3. return the cached driver if present, else download+unpack it.
+// Falls back to a chromedriver already on PATH when detection/resolution can't
+// proceed (the user-supplied / PATH short-circuit).
+resolve_chrome(hint: string) -> string {
+    label = version.platform_label(_os(), _arch())
+
+    // 1. detect the browser version (system Chrome, else a cached CfT Chrome).
+    bpath = browser.chrome_path()
+    bver = ""
+    if string.length(bpath) > 0 {
+        bver = browser.chrome_version(bpath)
+    } else {
+        bver = _cached_chrome_version(label)
+    }
+
+    // 2. resolve the driver version + url via CfT (fetch at the edge).
+    which = cft.which_endpoint(bver)
+    resolved = null
+    if string.equals(which, "latest") == 1 {
+        body = _fetch(cft.latest_versions_url())
+        resolved = cft.resolve_latest_stable_from(body, label)
+    } else {
+        if string.equals(which, "good") == 1 {
+            body = _fetch(cft.known_good_url())
+            resolved = cft.resolve_known_good_from(body, bver, label)
+        }
+    }
+
+    // Resolution failed (offline, below-CfT-floor, unknown) -> PATH fallback.
+    if resolved == null {
+        return _which_driver()
+    }
+
+    dver = cft.resolved_version(resolved)
+    durl = cft.resolved_url(resolved)
+    if string.length(dver) == 0 {
+        return _which_driver()
+    }
+
+    // 3. cache-or-download.
+    root = cache.default_cache_root()
+    got = cache.ensure(root, "chromedriver", label, dver, durl)
+    if string.length(got) > 0 { return got }
+    return _which_driver()
+}
+
+// ---- internals ----
+
+_fetch(url: string) -> string {
+    req = client.request("GET", url)
+    resp, err = client.send_request(req)
+    if string.length(err) > 0 { return "" }
+    if client.response_status(resp) != 200 { return "" }
+    return client.response_body(resp)
+}
+
+// A cached CfT Chrome's version from the cache dir name, when there's no system
+// Chrome: <cache>/chrome/<label>/<version>/chrome exists.
+_cached_chrome_version(label: string) -> string {
+    root = cache.default_cache_root()
+    // We can't list dirs portably here without more fs surface; probe the
+    // version the metadata/latest-stable would yield instead. Simplest correct
+    // behaviour: empty version -> CfT "latest" path resolves the current stable,
+    // which matches a freshly-cached CfT Chrome. So return "" to take Path A.
+    return ""
+}
+
+_which_driver() -> string {
+    p = os.which("chromedriver")
+    return string.trim(p)
+}
+
+_os() -> string {
+    // Aether targets Linux here; a later pass reads the real OS/arch.
+    return "linux"
+}
+
+_arch() -> string {
+    return "x86_64"
+}

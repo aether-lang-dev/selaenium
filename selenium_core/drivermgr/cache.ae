@@ -1,0 +1,118 @@
+// cache.ae — the driver binary cache + download/unpack (the FS + NET-download
+// edge of the Selenium-Manager pipeline). Ports the cache-path derivation +
+// download/unzip/chmod from the classic Rust files.rs/downloads.rs (see
+// docs/Selenium-Manager-chromedriver-algorithm.md).
+//
+// Cache-first: derive <cache>/<driver>/<label>/<version>/<driver>, return it if
+// present (the fast, offline, common path); else download the resolved zip,
+// unzip (stripping the 115+ top-level folder), chmod 0755, and return it. unzip
+// is shelled (a system tool, at the FS-adapter edge, exactly as the Rust
+// uncompress shells to format tools).
+import std.os
+import std.list
+import std.string
+import std.file
+import std.fs
+import std.http.client
+
+// default_cache_root() — <home>/.cache/selenium (SE_CACHE_PATH overrides).
+default_cache_root() -> string {
+    env = os.getenv("SE_CACHE_PATH")
+    if string.length(env) > 0 { return env }
+    home = os.getenv("HOME")
+    if string.length(home) == 0 { home = "/tmp" }
+    return string.concat(home, "/.cache/selenium")
+}
+
+// driver_path_in_cache(root, driver_name, label, version) — the spec's
+// compose_driver_path_in_cache: <root>/<driver>/<label>/<version>/<driver>.
+driver_path_in_cache(root: string, driver_name: string, label: string, version: string) -> string {
+    d = string.concat(root, string.concat("/", driver_name))
+    d = string.concat(d, string.concat("/", label))
+    d = string.concat(d, string.concat("/", version))
+    return string.concat(d, string.concat("/", driver_name))
+}
+
+// cached(path) — 1 if the driver binary is already present (cache hit).
+cached(path: string) -> int {
+    return file_exists(path)
+}
+
+// ensure(root, driver_name, label, version, url) — return an absolute path to a
+// runnable driver: the cache hit if present, else download `url` + unpack into
+// the cache. "" on failure.
+ensure(root: string, driver_name: string, label: string, version: string, url: string) -> string {
+    target = driver_path_in_cache(root, driver_name, label, version)
+    if file_exists(target) == 1 {
+        return target
+    }
+    if string.length(url) == 0 { return "" }
+
+    // Destination dir <root>/<driver>/<label>/<version>/
+    dest_dir = _dirname(target)
+    _md = fs.mkdir_p(dest_dir)
+
+    // Download the zip to a temp file.
+    zip_path = string.concat(dest_dir, "/_download.zip")
+    if _download(url, zip_path) != 0 { return "" }
+
+    // Unzip into dest_dir; the 115+ zip wraps files in a top folder, so extract
+    // then flatten to the driver binary. `unzip -j` junks paths (flattens), which
+    // handles both the folder-wrapped (115+) and flat (114-) layouts in one shot.
+    argv = list.new()
+    list.add(argv, "-c")
+    list.add(argv, "unzip -o -j '${zip_path}' -d '${dest_dir}' >/dev/null 2>&1")
+    _u, ustat, _ue = os.run_capture("/bin/sh", argv, null)
+    list.free(argv)
+
+    // The extracted binary is <dest_dir>/<driver_name> (unzip -j flattened it).
+    extracted = string.concat(dest_dir, string.concat("/", driver_name))
+    if file_exists(extracted) == 0 {
+        return ""
+    }
+    // chmod 0755 (0o755 == 493).
+    _c = fs.chmod(extracted, 493)
+    // Clean up the zip (best-effort).
+    _rm = _remove(zip_path)
+    return extracted
+}
+
+// ---- internals ----
+
+// Download `url` to `path` via the engine's http client. Returns 0 on success.
+_download(url: string, path: string) -> int {
+    req = client.request("GET", url)
+    resp, err = client.send_request(req)
+    if string.length(err) > 0 { return 1 }
+    if client.response_status(resp) != 200 { return 1 }
+    body = client.response_body(resp)
+    werr = file.write(path, body)
+    if string.length(werr) > 0 { return 1 }
+    return 0
+}
+
+_dirname(p: string) -> string {
+    idx = _last_slash(p)
+    if idx < 0 { return "." }
+    return string.substring(p, 0, idx)
+}
+
+_last_slash(p: string) -> int {
+    n = string.length(p)
+    i = n - 1
+    while i >= 0 {
+        ch = string.substring(p, i, i + 1)
+        if string.equals(ch, "/") == 1 { return i }
+        i = i - 1
+    }
+    return -1
+}
+
+_remove(path: string) -> int {
+    argv = list.new()
+    list.add(argv, "-c")
+    list.add(argv, "rm -f '${path}'")
+    _o, _s, _e = os.run_capture("/bin/sh", argv, null)
+    list.free(argv)
+    return 0
+}
