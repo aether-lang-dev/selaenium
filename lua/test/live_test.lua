@@ -19,7 +19,12 @@ local function assert_eq(got, want, label)
   end
 end
 
-local d = s.headless_chrome(cd_url)
+-- Headless Chrome; point at an explicit binary when SEL_CHROME_BINARY is set
+-- (a box with no system Chrome but a cached Chrome-for-Testing).
+local chrome_opts = { args = { "--headless=new", "--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage" } }
+local chrome_bin = os.getenv("SEL_CHROME_BINARY")
+if chrome_bin and #chrome_bin > 0 then chrome_opts.binary = chrome_bin end
+local d = s.chrome(cd_url, { ["goog:chromeOptions"] = chrome_opts })
 local ok, err = pcall(function()
   assert(#d:session_id() > 0, "session id present")
   print("  ok: session started")
