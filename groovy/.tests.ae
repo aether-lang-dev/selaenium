@@ -1,29 +1,32 @@
 // Groovy binding tests. Groovy is a JVM-family binding: it consumes the ONE Java
 // FFM binding's classes over Groovy/Java interop — no second FFI, no second .so
-// (one Java jar backs Kotlin/Scala/Clojure/Groovy). This node deps the engine;
-// run-tests.sh compiles the Java binding classes and runs the Groovy test
-// against them.
-//
-// It needs a MODERN Groovy (>= 4) on a JDK >= 22: the Java binding is Panama FFM
-// (JDK 22+), which Debian's Groovy 2.4 (on JVM 17) can't read. run-tests.sh
-// discovers one (GROOVY_HOME / sdkman / a >= 4 PATH groovy) and SKIPS LOUDLY
-// otherwise. Authored on a box without a capable Groovy; verified on catchyos.
-import build
-import std.os
+// (one Java jar backs Kotlin/Scala/Clojure/Groovy). It deps java/.build.ae for
+// the compiled binding classes (on the classpath via the JVM dep artifact) and
+// the engine for the .so, injected as SELENIUM_CORE_LIB. groovyc compiles the
+// idiomatic wrapper; groovyc_test's run_script runs the live_test.groovy script
+// directly with --enable-native-access (FFM needs it on JDK 24+). Needs a modern
+// Groovy (>= 4) on a JDK >= 22 — skip_below_groovy/skip_below_jdk SKIP LOUDLY on
+// an older/absent toolchain (Debian's 2.4 on JVM 17 can't read the FFM binding).
+// The live test self-skips without chromedriver.
+import bldr
+import groovy
+import groovy (source_layout, run_script, jvm_flag, skip_below_jdk, skip_below_groovy)
 
 aeb(cap) {
-    b = build.start()
-    build.dep(b, "selenium_core/.build.ae")
-    lib = build.dep_artifact(b, "selenium_core/.build.ae", "shared_lib")
-    root = build._get(b, "root")
-    gdir = "${root}/groovy"
-    jsrc = "${root}/java/src/org/seleniumhq/aether"
-
-    rc = os.system("bash \"${gdir}/run-tests.sh\" \"${lib}\" \"${jsrc}\" \"${gdir}\"")
-    if rc != 0 {
-        println("groovy tests: FAILED")
-        return 1
+    bldr.build() {
+        prereq("jdk:22")
+        dep("java/.build.ae")
+        dep("selenium_core/.build.ae")
+        lib = dep_artifact("selenium_core/.build.ae", "shared_lib")
+        groovy.groovyc() {
+            source_layout("maven idiomatic")
+        }
+        groovy.groovyc_test() {
+            env("SELENIUM_CORE_LIB", lib)
+            skip_below_jdk("22")
+            skip_below_groovy("4")
+            run_script("test/live_test.groovy")
+            jvm_flag("--enable-native-access=ALL-UNNAMED")
+        }
     }
-    println("groovy tests: PASSED (ffi + live+surface)")
-    return 0
 }
