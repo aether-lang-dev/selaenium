@@ -2,11 +2,11 @@
 // a CLEAN environment for a third party. zig.consumer_example stages the package
 // (src/ + example/ + build.zig[.zon] + native/.so — no core/) as zig-pkg, builds
 // it (`zig build`, pre_cmd), asserts the .so shipped, then runs the example
-// binary with SEL_MODE=<mode> (mode_env) and SELENIUM_CORE_LIB unset. Modes:
+// binary with SEL_MODE=<mode> (via a shell wrapper) and SELENIUM_CORE_LIB unset. Modes:
 // ffi/live. Skipped by preflight when zig is absent (prereq zig).
 import bldr
 import zig
-import zig (stage, stage_dir, run_in, consumer_run_cmd, run_arg, pre_cmd, mode_env, assert_file)
+import zig (stage, stage_dir, run_in, consumer_run_cmd, run_arg, pre_cmd, assert_file)
 
 aeb(cap) {
     bldr.build() {
@@ -24,8 +24,9 @@ aeb(cap) {
             assert_file("zig-pkg/native/libselenium_core.so")
             run_in("zig-pkg")
             pre_cmd("zig build")
-            consumer_run_cmd("./zig-out/bin/selenium-example")
-            mode_env("SEL_MODE")
+            // SEL_MODE is passed as $1 via a shell wrapper (the run builder
+            // appends the mode as an argv, which becomes $1 for env-mode consumers).
+            consumer_run_cmd("sh -c 'SEL_MODE=\"$1\" ./zig-out/bin/selenium-example' _")
             run_arg("ffi")
             run_arg("live")
         }

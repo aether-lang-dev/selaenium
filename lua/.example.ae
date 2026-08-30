@@ -2,12 +2,12 @@
 // CLEAN environment for a third party. lua.consumer_example stages the package
 // (selenium_core.lua + the C extension + native/.so + consumer.lua — no core/)
 // as lua-pkg, asserts the .so shipped, then runs the consumer from that dir with
-// LUA_PATH/LUA_CPATH pointed there, SEL_MODE=<mode> (mode_env) and
+// LUA_PATH/LUA_CPATH pointed there, SEL_MODE=<mode> (via a shell wrapper) and
 // SELENIUM_CORE_LIB unset — so only the bundled .so satisfies the load. Modes:
 // ffi/discovery/live. Skipped by the gate when a Lua 5.4 runner is absent.
 import bldr
 import lua
-import lua (stage, run_in, run_cmd, run_arg, mode_env, assert_file)
+import lua (stage, run_in, run_cmd, run_arg, assert_file)
 
 aeb(cap) {
     bldr.build() {
@@ -19,8 +19,9 @@ aeb(cap) {
             stage("example/consumer.lua", "lua-pkg/consumer.lua")
             assert_file("lua-pkg/native/libselenium_core.so")
             run_in("lua-pkg")
-            run_cmd("LUA_PATH='./?.lua' LUA_CPATH='./?.so' lua5.4 consumer.lua")
-            mode_env("SEL_MODE")
+            // SEL_MODE is passed as $1 via a shell wrapper (the run builder
+            // appends the mode as an argv, which becomes $1 for the consumer).
+            run_cmd("sh -c 'SEL_MODE=\"$1\" LUA_PATH=./?.lua LUA_CPATH=./?.so lua5.4 consumer.lua' _")
             run_arg("ffi")
             run_arg("discovery")
             run_arg("live")
