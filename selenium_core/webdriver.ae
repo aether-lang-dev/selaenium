@@ -1,0 +1,130 @@
+// webdriver.ae — the BEAUTIFUL Aether-facing driver API (builder-DSL).
+//
+// Two faces, one core: the flat sel_embed_* C ABI (embed.ae) serves the 18 FFI
+// bindings; THIS module is the native-Aether surface for the pure-Aether
+// consumer and the future Aether-language Selenium client. It brings the
+// closures/builder-DSL beauty (aether/docs/closures-and-builder-dsl.md — the
+// "DSL with scope" lineage), the same `builder func(){…}` mechanism aeb's own
+// build grammar uses:
+//
+//   import webdriver
+//
+//   d = webdriver.chrome() {
+//       version("stable")            // or pin "152.0.7977.64"
+//       cache("~/.cache/selenium")   // override the cache root
+//       offline()                    // resolve from cache only
+//       timeout_ms(10000)            // driver-readiness bound
+//   }
+//   // … use d …
+//   webdriver.stop(d)
+//
+// chrome()/firefox()/edge() are `builder` functions: the trailing block fills a
+// config (via the setters below on the injected `_builder`), then the function
+// runs the resolve→launch pipeline (driver.ae) and RETURNS a driver handle
+// (null if no driver resolvable — the caller's cue to skip/error). Setters are
+// plain DSL functions; block-receiver scoping resolves the bare names.
+import driver
+import std.map
+import std.string
+
+// ---- setters (fill the injected _builder config map) ----
+
+// version("stable"|"beta"|"dev"|"152.0.7977.64") — the browser channel to match,
+// or a pinned exact version. Default "stable".
+version(_ctx: ptr, v: string) {
+    _e = map.put(_ctx, "version", v)
+}
+
+// cache("<dir>") — override the driver cache root (default ~/.cache/selenium).
+cache(_ctx: ptr, dir: string) {
+    _e = map.put(_ctx, "cache", dir)
+}
+
+// offline() — resolve from the local cache only; never touch the network.
+offline(_ctx: ptr) {
+    _e = map.put(_ctx, "offline", "1")
+}
+
+// timeout_ms(n) — bound the driver-readiness wait (default 10000).
+timeout_ms(_ctx: ptr, n: int) {
+    _e = map.put(_ctx, "timeout_ms", string.from_int(n))
+}
+
+// driver_path("<abs>") — pin an EXPLICIT driver binary, bypassing resolution
+// entirely (the user-supplied-path short-circuit Selenium Manager also honors).
+// When set, chrome()/firefox()/edge() launch this binary directly.
+driver_path(_ctx: ptr, path: string) {
+    _e = map.put(_ctx, "driver_path", path)
+}
+
+// ---- builder entry points (block fills config, then resolve+launch) ----
+
+// webdriver.chrome() { … } — resolve + launch chromedriver for the local Chrome,
+// per the block's config. Returns a driver handle, or null.
+builder chrome(): ptr {
+    return _launch_for("chrome", _builder)
+}
+
+builder firefox(): ptr {
+    return _launch_for("firefox", _builder)
+}
+
+builder edge(): ptr {
+    return _launch_for("edge", _builder)
+}
+
+// webdriver.stop(handle) — kill + reap the driver process. NULL-safe.
+stop(dh: ptr) {
+    driver.stop(dh)
+}
+
+// webdriver.url(handle) — the "http://127.0.0.1:<port>" for a session.
+url(dh: ptr) -> string {
+    return driver.url_of(dh)
+}
+
+// ---- internals ----
+
+// Read the config the block filled (or defaults), assemble the resolution hint,
+// and run the driver.ae resolve→launch pipeline.
+_launch_for(browser: string, cfg: ptr) -> ptr {
+    tmo = 10000
+    hint = ""
+    explicit = ""
+    if cfg != null {
+        if map.has(cfg, "timeout_ms") == 1 {
+            tv, _ = map.get(cfg, "timeout_ms")
+            pv, perr = string.to_int(tv)
+            if string.length(perr) == 0 { tmo = pv }
+        }
+        if map.has(cfg, "driver_path") == 1 {
+            explicit, _ = map.get(cfg, "driver_path")
+        }
+        hint = _hint_of(cfg)
+    }
+    // user-supplied path short-circuits resolution.
+    if string.length(explicit) > 0 {
+        return driver.launch(explicit, tmo)
+    }
+    return driver.ensure(browser, hint, tmo)
+}
+
+// Serialize the resolution-relevant config into the `hint` string driver.ensure
+// forwards to resolve_driver. v1 resolution ignores it (PATH lookup); it grows
+// meaning as the Selenium-Manager pipeline lands (version/cache/offline). Kept as
+// a simple k=v;… string so the C-ABI `hint` and this DSL share one format.
+_hint_of(cfg: ptr) -> string {
+    out = ""
+    out = _append_kv(out, cfg, "version")
+    out = _append_kv(out, cfg, "cache")
+    out = _append_kv(out, cfg, "offline")
+    return out
+}
+
+_append_kv(acc: string, cfg: ptr, key: string) -> string {
+    if map.has(cfg, key) == 0 { return acc }
+    v, _ = map.get(cfg, key)
+    kv = string.concat(key, string.concat("=", v))
+    if string.length(acc) == 0 { return kv }
+    return string.concat(acc, string.concat(";", kv))
+}

@@ -1,0 +1,126 @@
+// version.ae — PURE version + platform helpers for the driver manager.
+//
+// The Selenium-Manager port's foundational pure logic: parse a Chrome/driver
+// version string (MAJOR.MINOR.BUILD.PATCH), pull out the pieces the CfT
+// resolution keys on (the MAJOR milestone and the MAJOR.MINOR.BUILD triple),
+// and map OS+arch to the CfT platform label. No I/O — unit-testable as-is.
+// See docs/Selenium-Manager-Port.md.
+import std.string
+
+// major(version) — the leading MAJOR component of "152.0.7977.64" -> 152, or -1
+// if the string doesn't start with digits. The CfT "milestone" key.
+major(version: string) -> int {
+    parts = string.split(version, ".")
+    n = string.array_size(parts)
+    if n == 0 {
+        string.string_array_free(parts)
+        return -1
+    }
+    first = string.string_array_get(parts, 0)
+    // copy into an owned string BEFORE freeing the array (get returns a borrow).
+    owned = string.concat(string.trim(first), "")
+    string.string_array_free(parts)
+    v, err = string.to_int(owned)
+    if string.length(err) > 0 { return -1 }
+    return v
+}
+
+// build_triple(version) — the "MAJOR.MINOR.BUILD" prefix of a 4-part version
+// ("152.0.7977.64" -> "152.0.7977"), the key CfT's latest-patch-versions-per-
+// build is indexed by. Returns "" if the version has fewer than 3 parts.
+build_triple(version: string) -> string {
+    parts = string.split(version, ".")
+    n = string.array_size(parts)
+    if n < 3 {
+        string.string_array_free(parts)
+        return ""
+    }
+    a = string.string_array_get(parts, 0)
+    b = string.string_array_get(parts, 1)
+    c = string.string_array_get(parts, 2)
+    out = string.concat(a, string.concat(".", string.concat(b, string.concat(".", c))))
+    string.string_array_free(parts)
+    return out
+}
+
+// platform_label(os, arch) — the CfT platform token for an OS+arch:
+//   linux/*        -> "linux64"
+//   macos/arm64    -> "mac-arm64"    macos/x86_64 -> "mac-x64"
+//   windows/64     -> "win64"        windows/32   -> "win32"
+// `os` is "linux"/"macos"/"windows"; `arch` is "x86_64"/"arm64"/"aarch64"/"x86".
+platform_label(os: string, arch: string) -> string {
+    if string.equals(os, "linux") == 1 { return "linux64" }
+    if string.equals(os, "macos") == 1 {
+        if string.equals(arch, "arm64") == 1 { return "mac-arm64" }
+        if string.equals(arch, "aarch64") == 1 { return "mac-arm64" }
+        return "mac-x64"
+    }
+    if string.equals(os, "windows") == 1 {
+        if string.equals(arch, "x86") == 1 { return "win32" }
+        return "win64"
+    }
+    return ""
+}
+
+// version_extract(output) — pull the first "N.N.N.N" (or "N.N.N") token out of a
+// `chrome --version` line like "Google Chrome 152.0.7977.64" -> "152.0.7977.64".
+// Scans for the first run of digits-and-dots with at least two dots. "" if none.
+version_extract(output: string) -> string {
+    n = string.length(output)
+    i = 0
+    start = -1
+    dots = 0
+    best = ""
+    while i < n {
+        ch = string.substring(output, i, i + 1)
+        is_digit = _is_digit(ch)
+        is_dot = string.equals(ch, ".")
+        if is_digit == 1 {
+            if start < 0 { start = i; dots = 0 }
+        } else {
+            if is_dot == 1 {
+                if start >= 0 { dots = dots + 1 }
+            } else {
+                // token boundary — accept if it had >= 2 dots
+                if start >= 0 {
+                    if dots >= 2 {
+                        best = string.substring(output, start, i)
+                        return _strip_trailing_dot(best)
+                    }
+                }
+                start = -1
+                dots = 0
+            }
+        }
+        i = i + 1
+    }
+    if start >= 0 {
+        if dots >= 2 {
+            best = string.substring(output, start, n)
+            return _strip_trailing_dot(best)
+        }
+    }
+    return ""
+}
+
+_is_digit(ch: string) -> int {
+    if string.equals(ch, "0") == 1 { return 1 }
+    if string.equals(ch, "1") == 1 { return 1 }
+    if string.equals(ch, "2") == 1 { return 1 }
+    if string.equals(ch, "3") == 1 { return 1 }
+    if string.equals(ch, "4") == 1 { return 1 }
+    if string.equals(ch, "5") == 1 { return 1 }
+    if string.equals(ch, "6") == 1 { return 1 }
+    if string.equals(ch, "7") == 1 { return 1 }
+    if string.equals(ch, "8") == 1 { return 1 }
+    if string.equals(ch, "9") == 1 { return 1 }
+    return 0
+}
+
+_strip_trailing_dot(s: string) -> string {
+    n = string.length(s)
+    if n == 0 { return s }
+    last = string.substring(s, n - 1, n)
+    if string.equals(last, ".") == 1 { return string.substring(s, 0, n - 1) }
+    return s
+}

@@ -35,6 +35,46 @@ We **port the algorithm, not transliterate** — most of this is PURE logic
 (version rules, path/cache derivation, JSON parsing of endpoint responses),
 which Aether does cleanly, with a thin I/O edge.
 
+## Two faces: flat C ABI + a beautiful Aether builder-DSL
+
+The driver manager has TWO end-user surfaces over the SAME pure core:
+
+1. **Flat `sel_embed_*` C ABI** — for the 18 FFI bindings (ctypes/Fiddle/koffi/
+   Panama/…). Scalar-only, append-only, string-ownership convention. Unchanged
+   from the Phase-A shape (`resolve_driver`/`ensure_driver`/…).
+
+2. **A native Aether builder-DSL** — for the pure-Aether consumer and the future
+   Aether-language Selenium client. This is where we bring the "DSL with scope"
+   beauty (aether/docs/closures-and-builder-dsl.md — the Smalltalk→Ruby→Groovy→
+   SwiftUI lineage), the same `builder func(){…}` mechanism aeb's own build
+   grammar uses. Target shape:
+
+   ```aether
+   import webdriver
+
+   driver = webdriver.chrome() {          // builder func: block fills config
+       version("stable")                  // or pin "152.0.7977.64"
+       cache("~/.cache/selenium")         // override cache root
+       offline()                          // resolve from cache only
+       on_progress callback |pct| {       // download progress closure
+           println("downloading… ${pct}%")
+       }
+   }                                      // → resolves + launches, returns a handle
+   // … use driver …
+   driver.stop()
+   ```
+
+   `webdriver.chrome()` is a `builder` function: the trailing block fills a
+   config (via `version`/`cache`/`offline`/`on_progress` setters on the injected
+   `_builder`), then the function runs the resolve→launch pipeline and returns a
+   driver handle. `on_progress` is a `callback` closure (real download progress).
+   The C ABI verbs are the same pipeline with the config passed as scalars/JSON
+   `hint` instead of a block.
+
+   This keeps the FFI bindings flat and the Aether surface delightful — one core,
+   two faces. The builder-DSL face is authored alongside B1 so the shape is
+   proven early (even if only `version`/`cache`/`offline` are wired first).
+
 ## Architecture: PURE core + injected adapters
 
 The research pipeline (13 capabilities) splits by execution kind. The **PURE +
