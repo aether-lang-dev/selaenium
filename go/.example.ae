@@ -1,49 +1,27 @@
-// Third-party-consumer EXAMPLE test for the Go binding.
-//
-// Publishes a standalone copy of the selenium-aether-go module under
-// target/go-pkg (carrying the bundled native/ .so, but deliberately WITHOUT the
-// repo's core/ as a sibling — so cgo's ${SRCDIR}/../core/native path can't
-// resolve and only the module's own bundled ${SRCDIR}/native .so satisfies the
-// link/rpath). A separate consumer module then `go run`s against it with no
-// SELENIUM_CORE_LIB. The honest "go get it and it just works" test the in-tree
-// go/.tests.ae cannot give (that one sits next to core/).
-import build
-import std.os
+// Go consumer-install proof: prove the packaged module drives the engine from a
+// CLEAN environment for a third party. go.consumer_example stages the published
+// module (the whole go/ tree minus example/, with the bundled native/.so — no
+// in-tree core/ sibling) as go-pkg, plus a consumer whose go.mod replaces the
+// module to ../go-pkg, asserts the .so shipped, then `go run . <mode>` with
+// SELENIUM_CORE_LIB unset. Modes: ffi/live (live self-skips). Skipped by
+// preflight when go is absent (prereq go:1.22).
+import bldr
+import go
+import go (stage, stage_dir, run_in, run_cmd, run_arg, assert_file)
 
 aeb(cap) {
-    b = build.start()
-    build.dep(b, "go/.package.ae")
-    _m = build.dep_artifact(b, "go/.package.ae", "module_dir")
-    root = build._get(b, "root")
-    exdir = "${root}/go/example"
-    pkg = "${root}/target/go-pkg"
-    consumer = "${root}/target/go-consumer"
-
-    // Stage a copy of the module WITHOUT example/ and WITHOUT a core/ sibling
-    // (target/ has no core/), plus a separate consumer program that replaces
-    // the module to ../go-pkg.
-    rc = os.system("rm -rf \"${pkg}\" \"${consumer}\" && cp -r \"${root}/go\" \"${pkg}\" && rm -rf \"${pkg}/example\" && mkdir -p \"${consumer}\" && cp \"${exdir}/go.mod\" \"${consumer}/\" && cp \"${exdir}/main.go\" \"${consumer}/\"")
-    if rc != 0 {
-        println("go example: staging the published module + consumer failed")
-        return 1
+    bldr.build() {
+        prereq("go:1.22")
+        dep("go/.package.ae")
+        go.consumer_example() {
+            stage_dir(".", "go-pkg", "example")
+            stage("example/go.mod", "go-consumer/go.mod")
+            stage("example/main.go", "go-consumer/main.go")
+            assert_file("go-pkg/native/libselenium_core.so")
+            run_in("go-consumer")
+            run_cmd("GOFLAGS=-mod=mod go run .")
+            run_arg("ffi")
+            run_arg("live")
+        }
     }
-    // The bundled .so must be present in the packaged copy (and NO core/ sibling).
-    rc_so = os.system("ls \"${pkg}/native\"/*.so >/dev/null 2>&1 && test ! -d \"${root}/target/core\"")
-    if rc_so != 0 {
-        println("go example: packaged module missing bundled native/*.so (or a core/ sibling leaked in)")
-        return 1
-    }
-
-    rc2 = os.system("cd \"${consumer}\" && env -u SELENIUM_CORE_LIB GOFLAGS=-mod=mod go run . ffi")
-    if rc2 != 0 {
-        println("go example: consumer `go run . ffi` against the bundled module failed")
-        return 1
-    }
-    rc3 = os.system("cd \"${consumer}\" && env -u SELENIUM_CORE_LIB GOFLAGS=-mod=mod go run . live")
-    if rc3 != 0 {
-        println("go example: consumer `go run . live` against the bundled module failed")
-        return 1
-    }
-    println("go example: PASS — consumer module drove the engine via its own bundled .so (ffi + live)")
-    return 0
 }

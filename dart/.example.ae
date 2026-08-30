@@ -1,59 +1,31 @@
-// Third-party-consumer EXAMPLE test for the Dart binding.
-//
-// Stages a standalone copy of the selenium_core package under target/dart-pkg
-// (carrying the bundled native/ .so, but WITHOUT the repo's core/ sibling — so
-// the loader can only find the package's own bundled .so). A separate consumer
-// project then `dart run`s against it (pub path dep to ../dart-pkg) with
-// SELENIUM_CORE_LIB unset. The honest "add the package and it just works" test.
-import build
-import std.os
+// Dart consumer-install proof: prove the packaged package drives the engine from
+// a CLEAN environment for a third party. dart.consumer_example stages the package
+// (lib/ + pubspec + native/.so — no test/ or core/) as dart-pkg, plus the
+// consumer (whose pubspec path dep is rewritten to ../dart-pkg via pre_cmd),
+// asserts the .so shipped, then `dart run consumer_example.dart <mode>` (dart
+// pub get runs implicitly) with SELENIUM_CORE_LIB unset. Modes: ffi/discovery/
+// live. Skipped by preflight when dart is absent (prereq dart).
+import bldr
+import dart
+import dart (stage, stage_dir, run_in, run_cmd, run_arg, pre_cmd, assert_file)
 
 aeb(cap) {
-    b = build.start()
-    build.dep(b, "dart/.package.ae")
-    _p = build.dep_artifact(b, "dart/.package.ae", "package_dir")
-    root = build._get(b, "root")
-    exsrc = "${root}/dart/example"
-    pkg = "${root}/target/dart-pkg"
-    consumer = "${root}/target/dart-consumer"
-    dart = "PATH=\"/home/paul/development/flutter/bin:$PATH\""
-
-    // Stage the package (lib/ + pubspec + bundled native/) WITHOUT test/ or a
-    // core/ sibling, plus a separate consumer project with a path dep.
-    // Stage the package, and the consumer with its path dep rewritten from
-    // `path: ..` (the in-tree sibling) to `path: ../dart-pkg` (the staged copy).
-    rc = os.system("rm -rf \"${pkg}\" \"${consumer}\" && mkdir -p \"${pkg}/native\" \"${consumer}\" && cp -r \"${root}/dart/lib\" \"${pkg}/\" && cp \"${root}/dart/pubspec.yaml\" \"${pkg}/\" && cp \"${root}/dart/native/libselenium_core.so\" \"${pkg}/native/\" && sed 's|path: \\.\\.$|path: ../dart-pkg|' \"${exsrc}/pubspec.yaml\" > \"${consumer}/pubspec.yaml\" && cp \"${exsrc}/consumer_example.dart\" \"${consumer}/\"")
-    if rc != 0 {
-        println("dart example: staging the package + consumer failed")
-        return 1
+    bldr.build() {
+        prereq("dart")
+        dep("dart/.package.ae")
+        dart.consumer_example() {
+            stage_dir("lib", "dart-pkg/lib", "")
+            stage("pubspec.yaml", "dart-pkg/pubspec.yaml")
+            stage("native/libselenium_core.so", "dart-pkg/native/libselenium_core.so")
+            stage("example/pubspec.yaml", "dart-consumer/pubspec.yaml")
+            stage("example/consumer_example.dart", "dart-consumer/consumer_example.dart")
+            assert_file("dart-pkg/native/libselenium_core.so")
+            run_in("dart-consumer")
+            pre_cmd("sed -i 's|path: \\.\\.$|path: ../dart-pkg|' pubspec.yaml && dart pub get --offline 2>/dev/null || dart pub get")
+            run_cmd("dart run consumer_example.dart")
+            run_arg("ffi")
+            run_arg("discovery")
+            run_arg("live")
+        }
     }
-    rc_so = os.system("ls \"${pkg}/native/libselenium_core.so\" >/dev/null 2>&1")
-    if rc_so != 0 {
-        println("dart example: staged package missing native/libselenium_core.so")
-        return 1
-    }
-
-    pg = os.system("cd \"${consumer}\" && ${dart} dart pub get --offline")
-    if pg != 0 {
-        println("dart example: consumer pub get failed")
-        return 1
-    }
-    pfx = "cd \"${consumer}\" && ${dart} env -u SELENIUM_CORE_LIB dart run consumer_example.dart"
-    rc2 = os.system("${pfx} ffi")
-    if rc2 != 0 {
-        println("dart example: ffi-mode consumer run failed")
-        return 1
-    }
-    rc3 = os.system("${pfx} discovery")
-    if rc3 != 0 {
-        println("dart example: discovery-mode consumer run failed")
-        return 1
-    }
-    rc4 = os.system("${pfx} live")
-    if rc4 != 0 {
-        println("dart example: live-mode consumer run failed")
-        return 1
-    }
-    println("dart example: PASS — installed package loaded its bundled .so (ffi + discovery + live)")
-    return 0
 }

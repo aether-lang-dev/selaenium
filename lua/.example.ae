@@ -1,42 +1,29 @@
-// Third-party-consumer EXAMPLE test for the Lua binding.
-//
-// Stages a standalone copy of the Lua package under target/lua-pkg (the pure-Lua
-// wrapper + the C extension + a bundled native/ .so, but WITHOUT the repo's
-// core/ sibling — so the extension's ../core/native fallback can't resolve and
-// only the package's own native/ .so loads). A consumer script then runs against
-// it (LUA_PATH/LUA_CPATH pointed at the staged pkg) with SELENIUM_CORE_LIB unset.
-// The live mode gets chromedriver from this harness (self-skips if absent).
-import build
-import std.os
+// Lua consumer-install proof: prove the packaged rock drives the engine from a
+// CLEAN environment for a third party. lua.consumer_example stages the package
+// (selenium_core.lua + the C extension + native/.so + consumer.lua — no core/)
+// as lua-pkg, asserts the .so shipped, then runs the consumer from that dir with
+// LUA_PATH/LUA_CPATH pointed there, SEL_MODE=<mode> (mode_env) and
+// SELENIUM_CORE_LIB unset — so only the bundled .so satisfies the load. Modes:
+// ffi/discovery/live. Skipped by the gate when a Lua 5.4 runner is absent.
+import bldr
+import lua
+import lua (stage, run_in, run_cmd, run_arg, mode_env, assert_file)
 
 aeb(cap) {
-    b = build.start()
-    build.dep(b, "lua/.package.ae")
-    _p = build.dep_artifact(b, "lua/.package.ae", "package_dir")
-    root = build._get(b, "root")
-    exsrc = "${root}/lua/example"
-    pkg = "${root}/target/lua-pkg"
-    ldir = "${root}/lua"
-
-    // Stage the package: selenium_core.lua + the C extension + native/ .so, and
-    // the consumer script — WITHOUT a core/ sibling (target/ has none).
-    rc = os.system("rm -rf \"${pkg}\" && mkdir -p \"${pkg}/native\" && cp \"${ldir}/src/selenium_core.lua\" \"${pkg}/\" && cp \"${ldir}/selenium_core_native.so\" \"${pkg}/\" && cp \"${ldir}/native/libselenium_core.so\" \"${pkg}/native/\" && cp \"${exsrc}/consumer.lua\" \"${pkg}/\"")
-    if rc != 0 { println("lua example: staging the package failed"); return 1 }
-    rc_so = os.system("ls \"${pkg}/native/libselenium_core.so\" \"${pkg}/selenium_core_native.so\" >/dev/null 2>&1 && test ! -d \"${root}/target/core\"")
-    if rc_so != 0 { println("lua example: staged package incomplete (or a core/ leaked)"); return 1 }
-
-    // A Lua 5.4 runner: distro lua5.4 if present, else the built host.
-    lua = "$(command -v lua5.4 || echo \"${ldir}/lua54\")"
-    env = "env -u SELENIUM_CORE_LIB LUA_PATH=\"${pkg}/?.lua\" LUA_CPATH=\"${pkg}/?.so\""
-
-    rc2 = os.system("cd \"${pkg}\" && ${env} SEL_MODE=ffi ${lua} consumer.lua")
-    if rc2 != 0 { println("lua example: ffi-mode consumer run failed"); return 1 }
-    rc3 = os.system("cd \"${pkg}\" && ${env} SEL_MODE=discovery ${lua} consumer.lua")
-    if rc3 != 0 { println("lua example: discovery-mode consumer run failed"); return 1 }
-    // live: spawn chromedriver, pass its URL.
-    rc4 = os.system("cd \"${pkg}\" && bash \"${ldir}/run-example-live.sh\" \"${lua}\" \"${pkg}/consumer.lua\" \"${pkg}\"")
-    if rc4 != 0 { println("lua example: live-mode consumer run failed"); return 1 }
-
-    println("lua example: PASS — installed package loaded its bundled .so (ffi + discovery + live)")
-    return 0
+    bldr.build() {
+        dep("lua/.package.ae")
+        lua.consumer_example() {
+            stage("src/selenium_core.lua", "lua-pkg/selenium_core.lua")
+            stage("selenium_core_native.so", "lua-pkg/selenium_core_native.so")
+            stage("native/libselenium_core.so", "lua-pkg/native/libselenium_core.so")
+            stage("example/consumer.lua", "lua-pkg/consumer.lua")
+            assert_file("lua-pkg/native/libselenium_core.so")
+            run_in("lua-pkg")
+            run_cmd("LUA_PATH='./?.lua' LUA_CPATH='./?.so' lua5.4 consumer.lua")
+            mode_env("SEL_MODE")
+            run_arg("ffi")
+            run_arg("discovery")
+            run_arg("live")
+        }
+    }
 }
