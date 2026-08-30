@@ -1,24 +1,25 @@
 // Erlang binding tests. Erlang owns the canonical Aether Selenium NIF for the
 // BEAM family — erlang/.build.ae compiles it ONCE into _build/selenium_nif. This
 // node deps that build and runs the live-surface test with ERL_LIBS pointed at
-// _build, so the selenium/selenium_nif modules and the NIF .so resolve the
-// standard OTP way. The live test self-skips if chromedriver is absent.
-import build
-import std.os
+// _build (so selenium/selenium_nif + the NIF .so resolve the OTP way) and -pa at
+// the NIF ebin. erlang.eunit's run_main path erlc-compiles test/live_test.erl
+// then runs live_test:main([]). The live test self-skips when chromedriver is
+// absent. Skipped by preflight when erlang is absent (prereq erlang).
+import bldr
+import erlang
+import erlang (test_source, run_main, pa)
 
 aeb(cap) {
-    b = build.start()
-    build.dep(b, "erlang/.build.ae")
-    libs = build.dep_artifact(b, "erlang/.build.ae", "erl_libs")
-    ebin = build.dep_artifact(b, "erlang/.build.ae", "nif_ebin")
-    root = build._get(b, "root")
-    erl = "${root}/erlang"
-
-    // Compile the test module against the NIF ebin, then run it.
-    cc = os.system("erlc -o \"${erl}/_build\" -pa \"${ebin}\" \"${erl}/test/live_test.erl\"")
-    if cc != 0 { println("erlang tests: erlc failed"); return 1 }
-    rc = os.system("cd \"${erl}\" && ERL_LIBS=\"${libs}\" erl -noshell -pa \"${ebin}\" -pa \"${erl}/_build\" -eval 'live_test:main([]), halt(0)'")
-    if rc != 0 { println("erlang tests: live test FAILED"); return 1 }
-    println("erlang tests: PASSED (ffi implicit + live+surface)")
-    return 0
+    bldr.build() {
+        prereq("erlang")
+        dep("erlang/.build.ae")
+        libs = dep_artifact("erlang/.build.ae", "erl_libs")
+        ebin = dep_artifact("erlang/.build.ae", "nif_ebin")
+        erlang.eunit() {
+            env("ERL_LIBS", libs)
+            test_source("test/live_test.erl")
+            pa(ebin)
+            run_main("live_test")
+        }
+    }
 }
