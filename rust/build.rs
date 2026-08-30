@@ -38,7 +38,7 @@ fn resolve_dir() -> PathBuf {
     if bundled.join("libselenium_core.so").exists() {
         return bundled;
     }
-    let mono = manifest.join("..").join("core").join("native");
+    let mono = manifest.join("..").join("selenium_core").join("native");
     if mono.join("libselenium_core.so").exists() {
         return mono;
     }
