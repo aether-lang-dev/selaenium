@@ -1,0 +1,29 @@
+// Scala binding tests. Scala is a JVM-family binding: it consumes the ONE Java
+// FFM binding's classes over seamless Java-interop — no second FFI, no second
+// .so (one Java jar backs Kotlin/Scala/Clojure/Groovy). It deps java/.build.ae
+// for the compiled binding classes (on the classpath via the JVM dep artifact)
+// and the engine for the .so, injected as SELENIUM_CORE_LIB. scalac compiles the
+// idiomatic wrapper, scalac_test the FfiTest; the main_class runner runs it with
+// --enable-native-access (FFM needs it on JDK 24+). Needs a scalac on a JDK >= 22
+// — skip_below_jdk("22") SKIPs LOUDLY on an older JDK; scalac discovery degrades
+// to a SKIP when absent. The FFI facts run with no browser.
+import bldr
+import scala
+import scala (main_class, skip_below_jdk, jvm_flag)
+
+aeb(cap) {
+    bldr.build() {
+        prereq("jdk:22")
+        dep("java/.build.ae")
+        dep("selenium_core/.build.ae")
+        lib = dep_artifact("selenium_core/.build.ae", "shared_lib")
+        scala.scalac() {
+        }
+        scala.scalac_test() {
+            env("SELENIUM_CORE_LIB", lib)
+            main_class("org.seleniumhq.aether.scala.FfiTest")
+            skip_below_jdk("22")
+            jvm_flag("--enable-native-access=ALL-UNNAMED")
+        }
+    }
+}
