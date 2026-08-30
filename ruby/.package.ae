@@ -1,35 +1,25 @@
-// Third-party-consumer PACKAGE stage for the Ruby binding.
-//
-// Builds the `selenium_core` gem as a downstream user would receive it: the
-// freshly-built engine .so bundled INSIDE the gem (the gemspec's
-// `Dir['lib/**/*']` sweeps in lib/selenium_core/native/*.so), via `gem build`.
-//
-// Deps core/.build.ae for the engine .so; publishes the built .gem on the
-// "gem" artifact edge, which ruby/.example.ae consumes.
-import build
-import std.os
+// Ruby consumer package (the gem). Bundles the engine .so into lib/ (what the
+// gemspec's Dir['lib/**/*'] ships) then builds the gem from the hand-written
+// selenium_core.gemspec via ruby.package, which publishes the dist dir on the
+// "gem_dir" edge for the consumer-install proof (ruby/.example.ae). The .so
+// staging is declarative (copy.file) into the SOURCE lib tree so the gem picks
+// it up. Skipped by preflight when ruby is absent (prereq ruby:3).
+import bldr
+import ruby
+import ruby (gemspec)
+import copy
 
 aeb(cap) {
-    b = build.start()
-    build.dep(b, "selenium_core/.build.ae")
-    lib = build.dep_artifact(b, "selenium_core/.build.ae", "shared_lib")
-    root = build._get(b, "root")
-    rbdir = "${root}/ruby"
-
-    // 1. Bundle the engine .so into lib/ (what `Dir['lib/**/*']` ships).
-    rc = os.system("mkdir -p \"${rbdir}/lib/selenium_core/native\" && cp \"${lib}\" \"${rbdir}/lib/selenium_core/native/libselenium_core.so\"")
-    if rc != 0 {
-        println("ruby package: failed to stage engine .so into lib/selenium_core/native/")
-        return 1
+    bldr.build() {
+        prereq("ruby:3")
+        dep("selenium_core/.build.ae")
+        lib = dep_artifact("selenium_core/.build.ae", "shared_lib")
+        copy.file() {
+            from(lib)
+            to("lib/selenium_core/native/libselenium_core.so")
+        }
+        ruby.package() {
+            gemspec("selenium_core.gemspec")
+        }
     }
-
-    // 2. Build the gem to a stable filename.
-    rc2 = os.system("cd \"${rbdir}\" && mkdir -p pkg && gem build selenium_core.gemspec --output pkg/selenium_core.gem")
-    if rc2 != 0 {
-        println("ruby package: `gem build` failed")
-        return 1
-    }
-    build.publish_artifact(b, "gem", "${rbdir}/pkg/selenium_core.gem")
-    println("ruby package: built gem with engine .so bundled → ruby/pkg/selenium_core.gem")
-    return 0
 }
