@@ -1,25 +1,28 @@
 // Clojure binding tests. Clojure is a JVM-family binding: it consumes the ONE
 // Java FFM binding's classes over Clojure/Java interop — no second FFI, no
-// second .so (one Java jar backs Kotlin/Scala/Clojure/Groovy). This node deps
-// the engine; run-tests.sh compiles the Java binding classes and runs the
-// Clojure test with the modern Clojure CLI (deps.edn -Sdeps :paths). It SKIPS
-// LOUDLY if clojure is absent, and self-skips the live leg without chromedriver.
-import build
-import std.os
+// second .so (one Java jar backs Kotlin/Scala/Clojure/Groovy). It deps
+// java/.build.ae for the compiled binding classes (on the classpath via the JVM
+// dep artifact) and the engine for the .so, injected as SELENIUM_CORE_LIB.
+// clojure.run_main runs the live-test namespace's -main (src/ + test/ are the
+// lein-default roots) with --enable-native-access (FFM needs it on JDK 24+),
+// threaded via jvm_flag. Needs the Clojure CLI on a JDK >= 22 —
+// skip_below_jdk("22") SKIPS LOUDLY on an older JDK, and run_main self-skips
+// when no clojure is found. The live leg self-skips without chromedriver.
+import bldr
+import clojure
+import clojure (main_ns, jvm_flag, skip_below_jdk)
 
 aeb(cap) {
-    b = build.start()
-    build.dep(b, "selenium_core/.build.ae")
-    lib = build.dep_artifact(b, "selenium_core/.build.ae", "shared_lib")
-    root = build._get(b, "root")
-    cdir = "${root}/clojure"
-    jsrc = "${root}/java/src/org/seleniumhq/aether"
-
-    rc = os.system("bash \"${cdir}/run-tests.sh\" \"${lib}\" \"${jsrc}\" \"${cdir}\"")
-    if rc != 0 {
-        println("clojure tests: FAILED")
-        return 1
+    bldr.build() {
+        prereq("jdk:22")
+        dep("java/.build.ae")
+        dep("selenium_core/.build.ae")
+        lib = dep_artifact("selenium_core/.build.ae", "shared_lib")
+        clojure.run_main() {
+            env("SELENIUM_CORE_LIB", lib)
+            main_ns("live-test")
+            skip_below_jdk("22")
+            jvm_flag("--enable-native-access=ALL-UNNAMED")
+        }
     }
-    println("clojure tests: PASSED (ffi + live+surface)")
-    return 0
 }
