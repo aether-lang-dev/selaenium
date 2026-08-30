@@ -1,27 +1,25 @@
 // Nim binding tests (importc + link-time). The engine .so is LINKED at build
-// time via src/selenium_core.nim's {.passL.} (-L nim/native + ../core/native,
-// with matching rpaths). This node deps the engine and stages the .so into
-// nim/native/ before compiling, exactly as go/.tests.ae does for cgo. The live
-// test self-skips if chromedriver is absent.
-import build
-import std.os
+// time via src/selenium_core.nim's {.passL.}, which searches ../../selenium_core
+// /native (+ rpath) — exactly where the engine node's copy.file() stages the
+// .so — so no per-binding staging is needed, just a dep on the engine. nim.test
+// compiles-and-runs each test file with `nim c -r`; tffi is the no-browser FFI
+// facts, tlive the live-Chrome smoke+surface (needs --threads:on) which
+// self-skips when chromedriver is absent. Skipped by preflight when nim is
+// absent (prereq nim).
+import bldr
+import nim
+import nim (test_file, nim_flag)
 
 aeb(cap) {
-    b = build.start()
-    build.dep(b, "selenium_core/.build.ae")
-    lib = build.dep_artifact(b, "selenium_core/.build.ae", "shared_lib")
-    root = build._get(b, "root")
-    ndir = "${root}/nim"
-    nim = "PATH=\"$HOME/.local/bin:$PATH\""
-
-    // Stage the engine .so where {.passL.} links it.
-    st = os.system("mkdir -p \"${ndir}/native\" && cp \"${lib}\" \"${ndir}/native/libselenium_core.so\"")
-    if st != 0 { println("nim tests: failed to stage engine .so"); return 1 }
-
-    rc = os.system("cd \"${ndir}\" && ${nim} nim c -r --hints:off --path:src tests/tffi.nim")
-    if rc != 0 { println("nim tests: tffi FAILED"); return 1 }
-    rc2 = os.system("cd \"${ndir}\" && ${nim} nim c -r --hints:off --threads:on --path:src tests/tlive.nim")
-    if rc2 != 0 { println("nim tests: tlive FAILED"); return 1 }
-    println("nim tests: PASSED (ffi + live+surface)")
-    return 0
+    bldr.build() {
+        prereq("nim")
+        dep("selenium_core/.build.ae")
+        nim.test() {
+            nim_flag("--hints:off")
+            nim_flag("--threads:on")
+            nim_flag("--path:src")
+            test_file("tests/tffi.nim")
+            test_file("tests/tlive.nim")
+        }
+    }
 }
