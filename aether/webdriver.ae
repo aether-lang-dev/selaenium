@@ -139,6 +139,28 @@ element_tag(sp: ptr, elem_id: string) -> string {
 }
 click(sp: ptr, elem_id: string) { _do(sp, "clickElement", _elem_body(elem_id)) }
 
+// find_relative(session, base_css, filters_json) -> first matching element id
+// ("" if none). Relative locators: candidates matching base_css filtered by
+// spatial relations to anchors, nearest first. filters_json is a JSON array of
+// {kind, sel[, dist]}, kind in above/below/left/right/near — e.g.
+//   [{"kind":"below","sel":"#hdr"}]
+find_relative(sp: ptr, base_css: string, filters_json: string) -> string {
+    if sp == null { return "" }
+    s = sp as *WdSession
+    rc = selenium_core.execute_relative(s.engine, base_css, filters_json)
+    if rc != 0 { return "" }
+    return _first_element_ref(_value(sp))
+}
+
+// find_relative_count(session, base_css, filters_json) -> number of matches.
+find_relative_count(sp: ptr, base_css: string, filters_json: string) -> int {
+    if sp == null { return 0 }
+    s = sp as *WdSession
+    rc = selenium_core.execute_relative(s.engine, base_css, filters_json)
+    if rc != 0 { return 0 }
+    return _element_array_len(_value(sp))
+}
+
 // ---- atom-backed element queries (no W3C endpoint; run via the engine's atoms) ----
 
 // is_displayed(session, elem) -> 1 visible / 0 hidden. Runs the isDisplayed atom
@@ -393,6 +415,25 @@ _element_ref(value_json: string) -> string {
     ev, _e = json.object_get(root, "element-6066-11e4-a52e-4f735466cecf")
     id, _i = json.get_string(ev)
     return id
+}
+
+// The first element ref out of a JSON array of element refs (findElements /
+// relative-locators result), or "" if the array is empty/unparseable.
+_first_element_ref(value_json: string) -> string {
+    arr, perr = json.parse(value_json)
+    if string.length(perr) > 0 { return "" }
+    if json.array_size(arr) == 0 { return "" }
+    first, _f = json.array_get(arr, 0)
+    fev, _e = json.object_get(first, "element-6066-11e4-a52e-4f735466cecf")
+    id, _i = json.get_string(fev)
+    return id
+}
+
+// The length of a JSON array value (0 if not an array / unparseable).
+_element_array_len(value_json: string) -> int {
+    arr, perr = json.parse(value_json)
+    if string.length(perr) > 0 { return 0 }
+    return json.array_size(arr)
 }
 
 // "binary":"<path>", when a Chrome binary must be named explicitly (no system

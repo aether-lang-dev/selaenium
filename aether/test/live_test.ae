@@ -83,6 +83,12 @@ main() {
     fails = fails + ck("atom get_attribute href",
              string.contains(webdriver.get_attribute(d, lnk, "href"), "example.com/x"))
 
+    // relative locators: the button sits below the #hdr heading.
+    rel = webdriver.find_relative(d, "button", "[{\"kind\":\"below\",\"sel\":\"#hdr\"}]")
+    fails = fails + ck("relative below #hdr finds the button", _gt0(string.length(rel)))
+    fails = fails + ck("relative count >= 1",
+             _gt0(webdriver.find_relative_count(d, "button", "[{\"kind\":\"below\",\"sel\":\"#hdr\"}]")))
+
     // ---- WebDriver-BiDi: subscribe + receive an async event ----
     // chrome() negotiated webSocketUrl:true, so BiDi is available in-process.
     // Subscribe to console log entries, emit one via the classic script channel,

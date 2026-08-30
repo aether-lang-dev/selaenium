@@ -115,6 +115,14 @@ sel_embed_atom_str_arg(s: string) -> string {
     return sel_embed_dup(selenium_core.atom_str_arg(s))
 }
 
+// Relative locators (findElementsRelative atom): candidates matching base_sel
+// (CSS), filtered by spatial relations to anchors. filters_json is a JSON array
+// of {kind, sel[, dist]} with kind in above/below/left/right/near. last_value is
+// a JSON array of element references (nearest anchor first).
+sel_embed_find_relative(h: ptr, base_sel: string, filters_json: string) -> int {
+    return selenium_core.execute_relative(h, base_sel, filters_json)
+}
+
 // ---- result accessors (drain after execute) ----
 
 // The response `value` as JSON text (the useful payload: a string, number,

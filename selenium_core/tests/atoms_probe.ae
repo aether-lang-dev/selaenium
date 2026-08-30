@@ -66,6 +66,17 @@ main() {
              has(p, "\"script\":\"return (function"))
     fails = fails + check_eq("unknown atom params empty", atoms.atom_params("noSuchAtom", "e.1", ""), "")
 
+    // ---- relative locators: findElementsRelative params ----
+    fails = fails + check("relative atom body present", _gt0(string.length(atoms.atom_body("findElementsRelative"))))
+    rp = atoms.relative_params("button", "[{\"kind\":\"below\",\"sel\":\"#anchor\"}]")
+    fails = fails + check("relative params has script", has(rp, "\"script\":"))
+    fails = fails + check("relative params carries base sel", has(rp, "button"))
+    fails = fails + check("relative params carries the filter", has(rp, "below"))
+    fails = fails + check("relative params carries the anchor sel", has(rp, "#anchor"))
+    // empty filters default to []
+    rp0 = atoms.relative_params("a", "")
+    fails = fails + check("relative params empty filters -> []", has(rp0, "\"args\":[\"a\",[]]"))
+
     if fails == 0 {
         println("PASS: all atoms probes green")
         exit(0)

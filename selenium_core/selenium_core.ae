@@ -242,6 +242,17 @@ execute_atom(sp: ptr, atom_name: string, elem_id: string, extra_json: string) ->
     return execute(sp, "executeScript", params)
 }
 
+// execute_relative(sp, base_sel, filters_json) — run the relative-locators atom
+// (findElementsRelative): candidates matching the base CSS selector, filtered by
+// spatial relations (above/below/left/right/near) to anchor elements, nearest
+// first. last_value is a JSON array of element references. filters_json is a JSON
+// array of {kind, sel[, dist]}. Returns 0 / W3C error / -1 like execute().
+execute_relative(sp: ptr, base_sel: string, filters_json: string) -> int {
+    if sp == null { return -1 }
+    params = atoms.relative_params(base_sel, filters_json)
+    return execute(sp, "executeScript", params)
+}
+
 // atom_str_arg(s) — a JSON array holding one string: `["<s>"]`, s JSON-escaped.
 // A binding uses this to pass e.g. getAttribute's name as the atom's extra arg.
 atom_str_arg(s: string) -> string {
