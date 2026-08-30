@@ -58,6 +58,21 @@ sel_embed_close(h: ptr) {
     selenium_core.session_free(h)
 }
 
+// ---- TLS for an https:// remote end (Grid over HTTPS; ae 0.606+) ----
+// A plain https:// base_url already follows the system CA store. For a
+// self-hosted Grid with its own CA, pin it (verify against THIS cert); for a
+// self-signed dev Grid, skip verification. Call before the first execute().
+
+// Pin the peer cert against a private CA file ("" reverts to the system store).
+sel_embed_set_ca(h: ptr, ca_path: string) {
+    selenium_core.session_set_ca(h, ca_path)
+}
+
+// Skip TLS verification (self-signed dev/staging Grid). on=1 to skip, 0 to verify.
+sel_embed_set_insecure(h: ptr, on: int) {
+    selenium_core.session_set_insecure(h, on)
+}
+
 // ---- the one workhorse ----
 
 // Execute a WebDriver command by name with JSON parameters (params_json may be

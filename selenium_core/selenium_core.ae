@@ -33,10 +33,15 @@ struct Session {
     last_value: string      // JSON text of the response `value` (the useful payload)
     last_error_code: int    // decoded W3C error code (0 = success), see error_code()
     last_error: string      // human-readable error / transport-failure message
+    ca_file: string         // TLS: pin the peer cert against THIS CA (""=system store)
+    insecure: int           // TLS: 1 = skip verification (self-signed dev Grid); 0 = verify
 }
 
-// Create a session bound to `base_url` (e.g. "http://127.0.0.1:9515"). No
-// network I/O yet — call execute(s, "newSession", caps_json) to start one.
+// Create a session bound to `base_url` (e.g. "http://127.0.0.1:9515" or a
+// "https://grid.example.com" hub). No network I/O yet — call
+// execute(s, "newSession", caps_json) to start one. HTTPS is native (ae 0.606+
+// std.http.client): a plain https:// base_url follows the system CA store; for a
+// private-CA or self-signed Grid, call session_set_ca / session_set_insecure.
 session_new(base_url: string) -> ptr {
     s = heap.new(Session)
     // Copy the borrowed FFI string into an owned, ref-counted AetherString so
@@ -48,7 +53,26 @@ session_new(base_url: string) -> ptr {
     s.last_value = ""
     s.last_error_code = 0
     s.last_error = ""
+    s.ca_file = ""
+    s.insecure = 0
     return s as ptr
+}
+
+// Pin the remote end's TLS cert against a private CA file (the "verify, but
+// against THIS cert" mode — a self-hosted Grid with its own CA, courier the CA
+// once). "" reverts to the system store. Strictly stronger than insecure.
+session_set_ca(sp: ptr, ca_path: string) {
+    if sp == null { return }
+    s = sp as *Session
+    s.ca_file = string.concat(ca_path, "")
+}
+
+// Skip TLS verification for this session (self-signed dev/staging Grid). Use
+// only against hosts trusted out-of-band — session_set_ca is the safer knob.
+session_set_insecure(sp: ptr, on: int) {
+    if sp == null { return }
+    s = sp as *Session
+    s.insecure = on
 }
 
 session_free(sp: ptr) {
@@ -177,7 +201,7 @@ execute(sp: ptr, name: string, params_json: string) -> int {
     path = string.substring(rest1, 0, t3)
     body = string.substring(rest1, t3 + 1, string.length(rest1))
 
-    tagged = http_roundtrip(s.base_url, method, path, body)
+    tagged = http_roundtrip(s.base_url, method, path, body, s.ca_file, s.insecure)
     // tagged is "ERR <msg>" or "OK <status> <body>"
     if string.starts_with(tagged, "ERR ") == 1 {
         s.last_error_code = -1
@@ -594,11 +618,19 @@ css_escape(s: string) -> string {
 // the split accessors in embed.ae — here we return a tagged string:
 //   "OK <http-status> <body>"        on an HTTP response (any status)
 //   "ERR <message>"                  on a transport-level failure
-http_roundtrip(base_url: string, method: string, path: string, body: string) -> string {
+http_roundtrip(base_url: string, method: string, path: string, body: string, ca_file: string, insecure: int) -> string {
     url = string.concat(base_url, path)
     req = client.request(method, url)
     _h1 = client.set_header(req, "Accept", "application/json")
     _h2 = client.set_header(req, "Content-Type", "application/json; charset=utf-8")
+    // TLS for an https:// remote end (native in ae 0.606+): a pinned private-CA
+    // (self-hosted Grid) or insecure (self-signed dev). No-ops for http://.
+    if string.length(ca_file) > 0 {
+        _ca = client.set_cafile(req, ca_file)
+    }
+    if insecure == 1 {
+        _in = client.set_insecure(req, 1)
+    }
     // WebDriver servers expect a JSON body for POST even when empty ("{}").
     if method == "POST" {
         b = body

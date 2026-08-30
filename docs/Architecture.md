@@ -87,16 +87,19 @@ a real Mach-O arm64 dylib **from a Linux runner** — no macOS host needed for t
   not "no OpenSSL"). This is the normal case (driving a local
   chromedriver/geckodriver), so a cross-built macOS/any-platform `.so` is usable
   today for local automation.
-- **Tier 2 — remote Grid over `https://`: ~25 contained lines.** `std.http.client`
-  HTTPS is OpenSSL, which zig cross-builds omit — but the pure-Aether
-  `std.cryptography.tls13_client` links with zero native deps and cross-builds
-  clean (verified). Frame HTTP over its `conn_send`/`conn_recv`; lift
-  `aether/tests/integration/https_pure_tls_vertical/client.ae`. Keep it behind a
-  narrow `https_get`/`https_post -> (body, err)` seam so it's deletable when
-  Aether wires pure-TLS under `std.http.client` (ask filed:
-  `aether/asks/http-client-pure-tls-backend-for-crossbuild.md`). Gotchas: set
-  `SSL_CERT_FILE`; pass `std.bytes` handles, never `bytes.data(b)` (raw ptr
-  segfaults); IP-SAN verification needs ae ≥ 0.603.0.
+- **Tier 2 — remote Grid over `https://`: DONE, native (ae 0.606+).** The
+  earlier ~25-line `std.cryptography.tls13_client` seam is RETIRED: the engine's
+  `http_roundtrip` just does `client.request("https://…")` and gets CA-following
+  HTTPS out of the box. v0.606.0 completed the pure-Aether TLS 1.3 client AND
+  server, auto-selected when OpenSSL is absent (`AETHER_PURE_TLS`), so a
+  cross-built no-OpenSSL `.so` gets HTTPS both ways with no special path.
+  Verified: the engine transport fetched a real `https://` endpoint (status 200)
+  on the installed toolchain. Private-CA and self-signed Grids are handled per
+  session via `sel_embed_set_ca(h, ca_path)` (`client.set_cafile` — verify
+  against THIS cert, the pre-shared-key case) and `sel_embed_set_insecure(h, 1)`
+  (`client.set_insecure` — skip verification for a dev Grid). No
+  `https_get`/`https_post` seam, no `SSL_CERT_FILE`/`bytes.data` gotchas — those
+  were the hand-rolled-tls13_client concerns, now moot.
 - **BiDi needs none of the above** — the WebSocket client already speaks `wss://`,
   so the (future, per Simon) BiDi transport is TLS-covered with no tls13_client
   work.
