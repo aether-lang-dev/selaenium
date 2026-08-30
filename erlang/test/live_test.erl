@@ -104,6 +104,23 @@ run(DriverBin) ->
             {error, {17, _}} = selenium:find_element(D, <<"id">>, <<"does-not-exist">>),
             io:format("  ok: no such element error~n"),
 
+            %% WebDriver-BiDi: subscribe to console log entries, emit one via the
+            %% classic script channel, and receive the event asynchronously over
+            %% the demux — the bidirectional half, over the negotiated webSocketUrl.
+            LogEntryAdded = <<"log.entryAdded">>,
+            true = selenium:bidi_available(D),
+            {ok, Ack} = selenium:bidi_subscribe(D, [LogEntryAdded]),
+            <<"success">> = maps:get(<<"type">>, Ack),
+            {ok, _} = selenium:execute_script(D, <<"console.log('bidi-hello');">>),
+            {ok, Ev} = selenium:bidi_next_event(D, LogEntryAdded, 8000),
+            true = is_map(Ev),
+            LogEntryAdded = maps:get(<<"method">>, Ev),
+            true = binary:match(iolist_to_binary(io_lib:format("~p", [Ev])),
+                                <<"bidi-hello">>) =/= nomatch,
+            {ok, Status} = selenium:bidi_command(D, <<"session.status">>, #{}, 10000),
+            <<"success">> = maps:get(<<"type">>, Status),
+            io:format("  ok: BiDi (log.entryAdded event + session.status command)~n"),
+
             io:format("PASS: Erlang live surface test green~n")
         after
             selenium:quit(D)
