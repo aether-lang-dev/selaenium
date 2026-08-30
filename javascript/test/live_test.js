@@ -174,3 +174,51 @@ test('live chrome + surface', async (t) => {
     web.kill()
   }
 })
+
+// Live WebDriver-BiDi: subscribe to log.entryAdded, emit a console.log via
+// executeScript, receive the event, and issue a plain BiDi command. Same fixture
+// as above: own chromedriver on an ephemeral port, self-skip if absent. All BiDi
+// calls are synchronous blocking FFI.
+test('live chrome + bidi', async (t) => {
+  const driverBin = which('chromedriver')
+  if (!driverBin) {
+    t.skip('chromedriver not on PATH')
+    return
+  }
+
+  const cdPort = await freePort()
+  const cd = spawn(driverBin, [`--port=${cdPort}`], { stdio: 'ignore' })
+
+  try {
+    if (!(await waitUp(cdPort))) {
+      t.skip('chromedriver did not come up')
+      return
+    }
+
+    // From here on, everything is synchronous (blocking FFI).
+    const d = s.WebDriver.headlessChrome(`http://127.0.0.1:${cdPort}`)
+    try {
+      assert.ok(d.sessionId, 'no session id after newSession')
+      assert.ok(d.bidiAvailable(), 'session negotiated no BiDi webSocketUrl')
+
+      d.get('data:text/html,<title>BiDi</title><h1>hi</h1>')
+
+      const ack = d.bidi.subscribe(s.BidiEvent.LOG_ENTRY_ADDED)
+      assert.strictEqual(ack.type, 'success', `subscribe ack: ${JSON.stringify(ack)}`)
+
+      d.executeScript("console.log('bidi-hello');")
+
+      const ev = d.bidi.nextEvent(s.BidiEvent.LOG_ENTRY_ADDED, 8000)
+      assert.ok(ev, 'no log.entryAdded event received')
+      assert.strictEqual(ev.method, s.BidiEvent.LOG_ENTRY_ADDED)
+      assert.ok(JSON.stringify(ev).includes('bidi-hello'), `event missing text: ${JSON.stringify(ev)}`)
+
+      const status = d.bidi.command('session.status')
+      assert.strictEqual(status.type, 'success', `session.status: ${JSON.stringify(status)}`)
+    } finally {
+      d.quit()
+    }
+  } finally {
+    cd.kill()
+  }
+})

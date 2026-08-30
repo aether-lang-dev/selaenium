@@ -13,7 +13,7 @@ use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use selenium_core::{json, By, ErrorKind, Json, WebDriver};
+use selenium_core::{json, BidiEvent, By, ErrorKind, Json, WebDriver};
 
 const PAGE_ONE: &str = concat!(
     "<!doctype html><title>Page One</title><h1 id=\"hdr\">One</h1>",
@@ -200,6 +200,72 @@ fn live_chrome_surface() {
 
     d.quit().unwrap();
     stop.store(true, Ordering::Relaxed);
+}
+
+/// A LIVE WebDriver-BiDi round-trip against real Chrome: negotiate a
+/// webSocketUrl, subscribe to log.entryAdded, trigger a console.log, and drain
+/// the matching event; then a plain BiDi command (session.status). Mirrors the
+/// `live_chrome_surface` fixture (own chromedriver on an ephemeral port,
+/// self-skip if chromedriver absent, a data: URL for a real document).
+#[test]
+fn live_bidi() {
+    let Some(driver_bin) = which("chromedriver") else {
+        eprintln!("SKIPPED: chromedriver not on PATH");
+        return;
+    };
+
+    let cd_port = free_port();
+    let cd = Command::new(&driver_bin)
+        .arg(format!("--port={cd_port}"))
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("spawn chromedriver");
+    let _guard = DriverGuard(cd);
+
+    if !wait_up(cd_port, Duration::from_secs(10)) {
+        eprintln!("SKIPPED: chromedriver did not come up");
+        return;
+    }
+
+    let mut d =
+        WebDriver::headless_chrome(&format!("http://127.0.0.1:{cd_port}")).expect("new session");
+    assert!(d.bidi_available(), "session negotiated a webSocketUrl (BiDi available)");
+
+    // A real document origin for the console.log to run against.
+    d.get("data:text/html,<!doctype html><title>bidi</title><h1>bidi</h1>").unwrap();
+
+    // Subscribe to log entries; the ack must report success.
+    let ack = d.bidi().unwrap().subscribe(&[BidiEvent::LOG_ENTRY_ADDED]).unwrap();
+    assert_eq!(ack.get("type").and_then(|v| v.as_str()), Some("success"), "subscribe ack: {ack:?}");
+
+    // Trigger a console.log in the page (classic executeScript).
+    d.execute_script("console.log('bidi-hello');", vec![]).unwrap();
+
+    // Drain the matching log.entryAdded event; it must carry our text.
+    let ev = d
+        .bidi()
+        .unwrap()
+        .next_event(BidiEvent::LOG_ENTRY_ADDED, 8000)
+        .unwrap()
+        .expect("a log.entryAdded event within the timeout");
+    assert_eq!(
+        ev.get("method").and_then(|v| v.as_str()),
+        Some(BidiEvent::LOG_ENTRY_ADDED),
+        "event method matches: {ev:?}"
+    );
+    let serialized = format!("{ev:?}");
+    assert!(serialized.contains("bidi-hello"), "logged text present in event: {serialized}");
+
+    // A plain BiDi command round-trip: session.status -> success.
+    let status = d.bidi().unwrap().command("session.status", json::obj(vec![]), 10000).unwrap();
+    assert_eq!(
+        status.get("type").and_then(|v| v.as_str()),
+        Some("success"),
+        "session.status reply: {status:?}"
+    );
+
+    d.quit().unwrap();
 }
 
 /// Minimal std-only base64 decoder (screenshot PNG check only).

@@ -136,4 +136,61 @@ void main() {
       server.kill();
     }
   }, timeout: const Timeout(Duration(seconds: 90)));
+
+  test('live chrome + bidi', () async {
+    final driverBin = which('chromedriver');
+    if (driverBin == null) {
+      markTestSkipped('chromedriver not on PATH');
+      return;
+    }
+
+    // Out-of-process content server.
+    final server = await Process.start(
+        Platform.resolvedExecutable, ['run', 'test/content_server.dart']);
+    final portLine = await server.stdout
+        .transform(utf8.decoder)
+        .transform(const LineSplitter())
+        .firstWhere((l) => l.startsWith('PORT '));
+    final webPort = int.parse(portLine.substring(5).trim());
+    final base = 'http://127.0.0.1:$webPort';
+
+    final cdPort = await freePort();
+    final cd = await Process.start(driverBin, ['--port=$cdPort']);
+    try {
+      if (!await waitUp(cdPort, const Duration(seconds: 10))) {
+        markTestSkipped('chromedriver did not come up');
+        return;
+      }
+
+      final d = WebDriver.headlessChrome('http://127.0.0.1:$cdPort');
+      try {
+        expect(d.bidiAvailable, isTrue);
+
+        d.get('$base/one');
+
+        // subscribe -> ack success
+        final ack = d.bidi.subscribe([BidiEvent.logEntryAdded]);
+        expect(ack['type'], 'success');
+
+        // emit a console log through the classic session
+        d.executeScript("console.log('bidi-hello');");
+
+        // the event streams over the BiDi channel
+        final ev =
+            d.bidi.nextEvent(BidiEvent.logEntryAdded, timeoutMs: 8000);
+        expect(ev, isNotNull);
+        expect(ev!['method'], BidiEvent.logEntryAdded);
+        expect(jsonEncode(ev), contains('bidi-hello'));
+
+        // a plain command round-trips too
+        final status = d.bidi.command('session.status');
+        expect(status['type'], 'success');
+      } finally {
+        d.quit();
+      }
+    } finally {
+      cd.kill();
+      server.kill();
+    }
+  }, timeout: const Timeout(Duration(seconds: 90)));
 }

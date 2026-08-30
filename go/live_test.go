@@ -5,10 +5,12 @@
 package selenium
 
 import (
+	"encoding/json"
 	"net"
 	"net/url"
 	"os/exec"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 )
@@ -125,5 +127,90 @@ func TestLiveChrome(t *testing.T) {
 	}
 
 	t.Log("live Chrome smoke test green")
+}
+
+// TestLiveBidi drives a real Chrome session over WebDriver-BiDi end to end:
+// subscribe to log.entryAdded, emit a console.log via executeScript, receive the
+// event asynchronously, and issue a raw session.status command. Mirrors the
+// canonical live BiDi test already passing in Python/Ruby.
+func TestLiveBidi(t *testing.T) {
+	driverBin, err := exec.LookPath("chromedriver")
+	if err != nil {
+		t.Skip("chromedriver not on PATH")
+	}
+	port := freePort(t)
+	cmd := exec.Command(driverBin, "--port="+strconv.Itoa(port))
+	cmd.Stdout = nil
+	cmd.Stderr = nil
+	if err := cmd.Start(); err != nil {
+		t.Skipf("could not start chromedriver: %v", err)
+	}
+	defer func() {
+		_ = cmd.Process.Kill()
+		_, _ = cmd.Process.Wait()
+	}()
+	if !waitUp(port, 10*time.Second) {
+		t.Skip("chromedriver did not come up")
+	}
+
+	drv, err := NewChrome("http://127.0.0.1:"+strconv.Itoa(port), Headless())
+	if err != nil {
+		t.Fatalf("NewChrome: %v", err)
+	}
+	defer drv.Quit()
+
+	if !drv.BidiAvailable() {
+		t.Fatal("BidiAvailable = false; session negotiated no webSocketUrl")
+	}
+
+	page := "data:text/html;charset=utf-8," + url.PathEscape(liveHTML)
+	if err := drv.Get(page); err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+
+	bidi, err := drv.Bidi()
+	if err != nil {
+		t.Fatalf("Bidi: %v", err)
+	}
+
+	ack, err := bidi.Subscribe(BidiEvent.LogEntryAdded)
+	if err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
+	if ack["type"] != "success" {
+		t.Fatalf("subscribe ack type = %v, want success", ack["type"])
+	}
+
+	if _, err := drv.ExecuteScript("console.log('bidi-hello');"); err != nil {
+		t.Fatalf("ExecuteScript: %v", err)
+	}
+
+	ev, err := bidi.NextEvent(BidiEvent.LogEntryAdded, 8000)
+	if err != nil {
+		t.Fatalf("NextEvent: %v", err)
+	}
+	if ev == nil {
+		t.Fatal("NextEvent returned nil (timed out waiting for log.entryAdded)")
+	}
+	if ev["method"] != BidiEvent.LogEntryAdded {
+		t.Fatalf("event method = %v, want %s", ev["method"], BidiEvent.LogEntryAdded)
+	}
+	evJSON, err := json.Marshal(ev)
+	if err != nil {
+		t.Fatalf("marshal event: %v", err)
+	}
+	if !strings.Contains(string(evJSON), "bidi-hello") {
+		t.Fatalf("event JSON did not contain logged text: %s", evJSON)
+	}
+
+	status, err := bidi.Command("session.status", nil, 10000)
+	if err != nil {
+		t.Fatalf("Command(session.status): %v", err)
+	}
+	if status["type"] != "success" {
+		t.Fatalf("session.status type = %v, want success", status["type"])
+	}
+
+	t.Log("live BiDi test green")
 }
 

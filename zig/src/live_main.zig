@@ -189,6 +189,85 @@ pub fn main() !void {
     }
     std.debug.print("  ok: no such element error\n", .{});
 
+    // ---- WebDriver-BiDi (live) ----
+    // Subscribe to log.entryAdded, navigate a data: page, emit a console.log
+    // through the classic script channel, then drain the BiDi event queue for
+    // the matching event and round-trip a session.status command.
+    {
+        assert(d.bidiAvailable(), "bidi available (webSocketUrl negotiated)");
+
+        // A minimal, self-contained page so the log entry is ours alone.
+        const bidi_page =
+            "data:text/html;charset=utf-8,%3C!doctype%20html%3E%3Ctitle%3EBiDi%3C/title%3E%3Ch1%3EBiDi%3C/h1%3E";
+        try d.get(bidi_page);
+
+        const bidi = try d.bidi();
+
+        // session.subscribe -> ack "type" == "success"
+        {
+            var ack = (try bidi.subscribe(&[_][]const u8{sel.BidiEvent.log_entry_added}, 10000)) orelse {
+                assert(false, "subscribe returned an ack");
+                unreachable;
+            };
+            defer ack.deinit();
+            const ack_type = switch (ack.value) {
+                .object => |o| switch (o.get("type") orelse std.json.Value{ .null = {} }) {
+                    .string => |s| s,
+                    else => "",
+                },
+                else => "",
+            };
+            assert(std.mem.eql(u8, ack_type, "success"), "subscribe ack type success");
+        }
+        std.debug.print("  ok: bidi subscribe (log.entryAdded)\n", .{});
+
+        // Emit a console.log through the classic script channel; BiDi observes it.
+        {
+            var v = try d.executeScript("console.log('bidi-hello');", "[]");
+            v.deinit();
+        }
+
+        // Drain the queue for the matching event; serialize and assert it carries
+        // our logged text.
+        {
+            var ev = (try bidi.nextEvent(sel.BidiEvent.log_entry_added, 8000)) orelse {
+                assert(false, "nextEvent returned a log.entryAdded event");
+                unreachable;
+            };
+            defer ev.deinit();
+
+            const method = switch (ev.value) {
+                .object => |o| switch (o.get("method") orelse std.json.Value{ .null = {} }) {
+                    .string => |s| s,
+                    else => "",
+                },
+                else => "",
+            };
+            assert(std.mem.eql(u8, method, sel.BidiEvent.log_entry_added), "event method is log.entryAdded");
+
+            // Stringify the whole event and look for our text anywhere in it.
+            const serialized = try std.json.Stringify.valueAlloc(a, ev.value, .{});
+            defer a.free(serialized);
+            assert(std.mem.indexOf(u8, serialized, "bidi-hello") != null, "event carries bidi-hello");
+        }
+        std.debug.print("  ok: bidi log.entryAdded event (bidi-hello)\n", .{});
+
+        // session.status round-trip -> reply "type" == "success"
+        {
+            var status = try bidi.command("session.status", "{}", 10000);
+            defer status.deinit();
+            const status_type = switch (status.value) {
+                .object => |o| switch (o.get("type") orelse std.json.Value{ .null = {} }) {
+                    .string => |s| s,
+                    else => "",
+                },
+                else => "",
+            };
+            assert(std.mem.eql(u8, status_type, "success"), "session.status reply type success");
+        }
+        std.debug.print("  ok: bidi session.status command\n", .{});
+    }
+
     try d.quit();
     std.debug.print("PASS: Zig live surface test green\n", .{});
 }

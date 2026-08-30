@@ -12,6 +12,7 @@ import java.util.Base64;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
+import org.seleniumhq.aether.BidiEvent;
 import org.seleniumhq.aether.By;
 import org.seleniumhq.aether.WebDriver;
 import org.seleniumhq.aether.WebDriverError;
@@ -131,6 +132,44 @@ class LiveTest {
         } finally {
             cd.destroy();
             web.stop(0);
+        }
+    }
+
+    @Test
+    void liveChromeBidi() throws Exception {
+        String driverBin = which("chromedriver");
+        assumeTrue(driverBin != null, "chromedriver not on PATH");
+
+        int cdPort = freePort();
+        Process cd = new ProcessBuilder(driverBin, "--port=" + cdPort)
+                .redirectOutput(ProcessBuilder.Redirect.DISCARD)
+                .redirectError(ProcessBuilder.Redirect.DISCARD)
+                .start();
+        try {
+            assumeTrue(waitUp(cdPort, 10000), "chromedriver did not come up");
+            WebDriver d = WebDriver.headlessChrome("http://127.0.0.1:" + cdPort);
+            try {
+                assertTrue(d.bidiAvailable(), "BiDi negotiated (webSocketUrl present)");
+
+                d.get("data:text/html,<!doctype html><title>BiDi</title><h1>bidi</h1>");
+
+                Map<String, Object> ack = d.bidi().subscribe(BidiEvent.LOG_ENTRY_ADDED);
+                assertEquals("success", ack.get("type"), "subscribe ack success");
+
+                d.executeScript("console.log('bidi-hello');");
+
+                Map<String, Object> ev = d.bidi().nextEvent(BidiEvent.LOG_ENTRY_ADDED, 8000);
+                assertTrue(ev != null, "log.entryAdded event arrived");
+                assertEquals(BidiEvent.LOG_ENTRY_ADDED, ev.get("method"), "event method");
+                assertTrue(ev.toString().contains("bidi-hello"), "event carries logged text");
+
+                Map<String, Object> status = d.bidi().command("session.status", null, 10000);
+                assertEquals("success", status.get("type"), "session.status success");
+            } finally {
+                d.quit();
+            }
+        } finally {
+            cd.destroy();
         }
     }
 

@@ -151,6 +151,24 @@ proc main() =
       doAssert nse
       echo "  ok: no such element error"
 
+      # WebDriver-BiDi: subscribe to log.entryAdded, trigger a console.log via
+      # a data: URL page, drain the event, and round-trip a session.status
+      # command — all over the negotiated webSocketUrl on this same session.
+      doAssert d.bidiAvailable
+      let dataUrl = "data:text/html," &
+        "<!doctype html><title>BiDi</title><h1>bidi page</h1>"
+      d.get(dataUrl)
+      let ack = d.bidi.subscribe(LogEntryAdded)
+      doAssert ack["type"].getStr == "success"
+      discard d.executeScript("console.log('bidi-hello');")
+      let ev = d.bidi.nextEvent(LogEntryAdded, 8000)
+      doAssert ev != nil
+      doAssert ev["method"].getStr == LogEntryAdded
+      doAssert ($ev).contains("bidi-hello")
+      let status = d.bidi.command("session.status")
+      doAssert status["type"].getStr == "success"
+      echo "  ok: BiDi (log.entryAdded event + session.status command)"
+
       echo "PASS: Nim live surface test green"
     finally:
       d.quit()
