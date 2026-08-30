@@ -140,6 +140,34 @@ final class Native {
                 FunctionDescriptor.of(C_STR, C_PTR, C_PTR, C_PTR));
         static final MethodHandle ERROR_CODE = down("aether_sel_embed_error_code",
                 FunctionDescriptor.of(C_INT, C_PTR));
+
+        // ---- WebDriver-BiDi (over the session's webSocketUrl) ----
+        // An opaque BiDi channel handle, independent of the W3C session handle.
+        static final MethodHandle BIDI_OPEN = down("aether_sel_embed_bidi_open",
+                FunctionDescriptor.of(C_PTR, C_PTR));
+        static final MethodHandle BIDI_CLOSE = down("aether_sel_embed_bidi_close",
+                FunctionDescriptor.ofVoid(C_PTR));
+        static final MethodHandle BIDI_SEND = down("aether_sel_embed_bidi_send",
+                FunctionDescriptor.of(C_INT, C_PTR, C_INT, C_PTR, C_PTR));
+        static final MethodHandle BIDI_PUMP = down("aether_sel_embed_bidi_pump",
+                FunctionDescriptor.of(C_INT, C_PTR, C_INT));
+        static final MethodHandle BIDI_FD = down("aether_sel_embed_bidi_fd",
+                FunctionDescriptor.of(C_INT, C_PTR));
+        static final MethodHandle BIDI_POLL_REPLY = down("aether_sel_embed_bidi_poll_reply",
+                FunctionDescriptor.of(C_STR, C_PTR, C_INT));
+        static final MethodHandle BIDI_POLL_EVENT = down("aether_sel_embed_bidi_poll_event",
+                FunctionDescriptor.of(C_STR, C_PTR));
+        static final MethodHandle BIDI_LOST_EVENTS = down("aether_sel_embed_bidi_lost_events",
+                FunctionDescriptor.of(C_INT, C_PTR));
+        static final MethodHandle BIDI_CANCEL = down("aether_sel_embed_bidi_cancel",
+                FunctionDescriptor.ofVoid(C_PTR, C_INT));
+        static final MethodHandle BIDI_SUBSCRIBE = down("aether_sel_embed_bidi_subscribe",
+                FunctionDescriptor.of(C_STR, C_PTR, C_INT, C_PTR, C_INT));
+        static final MethodHandle BIDI_UNSUBSCRIBE = down("aether_sel_embed_bidi_unsubscribe",
+                FunctionDescriptor.of(C_STR, C_PTR, C_INT, C_PTR, C_INT));
+        static final MethodHandle BIDI_WAIT_EVENT = down("aether_sel_embed_bidi_wait_event",
+                FunctionDescriptor.of(C_STR, C_PTR, C_PTR, C_INT));
+
         static final MethodHandle FREE_STRING = down("aether_sel_embed_free_string",
                 FunctionDescriptor.ofVoid(C_PTR));
     }
@@ -241,6 +269,108 @@ final class Native {
             return (int) MH.ERROR_CODE.invokeExact(a.allocateFrom(w3cError));
         } catch (Throwable t) {
             throw wrap(t, "error_code");
+        }
+    }
+
+    // ---- WebDriver-BiDi wrappers ----
+
+    static MemorySegment bidiOpen(String wsUrl) {
+        try (Arena a = Arena.ofConfined()) {
+            return (MemorySegment) MH.BIDI_OPEN.invokeExact(a.allocateFrom(wsUrl));
+        } catch (Throwable t) {
+            throw wrap(t, "bidi_open");
+        }
+    }
+
+    static void bidiClose(MemorySegment handle) {
+        try {
+            MH.BIDI_CLOSE.invokeExact(handle);
+        } catch (Throwable t) {
+            throw wrap(t, "bidi_close");
+        }
+    }
+
+    static int bidiSend(MemorySegment handle, int id, String method, String paramsJson) {
+        try (Arena a = Arena.ofConfined()) {
+            return (int) MH.BIDI_SEND.invokeExact(
+                    handle, id, a.allocateFrom(method), a.allocateFrom(paramsJson));
+        } catch (Throwable t) {
+            throw wrap(t, "bidi_send");
+        }
+    }
+
+    static int bidiPump(MemorySegment handle, int timeoutMs) {
+        try {
+            return (int) MH.BIDI_PUMP.invokeExact(handle, timeoutMs);
+        } catch (Throwable t) {
+            throw wrap(t, "bidi_pump");
+        }
+    }
+
+    static int bidiFd(MemorySegment handle) {
+        try {
+            return (int) MH.BIDI_FD.invokeExact(handle);
+        } catch (Throwable t) {
+            throw wrap(t, "bidi_fd");
+        }
+    }
+
+    static String bidiPollReply(MemorySegment handle, int id) {
+        try {
+            return takeString((MemorySegment) MH.BIDI_POLL_REPLY.invokeExact(handle, id));
+        } catch (Throwable t) {
+            throw wrap(t, "bidi_poll_reply");
+        }
+    }
+
+    static String bidiPollEvent(MemorySegment handle) {
+        try {
+            return takeString((MemorySegment) MH.BIDI_POLL_EVENT.invokeExact(handle));
+        } catch (Throwable t) {
+            throw wrap(t, "bidi_poll_event");
+        }
+    }
+
+    static int bidiLostEvents(MemorySegment handle) {
+        try {
+            return (int) MH.BIDI_LOST_EVENTS.invokeExact(handle);
+        } catch (Throwable t) {
+            throw wrap(t, "bidi_lost_events");
+        }
+    }
+
+    static void bidiCancel(MemorySegment handle, int id) {
+        try {
+            MH.BIDI_CANCEL.invokeExact(handle, id);
+        } catch (Throwable t) {
+            throw wrap(t, "bidi_cancel");
+        }
+    }
+
+    static String bidiSubscribe(MemorySegment handle, int id, String eventsCsv, int timeoutMs) {
+        try (Arena a = Arena.ofConfined()) {
+            return takeString((MemorySegment) MH.BIDI_SUBSCRIBE.invokeExact(
+                    handle, id, a.allocateFrom(eventsCsv), timeoutMs));
+        } catch (Throwable t) {
+            throw wrap(t, "bidi_subscribe");
+        }
+    }
+
+    static String bidiUnsubscribe(MemorySegment handle, int id, String eventsCsv, int timeoutMs) {
+        try (Arena a = Arena.ofConfined()) {
+            return takeString((MemorySegment) MH.BIDI_UNSUBSCRIBE.invokeExact(
+                    handle, id, a.allocateFrom(eventsCsv), timeoutMs));
+        } catch (Throwable t) {
+            throw wrap(t, "bidi_unsubscribe");
+        }
+    }
+
+    static String bidiWaitEvent(MemorySegment handle, String method, int timeoutMs) {
+        try (Arena a = Arena.ofConfined()) {
+            return takeString((MemorySegment) MH.BIDI_WAIT_EVENT.invokeExact(
+                    handle, a.allocateFrom(method), timeoutMs));
+        } catch (Throwable t) {
+            throw wrap(t, "bidi_wait_event");
         }
     }
 

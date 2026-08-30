@@ -19,6 +19,8 @@ public sealed class WebDriver : IDisposable
     internal const string W3CElementKey = "element-6066-11e4-a52e-4f735466cecf";
 
     private IntPtr _handle;
+    private readonly string _wsUrl;
+    private BiDi? _bidi;
 
     private WebDriver(string commandExecutor, IDictionary<string, object?> capabilities)
     {
@@ -27,10 +29,23 @@ public sealed class WebDriver : IDisposable
         {
             throw new WebDriverError("failed to open session handle", -1);
         }
-        Execute("newSession", new Dictionary<string, object?>
+        // Request a BiDi channel so `.Bidi` is available on demand; the channel
+        // itself is opened lazily (a classic script never opens the WebSocket).
+        var caps = new Dictionary<string, object?>(capabilities) { ["webSocketUrl"] = true };
+        JsonElement? result = Execute("newSession", new Dictionary<string, object?>
         {
-            ["capabilities"] = new Dictionary<string, object?> { ["alwaysMatch"] = capabilities },
+            ["capabilities"] = new Dictionary<string, object?> { ["alwaysMatch"] = caps },
         });
+        // value.capabilities.webSocketUrl — the BiDi endpoint for this session.
+        _wsUrl = string.Empty;
+        if (result is { } value && value.ValueKind == JsonValueKind.Object &&
+            value.TryGetProperty("capabilities", out JsonElement negotiated) &&
+            negotiated.ValueKind == JsonValueKind.Object &&
+            negotiated.TryGetProperty("webSocketUrl", out JsonElement ws) &&
+            ws.ValueKind == JsonValueKind.String)
+        {
+            _wsUrl = ws.GetString() ?? string.Empty;
+        }
     }
 
     /// <summary>Pin an explicit native library path (wins over env/bundled).</summary>
@@ -170,10 +185,49 @@ public sealed class WebDriver : IDisposable
     // ---- lifecycle ----
     public string SessionId => NativeMethods.TakeString(NativeMethods.SessionId(_handle));
 
+    // ---- WebDriver-BiDi ----
+
+    /// <summary>
+    /// The event-driven BiDi surface for this session (lazily opened over the
+    /// negotiated webSocketUrl). Throws if the remote end granted no BiDi URL.
+    ///
+    ///     driver.Bidi.Subscribe("log.entryAdded");
+    ///     driver.Get(url);
+    ///     var ev = driver.Bidi.NextEvent("log.entryAdded", timeoutMs: 5000);
+    /// </summary>
+    public BiDi Bidi
+    {
+        get
+        {
+            if (_bidi == null)
+            {
+                if (string.IsNullOrEmpty(_wsUrl))
+                {
+                    throw new WebDriverError("BiDi not available: the session negotiated no webSocketUrl", 0);
+                }
+                IntPtr handle = NativeMethods.BidiOpen(_wsUrl);
+                if (handle == IntPtr.Zero)
+                {
+                    throw new WebDriverError("BiDi channel failed to open", -1);
+                }
+                _bidi = new BiDi(handle);
+            }
+            return _bidi;
+        }
+    }
+
+    /// <summary>True if this session can use BiDi (a webSocketUrl was negotiated).</summary>
+    public bool BidiAvailable => !string.IsNullOrEmpty(_wsUrl);
+
     public void Quit()
     {
         try
         {
+            if (_bidi != null)
+            {
+                _bidi.Close();
+                _bidi = null;
+            }
             Execute("quit", null);
         }
         finally
@@ -182,7 +236,15 @@ public sealed class WebDriver : IDisposable
         }
     }
 
-    public void Dispose() => CloseHandle();
+    public void Dispose()
+    {
+        if (_bidi != null)
+        {
+            _bidi.Close();
+            _bidi = null;
+        }
+        CloseHandle();
+    }
 
     private void CloseHandle()
     {

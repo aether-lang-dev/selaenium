@@ -18,12 +18,28 @@ public final class WebDriver {
 
     private MemorySegment handle;
 
+    // The BiDi endpoint negotiated at newSession; the channel opens lazily.
+    private String wsUrl = "";
+    private BiDi bidi;
+
+    @SuppressWarnings("unchecked")
     private WebDriver(String commandExecutor, Map<String, Object> capabilities) {
         this.handle = Native.open(commandExecutor);
         if (Native.isNull(handle)) {
             throw new WebDriverError("failed to open session handle", -1);
         }
-        execute("newSession", Map.of("capabilities", Map.of("alwaysMatch", capabilities)));
+        // Request a BiDi channel so bidi() is available on demand; the channel
+        // itself is opened lazily (a classic script never opens the WebSocket).
+        Map<String, Object> caps = new HashMap<>(capabilities);
+        caps.put("webSocketUrl", Boolean.TRUE);
+        Object result = execute("newSession", Map.of("capabilities", Map.of("alwaysMatch", caps)));
+        // value.capabilities.webSocketUrl — the BiDi endpoint for this session.
+        if (result instanceof Map<?, ?> m && m.get("capabilities") instanceof Map<?, ?> c) {
+            Object ws = ((Map<String, Object>) c).get("webSocketUrl");
+            if (ws instanceof String s) {
+                this.wsUrl = s;
+            }
+        }
     }
 
     /** Pin an explicit native library path (wins over env/bundled discovery). */
@@ -196,6 +212,37 @@ public final class WebDriver {
         return (String) execute("screenshot", null);
     }
 
+    // ---- WebDriver-BiDi ----
+
+    /**
+     * The event-driven BiDi surface for this session (lazily opened over the
+     * negotiated webSocketUrl). Throws if the remote end granted no BiDi URL.
+     *
+     * <pre>{@code
+     * driver.bidi().subscribe(BidiEvent.LOG_ENTRY_ADDED);
+     * driver.get(url);
+     * Map<String, Object> ev = driver.bidi().nextEvent(BidiEvent.LOG_ENTRY_ADDED, 5000);
+     * }</pre>
+     */
+    public BiDi bidi() {
+        if (bidi == null) {
+            if (wsUrl.isEmpty()) {
+                throw new WebDriverError("BiDi not available: the session negotiated no webSocketUrl", 0);
+            }
+            MemorySegment channel = Native.bidiOpen(wsUrl);
+            if (Native.isNull(channel)) {
+                throw new WebDriverError("BiDi channel failed to open", -1);
+            }
+            bidi = new BiDi(channel);
+        }
+        return bidi;
+    }
+
+    /** True if this session can use BiDi (a webSocketUrl was negotiated). */
+    public boolean bidiAvailable() {
+        return !wsUrl.isEmpty();
+    }
+
     // ---- lifecycle ----
     public String sessionId() {
         return Native.sessionId(handle);
@@ -203,6 +250,10 @@ public final class WebDriver {
 
     public void quit() {
         try {
+            if (bidi != null) {
+                bidi.close();
+                bidi = null;
+            }
             execute("quit", null);
         } finally {
             closeHandle();

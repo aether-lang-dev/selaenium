@@ -58,6 +58,44 @@ internal static class NativeMethods
     [DllImport(Lib, EntryPoint = "aether_sel_embed_error_code", CharSet = CharSet.Ansi)]
     internal static extern int ErrorCode(string w3cError);
 
+    // ---- WebDriver-BiDi (over the session's webSocketUrl) ----
+    // An opaque BiDi channel handle, independent of the W3C session handle.
+    [DllImport(Lib, EntryPoint = "aether_sel_embed_bidi_open", CharSet = CharSet.Ansi)]
+    internal static extern IntPtr BidiOpen(string wsUrl);
+
+    [DllImport(Lib, EntryPoint = "aether_sel_embed_bidi_close")]
+    internal static extern void BidiClose(IntPtr handle);
+
+    [DllImport(Lib, EntryPoint = "aether_sel_embed_bidi_send", CharSet = CharSet.Ansi)]
+    internal static extern int BidiSend(IntPtr handle, int id, string method, string paramsJson);
+
+    [DllImport(Lib, EntryPoint = "aether_sel_embed_bidi_pump")]
+    internal static extern int BidiPump(IntPtr handle, int timeoutMs);
+
+    [DllImport(Lib, EntryPoint = "aether_sel_embed_bidi_fd")]
+    internal static extern int BidiFd(IntPtr handle);
+
+    [DllImport(Lib, EntryPoint = "aether_sel_embed_bidi_poll_reply")]
+    internal static extern IntPtr BidiPollReply(IntPtr handle, int id);
+
+    [DllImport(Lib, EntryPoint = "aether_sel_embed_bidi_poll_event")]
+    internal static extern IntPtr BidiPollEvent(IntPtr handle);
+
+    [DllImport(Lib, EntryPoint = "aether_sel_embed_bidi_lost_events")]
+    internal static extern int BidiLostEvents(IntPtr handle);
+
+    [DllImport(Lib, EntryPoint = "aether_sel_embed_bidi_cancel")]
+    internal static extern void BidiCancel(IntPtr handle, int id);
+
+    [DllImport(Lib, EntryPoint = "aether_sel_embed_bidi_subscribe", CharSet = CharSet.Ansi)]
+    internal static extern IntPtr BidiSubscribe(IntPtr handle, int id, string eventsCsv, int timeoutMs);
+
+    [DllImport(Lib, EntryPoint = "aether_sel_embed_bidi_unsubscribe", CharSet = CharSet.Ansi)]
+    internal static extern IntPtr BidiUnsubscribe(IntPtr handle, int id, string eventsCsv, int timeoutMs);
+
+    [DllImport(Lib, EntryPoint = "aether_sel_embed_bidi_wait_event", CharSet = CharSet.Ansi)]
+    internal static extern IntPtr BidiWaitEvent(IntPtr handle, string method, int timeoutMs);
+
     // ---- string ownership ----
     [DllImport(Lib, EntryPoint = "aether_sel_embed_free_string")]
     internal static extern void FreeString(IntPtr s);

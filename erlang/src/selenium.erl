@@ -24,10 +24,21 @@
     perform_actions/2, clear_actions/1,
     set_timeouts/2, screenshot/1,
     session_id/1, quit/1,
-    route/1, error_code/1, locator/2
+    route/1, error_code/1, locator/2,
+    bidi_available/1, bidi_subscribe/2, bidi_unsubscribe/2,
+    bidi_next_event/3, bidi_command/4, bidi_lost_events/1
 ]).
 
 -define(W3C_KEY, <<"element-6066-11e4-a52e-4f735466cecf">>).
+
+%% Per-session BiDi state lives in a named ETS table keyed by the session
+%% handle: {Handle, WsUrl, BidiHandle, NextId}. WsUrl is the negotiated
+%% webSocketUrl (<<>> if none). BidiHandle is `undefined` until the WebSocket is
+%% opened lazily on first BiDi use — a classic script never opens it. NextId is
+%% the monotonic per-channel command-id counter (starts at 1). This mirrors the
+%% binding's design: mutable session state lives outside the immutable Erlang
+%% terms (here in ETS; the W3C session state itself lives C-side behind Handle).
+-define(BIDI_TABLE, selenium_bidi).
 
 %% ---- session lifecycle ----
 
@@ -50,12 +61,29 @@ new(CommandExecutor, Caps) ->
     case Handle of
         0 -> {error, {-1, <<"failed to open session handle">>}};
         _ ->
-            Payload = #{<<"capabilities">> => #{<<"alwaysMatch">> => Caps}},
+            %% Request a BiDi channel so bidi_* is available on demand; the
+            %% WebSocket itself opens lazily (a classic script never opens it).
+            BidiCaps = maps:put(<<"webSocketUrl">>, true, Caps),
+            Payload = #{<<"capabilities">> => #{<<"alwaysMatch">> => BidiCaps}},
             case execute(Handle, <<"newSession">>, Payload) of
-                {ok, _} -> {ok, Handle};
+                {ok, Value} ->
+                    bidi_register(Handle, ws_url_of(Value)),
+                    {ok, Handle};
                 Err -> selenium_nif:close(Handle), Err
             end
     end.
+
+%% value.capabilities.webSocketUrl — the BiDi endpoint for this session, or <<>>.
+ws_url_of(Value) when is_map(Value) ->
+    case maps:get(<<"capabilities">>, Value, undefined) of
+        Caps when is_map(Caps) ->
+            case maps:get(<<"webSocketUrl">>, Caps, undefined) of
+                Url when is_binary(Url) -> Url;
+                _ -> <<>>
+            end;
+        _ -> <<>>
+    end;
+ws_url_of(_) -> <<>>.
 
 %% ---- the FFI seam ----
 
@@ -136,9 +164,159 @@ screenshot(H) -> execute(H, <<"screenshot">>, #{}).
 %% ---- lifecycle ----
 session_id(H) -> selenium_nif:session_id(H).
 quit(H) ->
+    bidi_shutdown(H),
     R = execute(H, <<"quit">>, #{}),
     selenium_nif:close(H),
     R.
+
+%% ---- WebDriver-BiDi ----
+%%
+%% The event-driven surface for a session, multiplexed over one WebSocket by the
+%% engine's demux (single reader -> id-keyed replies + bounded event queue), so
+%% replies stay correlated while events stream. The channel opens lazily over the
+%% negotiated webSocketUrl on first use; command ids are supplied automatically.
+%% See selenium_bidi.hrl for the common event-name macros.
+
+%% True if this session negotiated a webSocketUrl (BiDi usable).
+bidi_available(H) ->
+    case bidi_lookup(H) of
+        {ok, WsUrl, _, _} -> WsUrl =/= <<>>;
+        error -> false
+    end.
+
+%% session.subscribe to one or more event names (a list of binaries); wait for
+%% the ack. Returns {ok, AckMap} | {error, {Code, Message}}. Matching events then
+%% arrive on the queue (drain via bidi_next_event/3).
+bidi_subscribe(H, Events) ->
+    with_bidi(H, fun(BH) ->
+        Id = bidi_next_id(H),
+        Raw = selenium_nif:bidi_subscribe(BH, Id, join_events(Events), 10000),
+        {ok, ack(Raw)}
+    end).
+
+bidi_unsubscribe(H, Events) ->
+    with_bidi(H, fun(BH) ->
+        Id = bidi_next_id(H),
+        Raw = selenium_nif:bidi_unsubscribe(BH, Id, join_events(Events), 10000),
+        {ok, ack(Raw)}
+    end).
+
+%% Block until an event whose method matches arrives, or timeout. Returns
+%% {ok, EventMap} | {ok, timeout} on timeout/close | {error, _}. (Subscribe
+%% first.)
+bidi_next_event(H, Method, TimeoutMs) ->
+    with_bidi(H, fun(BH) ->
+        case selenium_nif:bidi_wait_event(BH, to_bin(Method), TimeoutMs) of
+            <<>> -> {ok, timeout};
+            Raw -> {ok, decode(Raw)}
+        end
+    end).
+
+%% Issue any BiDi command and return {ok, ReplyMap} | {error, _}. Reaches BiDi
+%% methods with no dedicated wrapper (script.evaluate, network.*, ...): send +
+%% pump-poll until this id's reply arrives.
+bidi_command(H, Method, Params, TimeoutMs) ->
+    with_bidi(H, fun(BH) ->
+        Id = bidi_next_id(H),
+        case selenium_nif:bidi_send(BH, Id, to_bin(Method), encode(Params)) of
+            0 -> bidi_await_reply(BH, Id, TimeoutMs, 50, 0, Method);
+            _ -> {error, {-1, iolist_to_binary([<<"BiDi send failed: ">>, to_bin(Method)])}}
+        end
+    end).
+
+bidi_await_reply(_BH, _Id, TimeoutMs, _Step, Waited, Method) when Waited >= TimeoutMs ->
+    {error, {24, iolist_to_binary([<<"BiDi command timed out: ">>, to_bin(Method)])}};
+bidi_await_reply(BH, Id, TimeoutMs, Step, Waited, Method) ->
+    case selenium_nif:bidi_poll_reply(BH, Id) of
+        <<>> ->
+            case selenium_nif:bidi_pump(BH, Step) of
+                Rc when Rc < 0 ->
+                    {error, {-1, <<"BiDi channel closed">>}};
+                _ ->
+                    bidi_await_reply(BH, Id, TimeoutMs, Step, Waited + Step, Method)
+            end;
+        Raw -> {ok, decode(Raw)}
+    end.
+
+%% How many events the bounded queue dropped since the last call (then resets).
+%% Returns {ok, Count} | {error, _}.
+bidi_lost_events(H) ->
+    with_bidi(H, fun(BH) -> {ok, selenium_nif:bidi_lost_events(BH)} end).
+
+%% ---- BiDi internals (ETS-backed per-session state) ----
+
+bidi_table() ->
+    case ets:info(?BIDI_TABLE, name) of
+        undefined ->
+            %% public + named so any process holding the handle can use BiDi.
+            try ets:new(?BIDI_TABLE, [named_table, public, set]) of
+                _ -> ?BIDI_TABLE
+            catch
+                error:badarg -> ?BIDI_TABLE
+            end;
+        _ -> ?BIDI_TABLE
+    end.
+
+bidi_register(Handle, WsUrl) ->
+    ets:insert(bidi_table(), {Handle, WsUrl, undefined, 1}).
+
+bidi_lookup(Handle) ->
+    case ets:info(?BIDI_TABLE, name) of
+        undefined -> error;
+        _ ->
+            case ets:lookup(?BIDI_TABLE, Handle) of
+                [{Handle, WsUrl, BidiHandle, NextId}] -> {ok, WsUrl, BidiHandle, NextId};
+                [] -> error
+            end
+    end.
+
+%% Ensure the BiDi WebSocket is open (lazily) then run Fun with its handle.
+with_bidi(Handle, Fun) ->
+    case bidi_channel(Handle) of
+        {ok, BH} -> Fun(BH);
+        {error, _} = Err -> Err
+    end.
+
+bidi_channel(Handle) ->
+    case bidi_lookup(Handle) of
+        {ok, <<>>, _, _} ->
+            {error, {0, <<"BiDi not available: no webSocketUrl negotiated">>}};
+        {ok, _WsUrl, BidiHandle, _NextId} when BidiHandle =/= undefined ->
+            {ok, BidiHandle};
+        {ok, WsUrl, undefined, _NextId} ->
+            case selenium_nif:bidi_open(WsUrl) of
+                0 -> {error, {-1, <<"BiDi channel failed to open">>}};
+                BH ->
+                    ets:update_element(?BIDI_TABLE, Handle, {3, BH}),
+                    {ok, BH}
+            end;
+        error ->
+            {error, {0, <<"BiDi not available: unknown session handle">>}}
+    end.
+
+%% Atomic monotonic per-channel command id (field 4 in the ETS row), from 1.
+bidi_next_id(Handle) ->
+    ets:update_counter(?BIDI_TABLE, Handle, {4, 1}) - 1.
+
+%% Close the BiDi channel (if open) and drop the session's ETS row.
+bidi_shutdown(Handle) ->
+    case bidi_lookup(Handle) of
+        {ok, _WsUrl, BidiHandle, _NextId} when BidiHandle =/= undefined ->
+            selenium_nif:bidi_close(BidiHandle);
+        _ -> ok
+    end,
+    case ets:info(?BIDI_TABLE, name) of
+        undefined -> ok;
+        _ -> ets:delete(?BIDI_TABLE, Handle), ok
+    end.
+
+join_events(Events) when is_list(Events) ->
+    lists:join(<<",">>, [to_bin(E) || E <- Events]);
+join_events(Event) ->
+    to_bin(Event).
+
+ack(<<>>) -> #{};
+ack(Raw) -> decode(Raw).
 
 %% ---- pure engine helpers ----
 route(Command) -> selenium_nif:route(to_bin(Command)).

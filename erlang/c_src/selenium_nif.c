@@ -35,6 +35,23 @@ extern char *aether_sel_embed_build_request(const char *name, const char *sessio
 extern int   aether_sel_embed_error_code(const char *w3c_error);
 extern void  aether_sel_embed_free_string(char *s);
 
+/* ---- WebDriver-BiDi (over the session's webSocketUrl) ----
+ * An opaque BiDi channel handle, independent of the W3C session handle. NULL
+ * from bidi_open means failure. Every char* returned is caller-owned (freed
+ * via aether_sel_embed_free_string, exactly like last_value/last_error). */
+extern void *aether_sel_embed_bidi_open(const char *ws_url);
+extern void  aether_sel_embed_bidi_close(void *h);
+extern int   aether_sel_embed_bidi_send(void *h, int id, const char *method, const char *params_json);
+extern int   aether_sel_embed_bidi_pump(void *h, int timeout_ms);
+extern int   aether_sel_embed_bidi_fd(void *h);
+extern char *aether_sel_embed_bidi_poll_reply(void *h, int id);
+extern char *aether_sel_embed_bidi_poll_event(void *h);
+extern int   aether_sel_embed_bidi_lost_events(void *h);
+extern void  aether_sel_embed_bidi_cancel(void *h, int id);
+extern char *aether_sel_embed_bidi_subscribe(void *h, int id, const char *events_csv, int timeout_ms);
+extern char *aether_sel_embed_bidi_unsubscribe(void *h, int id, const char *events_csv, int timeout_ms);
+extern char *aether_sel_embed_bidi_wait_event(void *h, const char *method, int timeout_ms);
+
 /* ---- helpers ---- */
 
 /* Erlang binary/iolist term -> malloc'd NUL-terminated C string (enif_alloc). */
@@ -200,6 +217,157 @@ static ERL_NIF_TERM nif_error_code(ErlNifEnv *env, int argc, const ERL_NIF_TERM 
     return enif_make_int(env, r);
 }
 
+/* ---- WebDriver-BiDi ----
+ * The BiDi channel handle is a 64-bit integer, wrapped exactly like the session
+ * handle (make_handle/get_handle). Command ids are supplied by the caller. */
+
+static ERL_NIF_TERM nif_bidi_open(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
+{
+    UNUSED(argc);
+    char *ws_url = term_to_cstr(env, argv[0]);
+    if (!ws_url) return enif_make_badarg(env);
+    void *h = aether_sel_embed_bidi_open(ws_url);
+    enif_free(ws_url);
+    return make_handle(env, h);
+}
+
+static ERL_NIF_TERM nif_bidi_close(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
+{
+    UNUSED(argc);
+    void *h;
+    if (!get_handle(env, argv[0], &h)) return enif_make_badarg(env);
+    aether_sel_embed_bidi_close(h);
+    return enif_make_atom(env, "ok");
+}
+
+static ERL_NIF_TERM nif_bidi_send(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
+{
+    UNUSED(argc);
+    void *h;
+    int id;
+    if (!get_handle(env, argv[0], &h)) return enif_make_badarg(env);
+    if (!enif_get_int(env, argv[1], &id)) return enif_make_badarg(env);
+    char *method = term_to_cstr(env, argv[2]);
+    char *params = term_to_cstr(env, argv[3]);
+    if (!method || !params) {
+        if (method) enif_free(method);
+        if (params) enif_free(params);
+        return enif_make_badarg(env);
+    }
+    int rc = aether_sel_embed_bidi_send(h, id, method, params);
+    enif_free(method);
+    enif_free(params);
+    return enif_make_int(env, rc);
+}
+
+static ERL_NIF_TERM nif_bidi_pump(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
+{
+    UNUSED(argc);
+    void *h;
+    int timeout_ms;
+    if (!get_handle(env, argv[0], &h)) return enif_make_badarg(env);
+    if (!enif_get_int(env, argv[1], &timeout_ms)) return enif_make_badarg(env);
+    return enif_make_int(env, aether_sel_embed_bidi_pump(h, timeout_ms));
+}
+
+static ERL_NIF_TERM nif_bidi_fd(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
+{
+    UNUSED(argc);
+    void *h;
+    if (!get_handle(env, argv[0], &h)) return enif_make_badarg(env);
+    return enif_make_int(env, aether_sel_embed_bidi_fd(h));
+}
+
+static ERL_NIF_TERM nif_bidi_poll_reply(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
+{
+    UNUSED(argc);
+    void *h;
+    int id;
+    if (!get_handle(env, argv[0], &h)) return enif_make_badarg(env);
+    if (!enif_get_int(env, argv[1], &id)) return enif_make_badarg(env);
+    return take_cstr(env, aether_sel_embed_bidi_poll_reply(h, id));
+}
+
+static ERL_NIF_TERM nif_bidi_poll_event(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
+{
+    UNUSED(argc);
+    void *h;
+    if (!get_handle(env, argv[0], &h)) return enif_make_badarg(env);
+    return take_cstr(env, aether_sel_embed_bidi_poll_event(h));
+}
+
+static ERL_NIF_TERM nif_bidi_lost_events(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
+{
+    UNUSED(argc);
+    void *h;
+    if (!get_handle(env, argv[0], &h)) return enif_make_badarg(env);
+    return enif_make_int(env, aether_sel_embed_bidi_lost_events(h));
+}
+
+static ERL_NIF_TERM nif_bidi_cancel(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
+{
+    UNUSED(argc);
+    void *h;
+    int id;
+    if (!get_handle(env, argv[0], &h)) return enif_make_badarg(env);
+    if (!enif_get_int(env, argv[1], &id)) return enif_make_badarg(env);
+    aether_sel_embed_bidi_cancel(h, id);
+    return enif_make_atom(env, "ok");
+}
+
+static ERL_NIF_TERM nif_bidi_subscribe(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
+{
+    UNUSED(argc);
+    void *h;
+    int id, timeout_ms;
+    if (!get_handle(env, argv[0], &h)) return enif_make_badarg(env);
+    if (!enif_get_int(env, argv[1], &id)) return enif_make_badarg(env);
+    char *events = term_to_cstr(env, argv[2]);
+    if (!events) return enif_make_badarg(env);
+    if (!enif_get_int(env, argv[3], &timeout_ms)) {
+        enif_free(events);
+        return enif_make_badarg(env);
+    }
+    ERL_NIF_TERM r = take_cstr(env, aether_sel_embed_bidi_subscribe(h, id, events, timeout_ms));
+    enif_free(events);
+    return r;
+}
+
+static ERL_NIF_TERM nif_bidi_unsubscribe(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
+{
+    UNUSED(argc);
+    void *h;
+    int id, timeout_ms;
+    if (!get_handle(env, argv[0], &h)) return enif_make_badarg(env);
+    if (!enif_get_int(env, argv[1], &id)) return enif_make_badarg(env);
+    char *events = term_to_cstr(env, argv[2]);
+    if (!events) return enif_make_badarg(env);
+    if (!enif_get_int(env, argv[3], &timeout_ms)) {
+        enif_free(events);
+        return enif_make_badarg(env);
+    }
+    ERL_NIF_TERM r = take_cstr(env, aether_sel_embed_bidi_unsubscribe(h, id, events, timeout_ms));
+    enif_free(events);
+    return r;
+}
+
+static ERL_NIF_TERM nif_bidi_wait_event(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
+{
+    UNUSED(argc);
+    void *h;
+    int timeout_ms;
+    if (!get_handle(env, argv[0], &h)) return enif_make_badarg(env);
+    char *method = term_to_cstr(env, argv[1]);
+    if (!method) return enif_make_badarg(env);
+    if (!enif_get_int(env, argv[2], &timeout_ms)) {
+        enif_free(method);
+        return enif_make_badarg(env);
+    }
+    ERL_NIF_TERM r = take_cstr(env, aether_sel_embed_bidi_wait_event(h, method, timeout_ms));
+    enif_free(method);
+    return r;
+}
+
 static ErlNifFunc nif_funcs[] = {
     {"open",            1, nif_open,            0},
     {"close",           1, nif_close,           0},
@@ -212,6 +380,18 @@ static ErlNifFunc nif_funcs[] = {
     {"by_locator",      2, nif_by_locator,      0},
     {"route",           1, nif_route,           0},
     {"error_code",      1, nif_error_code,      0},
+    {"bidi_open",        1, nif_bidi_open,        0},
+    {"bidi_close",       1, nif_bidi_close,       0},
+    {"bidi_send",        4, nif_bidi_send,        0},
+    {"bidi_pump",        2, nif_bidi_pump,        0},
+    {"bidi_fd",          1, nif_bidi_fd,          0},
+    {"bidi_poll_reply",  2, nif_bidi_poll_reply,  0},
+    {"bidi_poll_event",  1, nif_bidi_poll_event,  0},
+    {"bidi_lost_events", 1, nif_bidi_lost_events, 0},
+    {"bidi_cancel",      2, nif_bidi_cancel,      0},
+    {"bidi_subscribe",   4, nif_bidi_subscribe,   0},
+    {"bidi_unsubscribe", 4, nif_bidi_unsubscribe, 0},
+    {"bidi_wait_event",  3, nif_bidi_wait_event,  0},
 };
 
 ERL_NIF_INIT(selenium_nif, nif_funcs, NULL, NULL, NULL, NULL)

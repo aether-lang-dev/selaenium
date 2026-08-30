@@ -29,7 +29,19 @@
     session_id/1,
     by_locator/2,
     route/1,
-    error_code/1
+    error_code/1,
+    bidi_open/1,
+    bidi_close/1,
+    bidi_send/4,
+    bidi_pump/2,
+    bidi_fd/1,
+    bidi_poll_reply/2,
+    bidi_poll_event/1,
+    bidi_lost_events/1,
+    bidi_cancel/2,
+    bidi_subscribe/4,
+    bidi_unsubscribe/4,
+    bidi_wait_event/3
 ]).
 
 init() ->
@@ -60,3 +72,17 @@ session_id(_Handle) -> erlang:nif_error(not_loaded).
 by_locator(_Strategy, _Value) -> erlang:nif_error(not_loaded).
 route(_Name) -> erlang:nif_error(not_loaded).
 error_code(_W3cError) -> erlang:nif_error(not_loaded).
+
+%% ---- WebDriver-BiDi (over the session's webSocketUrl) ----
+bidi_open(_WsUrl) -> erlang:nif_error(not_loaded).
+bidi_close(_Handle) -> erlang:nif_error(not_loaded).
+bidi_send(_Handle, _Id, _Method, _ParamsJson) -> erlang:nif_error(not_loaded).
+bidi_pump(_Handle, _TimeoutMs) -> erlang:nif_error(not_loaded).
+bidi_fd(_Handle) -> erlang:nif_error(not_loaded).
+bidi_poll_reply(_Handle, _Id) -> erlang:nif_error(not_loaded).
+bidi_poll_event(_Handle) -> erlang:nif_error(not_loaded).
+bidi_lost_events(_Handle) -> erlang:nif_error(not_loaded).
+bidi_cancel(_Handle, _Id) -> erlang:nif_error(not_loaded).
+bidi_subscribe(_Handle, _Id, _EventsCsv, _TimeoutMs) -> erlang:nif_error(not_loaded).
+bidi_unsubscribe(_Handle, _Id, _EventsCsv, _TimeoutMs) -> erlang:nif_error(not_loaded).
+bidi_wait_event(_Handle, _Method, _TimeoutMs) -> erlang:nif_error(not_loaded).
