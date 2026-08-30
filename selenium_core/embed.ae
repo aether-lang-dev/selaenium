@@ -84,6 +84,37 @@ sel_embed_execute(h: ptr, name: string, params_json: string) -> int {
     return selenium_core.execute(h, name, params_json)
 }
 
+// ---- atom-backed commands (no direct W3C endpoint; run in-page via a JS atom) ----
+//
+// isDisplayed / getAttribute / getText have no W3C HTTP route — classic Selenium
+// implements them as injected JS "atoms". The engine owns the ONE atom source
+// (core/atoms.ae) and runs it via executeScript, so a binding calls these like
+// any other command instead of re-implementing the JS. Result drains via
+// last_value (a JSON boolean / string / null). Returns 0 / W3C error code / -1.
+
+// Run an atom by name (isDisplayed / getAttribute / getText) against an element.
+// extra_json is a JSON array of extra args (e.g. "[\"href\"]" for getAttribute),
+// "" or "[]" for none.
+sel_embed_execute_atom(h: ptr, atom_name: string, elem_id: string, extra_json: string) -> int {
+    return selenium_core.execute_atom(h, atom_name, elem_id, extra_json)
+}
+
+// Convenience: is the element displayed? last_value is a JSON boolean.
+sel_embed_is_displayed(h: ptr, elem_id: string) -> int {
+    return selenium_core.execute_atom(h, "isDisplayed", elem_id, "")
+}
+
+// Convenience: the classic getAttribute(name) (property-or-attribute). last_value
+// is a JSON string or null.
+sel_embed_get_attribute(h: ptr, elem_id: string, name: string) -> int {
+    return selenium_core.execute_atom(h, "getAttribute", elem_id, sel_embed_atom_str_arg(name))
+}
+
+// Build a one-string JSON array arg ["<s>"] for an atom's extra_json. Caller frees.
+sel_embed_atom_str_arg(s: string) -> string {
+    return sel_embed_dup(selenium_core.atom_str_arg(s))
+}
+
 // ---- result accessors (drain after execute) ----
 
 // The response `value` as JSON text (the useful payload: a string, number,

@@ -21,6 +21,13 @@ aeb(cap) {
             source("bidi_demux_probe.ae")
             lib("..")
         }
+        // Atom builders unit test — the executeScript params assembly for the
+        // atom-backed commands (isDisplayed/getAttribute/getText), pure (no
+        // browser/FFI). lib("..") resolves atoms.
+        aether.program_test() {
+            source("atoms_probe.ae")
+            lib("..")
+        }
         // BiDi live slice — drives real Chrome through the shape-C demux:
         // commands, concurrency, AND the event round-trip (session.subscribe →
         // navigate → async browsingContext.load via the event queue). Self-skips

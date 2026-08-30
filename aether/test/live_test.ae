@@ -26,7 +26,7 @@ ck(label: string, cond: int) -> int {
 
 // A self-contained page as a data: URL (title + an #hdr element + a button).
 page_one() -> string {
-    return "data:text/html,<title>Page One</title><h1 id='hdr'>One</h1><button id='btn' onclick=\"document.getElementById('hdr').textContent='clicked'\">b</button>"
+    return "data:text/html,<title>Page One</title><h1 id='hdr'>One</h1><button id='btn' onclick=\"document.getElementById('hdr').textContent='clicked'\">b</button><p id='gone' style='display:none'>hidden</p><a id='lnk' href='https://example.com/x'>lnk</a>"
 }
 
 main() {
@@ -73,6 +73,16 @@ main() {
     // negative path: a missing element yields "" (typed no-such-element)
     fails = fails + ck("missing element -> ''", string.equals(webdriver.find(d, webdriver.By_ID(), "nope"), ""))
 
+    // ---- atom-backed queries (isDisplayed / getAttribute), run in-page ----
+    hdr2 = webdriver.find(d, webdriver.By_ID(), "hdr")
+    fails = fails + ck("atom is_displayed: visible #hdr", webdriver.is_displayed(d, hdr2))
+    gone = webdriver.find(d, webdriver.By_ID(), "gone")
+    fails = fails + ck("atom is_displayed: hidden #gone -> false", _not(webdriver.is_displayed(d, gone)))
+    lnk = webdriver.find(d, webdriver.By_ID(), "lnk")
+    // getAttribute('href') returns the resolved absolute URL (property semantics).
+    fails = fails + ck("atom get_attribute href",
+             string.contains(webdriver.get_attribute(d, lnk, "href"), "example.com/x"))
+
     // ---- WebDriver-BiDi: subscribe + receive an async event ----
     // chrome() negotiated webSocketUrl:true, so BiDi is available in-process.
     // Subscribe to console log entries, emit one via the classic script channel,
@@ -101,3 +111,4 @@ main() {
 }
 
 _gt0(n: int) -> int { if n > 0 { return 1 } return 0 }
+_not(n: int) -> int { if n == 0 { return 1 } return 0 }

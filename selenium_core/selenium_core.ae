@@ -17,6 +17,7 @@ import std.http.client
 import std.json
 import std.string
 import std.heap
+import atoms
 
 // ---- Session handle ------------------------------------------------------
 //
@@ -217,6 +218,35 @@ execute(sp: ptr, name: string, params_json: string) -> int {
     s.last_status = status
 
     return decode_response(s, name, resp_body)
+}
+
+// execute_atom(sp, atom_name, elem_id, extra_json) — run a JS "atom" (a command
+// with no direct W3C endpoint: isDisplayed / getAttribute / getText) against an
+// element, via executeScript. The atom source + arg assembly live in atoms.ae,
+// so every binding shares ONE implementation instead of hand-rolling it over
+// executeScript. `elem_id` is a W3C element id; `extra_json` is a JSON array of
+// any extra args (e.g. ["href"] for getAttribute), "" for none. Result drains via
+// the normal last_value_of accessor. Returns 0 / a W3C error code / -1, exactly
+// like execute(). An unknown atom is reported as "invalid argument".
+execute_atom(sp: ptr, atom_name: string, elem_id: string, extra_json: string) -> int {
+    if sp == null { return -1 }
+    s = sp as *Session
+    params = atoms.atom_params(atom_name, elem_id, extra_json)
+    if string.length(params) == 0 {
+        s.last_status = 0
+        s.last_value = ""
+        s.last_error_code = error_code("invalid argument")
+        s.last_error = string.concat("unknown atom: ", atom_name)
+        return s.last_error_code
+    }
+    return execute(sp, "executeScript", params)
+}
+
+// atom_str_arg(s) — a JSON array holding one string: `["<s>"]`, s JSON-escaped.
+// A binding uses this to pass e.g. getAttribute's name as the atom's extra arg.
+atom_str_arg(s: string) -> string {
+    j, _e = json.stringify(json.str(s))
+    return string.concat("[", string.concat(j, "]"))
 }
 
 // Build a JSON object string of every param EXCEPT the path parameters and

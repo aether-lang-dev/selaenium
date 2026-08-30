@@ -1,0 +1,130 @@
+// atoms.ae — the JavaScript "atoms" for commands the W3C protocol has no direct
+// HTTP endpoint for, executed in-page via executeScript. Classic Selenium ships
+// these as compiled Closure atoms (bot.dom.isShown, bot.dom.getProperty, …);
+// this module keeps a compact, faithful equivalent in ONE place so every binding
+// gets identical semantics instead of each re-implementing them over
+// executeScript. See docs/Atoms.md.
+//
+// An atom is a self-contained JS function body of the form `function(){ … }`
+// applied to arguments; the first argument is the target element (passed as a
+// W3C element reference in the executeScript args, which the remote end rehydrates
+// into a real DOM node). The atom RETURNS a JSON-serializable value.
+//
+// Flow: atom_script(name) yields the wrapped `return (function(el, …){…})
+// (arguments[0], …);` string; execute.ae runs it through executeScript with the
+// element ref as arguments[0]. The engine exposes is_displayed / get_attribute /
+// get_text over this so the flat C ABI carries them like any other command.
+import std.string
+
+// W3C element identifier key — a reference {ELEMENT_KEY: id} in executeScript
+// args is rehydrated into the live element the atom receives as arguments[0].
+ELEMENT_KEY() -> string { return "element-6066-11e4-a52e-4f735466cecf" }
+
+// ---- the atom bodies (JS source) ----
+
+// isDisplayed: the visibility algorithm. Compact form of bot.dom.isShown —
+// covers the cases that actually differ from naive checks: detached nodes,
+// display:none / visibility:hidden / hidden attribute up the ancestor chain,
+// zero-size without overflow, opacity 0, and <option>/<input hidden>. Returns a
+// boolean.
+_ATOM_IS_DISPLAYED() -> string {
+    return "function(el){if(!el||!el.ownerDocument||!el.ownerDocument.documentElement.contains(el))return false;if(el.nodeType!==1)return false;var tag=el.tagName.toLowerCase();if(tag==='input'&&el.type==='hidden')return false;if(tag==='noscript'||tag==='script'||tag==='style')return false;function css(e,p){var v=e.ownerDocument.defaultView.getComputedStyle(e);return v?v.getPropertyValue(p):null;}function shown(e){if(e.nodeType===9)return true;if(css(e,'display')==='none')return false;if(css(e,'visibility')==='hidden'||css(e,'visibility')==='collapse')return false;if(parseFloat(css(e,'opacity')||'1')===0)return false;var p=e.parentNode;if(p&&p.nodeType===1&&!shown(p))return false;return true;}if(!shown(el))return false;var r=el.getClientRects();if(el.offsetWidth<=0&&el.offsetHeight<=0&&(!r||r.length===0)){if(css(el,'display')!=='inline'&&(css(el,'overflow')||'visible')!=='visible')return false;}return true;}"
+}
+
+// getAttribute: the property-or-attribute atom (bot.dom.getAttribute). W3C's
+// getDomAttribute returns only the literal attribute; this reproduces the classic
+// getAttribute(name) that WebDriver users expect — boolean attributes return
+// "true"/null, certain names read the live PROPERTY (value, checked, selected,
+// disabled, …), aria-/data-* fall through to the attribute. Returns a string or
+// null.
+_ATOM_GET_ATTRIBUTE() -> string {
+    return "function(el,name){var BOOL={async:1,autofocus:1,autoplay:1,checked:1,compact:1,complete:1,controls:1,declare:1,defaultchecked:1,defaultselected:1,defer:1,disabled:1,draggable:1,ended:1,formnovalidate:1,hidden:1,indeterminate:1,iscontenteditable:1,ismap:1,itemscope:1,loop:1,multiple:1,muted:1,nohref:1,noresize:1,noshade:1,novalidate:1,nowrap:1,open:1,paused:1,pubdate:1,readonly:1,required:1,reversed:1,scoped:1,seamless:1,seeking:1,selected:1,truespeed:1,willvalidate:1};var PROP={value:'value',checked:'checked',selected:'selected',disabled:'disabled',readonly:'readOnly',multiple:'multiple',required:'required',hidden:'hidden',index:'index','class':'className','for':'htmlFor'};var n=name.toLowerCase();if(BOOL[n]){return el[PROP[n]||n]?'true':null;}if(PROP[n]!==undefined){var pv=el[PROP[n]];return pv==null?null:''+pv;}var a=el.getAttribute(name);return a==null?null:''+a;}"
+}
+
+// getText: the visible-text atom (bot.dom.getVisibleText, compact). The W3C
+// getElementText already normalizes, but this atom gives a binding a consistent
+// fallback and matches the classic trimming/whitespace-collapse. Returns a string.
+_ATOM_GET_TEXT() -> string {
+    return "function(el){var t=el.innerText||el.textContent||'';return t.replace(/\\s+/g,' ').replace(/^\\s+|\\s+$/g,'');}"
+}
+
+// atom_body(name) — the raw JS function source for an atom name, or "".
+atom_body(name: string) -> string {
+    if string.equals(name, "isDisplayed") == 1 { return _ATOM_IS_DISPLAYED() }
+    if string.equals(name, "getAttribute") == 1 { return _ATOM_GET_ATTRIBUTE() }
+    if string.equals(name, "getText") == 1 { return _ATOM_GET_TEXT() }
+    return ""
+}
+
+// atom_script(name) — the executeScript `script` string: `return (<atom>).apply
+// (null, arguments);`, so the element ref (arguments[0]) and any extra args are
+// applied to the atom. "" if the atom is unknown.
+atom_script(name: string) -> string {
+    body = atom_body(name)
+    if string.length(body) == 0 { return "" }
+    return string.concat("return (", string.concat(body, ").apply(null, arguments);"))
+}
+
+// atom_args(elem_id, extra_json) — the executeScript args array JSON: the element
+// reference first, then any extra args spliced from extra_json (a JSON array
+// string, or "" / "[]" for none). e.g.
+//   atom_args("e.1", "")            -> [{"element-…":"e.1"}]
+//   atom_args("e.1", "[\"href\"]")  -> [{"element-…":"e.1"},"href"]
+atom_args(elem_id: string, extra_json: string) -> string {
+    elem_ref = string.concat("{\"", string.concat(ELEMENT_KEY(), string.concat("\":\"", string.concat(elem_id, "\"}"))))
+    extra = extra_json
+    if string.length(extra) == 0 { extra = "[]" }
+    // strip the surrounding [ ] of extra and, if it had contents, comma-join.
+    inner = _array_inner(extra)
+    if string.length(inner) == 0 {
+        return string.concat("[", string.concat(elem_ref, "]"))
+    }
+    return string.concat("[", string.concat(elem_ref, string.concat(",", string.concat(inner, "]"))))
+}
+
+// atom_params(elem_id, extra_json) — the full executeScript params JSON
+// {"script":...,"args":...} for an atom applied to an element. "" if unknown atom.
+atom_params(name: string, elem_id: string, extra_json: string) -> string {
+    scr = atom_script(name)
+    if string.length(scr) == 0 { return "" }
+    scr_json = _qjson(scr)
+    args = atom_args(elem_id, extra_json)
+    return string.concat("{\"script\":", string.concat(scr_json, string.concat(",\"args\":", string.concat(args, "}"))))
+}
+
+// _array_inner("[a,b]") -> "a,b"; "[]" -> "". Trims one leading '[' and trailing
+// ']' (the caller passes a well-formed JSON array).
+_array_inner(arr: string) -> string {
+    n = string.length(arr)
+    if n < 2 { return "" }
+    // find first '[' and last ']'
+    lo = string.index_of(arr, "[")
+    if lo < 0 { return "" }
+    hi = _last_index_of(arr, "]")
+    if hi <= lo { return "" }
+    return string.substring(arr, lo + 1, hi)
+}
+
+_last_index_of(s: string, ch: string) -> int {
+    n = string.length(s)
+    i = n - 1
+    found = -1
+    while i >= 0 {
+        c = string.substring(s, i, i + 1)
+        if string.equals(c, ch) == 1 { found = i; i = -1 } else { i = i - 1 }
+    }
+    return found
+}
+
+_qjson(str_val: string) -> string {
+    // A JSON string literal for arbitrary script text: escape backslash, quote,
+    // and the control chars that appear in JS (newline/tab/CR). The atoms here are
+    // single-line, but be safe.
+    out = str_val
+    out = string.replace(out, "\\", "\\\\")
+    out = string.replace(out, "\"", "\\\"")
+    out = string.replace(out, "\n", "\\n")
+    out = string.replace(out, "\t", "\\t")
+    out = string.replace(out, "\r", "\\r")
+    return string.concat("\"", string.concat(out, "\""))
+}

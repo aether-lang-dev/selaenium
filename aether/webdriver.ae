@@ -139,6 +139,30 @@ element_tag(sp: ptr, elem_id: string) -> string {
 }
 click(sp: ptr, elem_id: string) { _do(sp, "clickElement", _elem_body(elem_id)) }
 
+// ---- atom-backed element queries (no W3C endpoint; run via the engine's atoms) ----
+
+// is_displayed(session, elem) -> 1 visible / 0 hidden. Runs the isDisplayed atom
+// (bot.dom.isShown equivalent) in-page via the engine — the ONE shared impl.
+is_displayed(sp: ptr, elem_id: string) -> int {
+    if sp == null { return 0 }
+    s = sp as *WdSession
+    rc = selenium_core.execute_atom(s.engine, "isDisplayed", elem_id, "")
+    if rc != 0 { return 0 }
+    if string.equals(_value(sp), "true") == 1 { return 1 }
+    return 0
+}
+
+// get_attribute(session, elem, name) -> the classic property-or-attribute value
+// ("" if null/absent). The atom reproduces getAttribute(name) semantics (boolean
+// attrs, live properties like value/checked) rather than the raw DOM attribute.
+get_attribute(sp: ptr, elem_id: string, name: string) -> string {
+    if sp == null { return "" }
+    s = sp as *WdSession
+    rc = selenium_core.execute_atom(s.engine, "getAttribute", elem_id, selenium_core.atom_str_arg(name))
+    if rc != 0 { return "" }
+    return _unwrap(_value(sp))
+}
+
 // ---- script ----
 execute_script(sp: ptr, script: string, args_json: string) -> string {
     body = "{\"script\":${_qjson(script)},\"args\":${args_json}}"
