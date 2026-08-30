@@ -2,10 +2,11 @@
 // newSession(webSocketUrl:true), bidi_open, and drive commands through the pump
 // + demux. Proves the shape-C demux against REAL Chrome, incl. concurrency.
 import driver
-import bidi
+import selenium_bidi
 import std.http.client
 import std.json
 import std.string
+import std.os
 
 extern exit(code: int)
 
@@ -15,9 +16,13 @@ main() {
     if dh == null { println("SKIPPED: no chromedriver resolvable"); exit(0) }
     base = driver.url_of(dh)
 
-    // 2. newSession with webSocketUrl:true (+ cached CfT chrome binary).
-    chromebin = "/home/paul/.cache/selenium/chrome/linux64/152.0.7977.64/chrome"
-    caps = "{\"capabilities\":{\"alwaysMatch\":{\"webSocketUrl\":true,\"goog:chromeOptions\":{\"binary\":\"${chromebin}\",\"args\":[\"--headless=new\",\"--no-sandbox\",\"--disable-gpu\",\"--disable-dev-shm-usage\"]}}}}"
+    // 2. newSession with webSocketUrl:true. Let ChromeDriver locate Chrome
+    // (system install or the driver manager's cache); an explicit binary path
+    // can be added via SEL_CHROME_BINARY when the box has no default Chrome.
+    chromebin = os.getenv("SEL_CHROME_BINARY")
+    binpart = ""
+    if string.length(chromebin) > 0 { binpart = "\"binary\":\"${chromebin}\"," }
+    caps = "{\"capabilities\":{\"alwaysMatch\":{\"webSocketUrl\":true,\"goog:chromeOptions\":{${binpart}\"args\":[\"--headless=new\",\"--no-sandbox\",\"--disable-gpu\",\"--disable-dev-shm-usage\"]}}}}"
     req = client.request("POST", "${base}/session")
     _h = client.set_header(req, "Content-Type", "application/json")
     _b = client.set_body(req, caps, string.length(caps), "application/json")
@@ -36,36 +41,53 @@ main() {
     println("  ok: newSession -> webSocketUrl")
 
     // 3. open BiDi over shape-C session.
-    s = bidi.bidi_open(wsurl)
+    s = selenium_bidi.bidi_open(wsurl)
     if s == null { println("FAIL bidi_open"); driver.stop(dh); exit(1) }
 
     fails = 0
 
     // 4. a command via pump+demux.
-    r1 = bidi.bidi_command(s, 1, "session.status", "{}", 10000)
+    r1 = selenium_bidi.bidi_command(s, 1, "session.status", "{}", 10000)
     fails = fails + ck("session.status via demux", string.contains(r1, "\"type\":\"success\""))
 
     // 5. subscribe + a second command (browsingContext.getTree).
-    r2 = bidi.bidi_command(s, 2, "browsingContext.getTree", "{}", 10000)
+    r2 = selenium_bidi.bidi_command(s, 2, "browsingContext.getTree", "{}", 10000)
     fails = fails + ck("browsingContext.getTree via demux", string.contains(r2, "context"))
 
     // 6. CONCURRENCY: two commands in flight, then pump; both replies correlate.
-    bidi.bidi_send(s, 10, "session.status", "{}")
-    bidi.bidi_send(s, 11, "browsingContext.getTree", "{}")
+    selenium_bidi.bidi_send(s, 10, "session.status", "{}")
+    selenium_bidi.bidi_send(s, 11, "browsingContext.getTree", "{}")
     // pump until both replies are in (bounded).
     got10 = ""
     got11 = ""
     waited = 0
     while waited < 10000 {
-        if string.length(got10) == 0 { got10 = bidi.bidi_poll_reply(s, 10) }
-        if string.length(got11) == 0 { got11 = bidi.bidi_poll_reply(s, 11) }
+        if string.length(got10) == 0 { got10 = selenium_bidi.bidi_poll_reply(s, 10) }
+        if string.length(got11) == 0 { got11 = selenium_bidi.bidi_poll_reply(s, 11) }
         if string.length(got10) > 0 { if string.length(got11) > 0 { waited = 99999 } }
-        if waited < 99999 { bidi.bidi_pump(s, 50); waited = waited + 50 }
+        if waited < 99999 { selenium_bidi.bidi_pump(s, 50); waited = waited + 50 }
     }
     fails = fails + ck("concurrent id 10 correlates", string.contains(got10, "\"type\":\"success\""))
     fails = fails + ck("concurrent id 11 correlates", string.contains(got11, "context"))
 
-    bidi.bidi_close(s)
+    // 7. EVENTS (the bidirectional half): subscribe to browsingContext.load,
+    // navigate the top context, and RECEIVE the async event via the demux queue.
+    // The context id comes from the getTree reply we already have (got11).
+    ctx_id = _first_context(got11)
+    fails = fails + ck("extracted a context id", ck_nonempty(ctx_id))
+
+    sub = selenium_bidi.bidi_subscribe(s, 20, "browsingContext.load", 10000)
+    fails = fails + ck("session.subscribe ack", string.contains(sub, "\"type\":\"success\""))
+
+    // navigate (id 21) — fire-and-forget; the load EVENT is what we assert on.
+    navp = "{\"context\":\"${ctx_id}\",\"url\":\"about:blank\",\"wait\":\"complete\"}"
+    selenium_bidi.bidi_send(s, 21, "browsingContext.navigate", navp)
+
+    ev = selenium_bidi.bidi_wait_event(s, "browsingContext.load", 10000)
+    fails = fails + ck("browsingContext.load event received (async)",
+             string.contains(ev, "browsingContext.load"))
+
+    selenium_bidi.bidi_close(s)
     driver.stop(dh)
 
     if fails == 0 { println("PASS: BiDi shape-C live slice green (demux drove real Chrome, concurrent)") ; exit(0) }
@@ -76,4 +98,27 @@ main() {
 ck(label: string, cond: int) -> int {
     if cond == 1 { println("  ok: ${label}"); return 0 }
     println("FAIL: ${label}"); return 1
+}
+
+ck_nonempty(s: string) -> int {
+    if string.length(s) > 0 { return 1 }
+    return 0
+}
+
+// _first_context(getTree_reply) — pull the first context's id out of a
+// browsingContext.getTree success reply: value.contexts[0].context.
+_first_context(reply_json: string) -> string {
+    root, perr = json.parse(reply_json)
+    if string.length(perr) > 0 { return "" }
+    val, _v = json.object_get(root, "result")
+    if val == null { val, _v2 = json.object_get(root, "value") }
+    if val == null { return "" }
+    ctxs, _c = json.object_get(val, "contexts")
+    if ctxs == null { return "" }
+    first, _f = json.array_get(ctxs, 0)
+    if first == null { return "" }
+    cidv, _ci = json.object_get(first, "context")
+    if cidv == null { return "" }
+    cid, _cs = json.get_string(cidv)
+    return cid
 }

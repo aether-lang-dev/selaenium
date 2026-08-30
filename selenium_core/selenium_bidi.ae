@@ -1,4 +1,4 @@
-// bidi.ae — the live BiDi session (shape C): a WebSocket handle + the pure demux
+// selenium_bidi.ae — the live BiDi session (shape C): a WebSocket handle + the pure demux
 // (bidi_demux.ae), wired via Aether's non-blocking ws primitives (ws_recv_timeout
 // / ws_poll / ws_fd, ae 0.606+). The engine holds NO thread: bidi_pump advances
 // the single demux one step (bounded by timeout_ms), and the caller drives the
@@ -126,6 +126,80 @@ bidi_command(sp: ptr, id: int, method: string, params_json: string, timeout_ms: 
             waited = waited + step
             if waited >= timeout_ms { done = 1 }
         }
+    }
+    return out
+}
+
+// ---- events: subscribe + wait (the bidirectional half BiDi exists for) ----
+
+// bidi_subscribe(session, id, events_csv, timeout_ms) — session.subscribe to a
+// comma-separated list of event names (e.g. "log.entryAdded,browsingContext.load"),
+// and wait for the subscribe ack. Returns the ack reply JSON, or "" on failure.
+// After this returns, matching events arrive on the demux event queue; drain them
+// with bidi_wait_event / bidi_poll_event.
+bidi_subscribe(sp: ptr, id: int, events_csv: string, timeout_ms: int) -> string {
+    params = "{\"events\":[${_csv_to_json_array(events_csv)}]}"
+    return bidi_command(sp, id, "session.subscribe", params, timeout_ms)
+}
+
+// bidi_unsubscribe(session, id, events_csv, timeout_ms) — the inverse.
+bidi_unsubscribe(sp: ptr, id: int, events_csv: string, timeout_ms: int) -> string {
+    params = "{\"events\":[${_csv_to_json_array(events_csv)}]}"
+    return bidi_command(sp, id, "session.unsubscribe", params, timeout_ms)
+}
+
+// bidi_wait_event(session, method, timeout_ms) — pump the demux until an event
+// whose "method" matches arrives (from the bounded event queue), or timeout.
+// Returns the event JSON, or "" on timeout/close. Non-matching events that arrive
+// first are DROPPED here (already dequeued); a consumer wanting every event drains
+// bidi_poll_event itself. Correlation stays exact: replies are unaffected (they
+// route to the id-table, not the event queue).
+bidi_wait_event(sp: ptr, method: string, timeout_ms: int) -> string {
+    waited = 0
+    step = 50
+    while waited < timeout_ms {
+        ev = bidi_poll_event(sp)
+        if string.length(ev) > 0 {
+            if _event_method_is(ev, method) == 1 { return ev }
+            // a non-matching event — keep draining without advancing the clock.
+        } else {
+            pr = bidi_pump(sp, step)
+            if pr < 0 { return "" }
+            waited = waited + step
+        }
+    }
+    return ""
+}
+
+// _event_method_is(event_json, method) — 1 if the event's "method" equals method.
+_event_method_is(event_json: string, method: string) -> int {
+    root, perr = json.parse(event_json)
+    if string.length(perr) > 0 { return 0 }
+    mv, _m = json.object_get(root, "method")
+    if mv == null { return 0 }
+    mname, _mn = json.get_string(mv)
+    if string.equals(mname, method) == 1 { return 1 }
+    return 0
+}
+
+// _csv_to_json_array("a,b") -> "\"a\",\"b\"" — quote each comma-separated token
+// for a JSON string array body. Empty in -> "".
+_csv_to_json_array(csv: string) -> string {
+    if string.length(csv) == 0 { return "" }
+    out = ""
+    rest = csv
+    done = 0
+    while done == 0 {
+        idx = string.index_of(rest, ",")
+        tok = rest
+        if idx >= 0 {
+            tok = string.substring(rest, 0, idx)
+            rest = string.substring(rest, idx + 1, string.length(rest))
+        } else {
+            done = 1
+        }
+        if string.length(out) > 0 { out = string.concat(out, ",") }
+        out = string.concat(out, _qjson(tok))
     }
     return out
 }

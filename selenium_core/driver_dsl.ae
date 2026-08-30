@@ -1,22 +1,24 @@
-// webdriver.ae — the BEAUTIFUL Aether-facing driver API (builder-DSL).
+// driver_dsl.ae — the Aether-facing driver-config builder-DSL.
 //
-// Two faces, one core: the flat sel_embed_* C ABI (embed.ae) serves the 18 FFI
-// bindings; THIS module is the native-Aether surface for the pure-Aether
-// consumer and the future Aether-language Selenium client. It brings the
-// closures/builder-DSL beauty (aether/docs/closures-and-builder-dsl.md — the
-// "DSL with scope" lineage), the same `builder func(){…}` mechanism aeb's own
-// build grammar uses:
+// The driver-resolution half of the beautiful native surface: a `builder`-block
+// config over the resolve→launch pipeline (driver.ae). The FULL native client
+// (session + navigation + find/click/…) lives in aether/webdriver.ae, which is
+// THE `webdriver` module; this one is named driver_dsl to stay out of that
+// module's namespace (importing it as `webdriver` shadowed the native client
+// on the shared --lib search path). It brings the closures/builder-DSL beauty
+// (aether/docs/closures-and-builder-dsl.md — the "DSL with scope" lineage), the
+// same `builder func(){…}` mechanism aeb's own build grammar uses:
 //
-//   import webdriver
+//   import driver_dsl
 //
-//   d = webdriver.chrome() {
+//   d = driver_dsl.chrome() {
 //       version("stable")            // or pin "152.0.7977.64"
 //       cache("~/.cache/selenium")   // override the cache root
 //       offline()                    // resolve from cache only
 //       timeout_ms(10000)            // driver-readiness bound
 //   }
 //   // … use d …
-//   webdriver.stop(d)
+//   driver_dsl.stop(d)
 //
 // chrome()/firefox()/edge() are `builder` functions: the trailing block fills a
 // config (via the setters below on the injected `_builder`), then the function

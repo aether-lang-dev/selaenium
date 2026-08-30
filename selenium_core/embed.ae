@@ -34,7 +34,7 @@
 import selenium_core
 import selenium_core (Session)
 import driver
-import bidi
+import selenium_bidi
 import std.string
 
 // Caller-owned-string helper (core/_embed_strdup.c): malloc/strdup a C string
@@ -200,17 +200,17 @@ sel_embed_stop_driver(dh: ptr) {
 // Open the BiDi channel to a session's webSocketUrl. Returns an opaque handle
 // (null on connect failure), independent of the W3C session handle.
 sel_embed_bidi_open(ws_url: string) -> ptr {
-    return bidi.bidi_open(ws_url)
+    return selenium_bidi.bidi_open(ws_url)
 }
 
 sel_embed_bidi_close(h: ptr) {
-    bidi.bidi_close(h)
+    selenium_bidi.bidi_close(h)
 }
 
 // Frame + send one command; the CALLER supplies the id (so concurrent commands
 // stay distinct and compose with the binding's async). Returns 0 sent / -1 err.
 sel_embed_bidi_send(h: ptr, id: int, method: string, params_json: string) -> int {
-    return bidi.bidi_send(h, id, method, params_json)
+    return selenium_bidi.bidi_send(h, id, method, params_json)
 }
 
 // Advance the single demux ONE step: read up to one frame (bounded by
@@ -218,35 +218,63 @@ sel_embed_bidi_send(h: ptr, id: int, method: string, params_json: string) -> int
 // Returns 1 routed / 0 timed out / -1 closed. No engine thread — the binding
 // loops this (or waits on the fd) then drains via the poll calls below.
 sel_embed_bidi_pump(h: ptr, timeout_ms: int) -> int {
-    return bidi.bidi_pump(h, timeout_ms)
+    return selenium_bidi.bidi_pump(h, timeout_ms)
 }
 
 // The readable socket fd, for a native event loop (asyncio.add_reader/epoll).
 // Readiness is a HINT: on wake, always drain via bidi_pump(h, 0) until 0.
 sel_embed_bidi_fd(h: ptr) -> int {
-    return bidi.bidi_fd(h)
+    return selenium_bidi.bidi_fd(h)
 }
 
 // The reply JSON for a command id if it has arrived (and consume it), else "".
 // Returns immediately. Caller frees.
 sel_embed_bidi_poll_reply(h: ptr, id: int) -> string {
-    return sel_embed_dup(bidi.bidi_poll_reply(h, id))
+    return sel_embed_dup(selenium_bidi.bidi_poll_reply(h, id))
 }
 
 // The next queued event JSON (and dequeue), or "". Returns immediately. Frees.
 sel_embed_bidi_poll_event(h: ptr) -> string {
-    return sel_embed_dup(bidi.bidi_poll_event(h))
+    return sel_embed_dup(selenium_bidi.bidi_poll_event(h))
 }
 
 // How many events the bounded queue dropped, then resets to 0 (so a consumer
 // knows it missed events — BEEP's flow-control lesson).
 sel_embed_bidi_lost_events(h: ptr) -> int {
-    return bidi.bidi_lost_events(h)
+    return selenium_bidi.bidi_lost_events(h)
 }
 
 // A waiter gave up: drop its pending-reply slot so a late reply is discarded.
 sel_embed_bidi_cancel(h: ptr, id: int) {
-    bidi.bidi_cancel(h, id)
+    selenium_bidi.bidi_cancel(h, id)
+}
+
+// ---- BiDi events (subscribe + wait) ----
+//
+// The bidirectional half: session.subscribe to event names, then receive the
+// async events on the demux queue. These are convenience verbs over the
+// send/pump/poll primitives above — a binding can also drive subscribe by hand
+// via bidi_send("session.subscribe", …) + poll_event. events_csv is a
+// comma-separated list of BiDi event names (e.g.
+// "log.entryAdded,browsingContext.load"). Caller supplies the id.
+
+// session.subscribe to events_csv; waits for the ack. Returns the ack JSON (""
+// on failure). After it returns, matching events land on the queue. Caller frees.
+sel_embed_bidi_subscribe(h: ptr, id: int, events_csv: string, timeout_ms: int) -> string {
+    return sel_embed_dup(selenium_bidi.bidi_subscribe(h, id, events_csv, timeout_ms))
+}
+
+// session.unsubscribe from events_csv; waits for the ack. Caller frees.
+sel_embed_bidi_unsubscribe(h: ptr, id: int, events_csv: string, timeout_ms: int) -> string {
+    return sel_embed_dup(selenium_bidi.bidi_unsubscribe(h, id, events_csv, timeout_ms))
+}
+
+// Pump the demux until an event with method `method` arrives, or timeout_ms.
+// Returns the event JSON, or "" on timeout/close. Non-matching events dequeued
+// while waiting are dropped by this helper — a binding that needs every event
+// drives bidi_pump + bidi_poll_event itself. Caller frees.
+sel_embed_bidi_wait_event(h: ptr, method: string, timeout_ms: int) -> string {
+    return sel_embed_dup(selenium_bidi.bidi_wait_event(h, method, timeout_ms))
 }
 
 // ---- string ownership ----

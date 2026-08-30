@@ -6,15 +6,19 @@ aeb(cap) {
     bldr.build() {
         aether.shared_lib() {
             source("embed.ae")
-            caps("net,os")
+            // drivermgr/ modules (resolve/browser/version/cft/cache) import each
+            // other by bare name and driver.ae imports `resolve` — add the subdir
+            // as an aetherc module-search path so those resolve at compile time.
+            lib("drivermgr")
+            caps("net,os,fs")
             extra_source("_embed_strdup.c")
             output("libselenium_core.so")
         }
         // Stage an in-tree copy for link-time bindings' fixed -L path. The
-        // shared_lib .so lands at <repo>/target/build/selenium_core/lib/; from
-        // this node's source_dir (selenium_core/) that is ../target/build/...
+        // shared_lib .so lands in this node's own target/build/lib/ (node-local
+        // target dir), i.e. selenium_core/target/build/lib/ from source_dir.
         copy.file() {
-            from("../target/build/selenium_core/lib/libselenium_core.so")
+            from("target/build/lib/libselenium_core.so")
             to("native/libselenium_core.so")
         }
     }

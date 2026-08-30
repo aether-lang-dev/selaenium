@@ -1,0 +1,128 @@
+// core_tests/bidi_demux_probe.ae — pure-Aether unit test for the BiDi frame
+// router (bidi_demux.ae, shape C). Proves the correctness core of the BiDi
+// multiplexer with NO socket, NO browser, NO FFI: reply/event classification,
+// id-keyed correlation (including out-of-order concurrent replies),
+// uncorrelated-reply drop, cancel, event FIFO, and the bounded event queue's
+// drop-oldest + lost-count. Run via core_tests/.tests.ae (lib("..") resolves
+// bidi_demux). The live end-to-end BiDi slice is a separate, browser-dependent
+// test (bidi_probe.ae).
+import bidi_demux
+import std.string
+
+extern exit(code: int)
+
+check_eq(label: string, got: string, want: string) -> int {
+    if string.equals(got, want) == 1 {
+        println("  ok: ${label}")
+        return 0
+    }
+    println("FAIL: ${label}")
+    println("      got:  ${got}")
+    println("      want: ${want}")
+    return 1
+}
+
+check_int(label: string, got: int, want: int) -> int {
+    if got == want {
+        println("  ok: ${label}")
+        return 0
+    }
+    println("FAIL: ${label} got=${got} want=${want}")
+    return 1
+}
+
+main() {
+    println("== bidi_demux router probe ==")
+    fails = 0
+
+    // ---- 1. a registered id's reply is routed and correlated ----
+    d = bidi_demux.demux_new()
+    bidi_demux.demux_register(d, 1)
+    fails = fails + check_int("ingest reply (registered) -> 1",
+             bidi_demux.demux_ingest(d, "{\"id\":1,\"result\":{\"ready\":true}}"), 1)
+    fails = fails + check_eq("poll_reply(1) returns the frame",
+             bidi_demux.demux_poll_reply(d, 1), "{\"id\":1,\"result\":{\"ready\":true}}")
+    // consumed: a second poll is empty.
+    fails = fails + check_eq("poll_reply(1) again is empty",
+             bidi_demux.demux_poll_reply(d, 1), "")
+
+    // ---- 2. an error reply is still a reply (id-routed) ----
+    bidi_demux.demux_register(d, 2)
+    fails = fails + check_int("ingest error reply -> 1",
+             bidi_demux.demux_ingest(d, "{\"id\":2,\"error\":\"unknown command\"}"), 1)
+    fails = fails + check_eq("poll_reply(2) returns the error frame",
+             bidi_demux.demux_poll_reply(d, 2), "{\"id\":2,\"error\":\"unknown command\"}")
+
+    // ---- 3. an uncorrelated reply (never registered) is DROPPED, not kept ----
+    fails = fails + check_int("ingest reply for unknown id -> 0 (dropped)",
+             bidi_demux.demux_ingest(d, "{\"id\":999,\"result\":{}}"), 0)
+    fails = fails + check_eq("poll_reply(999) is empty (mis-route guard)",
+             bidi_demux.demux_poll_reply(d, 999), "")
+
+    // ---- 4. out-of-order concurrent replies stay distinct (the core claim) ----
+    bidi_demux.demux_register(d, 10)
+    bidi_demux.demux_register(d, 11)
+    // reply for 11 arrives BEFORE 10.
+    fails = fails + check_int("ingest reply 11 (before 10) -> 1",
+             bidi_demux.demux_ingest(d, "{\"id\":11,\"result\":{\"tree\":\"B\"}}"), 1)
+    fails = fails + check_int("ingest reply 10 -> 1",
+             bidi_demux.demux_ingest(d, "{\"id\":10,\"result\":{\"status\":\"A\"}}"), 1)
+    // each id gets ITS OWN reply, regardless of arrival order.
+    fails = fails + check_eq("poll_reply(10) is A",
+             bidi_demux.demux_poll_reply(d, 10), "{\"id\":10,\"result\":{\"status\":\"A\"}}")
+    fails = fails + check_eq("poll_reply(11) is B",
+             bidi_demux.demux_poll_reply(d, 11), "{\"id\":11,\"result\":{\"tree\":\"B\"}}")
+
+    // ---- 5. cancel drops the slot: a late reply is then discarded ----
+    bidi_demux.demux_register(d, 20)
+    bidi_demux.demux_cancel(d, 20)
+    fails = fails + check_int("ingest reply for cancelled id -> 0 (dropped)",
+             bidi_demux.demux_ingest(d, "{\"id\":20,\"result\":{}}"), 0)
+    fails = fails + check_eq("poll_reply(20) is empty after cancel",
+             bidi_demux.demux_poll_reply(d, 20), "")
+
+    // ---- 6. an id-less frame is an event, routed to the queue ----
+    fails = fails + check_int("ingest event -> 2",
+             bidi_demux.demux_ingest(d, "{\"type\":\"event\",\"method\":\"log.entryAdded\",\"params\":{}}"), 2)
+    fails = fails + check_int("event_count == 1", bidi_demux.demux_event_count(d), 1)
+    fails = fails + check_eq("poll_event returns it",
+             bidi_demux.demux_poll_event(d),
+             "{\"type\":\"event\",\"method\":\"log.entryAdded\",\"params\":{}}")
+    fails = fails + check_eq("poll_event empty after drain", bidi_demux.demux_poll_event(d), "")
+
+    // ---- 7. events are FIFO ----
+    _1 = bidi_demux.demux_ingest(d, "{\"type\":\"event\",\"method\":\"e1\"}")
+    _2 = bidi_demux.demux_ingest(d, "{\"type\":\"event\",\"method\":\"e2\"}")
+    fails = fails + check_eq("event FIFO 1st", bidi_demux.demux_poll_event(d),
+             "{\"type\":\"event\",\"method\":\"e1\"}")
+    fails = fails + check_eq("event FIFO 2nd", bidi_demux.demux_poll_event(d),
+             "{\"type\":\"event\",\"method\":\"e2\"}")
+
+    // ---- 8. unparseable frame -> -1, routes nothing ----
+    fails = fails + check_int("ingest garbage -> -1",
+             bidi_demux.demux_ingest(d, "{not json"), -1)
+
+    // ---- 9. bounded event queue: drop-oldest + lost-count ----
+    // Fill past EVENT_QUEUE_MAX so the oldest are evicted and counted.
+    cap = bidi_demux.EVENT_QUEUE_MAX()
+    over = cap + 5
+    i = 0
+    while i < over {
+        _e = bidi_demux.demux_ingest(d, "{\"type\":\"event\",\"method\":\"flood\"}")
+        i = i + 1
+    }
+    fails = fails + check_int("queue is bounded at EVENT_QUEUE_MAX",
+             bidi_demux.demux_event_count(d), cap)
+    // exactly `over - cap` were dropped; lost_count returns then resets.
+    fails = fails + check_int("lost_count == overflow", bidi_demux.demux_lost_count(d), over - cap)
+    fails = fails + check_int("lost_count resets to 0", bidi_demux.demux_lost_count(d), 0)
+
+    bidi_demux.demux_free(d)
+
+    if fails == 0 {
+        println("PASS: all bidi_demux probes green")
+        exit(0)
+    }
+    println("FAILED: ${fails} probe(s)")
+    exit(1)
+}

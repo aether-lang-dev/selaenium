@@ -2,12 +2,12 @@
 // version via CfT -> find-in-cache-or-download -> return a runnable driver path.
 // This is the Selenium-Manager pipeline end to end (docs/Selenium-Manager-Port
 // .md), composing the pieces: browser.ae (PROC detect), version.ae (PURE),
-// cft.ae (PURE navigation), cache.ae (FS/NET edge). The NET fetch for the CfT
+// cft.ae (PURE navigation), drivercache.ae (FS/NET edge). The NET fetch for the CfT
 // JSON lives HERE (the edge); the resolution navigation stays pure.
 import browser
 import version
 import cft
-import cache
+import drivercache
 import std.string
 import std.http.client
 import std.os
@@ -56,8 +56,8 @@ resolve_chrome(hint: string) -> string {
     }
 
     // 3. cache-or-download.
-    root = cache.default_cache_root()
-    got = cache.ensure(root, "chromedriver", label, dver, durl)
+    root = drivercache.default_cache_root()
+    got = drivercache.ensure(root, "chromedriver", label, dver, durl)
     if string.length(got) > 0 { return got }
     return _which_driver()
 }
@@ -75,7 +75,7 @@ _fetch(url: string) -> string {
 // A cached CfT Chrome's version from the cache dir name, when there's no system
 // Chrome: <cache>/chrome/<label>/<version>/chrome exists.
 _cached_chrome_version(label: string) -> string {
-    root = cache.default_cache_root()
+    root = drivercache.default_cache_root()
     // We can't list dirs portably here without more fs surface; probe the
     // version the metadata/latest-stable would yield instead. Simplest correct
     // behaviour: empty version -> CfT "latest" path resolves the current stable,
