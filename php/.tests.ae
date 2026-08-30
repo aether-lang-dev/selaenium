@@ -1,35 +1,26 @@
-// PHP binding tests (ext-ffi). The FFI binding loads libselenium_core.so via
-// FFI::cdef; the loader honors SELENIUM_CORE_LIB, which we point at the shared
-// engine artifact this node deps. PHP's ext-ffi must be enabled (it ships in
-// the arch php package as ffi.so but is off by default), so we pass
-// -d extension=ffi -d ffi.enable=1. The live test self-skips if chromedriver is
-// absent. SKIPS LOUDLY if php or the ffi module is unavailable.
-import build
-import std.os
+// PHP binding tests (ext-ffi, PHPUnit). The FFI binding loads
+// libselenium_core.so via FFI::cdef; the loader honors SELENIUM_CORE_LIB,
+// injected here from the engine's shared_lib artifact. ext-ffi ships in the php
+// package but is off by default, so ini("ffi.enable","1") passes `-d
+// ffi.enable=1` (plus `-d extension=ffi`, since ext-ffi is a shared module on
+// modern php builds) to the phpunit-phar runner. FfiTest is the no-browser facts;
+// LiveTest spawns its own content server + chromedriver and markTestSkipped()s
+// when chromedriver is absent. The phar is fetched once if missing. Skipped by
+// preflight when php is absent (prereq php).
+import bldr
+import php
 
 aeb(cap) {
-    b = build.start()
-    build.dep(b, "selenium_core/.build.ae")
-    lib = build.dep_artifact(b, "selenium_core/.build.ae", "shared_lib")
-    root = build._get(b, "root")
-    pdir = "${root}/php"
-    php = "php -d extension=ffi -d ffi.enable=1"
-
-    have = os.system("command -v php >/dev/null 2>&1 && php -d extension=ffi -d ffi.enable=1 -r 'exit(class_exists(\"FFI\")?0:1);' >/dev/null 2>&1")
-    if have != 0 {
-        println("php tests: SKIPPED — php with ext-ffi not available")
-        return 0
+    bldr.build() {
+        prereq("php")
+        dep("selenium_core/.build.ae")
+        lib = dep_artifact("selenium_core/.build.ae", "shared_lib")
+        php.test() {
+            env("SELENIUM_CORE_LIB", lib)
+            phpunit_phar_url("https://phar.phpunit.de/phpunit-12.phar")
+            ini("extension", "ffi")
+            ini("ffi.enable", "1")
+            config("phpunit.xml")
+        }
     }
-    rc = os.system("cd \"${pdir}\" && SELENIUM_CORE_LIB=\"${lib}\" ${php} test/ffi_test.php")
-    if rc != 0 {
-        println("php tests: ffi_test FAILED")
-        return 1
-    }
-    rc2 = os.system("cd \"${pdir}\" && SELENIUM_CORE_LIB=\"${lib}\" ${php} test/live_test.php")
-    if rc2 != 0 {
-        println("php tests: live_test FAILED")
-        return 1
-    }
-    println("php tests: PASSED (ffi + live+surface)")
-    return 0
 }

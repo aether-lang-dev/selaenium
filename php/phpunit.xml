@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- The ext-ffi binding has no composer autoloader, so a bootstrap requires the
+     src files. testdox gives readable per-test output; failOnWarning keeps the
+     suite honest. ffi.enable is passed on the CLI (-d) by aeb's php.ini() so the
+     FFI::cdef load works. -->
+<phpunit xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         bootstrap="test/bootstrap.php"
+         colors="true"
+         failOnWarning="true"
+         cacheDirectory=".phpunit.cache">
+    <testsuites>
+        <testsuite name="selenium-core">
+            <directory>test</directory>
+        </testsuite>
+    </testsuites>
+</phpunit>
