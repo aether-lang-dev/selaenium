@@ -1,23 +1,31 @@
 // Lua binding tests (Lua 5.4 C extension). The extension dlopen's the engine at
-// run time (not on its link line), so the engine path is threaded in via
-// SELENIUM_CORE_LIB. Debian ships a 5.3 interpreter but 5.4 dev headers, so
-// run-tests.sh builds a small 5.4 host (host/lua54.c) unless a real lua5.4 is on
-// PATH. The live test self-skips if chromedriver is absent.
-import build
-import std.os
+// run time (SELENIUM_CORE_LIB, injected here from the engine's shared_lib
+// artifact) — it is not on the extension's link line. lua.conformance builds the
+// C extension (selenium_core_native.so), builds a Lua 5.4 host from host/lua54.c
+// when no lua5.4 interpreter is present (Debian ships a 5.3 interpreter but 5.4
+// headers), and runs the FFI facts with LUA_CPATH/LUA_PATH set so `require`
+// resolves the .so + the pure-lua module. SKIPs loudly without a Lua 5.4
+// toolchain. Skipped by preflight when no C compiler/lua headers.
+//
+// The live-surface leg (test/live_test.lua) needs a running chromedriver +
+// content server; it will move to the engine's driver-orchestration ABI
+// (sel_embed_ensure_driver) in the ABI-retrofit pass — see
+// docs/Driver-Orchestration-ABI.md. On this box it self-skips (no chromedriver),
+// so the FFI conformance is the live-verified surface here.
+import bldr
+import lua
+import lua (c_source, ext_output, host_source, test_file)
 
 aeb(cap) {
-    b = build.start()
-    build.dep(b, "selenium_core/.build.ae")
-    lib = build.dep_artifact(b, "selenium_core/.build.ae", "shared_lib")
-    root = build._get(b, "root")
-    ldir = "${root}/lua"
-
-    rc = os.system("bash \"${ldir}/run-tests.sh\" \"${lib}\"")
-    if rc != 0 {
-        println("lua tests: FAILED")
-        return 1
+    bldr.build() {
+        dep("selenium_core/.build.ae")
+        lib = dep_artifact("selenium_core/.build.ae", "shared_lib")
+        lua.conformance() {
+            env("SELENIUM_CORE_LIB", lib)
+            c_source("src/selenium_core.c")
+            ext_output("selenium_core_native.so")
+            host_source("host/lua54.c")
+            test_file("test/ffi_test.lua")
+        }
     }
-    println("lua tests: PASSED (ffi + live+surface)")
-    return 0
 }
