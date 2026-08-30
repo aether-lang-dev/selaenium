@@ -1,66 +1,25 @@
-// Third-party-consumer EXAMPLE test for the Python binding.
-//
-// Installs the packaged wheel (from python/.package.ae) into a CLEAN venv and
-// runs example/consumer_example.py from the INSTALLED package — no source tree
-// on the path, and with SELENIUM_CORE_LIB unset (env -u) so ONLY the wheel's
-// bundled native/ .so can satisfy the load. This is the honest "pip install and
-// it just works" test the in-tree python/.tests.ae cannot give (that one runs
-// pytest against the source with the .so handed in via env var).
-//
-// Runs three consumer modes, each in its own fresh process: ffi (load + marshal
-// + transport-error), discovery (zero-config bundled-.so), and live (real
-// headless Chrome if chromedriver is present; skips otherwise).
-import build
-import std.os
+// Python consumer-install proof: prove the packaged wheel installs + runs from
+// a CLEAN environment for a third party. python.consumer_example unpacks the
+// dep's wheel into a bare site dir (no source tree, no dev deps), asserts the
+// bundled engine .so shipped (selenium_core/native/*.so), then runs the consumer
+// with PYTHONPATH = ONLY that site and SELENIUM_CORE_LIB unset — so only the
+// bundled .so can satisfy the load. Three modes: ffi (no browser), discovery
+// (driver-manager), live (real chrome, self-skips). Skipped by preflight when
+// python is absent (prereq python:3).
+import bldr
+import python
+import python (consumer_script, consumer_arg, asset_glob)
 
 aeb(cap) {
-    b = build.start()
-    build.dep(b, "python/.package.ae")
-    wheel_dir = build.dep_artifact(b, "python/.package.ae", "wheel_dir")
-    root = build._get(b, "root")
-    exdir = "${root}/python/example"
-    // A clean install prefix: a bare site dir the wheel is unpacked into, with
-    // NOTHING else on it (no source tree, no dev deps). `selenium-core` is a
-    // zero-dependency pure-Python package (install_requires=[]), so unzipping
-    // the wheel into a dir IS a complete, faithful install — and it needs no
-    // network and no ensurepip (which this box's python lacks). The consumer
-    // runs with PYTHONPATH pointed ONLY at this dir, proving the wheel is
-    // self-sufficient. The .so ships inside the wheel under selenium_core/native/.
-    site = "${root}/target/python-consumer-site"
-
-    rc = os.system("rm -rf \"${site}\" && mkdir -p \"${site}\" && cd \"${site}\" && for w in \"${wheel_dir}\"/*.whl; do python3 -c \"import zipfile,sys; zipfile.ZipFile(sys.argv[1]).extractall('.')\" \"$w\"; done")
-    if rc != 0 {
-        println("python example: clean-site wheel unpack failed")
-        return 1
+    bldr.build() {
+        prereq("python:3")
+        dep("python/.package.ae")
+        python.consumer_example() {
+            consumer_script("example/consumer_example.py")
+            asset_glob("selenium_core/native/*.so")
+            consumer_arg("ffi")
+            consumer_arg("discovery")
+            consumer_arg("live")
+        }
     }
-    // Sanity: the unpacked package must carry its bundled .so.
-    rc_so = os.system("ls \"${site}/selenium_core/native\"/*.so >/dev/null 2>&1")
-    if rc_so != 0 {
-        println("python example: unpacked wheel is missing selenium_core/native/*.so")
-        return 1
-    }
-
-    // Run from example/ with PYTHONPATH = ONLY the clean site dir, so
-    // `import selenium_core` resolves to the installed package, NOT
-    // python/selenium_core/. env -u unsets SELENIUM_CORE_LIB so only the
-    // bundled .so can satisfy the load.
-    pfx = "cd \"${exdir}\" && env -u SELENIUM_CORE_LIB PYTHONPATH=\"${site}\" python3 consumer_example.py"
-    rc2 = os.system("${pfx} ffi")
-    if rc2 != 0 {
-        println("python example: ffi-mode consumer run failed")
-        return 1
-    }
-    rc3 = os.system("${pfx} discovery")
-    if rc3 != 0 {
-        println("python example: discovery-mode consumer run failed")
-        return 1
-    }
-    rc4 = os.system("${pfx} live")
-    if rc4 != 0 {
-        println("python example: live-mode consumer run failed")
-        return 1
-    }
-
-    println("python example: PASS — installed wheel loaded its bundled .so (ffi + discovery + live)")
-    return 0
 }
