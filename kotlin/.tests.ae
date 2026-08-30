@@ -1,28 +1,33 @@
 // Kotlin binding tests. Kotlin is a JVM-family binding: it consumes the ONE Java
 // FFM binding's classes over seamless Java-interop — no second FFI, no second
-// .so (exactly as one Java jar backs Kotlin/Scala/Clojure/Groovy). This node
-// deps the engine; run-tests.sh compiles the Java binding classes, then the
-// Kotlin wrapper + test against them, and runs with --enable-native-access.
-//
-// It needs a MODERN kotlinc (>= 1.9): the Java binding is Panama FFM (JDK 22+),
-// which Debian's kotlinc 1.3 can't read. run-tests.sh discovers one (KOTLIN_HOME
-// / sdkman / a capable PATH kotlinc) and SKIPS LOUDLY otherwise.
-import build
-import std.os
+// .so (one Java jar backs Kotlin/Scala/Clojure/Groovy). It deps java/.build.ae
+// for the compiled binding classes (on the classpath via the JVM dep artifact)
+// and the engine for the .so, injected as SELENIUM_CORE_LIB. kotlinc compiles
+// the idiomatic wrapper, kotlinc_test the test; kotlin_test runs LiveTestKt with
+// --enable-native-access (FFM needs it on JDK 24+). Needs a modern kotlinc
+// (>= 1.9) on a JDK >= 22 — skip_below_jdk("22") SKIPS LOUDLY on an older JDK,
+// and _kotlin_home() degrades to a SKIP when no capable kotlinc is found. The
+// live test self-skips without chromedriver.
+import bldr
+import kotlin
+import kotlin (source_layout, skip_below_jdk, jvm_args)
 
 aeb(cap) {
-    b = build.start()
-    build.dep(b, "selenium_core/.build.ae")
-    lib = build.dep_artifact(b, "selenium_core/.build.ae", "shared_lib")
-    root = build._get(b, "root")
-    kdir = "${root}/kotlin"
-    jsrc = "${root}/java/src/org/seleniumhq/aether"
-
-    rc = os.system("bash \"${kdir}/run-tests.sh\" \"${lib}\" \"${jsrc}\" \"${kdir}\"")
-    if rc != 0 {
-        println("kotlin tests: FAILED")
-        return 1
+    bldr.build() {
+        prereq("jdk:22")
+        dep("java/.build.ae")
+        dep("selenium_core/.build.ae")
+        lib = dep_artifact("selenium_core/.build.ae", "shared_lib")
+        kotlin.kotlinc() {
+            source_layout("maven idiomatic")
+        }
+        kotlin.kotlinc_test() {
+            source_layout("maven idiomatic")
+        }
+        kotlin.kotlin_test("org.seleniumhq.aether.kotlin.LiveTestKt") {
+            env("SELENIUM_CORE_LIB", lib)
+            skip_below_jdk("22")
+            jvm_args("--enable-native-access=ALL-UNNAMED")
+        }
     }
-    println("kotlin tests: PASSED (ffi + live+surface)")
-    return 0
 }
