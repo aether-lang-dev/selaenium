@@ -363,8 +363,10 @@ response_error_code(resp_body: string) -> int {
 // These are the canonical command identifiers a binding sends. Kept as plain
 // string constants so a binding can send the same spelling the JS/Python/Ruby
 // bindings already use. Only the ones with a fixed W3C HTTP route live in the
-// route table below; atom-backed commands (findElementsRelative, isDisplayed,
-// getAttribute) are handled by the binding via executeScript for now.
+// route table below. Atom-backed commands (isDisplayed, getAttribute, getText)
+// have no W3C route — the engine runs them in-page via executeScript from ONE
+// shared atom source; see atoms.ae + execute_atom() and docs/Atoms.md.
+// (findElementsRelative / relative locators is the next atom to add.)
 
 // ---- The W3C command -> (method, path) route table -----------------------
 //
