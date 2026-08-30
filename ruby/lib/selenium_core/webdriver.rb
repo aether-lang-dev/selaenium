@@ -166,7 +166,12 @@ module SeleniumCore
       @handle = Native.call(:open, command_executor)
       raise WebDriverError.new('failed to open session handle', -1) if @handle.nil? || @handle.null?
 
-      execute('newSession', 'capabilities' => { 'alwaysMatch' => capabilities })
+      # Request a BiDi channel so #bidi is available on demand; the WebSocket
+      # itself opens lazily (a classic script never opens it).
+      caps = capabilities.merge('webSocketUrl' => true)
+      result = execute('newSession', 'capabilities' => { 'alwaysMatch' => caps })
+      @ws_url = (result.is_a?(Hash) ? result.dig('capabilities', 'webSocketUrl') : nil) || ''
+      @bidi = nil
     end
 
     # ---- navigation ----
@@ -227,7 +232,31 @@ module SeleniumCore
       Native.take_string(Native.call(:session_id, @handle))
     end
 
+    # ---- WebDriver-BiDi ----
+
+    # True if this session negotiated a webSocketUrl (BiDi usable).
+    def bidi_available? = !@ws_url.empty?
+
+    # The event-driven BiDi surface for this session, opened lazily over the
+    # negotiated webSocketUrl. Raises if the remote end granted no BiDi URL.
+    #
+    #   driver.bidi.subscribe(BidiEvent::LOG_ENTRY_ADDED)
+    #   driver.get(url)
+    #   ev = driver.bidi.next_event(BidiEvent::LOG_ENTRY_ADDED, timeout_ms: 5000)
+    def bidi
+      @bidi ||= begin
+        raise WebDriverError.new('BiDi not available: no webSocketUrl negotiated', 0) if @ws_url.empty?
+
+        handle = Native.call(:bidi_open, @ws_url)
+        raise WebDriverError.new('BiDi channel failed to open', -1) if handle.nil? || handle.null?
+
+        BiDi.new(handle)
+      end
+    end
+
     def quit
+      @bidi&.close
+      @bidi = nil
       execute('quit')
     ensure
       close_handle
@@ -260,6 +289,93 @@ module SeleniumCore
       return nil if raw.empty?
 
       JSON.parse(raw)
+    end
+  end
+
+  # The common WebDriver-BiDi event names (W3C spec). Pass to
+  # +driver.bidi.subscribe(...)+ and match in +next_event+.
+  module BidiEvent
+    LOG_ENTRY_ADDED     = 'log.entryAdded'
+    CONTEXT_CREATED     = 'browsingContext.contextCreated'
+    CONTEXT_DESTROYED   = 'browsingContext.contextDestroyed'
+    NAVIGATION_STARTED  = 'browsingContext.navigationStarted'
+    DOM_CONTENT_LOADED  = 'browsingContext.domContentLoaded'
+    LOAD                = 'browsingContext.load'
+    DOWNLOAD_WILL_BEGIN = 'browsingContext.downloadWillBegin'
+    BEFORE_REQUEST_SENT = 'network.beforeRequestSent'
+    RESPONSE_STARTED    = 'network.responseStarted'
+    RESPONSE_COMPLETED  = 'network.responseCompleted'
+    FETCH_ERROR         = 'network.fetchError'
+    REALM_CREATED       = 'script.realmCreated'
+    REALM_DESTROYED     = 'script.realmDestroyed'
+    MESSAGE             = 'script.message'
+  end
+
+  # The event-driven BiDi channel for a session (over the demux C ABI).
+  # Commands and events multiplex over one WebSocket via the engine's shape-C
+  # demux (single reader -> id-keyed replies + bounded event queue), so replies
+  # stay correlated while events stream. Command ids are supplied automatically.
+  class BiDi
+    def initialize(handle)
+      @handle = handle
+      @next_id = 1
+    end
+
+    # session.subscribe to one or more event names; wait for the ack. Returns the
+    # ack payload Hash. Matching events then arrive on the queue (drain via
+    # #next_event).
+    def subscribe(*events, timeout_ms: 10_000)
+      raw = Native.take_string(Native.call(:bidi_subscribe, @handle, next_id, events.join(','), timeout_ms))
+      raw.empty? ? {} : JSON.parse(raw)
+    end
+
+    def unsubscribe(*events, timeout_ms: 10_000)
+      raw = Native.take_string(Native.call(:bidi_unsubscribe, @handle, next_id, events.join(','), timeout_ms))
+      raw.empty? ? {} : JSON.parse(raw)
+    end
+
+    # Block until an event whose +method+ matches arrives, or timeout. Returns the
+    # event Hash, or nil on timeout/close. (Subscribe first.)
+    def next_event(method, timeout_ms: 5_000)
+      raw = Native.take_string(Native.call(:bidi_wait_event, @handle, method, timeout_ms))
+      raw.empty? ? nil : JSON.parse(raw)
+    end
+
+    # Issue any BiDi command and return its reply payload Hash. Reaches BiDi
+    # methods with no dedicated wrapper (script.evaluate, network.*, ...).
+    def command(method, params = {}, timeout_ms: 10_000)
+      cid = next_id
+      raise WebDriverError.new("BiDi send failed: #{method}", -1) if
+        Native.call(:bidi_send, @handle, cid, method, JSON.generate(params)) != 0
+
+      waited = 0
+      step = 50
+      while waited < timeout_ms
+        reply = Native.take_string(Native.call(:bidi_poll_reply, @handle, cid))
+        return JSON.parse(reply) unless reply.empty?
+        break if Native.call(:bidi_pump, @handle, step) < 0
+
+        waited += step
+      end
+      raise TimeoutError.new("BiDi command timed out: #{method}", 0)
+    end
+
+    # How many events the bounded queue dropped since the last call (then resets).
+    def lost_events = Native.call(:bidi_lost_events, @handle)
+
+    def close
+      return unless @handle && !@handle.null?
+
+      Native.call(:bidi_close, @handle)
+      @handle = nil
+    end
+
+    private
+
+    def next_id
+      id = @next_id
+      @next_id += 1
+      id
     end
   end
 end

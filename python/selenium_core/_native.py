@@ -150,6 +150,33 @@ def _ensure_loaded() -> None:
     )
     g["error_code"] = _decl("aether_sel_embed_error_code", ctypes.c_int, [ctypes.c_char_p])
 
+    # ---- WebDriver-BiDi (over the session's webSocketUrl) ----
+    # An opaque BiDi channel handle, independent of the W3C session handle.
+    g["bidi_open"] = _decl("aether_sel_embed_bidi_open", _HANDLE, [ctypes.c_char_p])
+    g["bidi_close"] = _decl("aether_sel_embed_bidi_close", None, [_HANDLE])
+    g["bidi_send"] = _decl(
+        "aether_sel_embed_bidi_send", ctypes.c_int,
+        [_HANDLE, ctypes.c_int, ctypes.c_char_p, ctypes.c_char_p],
+    )
+    g["bidi_pump"] = _decl("aether_sel_embed_bidi_pump", ctypes.c_int, [_HANDLE, ctypes.c_int])
+    g["bidi_fd"] = _decl("aether_sel_embed_bidi_fd", ctypes.c_int, [_HANDLE])
+    g["bidi_poll_reply"] = _decl("aether_sel_embed_bidi_poll_reply", _CSTR, [_HANDLE, ctypes.c_int])
+    g["bidi_poll_event"] = _decl("aether_sel_embed_bidi_poll_event", _CSTR, [_HANDLE])
+    g["bidi_lost_events"] = _decl("aether_sel_embed_bidi_lost_events", ctypes.c_int, [_HANDLE])
+    g["bidi_cancel"] = _decl("aether_sel_embed_bidi_cancel", None, [_HANDLE, ctypes.c_int])
+    g["bidi_subscribe"] = _decl(
+        "aether_sel_embed_bidi_subscribe", _CSTR,
+        [_HANDLE, ctypes.c_int, ctypes.c_char_p, ctypes.c_int],
+    )
+    g["bidi_unsubscribe"] = _decl(
+        "aether_sel_embed_bidi_unsubscribe", _CSTR,
+        [_HANDLE, ctypes.c_int, ctypes.c_char_p, ctypes.c_int],
+    )
+    g["bidi_wait_event"] = _decl(
+        "aether_sel_embed_bidi_wait_event", _CSTR,
+        [_HANDLE, ctypes.c_char_p, ctypes.c_int],
+    )
+
     # ---- string ownership ----
     g["free_string"] = _decl("aether_sel_embed_free_string", None, [ctypes.c_void_p])
 

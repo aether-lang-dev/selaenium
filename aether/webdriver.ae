@@ -20,9 +20,10 @@
 // C ABI uses): chrome() detects/resolves/launches chromedriver and opens a W3C
 // session against it, all in-process.
 import selenium_core
+import selenium_bidi
 import driver
 import browser
-import cache
+import drivercache
 import std.json
 import std.string
 import std.heap
@@ -44,6 +45,9 @@ By_XPATH() -> string { return "xpath" }
 struct WdSession {
     engine: ptr        // selenium_core Session
     drv: ptr           // drivermgr Driver (null for a Remote session)
+    ws_url: string     // BiDi webSocketUrl from newSession (webSocketUrl:true), "" if none
+    bidi: ptr          // selenium_bidi session, opened lazily on first bidi_* call
+    next_bidi_id: int  // monotonic command-id source for BiDi (caller-supplied ids)
 }
 
 // ---- session construction (builder-DSL; transparent driver management) ----
@@ -62,12 +66,15 @@ builder chrome(): ptr {
     // cached Chrome-for-Testing exists, point goog:chromeOptions.binary at it
     // (chromedriver otherwise looks for a system chrome that isn't there).
     bin_opt = _chrome_binary_opt()
-    caps = "{\"capabilities\":{\"alwaysMatch\":{\"browserName\":\"chrome\",\"goog:chromeOptions\":{${bin_opt}\"args\":[\"--headless=new\",\"--no-sandbox\",\"--disable-dev-shm-usage\"]}}}}"
+    // Request webSocketUrl:true so a BiDi channel is available on demand; the URL
+    // is captured and BiDi is opened lazily (non-BiDi users pay nothing).
+    caps = "{\"capabilities\":{\"alwaysMatch\":{\"browserName\":\"chrome\",\"webSocketUrl\":true,\"goog:chromeOptions\":{${bin_opt}\"args\":[\"--headless=new\",\"--no-sandbox\",\"--disable-dev-shm-usage\"]}}}}"
     rc = selenium_core.execute(eng, "newSession", caps)
     if rc != 0 {
         quit(sess)
         return null
     }
+    _capture_ws_url(sess)
     return sess
 }
 
@@ -76,9 +83,10 @@ builder chrome(): ptr {
 remote(url: string) -> ptr {
     eng = selenium_core.session_new(url)
     sess = _mk(eng, null)
-    caps = "{\"capabilities\":{\"alwaysMatch\":{\"browserName\":\"chrome\"}}}"
+    caps = "{\"capabilities\":{\"alwaysMatch\":{\"browserName\":\"chrome\",\"webSocketUrl\":true}}}"
     rc = selenium_core.execute(eng, "newSession", caps)
     if rc != 0 { quit(sess); return null }
+    _capture_ws_url(sess)
     return sess
 }
 
@@ -87,6 +95,10 @@ remote(url: string) -> ptr {
 quit(sp: ptr) {
     if sp == null { return }
     s = sp as *WdSession
+    if s.bidi != null {
+        selenium_bidi.bidi_close(s.bidi)
+        s.bidi = null
+    }
     if s.engine != null {
         _r = selenium_core.execute(s.engine, "quit", "{}")
         selenium_core.session_free(s.engine)
@@ -162,12 +174,103 @@ last_error_code(sp: ptr) -> int {
     return selenium_core.last_error_code_of(s.engine)
 }
 
+// ---- WebDriver-BiDi (event-driven, over the session's webSocketUrl) ----
+//
+// The bidirectional surface: subscribe to browser events (log entries, network
+// activity, navigation, script realms) and receive them asynchronously, plus
+// issue any BiDi command. The channel is opened lazily on first use over the
+// webSocketUrl captured at newSession — so a classic (HTTP-only) script never
+// pays for a WebSocket. All of this runs through the engine's shape-C demux
+// (single reader → id-keyed replies + bounded event queue), so replies stay
+// correlated even while events stream.
+//
+//   webdriver.bidi_subscribe(d, "log.entryAdded")
+//   webdriver.get(d, url)
+//   ev = webdriver.bidi_next_event(d, "log.entryAdded", 5000)   // async receipt
+//
+// bidi_available(session) — 1 if the session negotiated a webSocketUrl (chrome()
+// and remote() request webSocketUrl:true), so BiDi can be used. 0 for a remote
+// end that didn't grant one.
+bidi_available(sp: ptr) -> int {
+    if sp == null { return 0 }
+    s = sp as *WdSession
+    if string.length(s.ws_url) > 0 { return 1 }
+    return 0
+}
+
+// bidi_subscribe(session, events_csv) — session.subscribe to a comma-separated
+// list of BiDi event names (see the BidiEvent_* catalog below). Opens the BiDi
+// channel on first call. Returns 1 on ack, 0 on failure/unavailable.
+bidi_subscribe(sp: ptr, events_csv: string) -> int {
+    ch = _ensure_bidi(sp)
+    if ch == null { return 0 }
+    s = sp as *WdSession
+    id = _bidi_id(s)
+    ack = selenium_bidi.bidi_subscribe(ch, id, events_csv, 10000)
+    if string.contains(ack, "\"type\":\"success\"") == 1 { return 1 }
+    return 0
+}
+
+// bidi_unsubscribe(session, events_csv) — the inverse. Returns 1 on ack.
+bidi_unsubscribe(sp: ptr, events_csv: string) -> int {
+    if sp == null { return 0 }
+    s = sp as *WdSession
+    if s.bidi == null { return 0 }
+    id = _bidi_id(s)
+    ack = selenium_bidi.bidi_unsubscribe(s.bidi, id, events_csv, 10000)
+    if string.contains(ack, "\"type\":\"success\"") == 1 { return 1 }
+    return 0
+}
+
+// bidi_next_event(session, method, timeout_ms) — block until an event whose
+// method matches arrives (having subscribed first), or timeout. Returns the
+// event JSON, or "" on timeout/unavailable. The async-receipt half of BiDi.
+bidi_next_event(sp: ptr, method: string, timeout_ms: int) -> string {
+    if sp == null { return "" }
+    s = sp as *WdSession
+    if s.bidi == null { return "" }
+    return selenium_bidi.bidi_wait_event(s.bidi, method, timeout_ms)
+}
+
+// bidi_command(session, method, params_json, timeout_ms) — issue any BiDi command
+// and return its reply JSON ("" on failure). params_json may be "" or "{}". Lets
+// a caller reach BiDi methods without a dedicated wrapper (script.evaluate,
+// browsingContext.captureScreenshot, network.*, …). Opens the channel on first use.
+bidi_command(sp: ptr, method: string, params_json: string, timeout_ms: int) -> string {
+    ch = _ensure_bidi(sp)
+    if ch == null { return "" }
+    s = sp as *WdSession
+    id = _bidi_id(s)
+    return selenium_bidi.bidi_command(ch, id, method, params_json, timeout_ms)
+}
+
+// ---- BiDi event-name catalog (the common events, as typed helpers) ----
+// Names per the W3C WebDriver-BiDi spec. Pass to bidi_subscribe (single or a
+// comma-joined list) and match in bidi_next_event.
+BidiEvent_LOG_ENTRY_ADDED() -> string { return "log.entryAdded" }
+BidiEvent_CONTEXT_CREATED() -> string { return "browsingContext.contextCreated" }
+BidiEvent_CONTEXT_DESTROYED() -> string { return "browsingContext.contextDestroyed" }
+BidiEvent_NAVIGATION_STARTED() -> string { return "browsingContext.navigationStarted" }
+BidiEvent_DOM_CONTENT_LOADED() -> string { return "browsingContext.domContentLoaded" }
+BidiEvent_LOAD() -> string { return "browsingContext.load" }
+BidiEvent_DOWNLOAD_WILL_BEGIN() -> string { return "browsingContext.downloadWillBegin" }
+BidiEvent_BEFORE_REQUEST_SENT() -> string { return "network.beforeRequestSent" }
+BidiEvent_RESPONSE_STARTED() -> string { return "network.responseStarted" }
+BidiEvent_RESPONSE_COMPLETED() -> string { return "network.responseCompleted" }
+BidiEvent_FETCH_ERROR() -> string { return "network.fetchError" }
+BidiEvent_REALM_CREATED() -> string { return "script.realmCreated" }
+BidiEvent_REALM_DESTROYED() -> string { return "script.realmDestroyed" }
+BidiEvent_MESSAGE() -> string { return "script.message" }
+
 // ---- internals ----
 
 _mk(eng: ptr, drv: ptr) -> ptr {
     s = heap.new(WdSession)
     s.engine = eng
     s.drv = drv
+    s.ws_url = ""
+    s.bidi = null
+    s.next_bidi_id = 1
     return s as ptr
 }
 
@@ -204,6 +307,42 @@ _exec(sp: ptr, name: string, body: string) -> int {
 _value(sp: ptr) -> string {
     s = sp as *WdSession
     return selenium_core.last_value_of(s.engine)
+}
+
+// ---- BiDi internals ----
+
+// _capture_ws_url(session) — pull value.capabilities.webSocketUrl out of the
+// last newSession response and stash it on the session (for lazy bidi open).
+_capture_ws_url(sp: ptr) {
+    if sp == null { return }
+    s = sp as *WdSession
+    raw = selenium_core.last_value_of(s.engine)
+    root, perr = json.parse(raw)
+    if string.length(perr) > 0 { return }
+    caps, _c = json.object_get(root, "capabilities")
+    if caps == null { return }
+    wsv, _w = json.object_get(caps, "webSocketUrl")
+    if wsv == null { return }
+    url, _u = json.get_string(wsv)
+    s.ws_url = url
+}
+
+// _ensure_bidi(session) — open the BiDi channel on first use over the captured
+// webSocketUrl; return the selenium_bidi handle (null if unavailable).
+_ensure_bidi(sp: ptr) -> ptr {
+    if sp == null { return null }
+    s = sp as *WdSession
+    if s.bidi != null { return s.bidi }
+    if string.length(s.ws_url) == 0 { return null }
+    s.bidi = selenium_bidi.bidi_open(s.ws_url)
+    return s.bidi
+}
+
+// _bidi_id(session) — a fresh monotonic BiDi command id.
+_bidi_id(s: *WdSession) -> int {
+    id = s.next_bidi_id
+    s.next_bidi_id = id + 1
+    return id
 }
 
 // {"key":"<v>"} with v JSON-escaped.
@@ -248,7 +387,7 @@ _chrome_binary_opt() -> string {
 // Probes the version the driver manager resolved (the cached driver's version
 // dir mirrors the browser's). Empty if none.
 _cached_chrome() -> string {
-    root = cache.default_cache_root()
+    root = drivercache.default_cache_root()
     // The cache lays chrome out as chrome/linux64/<version>/chrome, parallel to
     // the chromedriver dir. Reuse the driver's resolved version via the same
     // layout: try the well-known linux64 path for any present version dir.

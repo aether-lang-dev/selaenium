@@ -73,6 +73,23 @@ main() {
     // negative path: a missing element yields "" (typed no-such-element)
     fails = fails + ck("missing element -> ''", string.equals(webdriver.find(d, webdriver.By_ID(), "nope"), ""))
 
+    // ---- WebDriver-BiDi: subscribe + receive an async event ----
+    // chrome() negotiated webSocketUrl:true, so BiDi is available in-process.
+    // Subscribe to console log entries, emit one via the classic script channel,
+    // and assert the BiDi event arrives asynchronously (the bidirectional half).
+    if webdriver.bidi_available(d) == 1 {
+        fails = fails + ck("bidi.subscribe log.entryAdded",
+                 webdriver.bidi_subscribe(d, webdriver.BidiEvent_LOG_ENTRY_ADDED()))
+        webdriver.execute_script(d, "console.log('bidi-hello');", "[]")
+        ev = webdriver.bidi_next_event(d, webdriver.BidiEvent_LOG_ENTRY_ADDED(), 8000)
+        fails = fails + ck("bidi log.entryAdded event received (async)",
+                 string.contains(ev, "log.entryAdded"))
+        fails = fails + ck("bidi event carries the logged text",
+                 string.contains(ev, "bidi-hello"))
+    } else {
+        println("  (bidi unavailable — remote end granted no webSocketUrl; skipping BiDi checks)")
+    }
+
     webdriver.quit(d)
 
     if fails == 0 {

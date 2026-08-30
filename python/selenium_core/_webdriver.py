@@ -201,9 +201,17 @@ class WebDriver:
     def __init__(self, command_executor: str, capabilities: dict | None = None):
         self._handle = _native.open(_native.encode(command_executor))
         caps = capabilities or {"browserName": "chrome"}
+        # Request a BiDi channel so `.bidi` is available on demand; the channel
+        # itself is opened lazily (a classic script never opens the WebSocket).
+        caps = {**caps, "webSocketUrl": True}
         # W3C newSession envelope: {"capabilities": {"alwaysMatch": {...}}}
         payload = {"capabilities": {"alwaysMatch": caps}}
-        self._execute("newSession", payload)
+        result = self._execute("newSession", payload)
+        # value.capabilities.webSocketUrl — the BiDi endpoint for this session.
+        self._ws_url = ""
+        if isinstance(result, dict):
+            self._ws_url = (result.get("capabilities") or {}).get("webSocketUrl", "") or ""
+        self._bidi: "BiDi | None" = None
 
     # ---- the FFI seam ----
 
@@ -359,8 +367,38 @@ class WebDriver:
     def session_id(self) -> str:
         return _native.take_string(_native.session_id(self._handle))
 
+    # ---- WebDriver-BiDi ----
+
+    @property
+    def bidi(self) -> "BiDi":
+        """The event-driven BiDi surface for this session (lazily opened over the
+        negotiated webSocketUrl). Raises if the remote end granted no BiDi URL.
+
+            driver.bidi.subscribe("log.entryAdded")
+            driver.get(url)
+            ev = driver.bidi.next_event("log.entryAdded", timeout_ms=5000)
+        """
+        if self._bidi is None:
+            if not self._ws_url:
+                raise WebDriverError(
+                    "BiDi not available: the session negotiated no webSocketUrl", 0
+                )
+            handle = _native.bidi_open(_native.encode(self._ws_url))
+            if not handle:
+                raise WebDriverError("BiDi channel failed to open", -1)
+            self._bidi = BiDi(handle)
+        return self._bidi
+
+    @property
+    def bidi_available(self) -> bool:
+        """True if this session can use BiDi (a webSocketUrl was negotiated)."""
+        return bool(self._ws_url)
+
     def quit(self) -> None:
         try:
+            if self._bidi is not None:
+                self._bidi.close()
+                self._bidi = None
             self._execute("quit")
         finally:
             self.close_handle()
@@ -379,6 +417,98 @@ class WebDriver:
 
     def __exit__(self, *exc):
         self.quit()
+
+
+class BidiEvent:
+    """The common WebDriver-BiDi event names (W3C spec). Pass to
+    ``driver.bidi.subscribe(...)`` and match in ``next_event(...)``."""
+
+    LOG_ENTRY_ADDED = "log.entryAdded"
+    CONTEXT_CREATED = "browsingContext.contextCreated"
+    CONTEXT_DESTROYED = "browsingContext.contextDestroyed"
+    NAVIGATION_STARTED = "browsingContext.navigationStarted"
+    DOM_CONTENT_LOADED = "browsingContext.domContentLoaded"
+    LOAD = "browsingContext.load"
+    DOWNLOAD_WILL_BEGIN = "browsingContext.downloadWillBegin"
+    BEFORE_REQUEST_SENT = "network.beforeRequestSent"
+    RESPONSE_STARTED = "network.responseStarted"
+    RESPONSE_COMPLETED = "network.responseCompleted"
+    FETCH_ERROR = "network.fetchError"
+    REALM_CREATED = "script.realmCreated"
+    REALM_DESTROYED = "script.realmDestroyed"
+    MESSAGE = "script.message"
+
+
+class BiDi:
+    """The event-driven BiDi channel for a session (over the demux C ABI).
+
+    Commands and events multiplex over one WebSocket via the engine's shape-C
+    demux (a single reader routes replies to an id table and events to a bounded
+    queue), so replies stay correlated while events stream. Command ids are
+    supplied automatically."""
+
+    def __init__(self, handle):
+        self._handle = handle
+        self._next_id = 1
+
+    def _id(self) -> int:
+        i = self._next_id
+        self._next_id += 1
+        return i
+
+    def subscribe(self, *events: str, timeout_ms: int = 10000) -> dict:
+        """session.subscribe to one or more event names; wait for the ack.
+        Returns the ack payload. After this, matching events arrive on the
+        queue (drain via :meth:`next_event`)."""
+        csv = ",".join(events)
+        raw = _native.take_string(
+            _native.bidi_subscribe(self._handle, self._id(), _native.encode(csv), timeout_ms)
+        )
+        return json.loads(raw) if raw else {}
+
+    def unsubscribe(self, *events: str, timeout_ms: int = 10000) -> dict:
+        csv = ",".join(events)
+        raw = _native.take_string(
+            _native.bidi_unsubscribe(self._handle, self._id(), _native.encode(csv), timeout_ms)
+        )
+        return json.loads(raw) if raw else {}
+
+    def next_event(self, method: str, timeout_ms: int = 5000) -> dict | None:
+        """Block until an event whose ``method`` matches arrives, or timeout.
+        Returns the event dict, or ``None`` on timeout/close. (Subscribe first.)"""
+        raw = _native.take_string(
+            _native.bidi_wait_event(self._handle, _native.encode(method), timeout_ms)
+        )
+        return json.loads(raw) if raw else None
+
+    def command(self, method: str, params: dict | None = None, timeout_ms: int = 10000) -> dict:
+        """Issue any BiDi command and return its reply payload. Lets a caller
+        reach BiDi methods with no dedicated wrapper (script.evaluate,
+        browsingContext.captureScreenshot, network.*, …)."""
+        params_json = json.dumps(params or {})
+        # send + pump until this id's reply arrives (the engine's convenience).
+        cid = self._id()
+        if _native.bidi_send(self._handle, cid, _native.encode(method), _native.encode(params_json)) != 0:
+            raise WebDriverError(f"BiDi send failed: {method}", -1)
+        waited, step = 0, 50
+        while waited < timeout_ms:
+            reply = _native.take_string(_native.bidi_poll_reply(self._handle, cid))
+            if reply:
+                return json.loads(reply)
+            if _native.bidi_pump(self._handle, step) < 0:
+                break
+            waited += step
+        raise TimeoutError_(f"BiDi command timed out: {method}", 0)
+
+    def lost_events(self) -> int:
+        """How many events the bounded queue has dropped since the last call
+        (then resets) — so a consumer knows it missed events."""
+        return _native.bidi_lost_events(self._handle)
+
+    def close(self) -> None:
+        if self._handle:
+            _native.bidi_close(self._handle)
+            self._handle = None
 
 
 def Chrome(command_executor: str = "http://127.0.0.1:9515", options: dict | None = None) -> WebDriver:

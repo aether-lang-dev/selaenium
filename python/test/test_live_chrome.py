@@ -8,6 +8,7 @@ own chromedriver on an ephemeral port, runs against a data: URL (no network),
 and tears everything down. Skips loudly if chromedriver is absent.
 """
 
+import json
 import os
 import pytest
 import shutil
@@ -116,6 +117,68 @@ def test_live_chrome():
         finally:
             driver.quit()
             print("  ok: quit")
+    finally:
+        proc.terminate()
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+
+
+def test_live_bidi():
+    """WebDriver-BiDi over the same engine: subscribe to console log entries,
+    emit one via the classic script channel, and receive the event
+    asynchronously — the bidirectional half, driven from Python through the
+    demux C ABI."""
+    from selenium_core import BidiEvent  # noqa: E402
+
+    driver_bin = shutil.which("chromedriver")
+    if not driver_bin:
+        pytest.skip("chromedriver not on PATH")
+
+    port = _free_port()
+    proc = subprocess.Popen(
+        [driver_bin, f"--port={port}"],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    )
+    try:
+        if not _wait_up(port):
+            pytest.skip("chromedriver did not come up")
+
+        options = {
+            "goog:chromeOptions": {
+                "args": ["--headless=new", "--no-sandbox", "--disable-gpu",
+                         "--disable-dev-shm-usage"]
+            }
+        }
+        driver = Chrome(f"http://127.0.0.1:{port}", options=options)
+        try:
+            assert driver.bidi_available, "session negotiated no webSocketUrl"
+            print("  ok: BiDi available (webSocketUrl negotiated)")
+
+            driver.get(PAGE)
+
+            ack = driver.bidi.subscribe(BidiEvent.LOG_ENTRY_ADDED)
+            assert ack.get("type") == "success", f"subscribe ack={ack!r}"
+            print("  ok: bidi.subscribe(log.entryAdded)")
+
+            driver.execute_script("console.log('bidi-hello');")
+
+            ev = driver.bidi.next_event(BidiEvent.LOG_ENTRY_ADDED, timeout_ms=8000)
+            assert ev is not None, "no log.entryAdded event received"
+            assert ev.get("method") == BidiEvent.LOG_ENTRY_ADDED, f"event={ev!r}"
+            # the logged text rides in params.args[0].value
+            assert "bidi-hello" in json.dumps(ev), f"event missing text: {ev!r}"
+            print("  ok: log.entryAdded event received async, carries the text")
+
+            # a raw BiDi command through the same channel (session.status).
+            status = driver.bidi.command("session.status")
+            assert status.get("type") == "success", f"status={status!r}"
+            print("  ok: bidi.command(session.status)")
+
+            print("PASS: live BiDi test green")
+        finally:
+            driver.quit()
     finally:
         proc.terminate()
         try:

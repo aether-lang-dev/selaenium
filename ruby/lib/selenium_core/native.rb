@@ -74,6 +74,19 @@ module SeleniumCore
       [:route,           'aether_sel_embed_route',           VOIDP, [VOIDP]],
       [:build_request,   'aether_sel_embed_build_request',   VOIDP, [VOIDP, VOIDP, VOIDP]],
       [:error_code,      'aether_sel_embed_error_code',      INT,   [VOIDP]],
+      # ---- WebDriver-BiDi (over the session's webSocketUrl) ----
+      [:bidi_open,        'aether_sel_embed_bidi_open',        VOIDP, [VOIDP]],
+      [:bidi_close,       'aether_sel_embed_bidi_close',       VOID,  [VOIDP]],
+      [:bidi_send,        'aether_sel_embed_bidi_send',        INT,   [VOIDP, INT, VOIDP, VOIDP]],
+      [:bidi_pump,        'aether_sel_embed_bidi_pump',        INT,   [VOIDP, INT]],
+      [:bidi_fd,          'aether_sel_embed_bidi_fd',          INT,   [VOIDP]],
+      [:bidi_poll_reply,  'aether_sel_embed_bidi_poll_reply',  VOIDP, [VOIDP, INT]],
+      [:bidi_poll_event,  'aether_sel_embed_bidi_poll_event',  VOIDP, [VOIDP]],
+      [:bidi_lost_events, 'aether_sel_embed_bidi_lost_events', INT,   [VOIDP]],
+      [:bidi_cancel,      'aether_sel_embed_bidi_cancel',      VOID,  [VOIDP, INT]],
+      [:bidi_subscribe,   'aether_sel_embed_bidi_subscribe',   VOIDP, [VOIDP, INT, VOIDP, INT]],
+      [:bidi_unsubscribe, 'aether_sel_embed_bidi_unsubscribe', VOIDP, [VOIDP, INT, VOIDP, INT]],
+      [:bidi_wait_event,  'aether_sel_embed_bidi_wait_event',  VOIDP, [VOIDP, VOIDP, INT]],
       [:free_string,     'aether_sel_embed_free_string',     VOID,  [VOIDP]]
     ].freeze
 

@@ -8,6 +8,7 @@
 require 'minitest/autorun'
 require 'socket'
 require 'cgi'
+require 'json'
 
 $LOAD_PATH.unshift File.expand_path('../lib', __dir__)
 require 'selenium_core'
@@ -61,6 +62,34 @@ class LiveTest < Minitest::Test
       assert_raises(SeleniumCore::NoSuchElementError) do
         driver.find_element(SeleniumCore::By::ID, 'does-not-exist')
       end
+    ensure
+      driver.quit
+    end
+  end
+
+  # WebDriver-BiDi over the same engine: subscribe to console log entries, emit
+  # one via the classic script channel, and receive the event asynchronously —
+  # the bidirectional half, driven from Ruby through the demux C ABI.
+  def test_live_bidi
+    driver = SeleniumCore::WebDriver.headless_chrome("http://127.0.0.1:#{@port}")
+    begin
+      assert driver.bidi_available?, 'session negotiated no webSocketUrl'
+
+      page = 'data:text/html;charset=utf-8,' + CGI.escape(HTML).gsub('+', '%20')
+      driver.get(page)
+
+      ack = driver.bidi.subscribe(SeleniumCore::BidiEvent::LOG_ENTRY_ADDED)
+      assert_equal 'success', ack['type'], "subscribe ack=#{ack.inspect}"
+
+      driver.execute_script("console.log('bidi-hello');")
+
+      ev = driver.bidi.next_event(SeleniumCore::BidiEvent::LOG_ENTRY_ADDED, timeout_ms: 8000)
+      refute_nil ev, 'no log.entryAdded event received'
+      assert_equal SeleniumCore::BidiEvent::LOG_ENTRY_ADDED, ev['method']
+      assert_includes ev.to_json, 'bidi-hello'
+
+      status = driver.bidi.command('session.status')
+      assert_equal 'success', status['type'], "status=#{status.inspect}"
     ensure
       driver.quit
     end

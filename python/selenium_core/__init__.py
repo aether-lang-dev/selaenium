@@ -17,6 +17,8 @@ language binding via ``libselenium_core.so``. This package is the Python face.
 
 from ._native import configure as configure_native_lib
 from ._webdriver import (
+    BiDi,
+    BidiEvent,
     By,
     Chrome,
     ElementClickInterceptedError,
@@ -36,6 +38,8 @@ from ._webdriver import (
 )
 
 __all__ = [
+    "BiDi",
+    "BidiEvent",
     "By",
     "Chrome",
     "Remote",
