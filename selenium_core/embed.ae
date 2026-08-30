@@ -33,6 +33,7 @@
 
 import selenium_core
 import selenium_core (Session)
+import driver
 import std.string
 
 // Caller-owned-string helper (core/_embed_strdup.c): malloc/strdup a C string
@@ -123,6 +124,48 @@ sel_embed_build_request(name: string, session_id: string, params_json: string) -
 // binding share the ONE code table rather than duplicating it.
 sel_embed_error_code(w3c_error: string) -> int {
     return selenium_core.error_code(w3c_error)
+}
+
+// ---- driver-process orchestration (launch layer) ----
+//
+// Spawn, reach, and reap the driver process (chromedriver/geckodriver/…) so no
+// binding re-implements process management. See docs/Driver-Orchestration-ABI.md.
+// The resolution verb (resolve/ensure) is v1 = PATH lookup and GROWS into full
+// driver management (detect→version→match→cache→download→CfT) with no ABI change.
+// Lifecycle: ensure_driver → driver_url → open → … → close → stop_driver.
+
+// Resolve the driver binary for `browser` ("chrome"/"firefox"/"edge"/… or a
+// driver name directly). v1: the conventional driver on PATH. `hint` is a
+// reserved opts/JSON string. Returns an absolute path or "" (caller frees).
+sel_embed_resolve_driver(browser: string, hint: string) -> string {
+    return sel_embed_dup(driver.resolve_driver(browser, hint))
+}
+
+// Spawn an explicit driver binary on a free port and wait up to timeout_ms for
+// readiness. Returns an opaque driver handle, or null if it never came up.
+sel_embed_launch_driver(driver_path: string, timeout_ms: int) -> ptr {
+    return driver.launch(driver_path, timeout_ms)
+}
+
+// resolve_driver(browser,hint) then launch. Returns a driver handle, or null —
+// the binding's cue to SKIP a live test (same "no driver" semantics as before).
+sel_embed_ensure_driver(browser: string, hint: string, timeout_ms: int) -> ptr {
+    return driver.ensure(browser, hint, timeout_ms)
+}
+
+// The "http://127.0.0.1:<port>" to pass to sel_embed_open(). Caller frees.
+sel_embed_driver_url(dh: ptr) -> string {
+    return sel_embed_dup(driver.url_of(dh))
+}
+
+// The driver's spawn token / pid (diagnostics). -1 if the handle is null.
+sel_embed_driver_pid(dh: ptr) -> int {
+    return driver.pid_of(dh)
+}
+
+// Kill + reap the driver process and free the handle. NULL-safe.
+sel_embed_stop_driver(dh: ptr) {
+    driver.stop(dh)
 }
 
 // ---- string ownership ----

@@ -1,0 +1,168 @@
+// driver.ae — driver-process orchestration for the pure-Aether Selenium engine.
+//
+// This is the LAUNCH LAYER of the driver-orchestration ABI
+// (docs/Driver-Orchestration-ABI.md): resolve a driver binary, spawn it on a
+// free port, wait for readiness, and tear it down — so no binding re-implements
+// ProcessBuilder / proc_open / subprocess / run-live.sh. It composes Aether
+// primitives already in the stdlib:
+//   * os.run_capture / os.spawn_proc / os.kill / os.wait  — process
+//   * net.http_server bind-0 + http_server_port           — free port
+//   * net.tcp_connect_raw + builtin sleep(ms)             — readiness poll
+//
+// resolve_driver() is v1 = PATH lookup; it GROWS (no ABI change) into the full
+// Selenium-Manager pipeline (detect browser -> version -> match -> cache ->
+// download -> Chrome-for-Testing) per docs/Selenium-Manager-Port.md. The launch
+// verbs (launch/url/pid/stop) stay stable while it does.
+import std.os
+import std.net
+import std.list
+import std.string
+import std.heap
+
+// One live driver process: the spawn token (for kill/wait) and the port it was
+// launched on (for the base URL a session binds to).
+struct Driver {
+    token: int
+    port: int
+}
+
+// ---- resolution layer (v1: PATH lookup; grows into full management) ----
+
+// Resolve the driver binary to run for `browser` (e.g. "chrome"). v1: map the
+// browser to its conventional driver name and find it on PATH. Returns an
+// absolute path, or "" if not resolvable. LATER (no signature change): browser+
+// version detection, version-matched driver, cache, download, CfT. `hint` is a
+// reserved opts/JSON string (a pinned version, cache dir, "offline", channel).
+resolve_driver(browser: string, hint: string) -> string {
+    exe = driver_exe_for(browser)
+    if string.length(exe) == 0 { return "" }
+    return which(exe)
+}
+
+// The conventional driver executable name for a browser. PURE — the first datum
+// the Selenium-Manager port will expand (per-browser modules).
+driver_exe_for(browser: string) -> string {
+    if string.equals(browser, "chrome") == 1 { return "chromedriver" }
+    if string.equals(browser, "chromium") == 1 { return "chromedriver" }
+    if string.equals(browser, "firefox") == 1 { return "geckodriver" }
+    if string.equals(browser, "edge") == 1 { return "msedgedriver" }
+    // Allow passing a driver binary name directly (e.g. "chromedriver").
+    return browser
+}
+
+// Absolute path of `exe` on PATH via `command -v`, or "" if absent. The one
+// PROC step of v1 resolution.
+which(exe: string) -> string {
+    argv = list.new()
+    list.add(argv, "-c")
+    list.add(argv, string.concat("command -v ", exe))
+    out, _status, _err = os.run_capture("/bin/sh", argv, null)
+    list.free(argv)
+    return string.trim(out)
+}
+
+// ---- launch layer (stable) ----
+
+// Spawn an EXPLICIT driver binary on a free port and wait until it accepts
+// connections (bounded by timeout_ms). Returns an opaque Driver handle (as ptr),
+// or null if the path is empty, the spawn failed, or it never came up.
+launch(driver_path: string, timeout_ms: int) -> ptr {
+    if string.length(driver_path) == 0 { return null }
+
+    port = free_port()
+    if port <= 0 { return null }
+
+    argv = list.new()
+    list.add(argv, string.concat("--port=", string.from_int(port)))
+    token, err = os.spawn_proc(driver_path, argv, null)
+    list.free(argv)
+    if string.length(err) > 0 { return null }
+
+    if wait_ready(port, timeout_ms) == 0 {
+        // Never came up — kill + reap so we don't leak the process.
+        _k = os.kill(token, 15)
+        _e, _we = os.wait(token)
+        return null
+    }
+
+    d = heap.new(Driver)
+    d.token = token
+    d.port = port
+    return d as ptr
+}
+
+// resolve_driver(browser,hint) -> launch(path,timeout). The convenience most
+// bindings call. Returns a Driver handle, or null (the binding's cue to SKIP its
+// live test: same "no driver" semantics every binding already has).
+ensure(browser: string, hint: string, timeout_ms: int) -> ptr {
+    path = resolve_driver(browser, hint)
+    if string.length(path) == 0 { return null }
+    return launch(path, timeout_ms)
+}
+
+// The "http://127.0.0.1:<port>" a session binds to (sel_embed_open). Owned by
+// the engine's caller-string convention at the embed layer.
+url_of(dp: ptr) -> string {
+    if dp == null { return "" }
+    d = dp as *Driver
+    return string.concat("http://127.0.0.1:", string.from_int(d.port))
+}
+
+pid_of(dp: ptr) -> int {
+    if dp == null { return -1 }
+    d = dp as *Driver
+    return d.token
+}
+
+// Kill + reap the driver process and free the handle. NULL-safe; safe once.
+stop(dp: ptr) {
+    if dp == null { return }
+    d = dp as *Driver
+    _k = os.kill(d.token, 15)
+    _e, _we = os.wait(d.token)
+    heap.free(dp)
+}
+
+// ---- internals ----
+
+// A free ephemeral TCP port: bind an http_server to 127.0.0.1:0, read the
+// OS-assigned port (getsockname at bind time), release it. The classic bind-0
+// trick; a brief race with the driver's own bind is acceptable for test/launch.
+free_port() -> int {
+    s = net.http_server_create(0)
+    if s == null { return -1 }
+    rc = net.http_server_bind_raw(s, "127.0.0.1", 0)
+    if rc != 0 {
+        net.http_server_free(s)
+        return -1
+    }
+    p = net.http_server_port(s)
+    net.http_server_free(s)
+    return p
+}
+
+// Poll tcp_connect to 127.0.0.1:port until it accepts (ready) or timeout_ms
+// elapses. Returns 1 ready, 0 timed out. Uses the builtin sleep(ms) — a real
+// timed wait, not a busy spin (matters on the production launch path).
+wait_ready(port: int, timeout_ms: int) -> int {
+    elapsed = 0
+    step = 50
+    ready = 0
+    done = 0
+    while done == 0 {
+        sock = net.tcp_connect_raw("127.0.0.1", port)
+        if sock != null {
+            _c = net.tcp_close(sock)
+            ready = 1
+            done = 1
+        } else {
+            if elapsed >= timeout_ms {
+                done = 1
+            } else {
+                sleep(step)
+                elapsed = elapsed + step
+            }
+        }
+    }
+    return ready
+}

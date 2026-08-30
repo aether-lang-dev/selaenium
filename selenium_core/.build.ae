@@ -6,7 +6,7 @@ aeb(cap) {
     bldr.build() {
         aether.shared_lib() {
             source("embed.ae")
-            caps("net")
+            caps("net,os")
             extra_source("_embed_strdup.c")
             output("libselenium_core.so")
         }
