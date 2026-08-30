@@ -1,49 +1,34 @@
-// Third-party-consumer EXAMPLE test for the Rust binding.
-//
-// Stages a standalone copy of the selenium-core crate under target/rust-pkg
-// (carrying the bundled native/ .so, but deliberately WITHOUT the repo's core/
-// as a sibling — so build.rs's ../core/native path can't resolve and only the
-// crate's own bundled native/ .so satisfies the link/rpath). A separate consumer
-// crate then `cargo run`s against it (path dep to ../rust-pkg) with no
-// SELENIUM_CORE_LIB. The honest "add the crate and it just works" test the
-// in-tree rust/.tests.ae cannot give (that one sits next to core/).
-import build
-import std.os
+// Rust consumer-install proof: prove the packaged crate drives the engine from a
+// CLEAN environment for a third party. rust.consumer_example stages a bundled
+// crate (Cargo.toml/build.rs/src + the bundled native/.so — NO in-tree ../core
+// sibling) plus a separate consumer crate whose Cargo.toml has a path dep to the
+// staged pkg, asserts the .so shipped, then `cargo run --offline -- <mode>` with
+// SELENIUM_CORE_LIB unset — so the consumer links only the crate's own bundled
+// .so. Modes: ffi/live (live self-skips). Skipped by preflight when rust is
+// absent (prereq rust:1.75).
+import bldr
+import rust
+import rust (stage, run_in, run_arg, assert_file)
 
 aeb(cap) {
-    b = build.start()
-    build.dep(b, "rust/.package.ae")
-    _c = build.dep_artifact(b, "rust/.package.ae", "crate_dir")
-    root = build._get(b, "root")
-    exsrc = "${root}/rust/example"
-    pkg = "${root}/target/rust-pkg"
-    consumer = "${root}/target/rust-consumer"
-    cargo = "PATH=\"$HOME/.cargo/bin:$PATH\""
-
-    // Stage the crate WITHOUT example/ or target/ (and target/ has no core/
-    // sibling), plus a separate consumer crate with a path dep to ../rust-pkg.
-    rc = os.system("rm -rf \"${pkg}\" \"${consumer}\" && mkdir -p \"${pkg}/src\" \"${consumer}/src\" && cp \"${root}/rust/Cargo.toml\" \"${pkg}/\" && cp \"${root}/rust/build.rs\" \"${pkg}/\" && cp \"${root}/rust/src/lib.rs\" \"${root}/rust/src/json.rs\" \"${pkg}/src/\" && mkdir -p \"${pkg}/native\" && cp \"${root}/rust/native/libselenium_core.so\" \"${pkg}/native/\" && cp \"${exsrc}/Cargo.toml\" \"${exsrc}/build.rs\" \"${consumer}/\" && cp \"${exsrc}/src/main.rs\" \"${consumer}/src/\"")
-    if rc != 0 {
-        println("rust example: staging the crate + consumer failed")
-        return 1
+    bldr.build() {
+        prereq("rust:1.75")
+        dep("rust/.package.ae")
+        rust.consumer_example() {
+            // the bundled crate (from the packaged rust/ tree).
+            stage("Cargo.toml", "rust-pkg/Cargo.toml")
+            stage("build.rs", "rust-pkg/build.rs")
+            stage("src/lib.rs", "rust-pkg/src/lib.rs")
+            stage("src/json.rs", "rust-pkg/src/json.rs")
+            stage("native/libselenium_core.so", "rust-pkg/native/libselenium_core.so")
+            // the consumer crate (path-deps ../pkg).
+            stage("example/Cargo.toml", "rust-consumer/Cargo.toml")
+            stage("example/build.rs", "rust-consumer/build.rs")
+            stage("example/src/main.rs", "rust-consumer/src/main.rs")
+            assert_file("rust-pkg/native/libselenium_core.so")
+            run_in("rust-consumer")
+            run_arg("ffi")
+            run_arg("live")
+        }
     }
-    // The staged crate must carry the bundled .so, and target/ must have NO core/.
-    rc_so = os.system("ls \"${pkg}/native/libselenium_core.so\" >/dev/null 2>&1 && test ! -d \"${root}/target/core\"")
-    if rc_so != 0 {
-        println("rust example: staged crate missing native/*.so (or a core/ sibling leaked)")
-        return 1
-    }
-
-    rc2 = os.system("cd \"${consumer}\" && ${cargo} env -u SELENIUM_CORE_LIB cargo run --offline -- ffi")
-    if rc2 != 0 {
-        println("rust example: consumer `cargo run -- ffi` against the bundled crate failed")
-        return 1
-    }
-    rc3 = os.system("cd \"${consumer}\" && ${cargo} env -u SELENIUM_CORE_LIB cargo run --offline -- live")
-    if rc3 != 0 {
-        println("rust example: consumer `cargo run -- live` against the bundled crate failed")
-        return 1
-    }
-    println("rust example: PASS — consumer crate drove the engine via its own bundled .so (ffi + live)")
-    return 0
 }
