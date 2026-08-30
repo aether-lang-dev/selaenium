@@ -1,36 +1,31 @@
-// Java binding tests (Panama FFM — java.lang.foreign, no JNI/C shim). The
-// loader honors SELENIUM_CORE_LIB, which we point at the shared engine artifact
-// this node deps. Built with plain `javac` (no Maven); tests are JUnit-free
-// main() harnesses run with `java --enable-native-access`. The live test spawns
-// its own chromedriver + in-process content server and self-skips if
-// chromedriver is absent. Needs a JDK >= 22 (FFM stable).
-import build
-import std.os
+// Java binding tests (Panama FFM — java.lang.foreign, no JNI/C shim), JUnit 5.
+// The loader honors SELENIUM_CORE_LIB, injected here from the engine's
+// shared_lib artifact. javac_test compiles src/test/java against the binding
+// classes + JUnit; junit5 runs them. jvm_args threads --enable-native-access
+// (required on JDK 24+, where an unnamed FFM downcall otherwise ERRORS). FfiTest
+// is the no-browser facts; LiveTest spawns its own chromedriver + in-process
+// HttpServer and assumeTrue-skips when chromedriver is absent. JUnit Jupiter +
+// platform-console 6.1.1 resolve from aeb's repo cache. Needs a JDK >= 22.
+import bldr
+import java
+import java (release, source_layout, jvm_args)
+import maven
 
 aeb(cap) {
-    b = build.start()
-    build.dep(b, "selenium_core/.build.ae")
-    lib = build.dep_artifact(b, "selenium_core/.build.ae", "shared_lib")
-    root = build._get(b, "root")
-    jdir = "${root}/java"
-
-    // Compile the binding + tests into java/out.
-    cc = os.system("cd \"${jdir}\" && rm -rf out && mkdir -p out && javac -d out src/org/seleniumhq/aether/*.java && javac -cp out -d out test/TestFfi.java test/TestLive.java")
-    if cc != 0 {
-        println("java tests: javac FAILED")
-        return 1
+    bldr.build() {
+        prereq("jdk:22")
+        dep("java/.build.ae")
+        dep("selenium_core/.build.ae")
+        lib = dep_artifact("selenium_core/.build.ae", "shared_lib")
+        dep("org.junit.jupiter:junit-jupiter:6.1.1")
+        dep("org.junit.platform:junit-platform-console:6.1.1")
+        java.javac_test() {
+            release("22")
+            source_layout("maven idiomatic")
+        }
+        java.junit5() {
+            env("SELENIUM_CORE_LIB", lib)
+            jvm_args("--enable-native-access=ALL-UNNAMED")
+        }
     }
-    na = "--enable-native-access=ALL-UNNAMED"
-    rc = os.system("cd \"${jdir}\" && SELENIUM_CORE_LIB=\"${lib}\" java ${na} -cp out TestFfi")
-    if rc != 0 {
-        println("java tests: TestFfi FAILED")
-        return 1
-    }
-    rc2 = os.system("cd \"${jdir}\" && SELENIUM_CORE_LIB=\"${lib}\" java ${na} -cp out TestLive")
-    if rc2 != 0 {
-        println("java tests: TestLive FAILED")
-        return 1
-    }
-    println("java tests: PASSED (ffi + live+surface)")
-    return 0
 }

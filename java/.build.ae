@@ -1,0 +1,20 @@
+// Java binding build (Panama FFM — java.lang.foreign, no JNI/C shim). Compiles
+// the binding classes under src/main/java with plain javac (no Maven). The
+// engine .so is loaded at runtime via SELENIUM_CORE_LIB / the bundled native/
+// resource, so the build itself only needs the JDK. Publishes the compiled
+// classes for the test + package stages. Needs a JDK >= 22 (FFM stable);
+// skipped by preflight when no JDK is present (prereq jdk:22).
+import bldr
+import java
+import java (release, source_layout)
+
+aeb(cap) {
+    bldr.build() {
+        prereq("jdk:22")
+        dep("selenium_core/.build.ae")
+        java.javac() {
+            release("22")
+            source_layout("maven idiomatic")
+        }
+    }
+}

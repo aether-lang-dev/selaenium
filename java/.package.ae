@@ -20,7 +20,7 @@ aeb(cap) {
 
     // 1. Compile classes into a staging dir, then drop the engine .so in as the
     //    /native/ jar resource.
-    rc = os.system("cd \"${jdir}\" && rm -rf pkgout && mkdir -p \"${stage}/native\" && javac -d \"${stage}\" src/org/seleniumhq/aether/*.java && cp \"${lib}\" \"${stage}/native/libselenium_core.so\"")
+    rc = os.system("cd \"${jdir}\" && rm -rf pkgout && mkdir -p \"${stage}/native\" && javac -d \"${stage}\" src/main/java/org/seleniumhq/aether/*.java && cp \"${lib}\" \"${stage}/native/libselenium_core.so\"")
     if rc != 0 {
         println("java package: compile / .so-stage FAILED")
         return 1
