@@ -85,6 +85,18 @@ const route = lazy('void* aether_sel_embed_route(const char* name)')
 const buildRequest = lazy('void* aether_sel_embed_build_request(const char* name, const char* session_id, const char* params_json)')
 const errorCode = lazy('int aether_sel_embed_error_code(const char* w3c_error)')
 
+// ---- atom-backed commands (a shared JS atom run in-page by the engine) ----
+// isDisplayed / getAttribute / relative-locator all execute the same JS atoms
+// upstream Selenium ships, via the engine's executeScript path. Results drain
+// through the usual last_value channel. char* args/returns go through void*.
+const executeAtom = lazy(
+  'int aether_sel_embed_execute_atom(void* h, const char* atom, const char* elem_id, const char* extra_json)',
+)
+const isDisplayed = lazy('int aether_sel_embed_is_displayed(void* h, const char* elem_id)')
+const getAttribute = lazy('int aether_sel_embed_get_attribute(void* h, const char* elem_id, const char* name)')
+const atomStrArg = lazy('void* aether_sel_embed_atom_str_arg(const char* s)')
+const findRelative = lazy('int aether_sel_embed_find_relative(void* h, const char* base_css, const char* filters_json)')
+
 // ---- WebDriver-BiDi (over the session's webSocketUrl) ----
 // An opaque BiDi channel handle, independent of the W3C session handle.
 const bidiOpen = lazy('void* aether_sel_embed_bidi_open(const char* ws_url)')
@@ -127,6 +139,11 @@ module.exports = {
   lastErrorCode,
   lastError,
   sessionId,
+  executeAtom,
+  isDisplayed,
+  getAttribute,
+  atomStrArg,
+  findRelative,
   byLocator,
   route,
   buildRequest,

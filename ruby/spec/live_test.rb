@@ -95,6 +95,36 @@ class LiveTest < Minitest::Test
     end
   end
 
+  # Atom-backed commands (isDisplayed / getAttribute / relative locators) run as
+  # JS atoms via executeScript — no W3C HTTP endpoint — proven against real Chrome.
+  ATOMS_HTML = '<html><head><title>Atoms</title></head><body>' \
+               "<h1 id='hdr'>Header</h1>" \
+               "<button id='btn'>Go</button>" \
+               "<p id='gone' style='display:none'>hidden</p>" \
+               "<a id='lnk' href='https://example.com/x'>link</a>" \
+               '</body></html>'
+
+  def test_live_atoms
+    driver = SeleniumCore::WebDriver.headless_chrome("http://127.0.0.1:#{@port}")
+    begin
+      page = 'data:text/html;charset=utf-8,' + CGI.escape(ATOMS_HTML).gsub('+', '%20')
+      driver.get(page)
+
+      assert driver.find_element(SeleniumCore::By::ID, 'hdr').displayed?,
+             '#hdr should be displayed'
+      refute driver.find_element(SeleniumCore::By::ID, 'gone').displayed?,
+             '#gone (display:none) should not be displayed'
+
+      href = driver.find_element(SeleniumCore::By::ID, 'lnk').attribute('href')
+      assert_includes href, 'example.com/x', "unexpected href: #{href.inspect}"
+
+      below = driver.find_relative('button', { kind: 'below', sel: '#hdr' })
+      assert_operator below.size, :>=, 1, 'expected >= 1 button below #hdr'
+    ensure
+      driver.quit
+    end
+  end
+
   private
 
   def which(cmd)

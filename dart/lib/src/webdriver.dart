@@ -98,7 +98,18 @@ class WebElement {
       _exec('sendKeysToElement', {'text': text, 'value': text.split('')});
   String get text => _exec('getElementText') as String;
   String get tagName => _exec('getElementTagName') as String;
-  dynamic getAttribute(String name) => _exec('getDomAttribute', {'name': name});
+
+  /// Whether the element is shown (the isDisplayed atom, run in-page by the
+  /// engine — the visibility algorithm, not a naive style check).
+  bool isDisplayed() => _driver._atomIsDisplayed(id) == true;
+
+  /// The classic getAttribute(name): property-or-attribute (boolean attrs,
+  /// live properties like value/checked), via the shared engine atom. Use
+  /// [getDomAttribute] for the raw W3C DOM attribute.
+  dynamic getAttribute(String name) => _driver._atomGetAttribute(id, name);
+
+  /// The literal DOM attribute (W3C getDomAttribute), no property fallback.
+  dynamic getDomAttribute(String name) => _exec('getDomAttribute', {'name': name});
   dynamic getProperty(String name) => _exec('getElementProperty', {'name': name});
   bool isEnabled() => _exec('isElementEnabled') == true;
   bool isSelected() => _exec('isElementSelected') == true;
@@ -171,6 +182,48 @@ class WebDriver {
     final raw = Native.instance.takeString(Native.instance.lastValue(_handle));
     if (raw.isEmpty) return null;
     return jsonDecode(raw);
+  }
+
+  // ---- atom-backed commands (run a shared JS atom in-page via the engine) ----
+
+  /// Drain last_value after an atom call, applying the same typed-error mapping
+  /// as [execute].
+  dynamic _atomResult(int rc) {
+    if (rc != 0) {
+      final code = Native.instance.lastErrorCode(_handle);
+      final message = Native.instance.takeString(Native.instance.lastError(_handle));
+      if (rc == -1 && code == 0) {
+        throw WebDriverError(message.isEmpty ? 'transport failure' : message, -1);
+      }
+      throw _classify(code, message);
+    }
+    final raw = Native.instance.takeString(Native.instance.lastValue(_handle));
+    if (raw.isEmpty) return null;
+    return jsonDecode(raw);
+  }
+
+  dynamic _atomIsDisplayed(String elementId) => _withCStr(elementId,
+      (e) => _atomResult(Native.instance.isDisplayed(_handle, e)));
+
+  dynamic _atomGetAttribute(String elementId, String name) => _withCStr(
+      elementId,
+      (e) => _withCStr(
+          name, (n) => _atomResult(Native.instance.getAttributeAtom(_handle, e, n))));
+
+  /// Relative locators: elements matching [baseCss] filtered by spatial relation
+  /// to anchors, nearest first. Each filter is a map
+  /// `{"kind": "above"|"below"|"left"|"right"|"near", "sel": "<css>"}`
+  /// (`near` also accepts `"dist"`). Returns a list of [WebElement].
+  List<WebElement> findRelative(String baseCss, List<Map<String, dynamic>> filters) {
+    final filtersJson = jsonEncode(filters);
+    final result = _withCStr(
+        baseCss,
+        (b) => _withCStr(filtersJson,
+            (f) => _atomResult(Native.instance.findRelative(_handle, b, f))));
+    final refs = (result as List<dynamic>?) ?? const [];
+    return refs
+        .map((e) => WebElement(this, (e as Map<String, dynamic>)[w3cElementKey] as String))
+        .toList();
   }
 
   // ---- navigation ----

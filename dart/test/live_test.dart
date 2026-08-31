@@ -137,6 +137,54 @@ void main() {
     }
   }, timeout: const Timeout(Duration(seconds: 90)));
 
+  test('live chrome + atoms', () async {
+    final driverBin = which('chromedriver');
+    if (driverBin == null) {
+      markTestSkipped('chromedriver not on PATH');
+      return;
+    }
+
+    final cdPort = await freePort();
+    final cd = await Process.start(driverBin, ['--port=$cdPort']);
+    try {
+      if (!await waitUp(cdPort, const Duration(seconds: 10))) {
+        markTestSkipped('chromedriver did not come up');
+        return;
+      }
+
+      final d = WebDriver.headlessChrome('http://127.0.0.1:$cdPort');
+      try {
+        // A self-contained fixture served straight from a data: URL.
+        const html = '<!doctype html><title>Atoms</title>'
+            '<h1 id="hdr">Header</h1>'
+            '<button id="btn">click me</button>'
+            '<p id="gone" style="display:none">hidden</p>'
+            '<a id="lnk" href="https://example.com/x">link</a>';
+        d.get('data:text/html,${Uri.encodeComponent(html)}');
+
+        // isDisplayed: the atom's real visibility algorithm.
+        expect(d.findElement(By.id, 'hdr').isDisplayed(), isTrue);
+        expect(d.findElement(By.id, 'gone').isDisplayed(), isFalse);
+
+        // getAttribute via the atom (property-or-attribute).
+        final href = d.findElement(By.id, 'lnk').getAttribute('href');
+        expect(href, isA<String>());
+        expect(href as String, contains('example.com/x'));
+
+        // findRelative: the button sits below the header.
+        final below = d.findRelative('button', [
+          {'kind': 'below', 'sel': '#hdr'}
+        ]);
+        expect(below.length, greaterThanOrEqualTo(1));
+        expect(below.first.getAttribute('id'), 'btn');
+      } finally {
+        d.quit();
+      }
+    } finally {
+      cd.kill();
+    }
+  }, timeout: const Timeout(Duration(seconds: 90)));
+
   test('live chrome + bidi', () async {
     final driverBin = which('chromedriver');
     if (driverBin == null) {

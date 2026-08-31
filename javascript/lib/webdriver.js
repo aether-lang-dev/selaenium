@@ -96,7 +96,19 @@ class WebElement {
   get tagName() {
     return this._exec('getElementTagName')
   }
+  isDisplayed() {
+    // The isDisplayed atom, run in-page by the engine — the real visibility
+    // algorithm, not a naive style check.
+    return !!this._driver._atomBool('isDisplayed', this._id)
+  }
   getAttribute(name) {
+    // The classic getAttribute(name): property-or-attribute (boolean attrs,
+    // live properties like value/checked), via the shared engine atom. Use
+    // getDomAttribute() for the raw W3C DOM attribute.
+    return this._driver._atomGetAttribute(this._id, name)
+  }
+  getDomAttribute(name) {
+    // The literal DOM attribute (W3C getDomAttribute), no property fallback.
     return this._exec('getDomAttribute', { name })
   }
   getProperty(name) {
@@ -157,6 +169,40 @@ class WebDriver {
     const raw = native.takeString(native.lastValue(this._handle))
     if (raw === '') return null
     return JSON.parse(raw)
+  }
+
+  // ---- atom-backed commands (a shared JS atom run in-page via the engine) ----
+  // Drain the last_value after an atom call, throwing a typed error on rc!=0.
+  _atomResult(rc) {
+    if (rc !== 0) {
+      const code = native.lastErrorCode(this._handle)
+      const message = native.takeString(native.lastError(this._handle))
+      if (rc === -1 && code === 0) {
+        throw new WebDriverError(message || 'transport failure', -1)
+      }
+      raiseFor(code, message)
+    }
+    const raw = native.takeString(native.lastValue(this._handle))
+    if (raw === '') return null
+    return JSON.parse(raw)
+  }
+
+  _atomBool(verb, elementId) {
+    return !!this._atomResult(native[verb](this._handle, elementId))
+  }
+
+  _atomGetAttribute(elementId, name) {
+    return this._atomResult(native.getAttribute(this._handle, elementId, name))
+  }
+
+  // Relative locators: elements matching baseCss filtered by spatial relation to
+  // anchors, nearest first. Each filter is an object
+  // { kind: 'above'|'below'|'left'|'right'|'near', sel: '<css>' } ('near' also
+  // accepts 'dist'). Returns an array of WebElement.
+  findRelative(baseCss, ...filters) {
+    const rc = native.findRelative(this._handle, baseCss, JSON.stringify(filters))
+    const refs = this._atomResult(rc) || []
+    return refs.map((r) => new WebElement(this, r[W3C_ELEMENT_KEY]))
   }
 
   // ---- navigation ----

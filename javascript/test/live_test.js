@@ -222,3 +222,55 @@ test('live chrome + bidi', async (t) => {
     cd.kill()
   }
 })
+
+// Live atom-backed commands: isDisplayed / getAttribute / relative locators all
+// run the shared JS atoms in-page via the engine. Same fixture as above: own
+// chromedriver on an ephemeral port, self-skip if absent. Uses a data: URL so no
+// content server is needed. All calls are synchronous blocking FFI.
+test('live chrome + atoms', async (t) => {
+  const driverBin = which('chromedriver')
+  if (!driverBin) {
+    t.skip('chromedriver not on PATH')
+    return
+  }
+
+  const cdPort = await freePort()
+  const cd = spawn(driverBin, [`--port=${cdPort}`], { stdio: 'ignore' })
+
+  try {
+    if (!(await waitUp(cdPort))) {
+      t.skip('chromedriver did not come up')
+      return
+    }
+
+    // From here on, everything is synchronous (blocking FFI).
+    const d = s.WebDriver.headlessChrome(`http://127.0.0.1:${cdPort}`)
+    try {
+      assert.ok(d.sessionId, 'no session id after newSession')
+
+      const html =
+        '<title>Atoms</title>' +
+        "<h1 id='hdr'>Header</h1>" +
+        "<button id='btn'>go</button>" +
+        "<p id='gone' style='display:none'>hidden</p>" +
+        "<a id='lnk' href='https://example.com/x'>link</a>"
+      d.get(`data:text/html,${encodeURIComponent(html)}`)
+
+      // isDisplayed atom
+      assert.strictEqual(d.findElement(s.By.ID, 'hdr').isDisplayed(), true, '#hdr should be displayed')
+      assert.strictEqual(d.findElement(s.By.ID, 'gone').isDisplayed(), false, '#gone should be hidden')
+
+      // getAttribute atom (property-or-attribute)
+      const href = d.findElement(s.By.ID, 'lnk').getAttribute('href')
+      assert.ok(href.includes('example.com/x'), `href missing: ${href}`)
+
+      // relative locators: the button is below the header
+      const below = d.findRelative('button', { kind: 'below', sel: '#hdr' })
+      assert.ok(below.length >= 1, `findRelative found none: ${below.length}`)
+    } finally {
+      d.quit()
+    }
+  } finally {
+    cd.kill()
+  }
+})

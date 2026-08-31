@@ -129,6 +129,85 @@ func TestLiveChrome(t *testing.T) {
 	t.Log("live Chrome smoke test green")
 }
 
+const liveAtomsHTML = `<html><head><title>Aether Atoms</title></head>` +
+	`<body><h1 id="hdr">Header</h1>` +
+	`<button id="btn">Go</button>` +
+	`<p id="gone" style="display:none">hidden</p>` +
+	`<a id="lnk" href="https://example.com/x">link</a></body></html>`
+
+// TestLiveAtoms drives a real Chrome session through the atom-backed commands
+// (isDisplayed / getAttribute / relative locators), all run in-page by the
+// engine via the aether_sel_embed_* atom C ABI. Mirrors the Python fixture.
+func TestLiveAtoms(t *testing.T) {
+	driverBin, err := exec.LookPath("chromedriver")
+	if err != nil {
+		t.Skip("chromedriver not on PATH")
+	}
+	port := freePort(t)
+	cmd := exec.Command(driverBin, "--port="+strconv.Itoa(port))
+	cmd.Stdout = nil
+	cmd.Stderr = nil
+	if err := cmd.Start(); err != nil {
+		t.Skipf("could not start chromedriver: %v", err)
+	}
+	defer func() {
+		_ = cmd.Process.Kill()
+		_, _ = cmd.Process.Wait()
+	}()
+	if !waitUp(port, 10*time.Second) {
+		t.Skip("chromedriver did not come up")
+	}
+
+	drv, err := NewChrome("http://127.0.0.1:"+strconv.Itoa(port), Headless())
+	if err != nil {
+		t.Fatalf("NewChrome: %v", err)
+	}
+	defer drv.Quit()
+
+	page := "data:text/html;charset=utf-8," + url.PathEscape(liveAtomsHTML)
+	if err := drv.Get(page); err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+
+	hdr, err := drv.FindElement(ByID, "hdr")
+	if err != nil {
+		t.Fatalf("FindElement(#hdr): %v", err)
+	}
+	if shown, err := hdr.IsDisplayed(); err != nil || !shown {
+		t.Fatalf("hdr.IsDisplayed = %v, err=%v; want true", shown, err)
+	}
+
+	gone, err := drv.FindElement(ByID, "gone")
+	if err != nil {
+		t.Fatalf("FindElement(#gone): %v", err)
+	}
+	if shown, err := gone.IsDisplayed(); err != nil || shown {
+		t.Fatalf("gone.IsDisplayed = %v, err=%v; want false", shown, err)
+	}
+
+	lnk, err := drv.FindElement(ByID, "lnk")
+	if err != nil {
+		t.Fatalf("FindElement(#lnk): %v", err)
+	}
+	href, err := lnk.GetAttribute("href")
+	if err != nil {
+		t.Fatalf("GetAttribute(href): %v", err)
+	}
+	if !strings.Contains(href, "example.com/x") {
+		t.Fatalf("GetAttribute(href) = %q; want to contain example.com/x", href)
+	}
+
+	rel, err := drv.FindRelative("button", map[string]interface{}{"kind": "below", "sel": "#hdr"})
+	if err != nil {
+		t.Fatalf("FindRelative: %v", err)
+	}
+	if len(rel) < 1 {
+		t.Fatalf("FindRelative returned %d elements; want >= 1", len(rel))
+	}
+
+	t.Log("live atoms test green")
+}
+
 // TestLiveBidi drives a real Chrome session over WebDriver-BiDi end to end:
 // subscribe to log.entryAdded, emit a console.log via executeScript, receive the
 // event asynchronously, and issue a raw session.status command. Mirrors the

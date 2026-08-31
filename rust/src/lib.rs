@@ -40,6 +40,13 @@ extern "C" {
     fn aether_sel_embed_error_code(w3c_error: *const c_char) -> c_int;
     fn aether_sel_embed_free_string(s: *mut c_char);
 
+    // ---- atom-backed commands (run a shared JS atom in-page via the engine) ----
+    fn aether_sel_embed_execute_atom(h: Handle, atom: *const c_char, elem_id: *const c_char, extra_json: *const c_char) -> c_int;
+    fn aether_sel_embed_is_displayed(h: Handle, elem_id: *const c_char) -> c_int;
+    fn aether_sel_embed_get_attribute(h: Handle, elem_id: *const c_char, name: *const c_char) -> c_int;
+    fn aether_sel_embed_atom_str_arg(s: *const c_char) -> *mut c_char;
+    fn aether_sel_embed_find_relative(h: Handle, base_css: *const c_char, filters_json: *const c_char) -> c_int;
+
     // ---- WebDriver-BiDi (over the session's webSocketUrl) ----
     // An opaque BiDi channel handle, independent of the W3C session handle.
     fn aether_sel_embed_bidi_open(ws_url: *const c_char) -> Handle;
@@ -265,6 +272,41 @@ impl WebDriver {
         json::parse(&raw).map_err(|e| WebDriverError::classify(1, format!("bad response JSON: {e}")))
     }
 
+    // ---- atom-backed commands (run a shared JS atom in-page via the engine) ----
+
+    /// Drain the last_value after an atom call, mapping rc != 0 to a typed error
+    /// exactly as [`WebDriver::execute`] does. Returns the decoded value (or
+    /// Json::Null when the atom produced no value).
+    fn atom_result(&self, rc: c_int) -> Result<Json> {
+        if rc != 0 {
+            let code = unsafe { aether_sel_embed_last_error_code(self.handle) };
+            let message = take_string(unsafe { aether_sel_embed_last_error(self.handle) });
+            if rc == -1 && code == 0 {
+                let m = if message.is_empty() { "transport failure".into() } else { message };
+                return Err(WebDriverError::classify(-1, m));
+            }
+            return Err(WebDriverError::classify(code, message));
+        }
+        let raw = take_string(unsafe { aether_sel_embed_last_value(self.handle) });
+        if raw.is_empty() {
+            return Ok(Json::Null);
+        }
+        json::parse(&raw).map_err(|e| WebDriverError::classify(1, format!("bad atom JSON: {e}")))
+    }
+
+    /// Relative locators: elements matching `base_css` filtered by spatial
+    /// relation to anchors, nearest first. Each filter is a JSON object
+    /// `{"kind": "above"|"below"|"left"|"right"|"near", "sel": "<css>"}`
+    /// (`near` also accepts `"dist"`). Returns the matching elements.
+    pub fn find_relative(&self, base_css: &str, filters: &[Json]) -> Result<Vec<WebElement>> {
+        let base = cstr(base_css);
+        let fj = cstr(&Json::Arr(filters.to_vec()).encode());
+        let rc = unsafe { aether_sel_embed_find_relative(self.handle, base.as_ptr(), fj.as_ptr()) };
+        let result = self.atom_result(rc)?;
+        let refs = result.as_array().cloned().unwrap_or_default();
+        refs.iter().map(|r| self.element_from(r)).collect()
+    }
+
     // ---- navigation ----
     pub fn get(&self, url: &str) -> Result<()> {
         self.execute("get", json::obj(vec![("url", json::s(url))]))?;
@@ -471,7 +513,29 @@ impl<'a> WebElement<'a> {
     pub fn tag_name(&self) -> Result<String> {
         Ok(self.exec("getElementTagName", json::obj(vec![]))?.as_str().unwrap_or("").to_string())
     }
-    pub fn get_attribute(&self, name: &str) -> Result<Json> {
+    /// Whether the element is shown (the isDisplayed atom, run in-page by the
+    /// engine — the visibility algorithm, not a naive style check).
+    pub fn is_displayed(&self) -> Result<bool> {
+        let eid = cstr(&self.id);
+        let rc = unsafe { aether_sel_embed_is_displayed(self.driver.handle, eid.as_ptr()) };
+        Ok(self.driver.atom_result(rc)?.as_bool().unwrap_or(false))
+    }
+
+    /// The classic getAttribute(name): property-or-attribute (boolean attrs,
+    /// live properties like value/checked), via the shared engine atom. Returns
+    /// `None` when the attribute is absent (JSON null). Use [`get_dom_attribute`]
+    /// for the raw W3C DOM attribute.
+    ///
+    /// [`get_dom_attribute`]: WebElement::get_dom_attribute
+    pub fn get_attribute(&self, name: &str) -> Result<Option<String>> {
+        let eid = cstr(&self.id);
+        let nm = cstr(name);
+        let rc = unsafe { aether_sel_embed_get_attribute(self.driver.handle, eid.as_ptr(), nm.as_ptr()) };
+        Ok(self.driver.atom_result(rc)?.as_str().map(String::from))
+    }
+
+    /// The literal DOM attribute (W3C getDomAttribute), no property fallback.
+    pub fn get_dom_attribute(&self, name: &str) -> Result<Json> {
         self.exec("getDomAttribute", json::obj(vec![("name", json::s(name))]))
     }
     pub fn get_property(&self, name: &str) -> Result<Json> {

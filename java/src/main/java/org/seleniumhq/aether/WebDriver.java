@@ -81,6 +81,45 @@ public final class WebDriver {
         return Json.decode(raw);
     }
 
+    // ---- atom-backed commands (run a shared JS atom in-page via the engine) ----
+
+    /** Drain the last_value after an atom call, raising a typed error on rc != 0. */
+    Object atomResult(int rc) {
+        if (rc != 0) {
+            int code = Native.lastErrorCode(handle);
+            String message = Native.lastError(handle);
+            if (rc == -1 && code == 0) {
+                throw new WebDriverError(message.isEmpty() ? "transport failure" : message, -1);
+            }
+            throw classify(code, message);
+        }
+        String raw = Native.lastValue(handle);
+        return raw.isEmpty() ? null : Json.decode(raw);
+    }
+
+    /** last_value drain shared with WebElement's atom calls. */
+    MemorySegment handle() {
+        return handle;
+    }
+
+    /**
+     * Relative locators: elements matching {@code baseCss} filtered by spatial
+     * relation to anchors, nearest first. Each filter is a map
+     * {@code {"kind": "above"|"below"|"left"|"right"|"near", "sel": "<css>"}}
+     * ({@code near} also accepts {@code "dist"}). Returns a list of WebElement.
+     */
+    @SuppressWarnings("unchecked")
+    public List<WebElement> findRelative(String baseCss, List<Map<String, Object>> filters) {
+        int rc = Native.findRelative(handle, baseCss, Json.encode(filters == null ? List.of() : filters));
+        Object result = atomResult(rc);
+        if (!(result instanceof List<?> refs)) {
+            return List.of();
+        }
+        return refs.stream()
+                .map(e -> new WebElement(this, (String) ((Map<String, Object>) e).get(W3C_ELEMENT_KEY)))
+                .toList();
+    }
+
     static WebDriverError classify(int code, String message) {
         return switch (code) {
             case 3 -> new WebDriverError.ElementClickIntercepted(message, code);

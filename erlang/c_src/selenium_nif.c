@@ -35,6 +35,18 @@ extern char *aether_sel_embed_build_request(const char *name, const char *sessio
 extern int   aether_sel_embed_error_code(const char *w3c_error);
 extern void  aether_sel_embed_free_string(char *s);
 
+/* ---- atom-backed commands (isDisplayed / getAttribute / relative locators) ----
+ * Shared JS atoms run in-page by the engine. The int-returning verbs leave their
+ * result in last_value (drained the normal way, exactly like execute); 0 ok, a
+ * W3C error code, or -1 transport. atom_str_arg builds the quoted JSON string a
+ * caller passes as an atom's extra_json argument; it returns a caller-owned
+ * char* (freed via aether_sel_embed_free_string like every other string). */
+extern int   aether_sel_embed_execute_atom(void *h, const char *atom, const char *elem_id, const char *extra_json);
+extern int   aether_sel_embed_is_displayed(void *h, const char *elem_id);
+extern int   aether_sel_embed_get_attribute(void *h, const char *elem_id, const char *name);
+extern char *aether_sel_embed_atom_str_arg(const char *s);
+extern int   aether_sel_embed_find_relative(void *h, const char *base_css, const char *filters_json);
+
 /* ---- WebDriver-BiDi (over the session's webSocketUrl) ----
  * An opaque BiDi channel handle, independent of the W3C session handle. NULL
  * from bidi_open means failure. Every char* returned is caller-owned (freed
@@ -368,6 +380,89 @@ static ERL_NIF_TERM nif_bidi_wait_event(ErlNifEnv *env, int argc, const ERL_NIF_
     return r;
 }
 
+/* ---- atom-backed commands ----
+ * The int-returning verbs leave the result in last_value; the caller reads it
+ * with last_value/1 (via selenium.erl's atom_result), just like execute. */
+
+static ERL_NIF_TERM nif_execute_atom(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
+{
+    UNUSED(argc);
+    void *h;
+    if (!get_handle(env, argv[0], &h)) return enif_make_badarg(env);
+    char *atom = term_to_cstr(env, argv[1]);
+    char *elem_id = term_to_cstr(env, argv[2]);
+    char *extra = term_to_cstr(env, argv[3]);
+    if (!atom || !elem_id || !extra) {
+        if (atom) enif_free(atom);
+        if (elem_id) enif_free(elem_id);
+        if (extra) enif_free(extra);
+        return enif_make_badarg(env);
+    }
+    int rc = aether_sel_embed_execute_atom(h, atom, elem_id, extra);
+    enif_free(atom);
+    enif_free(elem_id);
+    enif_free(extra);
+    return enif_make_int(env, rc);
+}
+
+static ERL_NIF_TERM nif_is_displayed(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
+{
+    UNUSED(argc);
+    void *h;
+    if (!get_handle(env, argv[0], &h)) return enif_make_badarg(env);
+    char *elem_id = term_to_cstr(env, argv[1]);
+    if (!elem_id) return enif_make_badarg(env);
+    int rc = aether_sel_embed_is_displayed(h, elem_id);
+    enif_free(elem_id);
+    return enif_make_int(env, rc);
+}
+
+static ERL_NIF_TERM nif_get_attribute(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
+{
+    UNUSED(argc);
+    void *h;
+    if (!get_handle(env, argv[0], &h)) return enif_make_badarg(env);
+    char *elem_id = term_to_cstr(env, argv[1]);
+    char *name = term_to_cstr(env, argv[2]);
+    if (!elem_id || !name) {
+        if (elem_id) enif_free(elem_id);
+        if (name) enif_free(name);
+        return enif_make_badarg(env);
+    }
+    int rc = aether_sel_embed_get_attribute(h, elem_id, name);
+    enif_free(elem_id);
+    enif_free(name);
+    return enif_make_int(env, rc);
+}
+
+static ERL_NIF_TERM nif_atom_str_arg(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
+{
+    UNUSED(argc);
+    char *s = term_to_cstr(env, argv[0]);
+    if (!s) return enif_make_badarg(env);
+    ERL_NIF_TERM r = take_cstr(env, aether_sel_embed_atom_str_arg(s));
+    enif_free(s);
+    return r;
+}
+
+static ERL_NIF_TERM nif_find_relative(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
+{
+    UNUSED(argc);
+    void *h;
+    if (!get_handle(env, argv[0], &h)) return enif_make_badarg(env);
+    char *base_css = term_to_cstr(env, argv[1]);
+    char *filters = term_to_cstr(env, argv[2]);
+    if (!base_css || !filters) {
+        if (base_css) enif_free(base_css);
+        if (filters) enif_free(filters);
+        return enif_make_badarg(env);
+    }
+    int rc = aether_sel_embed_find_relative(h, base_css, filters);
+    enif_free(base_css);
+    enif_free(filters);
+    return enif_make_int(env, rc);
+}
+
 static ErlNifFunc nif_funcs[] = {
     {"open",            1, nif_open,            0},
     {"close",           1, nif_close,           0},
@@ -392,6 +487,11 @@ static ErlNifFunc nif_funcs[] = {
     {"bidi_subscribe",   4, nif_bidi_subscribe,   0},
     {"bidi_unsubscribe", 4, nif_bidi_unsubscribe, 0},
     {"bidi_wait_event",  3, nif_bidi_wait_event,  0},
+    {"execute_atom",   4, nif_execute_atom,   0},
+    {"is_displayed",   2, nif_is_displayed,   0},
+    {"get_attribute",  3, nif_get_attribute,  0},
+    {"atom_str_arg",   1, nif_atom_str_arg,   0},
+    {"find_relative",  3, nif_find_relative,  0},
 };
 
 ERL_NIF_INIT(selenium_nif, nif_funcs, NULL, NULL, NULL, NULL)

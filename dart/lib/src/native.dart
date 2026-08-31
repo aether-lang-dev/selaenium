@@ -46,6 +46,23 @@ typedef _StrToInt = int Function(ffi.Pointer<pkgffi.Utf8>);
 typedef _FreeStringC = ffi.Void Function(ffi.Pointer<pkgffi.Utf8>);
 typedef _FreeString = void Function(ffi.Pointer<pkgffi.Utf8>);
 
+// ---- atom-backed commands (run a shared JS atom in-page via the engine) ----
+// Each returns an int rc; the result is drained from last_value like execute().
+typedef _HandleStrToIntC = ffi.Int Function(
+    ffi.Pointer<ffi.Void>, ffi.Pointer<pkgffi.Utf8>);
+typedef _HandleStrToInt = int Function(
+    ffi.Pointer<ffi.Void>, ffi.Pointer<pkgffi.Utf8>);
+
+typedef _HandleStr2ToIntC = ffi.Int Function(
+    ffi.Pointer<ffi.Void>, ffi.Pointer<pkgffi.Utf8>, ffi.Pointer<pkgffi.Utf8>);
+typedef _HandleStr2ToInt = int Function(
+    ffi.Pointer<ffi.Void>, ffi.Pointer<pkgffi.Utf8>, ffi.Pointer<pkgffi.Utf8>);
+
+typedef _HandleStr3ToIntC = ffi.Int Function(ffi.Pointer<ffi.Void>,
+    ffi.Pointer<pkgffi.Utf8>, ffi.Pointer<pkgffi.Utf8>, ffi.Pointer<pkgffi.Utf8>);
+typedef _HandleStr3ToInt = int Function(ffi.Pointer<ffi.Void>,
+    ffi.Pointer<pkgffi.Utf8>, ffi.Pointer<pkgffi.Utf8>, ffi.Pointer<pkgffi.Utf8>);
+
 // ---- WebDriver-BiDi (over the session's webSocketUrl) ----
 // The BiDi channel handle (void*) is opaque and independent of the W3C handle.
 typedef _BidiPumpC = ffi.Int Function(ffi.Pointer<ffi.Void>, ffi.Int32);
@@ -89,6 +106,13 @@ class Native {
   final _StrToInt errorCode;
   final _FreeString freeString;
 
+  // ---- atom-backed commands ----
+  final _HandleStr3ToInt executeAtom;
+  final _HandleStrToInt isDisplayed;
+  final _HandleStr2ToInt getAttributeAtom;
+  final _StrToStr atomStrArg;
+  final _HandleStr2ToInt findRelative;
+
   // ---- WebDriver-BiDi ----
   final _Open bidiOpen;
   final _Close bidiClose;
@@ -126,6 +150,17 @@ class Native {
             'aether_sel_embed_error_code'),
         freeString = lib.lookupFunction<_FreeStringC, _FreeString>(
             'aether_sel_embed_free_string'),
+        executeAtom = lib.lookupFunction<_HandleStr3ToIntC, _HandleStr3ToInt>(
+            'aether_sel_embed_execute_atom'),
+        isDisplayed = lib.lookupFunction<_HandleStrToIntC, _HandleStrToInt>(
+            'aether_sel_embed_is_displayed'),
+        getAttributeAtom =
+            lib.lookupFunction<_HandleStr2ToIntC, _HandleStr2ToInt>(
+                'aether_sel_embed_get_attribute'),
+        atomStrArg = lib.lookupFunction<_StrToStrC, _StrToStr>(
+            'aether_sel_embed_atom_str_arg'),
+        findRelative = lib.lookupFunction<_HandleStr2ToIntC, _HandleStr2ToInt>(
+            'aether_sel_embed_find_relative'),
         bidiOpen =
             lib.lookupFunction<_OpenC, _Open>('aether_sel_embed_bidi_open'),
         bidiClose =

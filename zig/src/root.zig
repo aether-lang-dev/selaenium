@@ -28,6 +28,14 @@ const c = struct {
     extern "c" fn aether_sel_embed_error_code(w3c_error: [*c]const u8) c_int;
     extern "c" fn aether_sel_embed_free_string(s: [*c]u8) void;
 
+    // ---- atom-backed commands (run a shared JS atom in-page via the engine) ----
+    // Each returns an rc (0 ok, !=0 error like execute); drain via last_value.
+    extern "c" fn aether_sel_embed_execute_atom(h: ?*anyopaque, atom: [*c]const u8, elem_id: [*c]const u8, extra_json: [*c]const u8) c_int;
+    extern "c" fn aether_sel_embed_is_displayed(h: ?*anyopaque, elem_id: [*c]const u8) c_int;
+    extern "c" fn aether_sel_embed_get_attribute(h: ?*anyopaque, elem_id: [*c]const u8, name: [*c]const u8) c_int;
+    extern "c" fn aether_sel_embed_atom_str_arg(s: [*c]const u8) [*c]u8;
+    extern "c" fn aether_sel_embed_find_relative(h: ?*anyopaque, base_css: [*c]const u8, filters_json: [*c]const u8) c_int;
+
     // ---- WebDriver-BiDi (over the session's webSocketUrl) ----
     // An opaque BiDi channel handle, independent of the W3C session handle.
     extern "c" fn aether_sel_embed_bidi_open(ws_url: [*c]const u8) ?*anyopaque;
@@ -267,6 +275,74 @@ pub const WebDriver = struct {
         return std.json.parseFromSlice(std.json.Value, self.allocator, body, .{}) catch Error.BadResponse;
     }
 
+    // ---- atom-backed commands (run a shared JS atom in-page via the engine) ----
+
+    /// Drain last_value after an atom call: on rc!=0 record the rich error and
+    /// return `error.WebDriver`; otherwise return the parsed value (owned;
+    /// `.deinit()`), an empty string parsing as JSON `null`.
+    fn atomResult(self: *WebDriver, rc: i32) Error!std.json.Parsed(std.json.Value) {
+        if (rc != 0) {
+            const code: i32 = @intCast(c.aether_sel_embed_last_error_code(self.handle));
+            const msg = try takeString(self.allocator, c.aether_sel_embed_last_error(self.handle));
+            if (rc == -1 and code == 0) {
+                self.setLast(-1, msg);
+            } else {
+                self.setLast(code, msg);
+            }
+            return Error.WebDriver;
+        }
+        const raw = try takeString(self.allocator, c.aether_sel_embed_last_value(self.handle));
+        defer self.allocator.free(raw);
+        const body = if (raw.len == 0) "null" else raw;
+        return std.json.parseFromSlice(std.json.Value, self.allocator, body, .{}) catch Error.BadResponse;
+    }
+
+    /// Whether the element is shown (the isDisplayed atom, run in-page by the
+    /// engine — the visibility algorithm, not a naive style check).
+    pub fn isDisplayed(self: *WebDriver, e: *const WebElement) Error!bool {
+        const idc = try cstr(self.allocator, e.id);
+        defer self.allocator.free(idc);
+        var v = try self.atomResult(@intCast(c.aether_sel_embed_is_displayed(self.handle, idc.ptr)));
+        defer v.deinit();
+        return switch (v.value) {
+            .bool => |b| b,
+            else => false,
+        };
+    }
+
+    /// The classic getAttribute(name): property-or-attribute (boolean attrs,
+    /// live properties like value/checked), via the shared engine atom. Returns
+    /// the parsed value (owned; `.deinit()`) — a JSON string, or `null` when the
+    /// attribute is absent. Use `getDomAttribute` for the raw W3C DOM attribute.
+    pub fn getAttribute(self: *WebDriver, e: *const WebElement, name: []const u8) Error!std.json.Parsed(std.json.Value) {
+        const idc = try cstr(self.allocator, e.id);
+        defer self.allocator.free(idc);
+        const nc = try cstr(self.allocator, name);
+        defer self.allocator.free(nc);
+        return self.atomResult(@intCast(c.aether_sel_embed_get_attribute(self.handle, idc.ptr, nc.ptr)));
+    }
+
+    /// The literal DOM attribute (W3C getDomAttribute), no property fallback.
+    /// Returns the parsed value (owned; `.deinit()`).
+    pub fn getDomAttribute(self: *WebDriver, e: *const WebElement, name: []const u8) Error!std.json.Parsed(std.json.Value) {
+        const extra = try std.fmt.allocPrint(self.allocator, ",\"name\":\"{s}\"", .{name});
+        defer self.allocator.free(extra);
+        return self.elementCmd("getDomAttribute", e.id, extra);
+    }
+
+    /// Relative locators: elements matching `base_css` filtered by spatial
+    /// relation to anchors, nearest first. `filters_json` is a JSON array of
+    /// `{"kind":"above"|"below"|"left"|"right"|"near","sel":"<css>"}`
+    /// (`near` also accepts `"dist"`). Returns the parsed array of W3C element
+    /// refs (owned; `.deinit()`); iterate its `.array` and read `w3c_element_key`.
+    pub fn findRelative(self: *WebDriver, base_css: []const u8, filters_json: []const u8) Error!std.json.Parsed(std.json.Value) {
+        const bc = try cstr(self.allocator, base_css);
+        defer self.allocator.free(bc);
+        const fc = try cstr(self.allocator, filters_json);
+        defer self.allocator.free(fc);
+        return self.atomResult(@intCast(c.aether_sel_embed_find_relative(self.handle, bc.ptr, fc.ptr)));
+    }
+
     // ---- navigation ----
     pub fn get(self: *WebDriver, url: []const u8) Error!void {
         const p = try std.fmt.allocPrint(self.allocator, "{{\"url\":\"{s}\"}}", .{url});
@@ -399,6 +475,14 @@ pub const WebDriver = struct {
         const p = try std.fmt.allocPrint(self.allocator, "{{\"script\":\"{s}\",\"args\":{s}}}", .{ script, args_json });
         defer self.allocator.free(p);
         return self.execute("executeScript", p);
+    }
+
+    /// The async script executor: the page calls the injected callback (last
+    /// argument) to complete. Use for anything that must turn the event loop.
+    pub fn executeAsyncScript(self: *WebDriver, script: []const u8, args_json: []const u8) Error!std.json.Parsed(std.json.Value) {
+        const p = try std.fmt.allocPrint(self.allocator, "{{\"script\":\"{s}\",\"args\":{s}}}", .{ script, args_json });
+        defer self.allocator.free(p);
+        return self.execute("executeAsyncScript", p);
     }
 
     // ---- actions ----

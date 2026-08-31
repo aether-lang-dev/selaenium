@@ -74,6 +74,12 @@ module SeleniumCore
       [:route,           'aether_sel_embed_route',           VOIDP, [VOIDP]],
       [:build_request,   'aether_sel_embed_build_request',   VOIDP, [VOIDP, VOIDP, VOIDP]],
       [:error_code,      'aether_sel_embed_error_code',      INT,   [VOIDP]],
+      # ---- atom-backed commands (isDisplayed/getAttribute/relative locators, run in-page) ----
+      [:execute_atom,    'aether_sel_embed_execute_atom',    INT,   [VOIDP, VOIDP, VOIDP, VOIDP]],
+      [:is_displayed,    'aether_sel_embed_is_displayed',    INT,   [VOIDP, VOIDP]],
+      [:get_attribute,   'aether_sel_embed_get_attribute',   INT,   [VOIDP, VOIDP, VOIDP]],
+      [:atom_str_arg,    'aether_sel_embed_atom_str_arg',    VOIDP, [VOIDP]],
+      [:find_relative,   'aether_sel_embed_find_relative',   INT,   [VOIDP, VOIDP, VOIDP]],
       # ---- WebDriver-BiDi (over the session's webSocketUrl) ----
       [:bidi_open,        'aether_sel_embed_bidi_open',        VOIDP, [VOIDP]],
       [:bidi_close,       'aether_sel_embed_bidi_close',       VOID,  [VOIDP]],

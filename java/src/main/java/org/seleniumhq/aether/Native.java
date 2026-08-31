@@ -141,6 +141,19 @@ final class Native {
         static final MethodHandle ERROR_CODE = down("aether_sel_embed_error_code",
                 FunctionDescriptor.of(C_INT, C_PTR));
 
+        // ---- atom-backed commands (a shared JS atom run in-page by the engine) ----
+        // Each drains the session's last_value (JSON) on success, like execute.
+        static final MethodHandle EXECUTE_ATOM = down("aether_sel_embed_execute_atom",
+                FunctionDescriptor.of(C_INT, C_PTR, C_PTR, C_PTR, C_PTR));
+        static final MethodHandle IS_DISPLAYED = down("aether_sel_embed_is_displayed",
+                FunctionDescriptor.of(C_INT, C_PTR, C_PTR));
+        static final MethodHandle GET_ATTRIBUTE = down("aether_sel_embed_get_attribute",
+                FunctionDescriptor.of(C_INT, C_PTR, C_PTR, C_PTR));
+        static final MethodHandle ATOM_STR_ARG = down("aether_sel_embed_atom_str_arg",
+                FunctionDescriptor.of(C_STR, C_PTR));
+        static final MethodHandle FIND_RELATIVE = down("aether_sel_embed_find_relative",
+                FunctionDescriptor.of(C_INT, C_PTR, C_PTR, C_PTR));
+
         // ---- WebDriver-BiDi (over the session's webSocketUrl) ----
         // An opaque BiDi channel handle, independent of the W3C session handle.
         static final MethodHandle BIDI_OPEN = down("aether_sel_embed_bidi_open",
@@ -269,6 +282,51 @@ final class Native {
             return (int) MH.ERROR_CODE.invokeExact(a.allocateFrom(w3cError));
         } catch (Throwable t) {
             throw wrap(t, "error_code");
+        }
+    }
+
+    // ---- atom-backed command wrappers ----
+
+    static int executeAtom(MemorySegment handle, String atom, String elementId, String extraJson) {
+        try (Arena a = Arena.ofConfined()) {
+            return (int) MH.EXECUTE_ATOM.invokeExact(
+                    handle, a.allocateFrom(atom), a.allocateFrom(elementId), a.allocateFrom(extraJson));
+        } catch (Throwable t) {
+            throw wrap(t, "execute_atom");
+        }
+    }
+
+    static int isDisplayed(MemorySegment handle, String elementId) {
+        try (Arena a = Arena.ofConfined()) {
+            return (int) MH.IS_DISPLAYED.invokeExact(handle, a.allocateFrom(elementId));
+        } catch (Throwable t) {
+            throw wrap(t, "is_displayed");
+        }
+    }
+
+    static int getAttribute(MemorySegment handle, String elementId, String name) {
+        try (Arena a = Arena.ofConfined()) {
+            return (int) MH.GET_ATTRIBUTE.invokeExact(
+                    handle, a.allocateFrom(elementId), a.allocateFrom(name));
+        } catch (Throwable t) {
+            throw wrap(t, "get_attribute");
+        }
+    }
+
+    static String atomStrArg(String s) {
+        try (Arena a = Arena.ofConfined()) {
+            return takeString((MemorySegment) MH.ATOM_STR_ARG.invokeExact(a.allocateFrom(s)));
+        } catch (Throwable t) {
+            throw wrap(t, "atom_str_arg");
+        }
+    }
+
+    static int findRelative(MemorySegment handle, String baseCss, String filtersJson) {
+        try (Arena a = Arena.ofConfined()) {
+            return (int) MH.FIND_RELATIVE.invokeExact(
+                    handle, a.allocateFrom(baseCss), a.allocateFrom(filtersJson));
+        } catch (Throwable t) {
+            throw wrap(t, "find_relative");
         }
     }
 

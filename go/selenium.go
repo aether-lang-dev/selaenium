@@ -40,6 +40,13 @@ char*  aether_sel_embed_build_request(const char* name, const char* session_id, 
 int    aether_sel_embed_error_code(const char* w3c_error);
 void   aether_sel_embed_free_string(char* s);
 
+// ---- atom-backed commands (a shared JS atom run in-page via the engine) ----
+int    aether_sel_embed_execute_atom(void* h, const char* atom, const char* elem_id, const char* extra_json);
+int    aether_sel_embed_is_displayed(void* h, const char* elem_id);
+int    aether_sel_embed_get_attribute(void* h, const char* elem_id, const char* name);
+char*  aether_sel_embed_atom_str_arg(const char* s);
+int    aether_sel_embed_find_relative(void* h, const char* base_css, const char* filters_json);
+
 // ---- WebDriver-BiDi (over the session's negotiated webSocketUrl) ----
 // An opaque BiDi channel handle, independent of the W3C session handle.
 void*  aether_sel_embed_bidi_open(const char* ws_url);
@@ -242,6 +249,31 @@ func (d *WebDriver) execute(command string, params map[string]interface{}) (inte
 	return v, nil
 }
 
+// ---- atom-backed commands (run a shared JS atom in-page via the engine) ----
+
+// atomResult drains last_value after an atom cgo call, returning the decoded
+// value or a typed *Error — reusing the exact last_value/error machinery of
+// execute so atom calls share one error taxonomy with every command.
+func (d *WebDriver) atomResult(rc int) (interface{}, error) {
+	if rc != 0 {
+		code := int(C.aether_sel_embed_last_error_code(d.h))
+		msg := takeString(C.aether_sel_embed_last_error(d.h))
+		if rc == -1 && code == 0 {
+			return nil, &Error{Code: -1, Message: nonEmpty(msg, "transport failure")}
+		}
+		return nil, &Error{Code: code, Message: msg}
+	}
+	raw := takeString(C.aether_sel_embed_last_value(d.h))
+	if raw == "" {
+		return nil, nil
+	}
+	var v interface{}
+	if err := json.Unmarshal([]byte(raw), &v); err != nil {
+		return nil, fmt.Errorf("unmarshal atom value: %w", err)
+	}
+	return v, nil
+}
+
 func nonEmpty(s, fallback string) string {
 	if s == "" {
 		return fallback
@@ -295,6 +327,34 @@ func (d *WebDriver) FindElements(by By, value string) ([]*WebElement, error) {
 	v, err := d.execute("findElements", decodeBy(by, value))
 	if err != nil {
 		return nil, err
+	}
+	return elementList(d, v)
+}
+
+// FindRelative resolves relative locators: elements matching baseCSS filtered by
+// spatial relation to anchors, nearest first. Each filter is a map
+// {"kind": "above"|"below"|"left"|"right"|"near", "sel": "<css>"} ("near" also
+// accepts "dist"). The atom runs in-page via the engine; the returned array of
+// W3C element refs is parsed into WebElement handles.
+func (d *WebDriver) FindRelative(baseCSS string, filters ...map[string]interface{}) ([]*WebElement, error) {
+	if filters == nil {
+		filters = []map[string]interface{}{}
+	}
+	fj, err := json.Marshal(filters)
+	if err != nil {
+		return nil, fmt.Errorf("marshal filters: %w", err)
+	}
+	cBase := cstr(baseCSS)
+	cFilters := cstr(string(fj))
+	rc := int(C.aether_sel_embed_find_relative(d.h, cBase, cFilters))
+	C.free(unsafe.Pointer(cBase))
+	C.free(unsafe.Pointer(cFilters))
+	v, err := d.atomResult(rc)
+	if err != nil {
+		return nil, err
+	}
+	if v == nil {
+		return []*WebElement{}, nil
 	}
 	return elementList(d, v)
 }
@@ -491,7 +551,41 @@ func (e *WebElement) TagName() (string, error) {
 	return s, nil
 }
 
-func (e *WebElement) GetAttribute(name string) (interface{}, error) {
+// IsDisplayed reports whether the element is shown (the isDisplayed atom, run
+// in-page by the engine — the visibility algorithm, not a naive style check).
+func (e *WebElement) IsDisplayed() (bool, error) {
+	cid := cstr(e.id)
+	rc := int(C.aether_sel_embed_is_displayed(e.driver.h, cid))
+	C.free(unsafe.Pointer(cid))
+	v, err := e.driver.atomResult(rc)
+	if err != nil {
+		return false, err
+	}
+	b, _ := v.(bool)
+	return b, nil
+}
+
+// GetAttribute is the classic getAttribute(name): property-or-attribute
+// (boolean attrs, live properties like value/checked), via the shared engine
+// atom. Use GetDomAttribute for the raw W3C DOM attribute.
+func (e *WebElement) GetAttribute(name string) (string, error) {
+	cid := cstr(e.id)
+	cname := cstr(name)
+	rc := int(C.aether_sel_embed_get_attribute(e.driver.h, cid, cname))
+	C.free(unsafe.Pointer(cid))
+	C.free(unsafe.Pointer(cname))
+	v, err := e.driver.atomResult(rc)
+	if err != nil {
+		return "", err
+	}
+	// The atom yields a JSON string or null; null (absent attribute) -> "".
+	s, _ := v.(string)
+	return s, nil
+}
+
+// GetDomAttribute returns the literal DOM attribute (W3C getDomAttribute), with
+// no property fallback.
+func (e *WebElement) GetDomAttribute(name string) (interface{}, error) {
 	return e.exec("getDomAttribute", map[string]interface{}{"name": name})
 }
 

@@ -46,6 +46,18 @@ proc selRoute(name: cstring): cstring {.importc: "aether_sel_embed_route", cdecl
 proc selErrorCode(w3cError: cstring): cint {.importc: "aether_sel_embed_error_code", cdecl.}
 proc selFreeString(s: cstring) {.importc: "aether_sel_embed_free_string", cdecl.}
 
+# ---- atom-backed commands (a shared JS atom run in-page by the engine) ----
+proc selExecuteAtom(h: pointer, atom, elemId, extraJson: cstring): cint
+  {.importc: "aether_sel_embed_execute_atom", cdecl.}
+proc selIsDisplayed(h: pointer, elemId: cstring): cint
+  {.importc: "aether_sel_embed_is_displayed", cdecl.}
+proc selGetAttribute(h: pointer, elemId, name: cstring): cint
+  {.importc: "aether_sel_embed_get_attribute", cdecl.}
+proc selAtomStrArg(s: cstring): cstring
+  {.importc: "aether_sel_embed_atom_str_arg", cdecl.}
+proc selFindRelative(h: pointer, baseCss, filtersJson: cstring): cint
+  {.importc: "aether_sel_embed_find_relative", cdecl.}
+
 # ---- WebDriver-BiDi (over the session's webSocketUrl) ----
 # An opaque BiDi channel handle, independent of the W3C session handle.
 proc selBidiOpen(wsUrl: cstring): pointer {.importc: "aether_sel_embed_bidi_open", cdecl.}
@@ -174,6 +186,21 @@ proc execute(d: WebDriver, command: string, params: JsonNode): JsonNode =
     return newJNull()
   parseJson(raw)
 
+proc atomResult(d: WebDriver, rc: cint): JsonNode =
+  ## Drain last_value after an atom call, mapping rc!=0 to a typed error exactly
+  ## like `execute`. The atom verbs report success/failure through the same
+  ## last_status / last_error_code / last_error channel as a W3C command.
+  if rc != 0:
+    let code = selLastErrorCode(d.handle).int
+    let message = takeString(selLastError(d.handle))
+    if rc == -1 and code == 0:
+      raise classify(-1, if message.len == 0: "transport failure" else: message)
+    raise classify(code, message)
+  let raw = takeString(selLastValue(d.handle))
+  if raw.len == 0:
+    return newJNull()
+  parseJson(raw)
+
 proc chrome*(commandExecutor: string, options: JsonNode = newJObject()): WebDriver =
   ## Start a Chrome session against a running chromedriver (or Grid).
   var caps = newJObject()
@@ -223,6 +250,20 @@ proc findElements*(d: WebDriver, by, value: string): seq[WebElement] =
   for e in d.execute("findElements", decodeBy(by, value)):
     result.add d.elementFrom(e)
 
+proc findRelative*(d: WebDriver, baseCss: string,
+                   filters: varargs[JsonNode]): seq[WebElement] =
+  ## Relative locators: elements matching `baseCss` filtered by spatial relation
+  ## to anchors, nearest first. Each filter is a JSON object
+  ## `{"kind": "above"|"below"|"left"|"right"|"near", "sel": "<css>"}`
+  ## (`near` also accepts `"dist"`). Returns a seq of WebElement.
+  var arr = newJArray()
+  for f in filters: arr.add f
+  let rc = selFindRelative(d.handle, baseCss.cstring, ($arr).cstring)
+  let refs = d.atomResult(rc)
+  if refs.kind == JArray:
+    for r in refs:
+      result.add d.elementFrom(r)
+
 proc elExec(e: WebElement, command: string, params: JsonNode): JsonNode =
   var p = params
   p["id"] = %e.id
@@ -239,6 +280,22 @@ proc tagName*(e: WebElement): string = e.elExec("getElementTagName", newJObject(
 proc getProperty*(e: WebElement, name: string): JsonNode =
   e.elExec("getElementProperty", %*{"name": name})
 proc rect*(e: WebElement): JsonNode = e.elExec("getElementRect", newJObject())
+
+proc isDisplayed*(e: WebElement): bool =
+  ## Whether the element is shown (the isDisplayed atom, run in-page by the
+  ## engine — the real visibility algorithm, not a naive style check).
+  e.driver.atomResult(selIsDisplayed(e.driver.handle, e.id.cstring)).getBool
+
+proc getAttribute*(e: WebElement, name: string): JsonNode =
+  ## The classic getAttribute(name): property-or-attribute (boolean attrs, live
+  ## properties like value/checked), via the shared engine atom. Returns a JSON
+  ## string, or JNull when absent. Use `getDomAttribute` for the raw W3C DOM
+  ## attribute.
+  e.driver.atomResult(selGetAttribute(e.driver.handle, e.id.cstring, name.cstring))
+
+proc getDomAttribute*(e: WebElement, name: string): string =
+  ## The literal DOM attribute (W3C getDomAttribute), no property fallback.
+  e.elExec("getDomAttribute", %*{"name": name}).getStr
 
 # ---- script ----
 proc executeScript*(d: WebDriver, script: string, args: JsonNode = newJArray()): JsonNode =

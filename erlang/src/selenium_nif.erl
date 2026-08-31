@@ -41,7 +41,12 @@
     bidi_cancel/2,
     bidi_subscribe/4,
     bidi_unsubscribe/4,
-    bidi_wait_event/3
+    bidi_wait_event/3,
+    execute_atom/4,
+    is_displayed/2,
+    get_attribute/3,
+    atom_str_arg/1,
+    find_relative/3
 ]).
 
 init() ->
@@ -86,3 +91,12 @@ bidi_cancel(_Handle, _Id) -> erlang:nif_error(not_loaded).
 bidi_subscribe(_Handle, _Id, _EventsCsv, _TimeoutMs) -> erlang:nif_error(not_loaded).
 bidi_unsubscribe(_Handle, _Id, _EventsCsv, _TimeoutMs) -> erlang:nif_error(not_loaded).
 bidi_wait_event(_Handle, _Method, _TimeoutMs) -> erlang:nif_error(not_loaded).
+
+%% ---- atom-backed commands (isDisplayed / getAttribute / relative locators) ----
+%% The int-returning verbs leave their JSON result in last_value (drained the
+%% normal way, like execute); atom_str_arg returns a quoted JSON string binary.
+execute_atom(_Handle, _Atom, _ElemId, _ExtraJson) -> erlang:nif_error(not_loaded).
+is_displayed(_Handle, _ElemId) -> erlang:nif_error(not_loaded).
+get_attribute(_Handle, _ElemId, _Name) -> erlang:nif_error(not_loaded).
+atom_str_arg(_S) -> erlang:nif_error(not_loaded).
+find_relative(_Handle, _BaseCss, _FiltersJson) -> erlang:nif_error(not_loaded).

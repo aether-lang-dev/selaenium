@@ -17,6 +17,7 @@
     get/2, current_url/1, title/1, page_source/1, back/1, forward/1, refresh/1,
     find_element/3, find_elements/3,
     click/2, send_keys/3, element_text/2, tag_name/2, element_property/3, element_rect/2,
+    is_displayed/2, get_attribute/3, dom_attribute/3, find_relative/3,
     execute/3,
     execute_script/2, execute_script/3,
     window_handles/1, current_window_handle/1, set_window_rect/2, get_window_rect/1,
@@ -134,6 +135,62 @@ tag_name(H, ElementId) -> execute(H, <<"getElementTagName">>, #{<<"id">> => Elem
 element_property(H, ElementId, Name) ->
     execute(H, <<"getElementProperty">>, #{<<"id">> => ElementId, <<"name">> => to_bin(Name)}).
 element_rect(H, ElementId) -> execute(H, <<"getElementRect">>, #{<<"id">> => ElementId}).
+
+%% ---- atom-backed commands (isDisplayed / getAttribute / relative locators) ----
+%%
+%% Each runs a shared JS atom in-page via the engine (the SAME atoms every other
+%% binding uses). The int-returning verbs leave their JSON result in last_value,
+%% drained + error-decoded exactly like execute/3 (see atom_result/2).
+
+%% Whether the element is shown (the isDisplayed atom — the real visibility
+%% algorithm, not a naive style check). Returns boolean() | {error, {Code, Msg}}.
+is_displayed(H, ElementId) ->
+    case atom_result(H, selenium_nif:is_displayed(H, to_bin(ElementId))) of
+        {ok, V} -> V =:= true;
+        Err -> Err
+    end.
+
+%% The classic getAttribute(name): property-or-attribute (boolean attrs, live
+%% properties like value/checked), via the shared engine atom. Returns
+%% binary() | undefined (JSON null) | {error, {Code, Msg}}. Use dom_attribute/3
+%% for the raw W3C DOM attribute.
+get_attribute(H, ElementId, Name) ->
+    case atom_result(H, selenium_nif:get_attribute(H, to_bin(ElementId), to_bin(Name))) of
+        {ok, null} -> undefined;
+        {ok, V} -> V;
+        Err -> Err
+    end.
+
+%% The literal DOM attribute (W3C getDomAttribute), no property fallback.
+dom_attribute(H, ElementId, Name) ->
+    execute(H, <<"getDomAttribute">>, #{<<"id">> => ElementId, <<"name">> => to_bin(Name)}).
+
+%% Relative locators: elements matching BaseCss filtered by spatial relation to
+%% anchors, nearest first. Filters is a list of maps
+%% #{kind => above|below|left|right|near, sel => <<css>>} (near also accepts
+%% dist). Returns {ok, [ElementId]} | {error, {Code, Msg}}.
+find_relative(H, BaseCss, Filters) ->
+    Rc = selenium_nif:find_relative(H, to_bin(BaseCss), encode(Filters)),
+    case atom_result(H, Rc) of
+        {ok, null} -> {ok, []};
+        {ok, Refs} when is_list(Refs) -> {ok, [maps:get(?W3C_KEY, R) || R <- Refs]};
+        Err -> Err
+    end.
+
+%% Drain last_value after an atom call, decoding + error-mapping like execute/3.
+%% Returns {ok, DecodedValue} | {error, {Code, Message}}.
+atom_result(H, Rc) ->
+    case Rc of
+        0 ->
+            case selenium_nif:last_value(H) of
+                <<>> -> {ok, null};
+                Raw -> {ok, decode(Raw)}
+            end;
+        _ ->
+            Code = selenium_nif:last_error_code(H),
+            Msg = selenium_nif:last_error(H),
+            {error, {Code, Msg}}
+    end.
 
 %% ---- script ----
 execute_script(H, Script) -> execute_script(H, Script, []).

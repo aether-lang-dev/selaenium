@@ -104,7 +104,21 @@ module SeleniumCore
       exec('getElementTagName')
     end
 
+    # Whether the element is shown (the isDisplayed atom, run in-page by the
+    # engine — the visibility algorithm, not a naive style check).
+    def displayed?
+      !!@driver.send(:atom_bool, :is_displayed, @id)
+    end
+
+    # The classic getAttribute(name): property-or-attribute (boolean attrs,
+    # live properties like value/checked), via the shared engine atom. Use
+    # #dom_attribute for the raw W3C DOM attribute.
     def attribute(name)
+      @driver.send(:atom_get_attribute, @id, name)
+    end
+
+    # The literal DOM attribute (W3C getDomAttribute), no property fallback.
+    def dom_attribute(name)
       exec('getDomAttribute', 'name' => name)
     end
 
@@ -203,6 +217,18 @@ module SeleniumCore
       execute('executeScript', 'script' => script, 'args' => args)
     end
 
+    # ---- atom-backed commands (run a shared JS atom in-page via the engine) ----
+
+    # Relative locators: elements matching +base_css+ filtered by spatial
+    # relation to anchors, nearest first. Each filter is a Hash
+    # {kind: "above"|"below"|"left"|"right"|"near", sel: "<css>"} (+near+ also
+    # accepts +dist+). Returns an Array of WebElement.
+    def find_relative(base_css, *filters)
+      rc = Native.call(:find_relative, @handle, base_css, JSON.generate(filters))
+      result = atom_result(rc) || []
+      result.map { |ref| WebElement.new(self, ref.fetch(W3C_ELEMENT_KEY)) }
+    end
+
     # ---- windows ----
     def window_handles = execute('getWindowHandles')
     def current_window_handle = execute('getCurrentWindowHandle')
@@ -289,6 +315,35 @@ module SeleniumCore
       return nil if raw.empty?
 
       JSON.parse(raw)
+    end
+
+    # Drain last_value after an atom call, raising the same typed WebDriverError
+    # that #execute uses on a non-zero return code.
+    def atom_result(rc)
+      if rc != 0
+        code = Native.call(:last_error_code, @handle)
+        message = Native.take_string(Native.call(:last_error, @handle))
+        if rc == -1 && code.zero?
+          raise WebDriverError.new(message.empty? ? 'transport failure' : message, -1)
+        end
+
+        exc = CODE_TO_EXC.fetch(code, WebDriverError)
+        raise exc.new(message, code)
+      end
+      raw = Native.take_string(Native.call(:last_value, @handle))
+      return nil if raw.empty?
+
+      JSON.parse(raw)
+    end
+
+    # An atom verb taking (handle, element_id) whose last_value is a JSON boolean.
+    def atom_bool(verb, element_id)
+      !!atom_result(Native.call(verb, @handle, element_id))
+    end
+
+    # The getAttribute atom: (handle, element_id, name) -> JSON string|null.
+    def atom_get_attribute(element_id, name)
+      atom_result(Native.call(:get_attribute, @handle, element_id, name))
     end
   end
 

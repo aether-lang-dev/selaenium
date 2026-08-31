@@ -49,7 +49,25 @@ public final class WebElement {
         return (String) exec("getElementTagName", null);
     }
 
+    /**
+     * Whether the element is shown (the isDisplayed atom, run in-page by the
+     * engine — the visibility algorithm, not a naive style check).
+     */
+    public boolean isDisplayed() {
+        return Boolean.TRUE.equals(driver.atomResult(Native.isDisplayed(driver.handle(), id)));
+    }
+
+    /**
+     * The classic getAttribute(name): property-or-attribute (boolean attrs, live
+     * properties like value/checked), via the shared engine atom. Use
+     * {@link #getDomAttribute(String)} for the raw W3C DOM attribute.
+     */
     public Object getAttribute(String name) {
+        return driver.atomResult(Native.getAttribute(driver.handle(), id, name));
+    }
+
+    /** The literal DOM attribute (W3C getDomAttribute), no property fallback. */
+    public Object getDomAttribute(String name) {
         return exec("getDomAttribute", Map.of("name", name));
     }
 

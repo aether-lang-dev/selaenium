@@ -268,6 +268,60 @@ fn live_bidi() {
     d.quit().unwrap();
 }
 
+/// A LIVE test of the atom-backed commands against real Chrome: isDisplayed,
+/// the classic getAttribute (property-or-attribute atom), and relative locators.
+/// Mirrors the `live_chrome_surface` fixture (own chromedriver on an ephemeral
+/// port, self-skip if chromedriver absent, a data: URL for a real document).
+#[test]
+fn live_atoms() {
+    let Some(driver_bin) = which("chromedriver") else {
+        eprintln!("SKIPPED: chromedriver not on PATH");
+        return;
+    };
+
+    let cd_port = free_port();
+    let cd = Command::new(&driver_bin)
+        .arg(format!("--port={cd_port}"))
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("spawn chromedriver");
+    let _guard = DriverGuard(cd);
+
+    if !wait_up(cd_port, Duration::from_secs(10)) {
+        eprintln!("SKIPPED: chromedriver did not come up");
+        return;
+    }
+
+    let d = WebDriver::headless_chrome(&format!("http://127.0.0.1:{cd_port}")).expect("new session");
+
+    d.get(concat!(
+        "data:text/html,<!doctype html><title>atoms</title>",
+        "<h1 id='hdr'>Header</h1>",
+        "<button id='btn'>press</button>",
+        "<p id='gone' style='display:none'>hidden</p>",
+        "<a id='lnk' href='https://example.com/x'>link</a>"
+    ))
+    .unwrap();
+
+    // isDisplayed atom: a visible header, a display:none paragraph.
+    assert!(d.find_element(By::ID, "hdr").unwrap().is_displayed().unwrap(), "#hdr should be displayed");
+    assert!(!d.find_element(By::ID, "gone").unwrap().is_displayed().unwrap(), "#gone should be hidden");
+
+    // getAttribute atom: the href resolves to the absolute URL.
+    let href = d.find_element(By::ID, "lnk").unwrap().get_attribute("href").unwrap();
+    assert!(href.as_deref().unwrap_or("").contains("example.com/x"), "href atom: {href:?}");
+
+    // relative locators: a <button> positioned below the #hdr anchor.
+    let below = d
+        .find_relative("button", &[json::obj(vec![("kind", json::s("below")), ("sel", json::s("#hdr"))])])
+        .unwrap();
+    assert!(!below.is_empty(), "expected a button below #hdr, got {}", below.len());
+    assert_eq!(below[0].tag_name().unwrap().to_lowercase(), "button");
+
+    d.quit().unwrap();
+}
+
 /// Minimal std-only base64 decoder (screenshot PNG check only).
 fn base64_decode(s: &str) -> Vec<u8> {
     const T: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";

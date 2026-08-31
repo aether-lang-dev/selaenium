@@ -121,6 +121,30 @@ run(DriverBin) ->
             <<"success">> = maps:get(<<"type">>, Status),
             io:format("  ok: BiDi (log.entryAdded event + session.status command)~n"),
 
+            %% atom-backed commands: isDisplayed / getAttribute / relative
+            %% locators — the shared JS atoms run in-page by the engine (the
+            %% same atoms every other binding uses), reached through the NIF.
+            AtomsHtml = <<"<!doctype html><title>Atoms</title>"
+                          "<h1 id='hdr'>Header</h1>"
+                          "<button id='btn'>Click</button>"
+                          "<p id='gone' style='display:none'>hidden</p>"
+                          "<a id='lnk' href='https://example.com/x'>link</a>">>,
+            {ok, _} = selenium:get(D, <<"data:text/html,", (uri_pct(AtomsHtml))/binary>>),
+            {ok, AHdr} = selenium:find_element(D, <<"id">>, <<"hdr">>),
+            {ok, AGone} = selenium:find_element(D, <<"id">>, <<"gone">>),
+            {ok, ALnk} = selenium:find_element(D, <<"id">>, <<"lnk">>),
+            true = selenium:is_displayed(D, AHdr),
+            false = selenium:is_displayed(D, AGone),
+            Href = selenium:get_attribute(D, ALnk, <<"href">>),
+            true = is_binary(Href),
+            true = binary:match(Href, <<"example.com/x">>) =/= nomatch,
+            {ok, Below} = selenium:find_relative(D, <<"button">>,
+                              [#{<<"kind">> => <<"below">>, <<"sel">> => <<"#hdr">>}]),
+            true = length(Below) >= 1,
+            io:format("  ok: atoms (is_displayed hdr=true gone=false, "
+                      "get_attribute href=~s, find_relative below #hdr=~p)~n",
+                      [Href, length(Below)]),
+
             io:format("PASS: Erlang live surface test green~n")
         after
             selenium:quit(D)
@@ -133,6 +157,18 @@ run(DriverBin) ->
 
 %% Public alias so the test can reach the raw execute for getElementRect.
 %% (selenium:execute/3 is not exported; use a thin re-entry.)
+
+%% Minimal percent-encoding so the HTML rides safely in a data: URL (spaces,
+%% quotes, '#' and the like would otherwise derail the URL parse).
+uri_pct(Bin) -> uri_pct(Bin, <<>>).
+uri_pct(<<>>, Acc) -> Acc;
+uri_pct(<<C, R/binary>>, Acc)
+  when (C >= $A andalso C =< $Z); (C >= $a andalso C =< $z);
+       (C >= $0 andalso C =< $9); C =:= $-; C =:= $_; C =:= $.; C =:= $~ ->
+    uri_pct(R, <<Acc/binary, C>>);
+uri_pct(<<C, R/binary>>, Acc) ->
+    Hex = list_to_binary(io_lib:format("%~2.16.0B", [C])),
+    uri_pct(R, <<Acc/binary, Hex/binary>>).
 
 which(Cmd) ->
     case os:find_executable(Cmd) of

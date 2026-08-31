@@ -173,6 +173,50 @@ class LiveTest {
         }
     }
 
+    static final String ATOM_PAGE =
+            "<!doctype html><title>Atoms</title>"
+            + "<h1 id=\"hdr\">Header</h1>"
+            + "<button id=\"btn\">click</button>"
+            + "<p id=\"gone\" style=\"display:none\">hidden</p>"
+            + "<a id=\"lnk\" href=\"https://example.com/x\">link</a>";
+
+    @Test
+    void liveChromeAtoms() throws Exception {
+        String driverBin = which("chromedriver");
+        assumeTrue(driverBin != null, "chromedriver not on PATH");
+
+        int cdPort = freePort();
+        Process cd = new ProcessBuilder(driverBin, "--port=" + cdPort)
+                .redirectOutput(ProcessBuilder.Redirect.DISCARD)
+                .redirectError(ProcessBuilder.Redirect.DISCARD)
+                .start();
+        try {
+            assumeTrue(waitUp(cdPort, 10000), "chromedriver did not come up");
+            WebDriver d = WebDriver.headlessChrome("http://127.0.0.1:" + cdPort);
+            try {
+                d.get("data:text/html," + ATOM_PAGE);
+
+                // isDisplayed atom: visible header vs display:none paragraph.
+                assertTrue(d.findElement(By.ID, "hdr").isDisplayed(), "#hdr is displayed");
+                assertTrue(!d.findElement(By.ID, "gone").isDisplayed(), "#gone is not displayed");
+
+                // getAttribute atom: resolves href to the property (absolute URL).
+                Object href = d.findElement(By.ID, "lnk").getAttribute("href");
+                assertTrue(href instanceof String s && s.contains("example.com/x"),
+                        "getAttribute(href) contains example.com/x, was: " + href);
+
+                // relative locators: the button sits below the header.
+                List<WebElement> below = d.findRelative(
+                        "button", List.of(Map.of("kind", "below", "sel", "#hdr")));
+                assertTrue(below.size() >= 1, "findRelative(button below #hdr) found at least one");
+            } finally {
+                d.quit();
+            }
+        } finally {
+            cd.destroy();
+        }
+    }
+
     // ---- process/net helpers ----
     static String which(String cmd) {
         String path = System.getenv("PATH");

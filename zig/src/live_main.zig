@@ -268,6 +268,57 @@ pub fn main() !void {
         std.debug.print("  ok: bidi session.status command\n", .{});
     }
 
+    // ---- atom-backed commands (isDisplayed / getAttribute / findRelative) ----
+    // Navigate a self-contained data: page and exercise the three atom verbs.
+    {
+        const atoms_page =
+            "data:text/html;charset=utf-8," ++
+            "%3C!doctype%20html%3E%3Ctitle%3EAtoms%3C/title%3E" ++
+            "%3Ch1%20id='hdr'%3EAtoms%3C/h1%3E" ++
+            "%3Cbutton%20id='btn'%3EGo%3C/button%3E" ++
+            "%3Cp%20id='gone'%20style='display:none'%3Ehidden%3C/p%3E" ++
+            "%3Ca%20id='lnk'%20href='https://example.com/x'%3Elink%3C/a%3E";
+        try d.get(atoms_page);
+
+        // isDisplayed: true for a visible header, false for display:none.
+        {
+            var hdr = try d.findElement(sel.By.id, "hdr");
+            defer hdr.deinit();
+            assert(try d.isDisplayed(&hdr), "isDisplayed #hdr true");
+
+            var gone = try d.findElement(sel.By.id, "gone");
+            defer gone.deinit();
+            assert(!(try d.isDisplayed(&gone)), "isDisplayed #gone false");
+        }
+        std.debug.print("  ok: atom isDisplayed (#hdr true, #gone false)\n", .{});
+
+        // getAttribute: the href of the anchor carries our target.
+        {
+            var lnk = try d.findElement(sel.By.id, "lnk");
+            defer lnk.deinit();
+            var href = try d.getAttribute(&lnk, "href");
+            defer href.deinit();
+            const s = switch (href.value) {
+                .string => |x| x,
+                else => "",
+            };
+            assert(std.mem.indexOf(u8, s, "example.com/x") != null, "getAttribute href has example.com/x");
+        }
+        std.debug.print("  ok: atom getAttribute (#lnk href has example.com/x)\n", .{});
+
+        // findRelative: a button below the header — at least one match.
+        {
+            var rel = try d.findRelative("button", "[{\"kind\":\"below\",\"sel\":\"#hdr\"}]");
+            defer rel.deinit();
+            const count = switch (rel.value) {
+                .array => |arr| arr.items.len,
+                else => 0,
+            };
+            assert(count >= 1, "findRelative button below #hdr count>=1");
+        }
+        std.debug.print("  ok: atom findRelative (button below #hdr count>=1)\n", .{});
+    }
+
     try d.quit();
     std.debug.print("PASS: Zig live surface test green\n", .{});
 }

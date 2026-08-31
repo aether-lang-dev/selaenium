@@ -90,6 +90,25 @@ proc main() =
       doAssert d.findElement(ByCss, "#go").tagName.toLowerAscii == "a"
       echo "  ok: navigate + find + text/tag"
 
+      # atom-backed commands: isDisplayed / getAttribute / relative locators,
+      # each run in-page by the shared JS atoms in the engine.
+      let atomsUrl = "data:text/html," &
+        "<!doctype html><title>Atoms</title>" &
+        "<h1 id='hdr'>H</h1>" &
+        "<button id='btn'>b</button>" &
+        "<p id='gone' style='display:none'>hidden</p>" &
+        "<a id='lnk' href='https://example.com/x'>lnk</a>"
+      d.get(atomsUrl)
+      doAssert d.findElement(ById, "hdr").isDisplayed
+      doAssert not d.findElement(ById, "gone").isDisplayed
+      doAssert d.findElement(ById, "lnk").getAttribute("href").getStr.contains("example.com/x")
+      let below = d.findRelative("button", %*{"kind": "below", "sel": "#hdr"})
+      doAssert below.len >= 1
+      echo "  ok: atoms (isDisplayed / getAttribute / findRelative)"
+
+      d.get(base & "/one")
+      doAssert d.title == "Page One"
+
       # navigation history
       d.findElement(ById, "go").click()
       doAssert d.title == "Page Two"
