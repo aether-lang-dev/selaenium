@@ -240,6 +240,12 @@ proc main() =
       doAssert d.bidi.removeIntercept(ic2)["type"].getStr == "success"
       echo "  ok: BiDi request mocking (provideResponse -> MOCKED-BODY)"
 
+      # network.setCacheBehavior — bypass (disable the HTTP cache so every
+      # request hits the network / an intercept) then restore the default.
+      doAssert d.bidi.setCacheBehavior("bypass")["type"].getStr == "success"
+      doAssert d.bidi.setCacheBehavior("default")["type"].getStr == "success"
+      echo "  ok: BiDi setCacheBehavior (bypass -> default)"
+
       echo "PASS: Nim live surface test green"
     finally:
       d.quit()

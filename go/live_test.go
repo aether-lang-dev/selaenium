@@ -387,5 +387,25 @@ func TestLiveBidi(t *testing.T) {
 		t.Fatalf("window.__mock = %q; want to contain MOCKED-BODY", got)
 	}
 
+	// Cache control: bypass disables the session HTTP cache, default restores it.
+	bypass, err := bidi.SetCacheBehavior("bypass")
+	if err != nil {
+		t.Fatalf("SetCacheBehavior(bypass): %v", err)
+	}
+	if bypass["type"] != "success" {
+		t.Fatalf("SetCacheBehavior(bypass) type = %v, want success; reply = %v", bypass["type"], bypass)
+	}
+	restore, err := bidi.SetCacheBehavior("default")
+	if err != nil {
+		t.Fatalf("SetCacheBehavior(default): %v", err)
+	}
+	if restore["type"] != "success" {
+		t.Fatalf("SetCacheBehavior(default) type = %v, want success; reply = %v", restore["type"], restore)
+	}
+
+	// ContinueWithAuth needs an auth-challenging server to exercise live; here we
+	// only bind it so the wrapper stays compiled and its signature is covered.
+	_ = bidi.ContinueWithAuth
+
 	t.Log("live BiDi test green")
 }

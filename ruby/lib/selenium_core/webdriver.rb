@@ -506,6 +506,26 @@ module SeleniumCore
       raw.empty? ? {} : JSON.parse(raw)
     end
 
+    # Answer an HTTP auth challenge (a paused authRequired request) with
+    # credentials — automates basic/digest auth that classic WebDriver can't
+    # handle in headless. Returns the reply Hash.
+    def continue_with_auth(request_id, username, password, timeout_ms: 10_000)
+      raw = Native.take_string(
+        Native.call(:bidi_network_continue_with_auth, @handle, next_id, request_id, username, password, timeout_ms)
+      )
+      raw.empty? ? {} : JSON.parse(raw)
+    end
+
+    # Set the session HTTP cache behavior: "bypass" to disable it (so every
+    # request hits the network / an intercept), "default" to restore it.
+    # Returns the reply Hash.
+    def set_cache_behavior(behavior = 'bypass', timeout_ms: 10_000)
+      raw = Native.take_string(
+        Native.call(:bidi_network_set_cache_behavior, @handle, next_id, behavior, timeout_ms)
+      )
+      raw.empty? ? {} : JSON.parse(raw)
+    end
+
     # The network.request id out of a network.beforeRequestSent (or other
     # network) event: +params.request.request+.
     def self.event_request_id(event)

@@ -360,6 +360,29 @@ fn live_bidi() {
     }
     assert!(got.contains("MOCKED-BODY"), "fetch should see the mocked body, got {got:?}");
 
+    // ---- BiDi cache behavior (network.setCacheBehavior: bypass / default) ----
+
+    // Disable the HTTP cache session-wide, then restore it; both replies succeed.
+    let bypass = d.bidi().unwrap().set_cache_behavior("bypass", 10000).unwrap();
+    assert_eq!(
+        bypass.get("type").and_then(|v| v.as_str()),
+        Some("success"),
+        "set_cache_behavior(bypass) reply: {bypass:?}"
+    );
+    let default = d.bidi().unwrap().set_cache_behavior("default", 10000).unwrap();
+    assert_eq!(
+        default.get("type").and_then(|v| v.as_str()),
+        Some("success"),
+        "set_cache_behavior(default) reply: {default:?}"
+    );
+
+    // continue_with_auth needs a real auth-challenging server to exercise; here we
+    // only pin its signature so it stays compiled (never actually called).
+    #[allow(unused)]
+    fn _continue_with_auth_compiles(bidi: &mut selenium_core::BiDi) {
+        let _ = bidi.continue_with_auth("req-1", "user", "pass", 10000);
+    }
+
     d.quit().unwrap();
 }
 

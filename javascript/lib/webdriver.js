@@ -530,6 +530,32 @@ class BiDi {
     return raw ? JSON.parse(raw) : {}
   }
 
+  // Answer an HTTP auth challenge (a paused authRequired request) with
+  // credentials — automates basic/digest auth that classic WebDriver can't
+  // handle in headless. requestId comes from a network event (see eventRequestId).
+  continueWithAuth(requestId, username, password, timeoutMs = 10000) {
+    const raw = native.takeString(
+      native.bidiNetworkContinueWithAuth(
+        this._handle,
+        this._id(),
+        requestId,
+        username,
+        password,
+        timeoutMs,
+      ),
+    )
+    return raw ? JSON.parse(raw) : {}
+  }
+
+  // Set the session HTTP cache behavior: 'bypass' to disable it (so every
+  // request hits the network / an intercept), 'default' to restore it.
+  setCacheBehavior(behavior = 'bypass', timeoutMs = 10000) {
+    const raw = native.takeString(
+      native.bidiNetworkSetCacheBehavior(this._handle, this._id(), behavior, timeoutMs),
+    )
+    return raw ? JSON.parse(raw) : {}
+  }
+
   // The network.request id out of a network.beforeRequestSent (or other network)
   // event: params.request.request.
   static eventRequestId(event) {

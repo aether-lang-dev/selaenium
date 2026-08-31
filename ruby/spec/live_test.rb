@@ -128,6 +128,12 @@ class LiveTest < Minitest::Test
       got = ''
       25.times { got = driver.execute_script('return window.__mock;').to_s; break if got.include?('MOCKED-BODY'); sleep 0.2 }
       assert got.include?('MOCKED-BODY'), "page did not receive mock: #{got}"
+
+      # BiDi network.setCacheBehavior: bypass the HTTP cache, then restore it.
+      assert_equal 'success', driver.bidi.set_cache_behavior('bypass')['type'],
+                   'set_cache_behavior("bypass") should succeed'
+      assert_equal 'success', driver.bidi.set_cache_behavior('default')['type'],
+                   'set_cache_behavior("default") should succeed'
     ensure
       driver.quit
     end

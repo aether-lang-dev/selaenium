@@ -137,6 +137,12 @@ const bidiNetworkFailRequest = lazy(
 const bidiNetworkProvideResponse = lazy(
   'void* aether_sel_embed_bidi_network_provide_response(void* h, int id, const char* request_id, int status, const char* content_type, const char* body, int timeout_ms)',
 )
+const bidiNetworkContinueWithAuth = lazy(
+  'void* aether_sel_embed_bidi_network_continue_with_auth(void* h, int id, const char* request_id, const char* username, const char* password, int timeout_ms)',
+)
+const bidiNetworkSetCacheBehavior = lazy(
+  'void* aether_sel_embed_bidi_network_set_cache_behavior(void* h, int id, const char* behavior, int timeout_ms)',
+)
 
 // ---- string ownership ----
 const freeString = lazy('void aether_sel_embed_free_string(void* s)')
@@ -194,6 +200,8 @@ module.exports = {
   bidiNetworkContinueRequest,
   bidiNetworkFailRequest,
   bidiNetworkProvideResponse,
+  bidiNetworkContinueWithAuth,
+  bidiNetworkSetCacheBehavior,
   takeString,
   isNull,
 }

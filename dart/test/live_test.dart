@@ -273,6 +273,10 @@ void main() {
           sleep(const Duration(milliseconds: 200));
         }
         expect(mocked, contains('MOCKED-BODY'));
+
+        // setCacheBehavior: disable then restore the session HTTP cache.
+        expect(d.bidi.setCacheBehavior('bypass')['type'], 'success');
+        expect(d.bidi.setCacheBehavior('default')['type'], 'success');
       } finally {
         d.quit();
       }

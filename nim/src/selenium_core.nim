@@ -106,6 +106,13 @@ proc selBidiNetworkProvideResponse(h: pointer, id: cint, requestId: cstring,
                                    status: cint, contentType, body: cstring,
                                    timeoutMs: cint): cstring
   {.importc: "aether_sel_embed_bidi_network_provide_response", cdecl.}
+proc selBidiNetworkContinueWithAuth(h: pointer, id: cint, requestId: cstring,
+                                    username, password: cstring,
+                                    timeoutMs: cint): cstring
+  {.importc: "aether_sel_embed_bidi_network_continue_with_auth", cdecl.}
+proc selBidiNetworkSetCacheBehavior(h: pointer, id: cint, behavior: cstring,
+                                    timeoutMs: cint): cstring
+  {.importc: "aether_sel_embed_bidi_network_set_cache_behavior", cdecl.}
 
 proc takeString(p: cstring): string =
   ## Copy an ABI-returned string into a Nim string and free the original. Every
@@ -517,6 +524,23 @@ proc provideResponse*(b: BiDi, requestId: string, status = 200,
   let raw = takeString(selBidiNetworkProvideResponse(b.handle, b.nextBidiId,
     requestId.cstring, status.cint, contentType.cstring, body.cstring,
     timeoutMs.cint))
+  if raw.len == 0: newJObject() else: parseJson(raw)
+
+proc continueWithAuth*(b: BiDi, requestId, username, password: string,
+                       timeoutMs = 10000): JsonNode =
+  ## Answer an HTTP auth challenge (a paused authRequired request) with
+  ## credentials — automates basic/digest auth that classic WebDriver can't
+  ## handle in headless. requestId comes from a network event's
+  ## `params.request.request` (see `eventRequestId`).
+  let raw = takeString(selBidiNetworkContinueWithAuth(b.handle, b.nextBidiId,
+    requestId.cstring, username.cstring, password.cstring, timeoutMs.cint))
+  if raw.len == 0: newJObject() else: parseJson(raw)
+
+proc setCacheBehavior*(b: BiDi, behavior = "bypass", timeoutMs = 10000): JsonNode =
+  ## Set the session HTTP cache behavior: "bypass" to disable it (so every
+  ## request hits the network / an intercept), "default" to restore it.
+  let raw = takeString(selBidiNetworkSetCacheBehavior(b.handle, b.nextBidiId,
+    behavior.cstring, timeoutMs.cint))
   if raw.len == 0: newJObject() else: parseJson(raw)
 
 proc eventRequestId*(event: JsonNode): string =

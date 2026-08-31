@@ -114,6 +114,20 @@ extern "C" {
         body: *const c_char,
         timeout_ms: c_int,
     ) -> *mut c_char;
+    fn aether_sel_embed_bidi_network_continue_with_auth(
+        h: Handle,
+        id: c_int,
+        request_id: *const c_char,
+        username: *const c_char,
+        password: *const c_char,
+        timeout_ms: c_int,
+    ) -> *mut c_char;
+    fn aether_sel_embed_bidi_network_set_cache_behavior(
+        h: Handle,
+        id: c_int,
+        behavior: *const c_char,
+        timeout_ms: c_int,
+    ) -> *mut c_char;
 }
 
 /// Copy a caller-owned native `char*` into a Rust `String`, then free it per the
@@ -877,6 +891,46 @@ impl BiDi {
                 b.as_ptr(),
                 timeout_ms,
             )
+        });
+        Self::decode(&raw)
+    }
+
+    /// Answer an HTTP auth challenge (a paused `authRequired` request) with
+    /// credentials — automates basic/digest auth that classic WebDriver can't
+    /// handle in headless. `request_id` comes from a network event's
+    /// `params.request.request`. Returns the reply payload.
+    pub fn continue_with_auth(
+        &mut self,
+        request_id: &str,
+        username: &str,
+        password: &str,
+        timeout_ms: i32,
+    ) -> Result<Json> {
+        let id = self.next_id();
+        let rid = cstr(request_id);
+        let user = cstr(username);
+        let pass = cstr(password);
+        let raw = take_string(unsafe {
+            aether_sel_embed_bidi_network_continue_with_auth(
+                self.handle,
+                id,
+                rid.as_ptr(),
+                user.as_ptr(),
+                pass.as_ptr(),
+                timeout_ms,
+            )
+        });
+        Self::decode(&raw)
+    }
+
+    /// Set the session HTTP cache behavior (`network.setCacheBehavior`):
+    /// `"bypass"` disables it (so every request hits the network / an intercept),
+    /// `"default"` restores it. Returns the reply payload.
+    pub fn set_cache_behavior(&mut self, behavior: &str, timeout_ms: i32) -> Result<Json> {
+        let id = self.next_id();
+        let b = cstr(behavior);
+        let raw = take_string(unsafe {
+            aether_sel_embed_bidi_network_set_cache_behavior(self.handle, id, b.as_ptr(), timeout_ms)
         });
         Self::decode(&raw)
     }

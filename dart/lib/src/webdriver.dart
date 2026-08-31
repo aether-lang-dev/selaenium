@@ -555,6 +555,36 @@ class BiDi {
     return raw.isEmpty ? {} : jsonDecode(raw) as Map<String, dynamic>;
   }
 
+  /// Answer an HTTP auth challenge (a paused authRequired request) with
+  /// credentials — automates basic/digest auth that classic WebDriver can't
+  /// handle in headless. [requestId] comes from a network event's
+  /// `params.request.request`.
+  Map<String, dynamic> continueWithAuth(
+      String requestId, String username, String password,
+      {int timeoutMs = 10000}) {
+    final raw = _withCStr(
+        requestId,
+        (r) => _withCStr(
+            username,
+            (u) => _withCStr(
+                password,
+                (p) => Native.instance.takeString(
+                    Native.instance.bidiNetworkContinueWithAuth(
+                        _handle, _id(), r, u, p, timeoutMs)))));
+    return raw.isEmpty ? {} : jsonDecode(raw) as Map<String, dynamic>;
+  }
+
+  /// Set the session HTTP cache behavior: `"bypass"` to disable it (so every
+  /// request hits the network / an intercept), `"default"` to restore it.
+  Map<String, dynamic> setCacheBehavior(
+      [String behavior = 'bypass', int timeoutMs = 10000]) {
+    final raw = _withCStr(
+        behavior,
+        (b) => Native.instance.takeString(Native.instance
+            .bidiNetworkSetCacheBehavior(_handle, _id(), b, timeoutMs)));
+    return raw.isEmpty ? {} : jsonDecode(raw) as Map<String, dynamic>;
+  }
+
   /// The network.request id out of a network.beforeRequestSent (or other
   /// network) event: `params.request.request`.
   static String? eventRequestId(Map<String, dynamic> event) {

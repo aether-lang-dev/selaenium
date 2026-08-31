@@ -284,6 +284,15 @@ test('live chrome + bidi', async (t) => {
       assert.ok(mock.includes('MOCKED-BODY'), `page never saw mock body: ${JSON.stringify(mock)}`)
 
       d.bidi.removeIntercept(ic2)
+
+      // network.setCacheBehavior: disable the HTTP cache for the session, then
+      // restore it. (continueWithAuth needs an auth server, so it is not
+      // live-tested here — its module wiring is exercised by loading the binding.)
+      const bypass = d.bidi.setCacheBehavior('bypass')
+      assert.strictEqual(bypass.type, 'success', `setCacheBehavior('bypass'): ${JSON.stringify(bypass)}`)
+      const dflt = d.bidi.setCacheBehavior('default')
+      assert.strictEqual(dflt.type, 'success', `setCacheBehavior('default'): ${JSON.stringify(dflt)}`)
+      assert.strictEqual(typeof d.bidi.continueWithAuth, 'function', 'continueWithAuth missing')
     } finally {
       d.quit()
     }

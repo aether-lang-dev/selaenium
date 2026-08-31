@@ -103,6 +103,8 @@ module SeleniumCore
       [:bidi_network_continue_request,  'aether_sel_embed_bidi_network_continue_request',  VOIDP, [VOIDP, INT, VOIDP, INT]],
       [:bidi_network_fail_request,      'aether_sel_embed_bidi_network_fail_request',      VOIDP, [VOIDP, INT, VOIDP, INT]],
       [:bidi_network_provide_response,  'aether_sel_embed_bidi_network_provide_response',  VOIDP, [VOIDP, INT, VOIDP, INT, VOIDP, VOIDP, INT]],
+      [:bidi_network_continue_with_auth, 'aether_sel_embed_bidi_network_continue_with_auth', VOIDP, [VOIDP, INT, VOIDP, VOIDP, VOIDP, INT]],
+      [:bidi_network_set_cache_behavior, 'aether_sel_embed_bidi_network_set_cache_behavior', VOIDP, [VOIDP, INT, VOIDP, INT]],
       [:free_string,     'aether_sel_embed_free_string',     VOID,  [VOIDP]]
     ].freeze
 

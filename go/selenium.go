@@ -73,6 +73,8 @@ char*  aether_sel_embed_bidi_network_remove_intercept(void* h, int id, const cha
 char*  aether_sel_embed_bidi_network_continue_request(void* h, int id, const char* request_id, int timeout_ms);
 char*  aether_sel_embed_bidi_network_fail_request(void* h, int id, const char* request_id, int timeout_ms);
 char*  aether_sel_embed_bidi_network_provide_response(void* h, int id, const char* request_id, int status, const char* content_type, const char* body, int timeout_ms);
+char*  aether_sel_embed_bidi_network_continue_with_auth(void* h, int id, const char* request_id, const char* username, const char* password, int timeout_ms);
+char*  aether_sel_embed_bidi_network_set_cache_behavior(void* h, int id, const char* behavior, int timeout_ms);
 */
 import "C"
 
@@ -961,6 +963,28 @@ func (b *BiDi) ProvideResponse(requestID string, status int, contentType, body s
 	defer C.free(unsafe.Pointer(cType))
 	defer C.free(unsafe.Pointer(cBody))
 	return decodeBidiReply(takeString(C.aether_sel_embed_bidi_network_provide_response(b.h, b.id(), cID, C.int(status), cType, cBody, C.int(firstTimeout(timeoutMs)))))
+}
+
+// ContinueWithAuth answers an HTTP auth challenge (a paused authRequired
+// request) with credentials — automating basic/digest auth that classic
+// WebDriver cannot handle in headless. requestID comes from a
+// network.authRequired event's params.request.request (see EventRequestID).
+func (b *BiDi) ContinueWithAuth(requestID, username, password string, timeoutMs ...int) (map[string]interface{}, error) {
+	cID := cstr(requestID)
+	cUser := cstr(username)
+	cPass := cstr(password)
+	defer C.free(unsafe.Pointer(cID))
+	defer C.free(unsafe.Pointer(cUser))
+	defer C.free(unsafe.Pointer(cPass))
+	return decodeBidiReply(takeString(C.aether_sel_embed_bidi_network_continue_with_auth(b.h, b.id(), cID, cUser, cPass, C.int(firstTimeout(timeoutMs)))))
+}
+
+// SetCacheBehavior sets the session HTTP cache behavior: "bypass" disables it
+// (so every request hits the network / an intercept), "default" restores it.
+func (b *BiDi) SetCacheBehavior(behavior string, timeoutMs ...int) (map[string]interface{}, error) {
+	cBehavior := cstr(behavior)
+	defer C.free(unsafe.Pointer(cBehavior))
+	return decodeBidiReply(takeString(C.aether_sel_embed_bidi_network_set_cache_behavior(b.h, b.id(), cBehavior, C.int(firstTimeout(timeoutMs)))))
 }
 
 // EventRequestID reads the network request id out of a network.beforeRequestSent

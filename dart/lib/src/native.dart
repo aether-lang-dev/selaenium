@@ -146,6 +146,24 @@ typedef _BidiNetProvideResponse = ffi.Pointer<pkgffi.Utf8> Function(
     ffi.Pointer<pkgffi.Utf8>,
     int);
 
+// continue_with_auth: answer a paused authRequired request with credentials.
+// (void* handle, int id, char* request_id, char* username, char* password,
+//  int timeout_ms) -> char* reply JSON.
+typedef _BidiNetContinueWithAuthC = ffi.Pointer<pkgffi.Utf8> Function(
+    ffi.Pointer<ffi.Void>,
+    ffi.Int32,
+    ffi.Pointer<pkgffi.Utf8>,
+    ffi.Pointer<pkgffi.Utf8>,
+    ffi.Pointer<pkgffi.Utf8>,
+    ffi.Int32);
+typedef _BidiNetContinueWithAuth = ffi.Pointer<pkgffi.Utf8> Function(
+    ffi.Pointer<ffi.Void>,
+    int,
+    ffi.Pointer<pkgffi.Utf8>,
+    ffi.Pointer<pkgffi.Utf8>,
+    ffi.Pointer<pkgffi.Utf8>,
+    int);
+
 /// A loaded engine: the [ffi.DynamicLibrary] plus every symbol bound once.
 class Native {
   final _Open open;
@@ -189,6 +207,8 @@ class Native {
   final _BidiNetStrArg bidiNetworkContinueRequest;
   final _BidiNetStrArg bidiNetworkFailRequest;
   final _BidiNetProvideResponse bidiNetworkProvideResponse;
+  final _BidiNetContinueWithAuth bidiNetworkContinueWithAuth;
+  final _BidiNetStrArg bidiNetworkSetCacheBehavior;
 
   Native._(ffi.DynamicLibrary lib)
       : open = lib.lookupFunction<_OpenC, _Open>('aether_sel_embed_open'),
@@ -268,7 +288,13 @@ class Native {
                 'aether_sel_embed_bidi_network_fail_request'),
         bidiNetworkProvideResponse = lib.lookupFunction<
             _BidiNetProvideResponseC, _BidiNetProvideResponse>(
-            'aether_sel_embed_bidi_network_provide_response');
+            'aether_sel_embed_bidi_network_provide_response'),
+        bidiNetworkContinueWithAuth = lib.lookupFunction<
+            _BidiNetContinueWithAuthC, _BidiNetContinueWithAuth>(
+            'aether_sel_embed_bidi_network_continue_with_auth'),
+        bidiNetworkSetCacheBehavior =
+            lib.lookupFunction<_BidiNetStrArgC, _BidiNetStrArg>(
+                'aether_sel_embed_bidi_network_set_cache_behavior');
 
   static Native? _instance;
   static String? _explicitPath;
