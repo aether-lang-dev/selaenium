@@ -354,6 +354,19 @@ bidi_network_fail(sp: ptr, request_id: string) -> int {
     return 0
 }
 
+// bidi_network_mock(session, request_id, status, content_type, body) — fulfill a
+// paused request with a MOCK response (network.provideResponse). Returns 1 on
+// success. The request-mocking capability: serve canned content / a fake status /
+// a stub API payload instead of the real network response.
+bidi_network_mock(sp: ptr, request_id: string, status: int, content_type: string, body: string) -> int {
+    ch = _ensure_bidi(sp)
+    if ch == null { return 0 }
+    s = sp as *WdSession
+    rj = selenium_bidi.bidi_network_provide_response(ch, _bidi_id(s), request_id, status, content_type, body, 10000)
+    if string.contains(rj, "\"type\":\"success\"") == 1 { return 1 }
+    return 0
+}
+
 // bidi_event_request_id(event_json) — the network.request id out of a
 // network.beforeRequestSent (or other network) event: params.request.request.
 bidi_event_request_id(sp: ptr, event_json: string) -> string {

@@ -359,6 +359,13 @@ sel_embed_bidi_network_fail_request(h: ptr, id: int, request_id: string, timeout
     return sel_embed_dup(selenium_bidi.bidi_network_fail_request(h, id, request_id, timeout_ms))
 }
 
+// Fulfill a paused request with a MOCK response (network.provideResponse) — the
+// request-mocking capability. status is the HTTP status; content_type sets
+// Content-Type ("" to omit); body is the raw response body ("" for none).
+sel_embed_bidi_network_provide_response(h: ptr, id: int, request_id: string, status: int, content_type: string, body: string, timeout_ms: int) -> string {
+    return sel_embed_dup(selenium_bidi.bidi_network_provide_response(h, id, request_id, status, content_type, body, timeout_ms))
+}
+
 // ---- string ownership ----
 
 // Free any char* returned by a sel_embed_* function above.

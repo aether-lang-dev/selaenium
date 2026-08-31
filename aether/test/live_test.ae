@@ -131,6 +131,25 @@ main() {
         fails = fails + ck("intercepted request has a request id", _gt0(string.length(rid)))
         fails = fails + ck("network.continueRequest releases it",
                  webdriver.bidi_network_continue(d, rid))
+
+        // Request MOCKING — provideResponse: fulfill a paused request with a fake
+        // body, never hitting the network. Fire a fetch that stashes the response
+        // text in window.__mock, catch it, mock a response, then read it back.
+        webdriver.execute_script(d, "window.__mock='';fetch('https://example.com/api').then(function(r){return r.text()}).then(function(t){window.__mock=t}).catch(function(){});", "[]")
+        reqev2 = webdriver.bidi_next_event(d, webdriver.BidiEvent_BEFORE_REQUEST_SENT(), 8000)
+        rid2 = webdriver.bidi_event_request_id(d, reqev2)
+        fails = fails + ck("mock: got the api request id", _gt0(string.length(rid2)))
+        fails = fails + ck("network.provideResponse mocks the body",
+                 webdriver.bidi_network_mock(d, rid2, 200, "text/plain", "MOCKED-BODY"))
+        // the page's .then now resolves with our fake body; poll window.__mock.
+        got = ""
+        waited = 0
+        while waited < 5000 {
+            v = webdriver.execute_script(d, "return window.__mock;", "[]")
+            if string.contains(v, "MOCKED-BODY") == 1 { got = v; waited = 99999 }
+            if waited < 99999 { sleep(200); waited = waited + 200 }
+        }
+        fails = fails + ck("the page received the mocked body", string.contains(got, "MOCKED-BODY"))
     } else {
         println("  (bidi unavailable — remote end granted no webSocketUrl; skipping BiDi checks)")
     }

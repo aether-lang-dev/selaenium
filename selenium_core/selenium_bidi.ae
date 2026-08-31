@@ -218,6 +218,30 @@ bidi_network_fail_request(sp: ptr, id: int, request_id: string, timeout_ms: int)
     return bidi_command(sp, id, "network.failRequest", params, timeout_ms)
 }
 
+// bidi_network_provide_response(session, id, request_id, status, content_type,
+// body, timeout_ms) — network.provideResponse: fulfill a paused request with a
+// MOCK response, never hitting the network. This is the request-mocking capability
+// — return canned content, a fake status, or a stub API payload. body is the raw
+// response body (sent as a base64 BiDi "string" bytes value). content_type sets
+// the Content-Type header ("" to omit). The request completes as if the server
+// answered.
+bidi_network_provide_response(sp: ptr, id: int, request_id: string, status: int, content_type: string, body: string, timeout_ms: int) -> string {
+    // A mocked response is meant to be consumed by the requesting page, so allow
+    // any origin to read it (a cross-origin fetch otherwise yields an opaque,
+    // unreadable body). Add Content-Type when given.
+    ct_header = ""
+    if string.length(content_type) > 0 {
+        ct_header = ",{\"name\":\"Content-Type\",\"value\":{\"type\":\"string\",\"value\":${_qjson(content_type)}}}"
+    }
+    headers = "\"headers\":[{\"name\":\"Access-Control-Allow-Origin\",\"value\":{\"type\":\"string\",\"value\":\"*\"}}${ct_header}],"
+    body_field = ""
+    if string.length(body) > 0 {
+        body_field = "\"body\":{\"type\":\"string\",\"value\":${_qjson(body)}},"
+    }
+    params = "{\"request\":${_qjson(request_id)},\"statusCode\":${string.from_int(status)},${headers}${body_field}\"reasonPhrase\":\"OK\"}"
+    return bidi_command(sp, id, "network.provideResponse", params, timeout_ms)
+}
+
 // bidi_wait_event(session, method, timeout_ms) — pump the demux until an event
 // whose "method" matches arrives (from the bounded event queue), or timeout.
 // Returns the event JSON, or "" on timeout/close. Non-matching events that arrive
