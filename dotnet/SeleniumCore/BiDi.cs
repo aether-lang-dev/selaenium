@@ -202,6 +202,17 @@ public sealed class BiDi
         return raw.Length == 0 ? new Dictionary<string, object?>() : ParseObject(raw);
     }
 
+    /// <summary>Fulfill a paused request with a MOCK response (network.provideResponse),
+    /// never hitting the network — mock an API, serve stub content, or test an error
+    /// status. The mock auto-allows any origin to read the body.</summary>
+    public Dictionary<string, object?> ProvideResponse(string requestId, int status = 200,
+        string contentType = "", string body = "", int timeoutMs = 10000)
+    {
+        string raw = NativeMethods.TakeString(
+            NativeMethods.BidiNetworkProvideResponse(_handle, NextId(), requestId, status, contentType, body, timeoutMs));
+        return raw.Length == 0 ? new Dictionary<string, object?>() : ParseObject(raw);
+    }
+
     /// <summary>The network.request id out of a network event: params.request.request.</summary>
     public static string? EventRequestId(Dictionary<string, object?> ev)
     {

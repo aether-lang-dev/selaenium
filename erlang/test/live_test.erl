@@ -141,6 +141,16 @@ run(DriverBin) ->
             <<"success">> = maps:get(<<"type">>, Cont),
             io:format("  ok: BiDi network intercept -> beforeRequestSent -> continueRequest~n"),
 
+            %% request mocking — provideResponse fulfills a paused request with a fake body.
+            {ok, _} = selenium:execute_script(D, <<"window.__mock='';fetch('https://example.com/api').then(function(r){return r.text()}).then(function(t){window.__mock=t}).catch(function(){});">>),
+            {ok, NetEv2} = selenium:bidi_next_event(D, <<"network.beforeRequestSent">>, 8000),
+            Rid2 = selenium:bidi_event_request_id(NetEv2),
+            {ok, Prov} = selenium:bidi_provide_response(D, Rid2, 200, <<"text/plain">>, <<"MOCKED-BODY">>),
+            <<"success">> = maps:get(<<"type">>, Prov),
+            Mocked = poll_mock(D, 25),
+            true = binary:match(Mocked, <<"MOCKED-BODY">>) =/= nomatch,
+            io:format("  ok: BiDi network provideResponse mocked the body~n"),
+
             %% atom-backed commands: isDisplayed / getAttribute / relative
             %% locators — the shared JS atoms run in-page by the engine (the
             %% same atoms every other binding uses), reached through the NIF.
@@ -191,6 +201,18 @@ chrome_opts() ->
         Bin -> ChromeOpts0#{<<"binary">> => list_to_binary(Bin)}
     end,
     #{<<"goog:chromeOptions">> => ChromeOpts}.
+
+%% Poll window.__mock up to N times (200ms apart) for the mocked body.
+poll_mock(_D, 0) -> <<>>;
+poll_mock(D, N) ->
+    case selenium:execute_script(D, <<"return window.__mock;">>) of
+        {ok, V} when is_binary(V) ->
+            case binary:match(V, <<"MOCKED-BODY">>) of
+                nomatch -> timer:sleep(200), poll_mock(D, N - 1);
+                _ -> V
+            end;
+        _ -> timer:sleep(200), poll_mock(D, N - 1)
+    end.
 
 uri_pct(Bin) -> uri_pct(Bin, <<>>).
 uri_pct(<<>>, Acc) -> Acc;

@@ -533,6 +533,13 @@ function BiDi:fail_request(request_id, timeout_ms)
   return raw == "" and {} or json.decode(raw)
 end
 
+-- Fulfill a paused request with a MOCK response (never hits the network).
+function BiDi:provide_response(request_id, status, content_type, body, timeout_ms)
+  local raw = native.bidi_network_provide_response(self._handle, self:_id(), request_id,
+    status or 200, content_type or "", body or "", timeout_ms or 10000)
+  return raw == "" and {} or json.decode(raw)
+end
+
 -- The network.request id out of a network event: params.request.request.
 function BiDi.event_request_id(event)
   local p = event.params

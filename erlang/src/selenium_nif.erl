@@ -49,6 +49,7 @@
     bidi_network_remove_intercept/4,
     bidi_network_continue_request/4,
     bidi_network_fail_request/4,
+    bidi_network_provide_response/7,
     execute_atom/4,
     is_displayed/2,
     get_attribute/3,
@@ -105,6 +106,7 @@ bidi_network_add_intercept(_Handle, _Id, _Phases, _Pattern, _TimeoutMs) -> erlan
 bidi_network_remove_intercept(_Handle, _Id, _InterceptId, _TimeoutMs) -> erlang:nif_error(not_loaded).
 bidi_network_continue_request(_Handle, _Id, _RequestId, _TimeoutMs) -> erlang:nif_error(not_loaded).
 bidi_network_fail_request(_Handle, _Id, _RequestId, _TimeoutMs) -> erlang:nif_error(not_loaded).
+bidi_network_provide_response(_Handle, _Id, _RequestId, _Status, _Ct, _Body, _TimeoutMs) -> erlang:nif_error(not_loaded).
 
 %% ---- atom-backed commands (isDisplayed / getAttribute / relative locators) ----
 %% The int-returning verbs leave their JSON result in last_value (drained the

@@ -70,6 +70,7 @@ extern char *aether_sel_embed_bidi_network_add_intercept(void *h, int id, const 
 extern char *aether_sel_embed_bidi_network_remove_intercept(void *h, int id, const char *icid, int timeout_ms);
 extern char *aether_sel_embed_bidi_network_continue_request(void *h, int id, const char *rid, int timeout_ms);
 extern char *aether_sel_embed_bidi_network_fail_request(void *h, int id, const char *rid, int timeout_ms);
+extern char *aether_sel_embed_bidi_network_provide_response(void *h, int id, const char *rid, int status, const char *ct, const char *body, int timeout_ms);
 
 /* ---- helpers ---- */
 
@@ -484,6 +485,31 @@ static ERL_NIF_TERM nif_bidi_network_continue_request(ErlNifEnv *env, int argc, 
 static ERL_NIF_TERM nif_bidi_network_fail_request(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
 { UNUSED(argc); return nif_bidi_net_str(env, argv, aether_sel_embed_bidi_network_fail_request); }
 
+static ERL_NIF_TERM nif_bidi_network_provide_response(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
+{
+    UNUSED(argc);
+    void *h;
+    int id, status, timeout_ms;
+    if (!get_handle(env, argv[0], &h)) return enif_make_badarg(env);
+    if (!enif_get_int(env, argv[1], &id)) return enif_make_badarg(env);
+    char *rid = term_to_cstr(env, argv[2]);
+    if (!rid) return enif_make_badarg(env);
+    if (!enif_get_int(env, argv[3], &status)) { enif_free(rid); return enif_make_badarg(env); }
+    char *ct = term_to_cstr(env, argv[4]);
+    if (!ct) { enif_free(rid); return enif_make_badarg(env); }
+    char *body = term_to_cstr(env, argv[5]);
+    if (!body) { enif_free(rid); enif_free(ct); return enif_make_badarg(env); }
+    if (!enif_get_int(env, argv[6], &timeout_ms)) {
+        enif_free(rid); enif_free(ct); enif_free(body);
+        return enif_make_badarg(env);
+    }
+    ERL_NIF_TERM r = take_cstr(env, aether_sel_embed_bidi_network_provide_response(h, id, rid, status, ct, body, timeout_ms));
+    enif_free(rid);
+    enif_free(ct);
+    enif_free(body);
+    return r;
+}
+
 /* ---- atom-backed commands ----
  * The int-returning verbs leave the result in last_value; the caller reads it
  * with last_value/1 (via selenium.erl's atom_result), just like execute. */
@@ -598,6 +624,7 @@ static ErlNifFunc nif_funcs[] = {
     {"bidi_network_remove_intercept", 4, nif_bidi_network_remove_intercept, 0},
     {"bidi_network_continue_request", 4, nif_bidi_network_continue_request, 0},
     {"bidi_network_fail_request",     4, nif_bidi_network_fail_request,     0},
+    {"bidi_network_provide_response", 7, nif_bidi_network_provide_response, 0},
     {"execute_atom",   4, nif_execute_atom,   0},
     {"is_displayed",   2, nif_is_displayed,   0},
     {"get_attribute",  3, nif_get_attribute,  0},

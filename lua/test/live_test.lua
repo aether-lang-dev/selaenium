@@ -143,6 +143,21 @@ local ok, err = pcall(function()
   assert(rid, "intercepted request has a request id")
   assert_eq(bidi:continue_request(rid).type, "success", "network.continueRequest")
   print("  ok: BiDi network intercept -> beforeRequestSent -> continueRequest")
+
+  -- request mocking — provideResponse fulfills a paused request with a fake body.
+  d:execute_script("window.__mock='';fetch('https://example.com/api').then(function(r){return r.text()}).then(function(t){window.__mock=t}).catch(function(){});")
+  local nev2 = bidi:next_event(s.BidiEvent.BEFORE_REQUEST_SENT, 8000)
+  local rid2 = s.BiDi.event_request_id(nev2)
+  assert(rid2, "mock: request id")
+  assert_eq(bidi:provide_response(rid2, 200, "text/plain", "MOCKED-BODY").type, "success", "provideResponse")
+  local got = ""
+  for _ = 1, 25 do
+    got = tostring(d:execute_script("return window.__mock;"))
+    if got:find("MOCKED-BODY", 1, true) then break end
+    os.execute("sleep 0.2")
+  end
+  assert(got:find("MOCKED-BODY", 1, true), "page received the mocked body")
+  print("  ok: BiDi network provideResponse mocked the body")
 end)
 
 d:quit()

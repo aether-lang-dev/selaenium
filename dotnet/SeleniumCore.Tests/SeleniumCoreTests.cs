@@ -195,6 +195,21 @@ namespace SeleniumCore.Tests
                     string? rid = BiDi.EventRequestId(netEv!);
                     rid.ShouldNotBeNull();
                     d.Bidi.ContinueRequest(rid!)["type"].ShouldBe("success");
+
+                    // request mocking — provideResponse fulfills a paused request with a fake body.
+                    d.ExecuteScript("window.__mock='';fetch('https://example.com/api').then(r => r.text()).then(t => {window.__mock=t;}).catch(() => {});");
+                    var netEv2 = d.Bidi.NextEvent(BidiEvent.BeforeRequestSent, 8000);
+                    string? rid2 = BiDi.EventRequestId(netEv2!);
+                    rid2.ShouldNotBeNull();
+                    d.Bidi.ProvideResponse(rid2!, status: 200, contentType: "text/plain", body: "MOCKED-BODY")["type"].ShouldBe("success");
+                    string mocked = "";
+                    for (int i = 0; i < 25; i++)
+                    {
+                        mocked = d.ExecuteScript("return window.__mock;")?.GetString() ?? "";
+                        if (mocked.Contains("MOCKED-BODY")) break;
+                        System.Threading.Thread.Sleep(200);
+                    }
+                    mocked.ShouldContain("MOCKED-BODY");
                 }
                 finally { d.Quit(); }
             }

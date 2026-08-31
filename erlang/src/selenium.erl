@@ -30,7 +30,8 @@
     bidi_next_event/3, bidi_command/4, bidi_lost_events/1,
     bidi_get_tree/1, bidi_top_context/1, bidi_evaluate/2, bidi_evaluate_value/2, bidi_navigate/2,
     bidi_add_intercept/2, bidi_add_intercept/3, bidi_remove_intercept/2,
-    bidi_continue_request/2, bidi_fail_request/2, bidi_event_request_id/1
+    bidi_continue_request/2, bidi_fail_request/2, bidi_event_request_id/1,
+    bidi_provide_response/2, bidi_provide_response/5
 ]).
 
 -define(W3C_KEY, <<"element-6066-11e4-a52e-4f735466cecf">>).
@@ -383,6 +384,16 @@ bidi_continue_request(H, RequestId) ->
 bidi_fail_request(H, RequestId) ->
     with_bidi(H, fun(BH) ->
         {ok, decode(selenium_nif:bidi_network_fail_request(BH, bidi_next_id(H), to_bin(RequestId), 10000))}
+    end).
+
+%% Fulfill a paused request with a MOCK response (never hits the network).
+%% provide_response/2 defaults to status 200, no content-type, empty body.
+bidi_provide_response(H, RequestId) ->
+    bidi_provide_response(H, RequestId, 200, <<>>, <<>>).
+bidi_provide_response(H, RequestId, Status, ContentType, Body) ->
+    with_bidi(H, fun(BH) ->
+        {ok, decode(selenium_nif:bidi_network_provide_response(BH, bidi_next_id(H),
+            to_bin(RequestId), Status, to_bin(ContentType), to_bin(Body), 10000))}
     end).
 
 %% The network.request id out of a network event: params.request.request.

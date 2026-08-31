@@ -52,6 +52,7 @@ typedef char* (*fn_bidi_sub)(void*, int, const char*, int);   /* -> owned string
 typedef char* (*fn_bidi_wait)(void*, const char*, int);       /* -> owned string */
 typedef char* (*fn_bidi_tree)(void*, int, int);                          /* get_tree -> owned */
 typedef char* (*fn_bidi_2str)(void*, int, const char*, const char*, int); /* evaluate/navigate -> owned */
+typedef char* (*fn_bidi_provide)(void*, int, const char*, int, const char*, const char*, int); /* provideResponse -> owned */
 
 /* ---- atom-backed commands ---- */
 typedef int   (*fn_atom4)(void*, const char*, const char*, const char*);  /* execute_atom */
@@ -93,6 +94,7 @@ static struct {
     fn_bidi_sub         bidi_network_remove_intercept;
     fn_bidi_sub         bidi_network_continue_request;
     fn_bidi_sub         bidi_network_fail_request;
+    fn_bidi_provide     bidi_network_provide_response;
     /* ---- atoms ---- */
     fn_atom4            execute_atom;
     fn_atom1            is_displayed;
@@ -145,6 +147,7 @@ static int load_symbols(lua_State* L, void* lib, const char* path) {
     SYM(bidi_network_remove_intercept, "aether_sel_embed_bidi_network_remove_intercept");
     SYM(bidi_network_continue_request, "aether_sel_embed_bidi_network_continue_request");
     SYM(bidi_network_fail_request,     "aether_sel_embed_bidi_network_fail_request");
+    SYM(bidi_network_provide_response, "aether_sel_embed_bidi_network_provide_response");
     SYM(execute_atom,     "aether_sel_embed_execute_atom");
     SYM(is_displayed,     "aether_sel_embed_is_displayed");
     SYM(get_attribute,    "aether_sel_embed_get_attribute");
@@ -420,6 +423,17 @@ static int l_bidi_network_fail_request(lua_State* L) {
     push_owned(L, ENGINE.bidi_network_fail_request(h, id, rid, timeout_ms));
     return 1;
 }
+static int l_bidi_network_provide_response(lua_State* L) {
+    void* h = check_handle(L, 1);
+    int id = (int)luaL_checkinteger(L, 2);
+    const char* rid = luaL_checkstring(L, 3);
+    int status = (int)luaL_checkinteger(L, 4);
+    const char* ct = luaL_checkstring(L, 5);
+    const char* body = luaL_checkstring(L, 6);
+    int timeout_ms = (int)luaL_checkinteger(L, 7);
+    push_owned(L, ENGINE.bidi_network_provide_response(h, id, rid, status, ct, body, timeout_ms));
+    return 1;
+}
 
 /* ---- atom-backed commands (result via last_value, drained the normal way) ---- */
 static int l_execute_atom(lua_State* L) {
@@ -488,6 +502,7 @@ static const luaL_Reg MODULE[] = {
     {"bidi_network_remove_intercept", l_bidi_network_remove_intercept},
     {"bidi_network_continue_request", l_bidi_network_continue_request},
     {"bidi_network_fail_request",     l_bidi_network_fail_request},
+    {"bidi_network_provide_response", l_bidi_network_provide_response},
     {"execute_atom",      l_execute_atom},
     {"is_displayed",      l_is_displayed},
     {"get_attribute",     l_get_attribute},

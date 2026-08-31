@@ -130,6 +130,9 @@ internal static class NativeMethods
     [DllImport(Lib, EntryPoint = "aether_sel_embed_bidi_network_fail_request", CharSet = CharSet.Ansi)]
     internal static extern IntPtr BidiNetworkFailRequest(IntPtr handle, int id, string requestId, int timeoutMs);
 
+    [DllImport(Lib, EntryPoint = "aether_sel_embed_bidi_network_provide_response", CharSet = CharSet.Ansi)]
+    internal static extern IntPtr BidiNetworkProvideResponse(IntPtr handle, int id, string requestId, int status, string contentType, string body, int timeoutMs);
+
     // ---- string ownership ----
     [DllImport(Lib, EntryPoint = "aether_sel_embed_free_string")]
     internal static extern void FreeString(IntPtr s);
