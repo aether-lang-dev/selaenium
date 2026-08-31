@@ -1,181 +1,129 @@
-// core_tests/probe.ae — pure-Aether engine probe. Proves the protocol logic
-// (route table, path templating, By normalization, error-code map) with NO
-// live browser and NO FFI — the servirtium-vcr / html-sanitizer pattern of
-// testing the engine directly. Run via core_tests/.tests.ae.
+// core_tests/probe.ae — pure-Aether engine probe, using std.spec. Proves the
+// protocol logic (route table, path templating, By normalization, build_request
+// wire format, error-code map, response error detection) with NO live browser and
+// NO FFI — testing the shared engine directly. Run via core_tests/.tests.ae.
 //
 // A live end-to-end session against a real chromedriver is a separate,
-// browser-dependent test (see python/test); this probe is the fast gate that
-// the shared protocol logic is correct.
+// browser-dependent test (see python/test); this probe is the fast gate that the
+// shared protocol logic is correct. main() returns spec.run_summary(fw) — its
+// verdict is the exit status (ae >= 0.612); a bare run_summary() would silently
+// exit 0 on failure.
 
 import selenium_core
 import std.json
 import std.string
-
-extern exit(code: int)
-
-// Each check returns 1 on failure, 0 on pass, so main() can sum them.
-check_eq(label: string, got: string, want: string) -> int {
-    if string.equals(got, want) == 1 {
-        println("  ok: ${label}")
-        return 0
-    }
-    println("FAIL: ${label}")
-    println("      got:  ${got}")
-    println("      want: ${want}")
-    return 1
-}
-
-check_int(label: string, got: int, want: int) -> int {
-    if got == want {
-        println("  ok: ${label}")
-        return 0
-    }
-    println("FAIL: ${label} got=${got} want=${want}")
-    return 1
-}
+import std.spec
 
 main() {
-    println("== selenium_core engine probe ==")
-    fails = 0
+    fw = spec.init()
 
-    // ---- route table ----
-    fails = fails + check_eq("route newSession", selenium_core.route("newSession"), "POST /session")
-    fails = fails + check_eq("route quit", selenium_core.route("quit"), "DELETE /session/:sessionId")
-    fails = fails + check_eq("route get", selenium_core.route("get"), "POST /session/:sessionId/url")
-    fails = fails + check_eq("route findElement", selenium_core.route("findElement"), "POST /session/:sessionId/element")
-    fails = fails + check_eq("route clickElement", selenium_core.route("clickElement"),
-             "POST /session/:sessionId/element/:id/click")
-    fails = fails + check_eq("route getElementText", selenium_core.route("getElementText"),
-             "GET /session/:sessionId/element/:id/text")
-    fails = fails + check_eq("route getDomAttribute", selenium_core.route("getDomAttribute"),
-             "GET /session/:sessionId/element/:id/attribute/:name")
-    fails = fails + check_eq("route unknown", selenium_core.route("no_such_command"), "")
-
-    // ---- path templating ----
-    params = json.obj()
-    _e1 = json.set(params, "sessionId", json.str("abc123"))
-    _e2 = json.set(params, "id", json.str("elem-9"))
-    p1 = selenium_core.build_path("/session/:sessionId/element/:id/click", params)
-    fails = fails + check_eq("build_path click", p1, "/session/abc123/element/elem-9/click")
-    json.free(params)
-
-    params2 = json.obj()
-    _e3 = json.set(params2, "sessionId", json.str("S"))
-    _e4 = json.set(params2, "name", json.str("cookieName"))
-    p2 = selenium_core.build_path("/session/:sessionId/cookie/:name", params2)
-    fails = fails + check_eq("build_path cookie", p2, "/session/S/cookie/cookieName")
-    json.free(params2)
-
-    // ---- By normalization ----
-    fails = fails + check_eq("by css", selenium_core.by_locator("css selector", "div.foo"),
-             "{\"using\":\"css selector\",\"value\":\"div.foo\"}")
-    fails = fails + check_eq("by id -> css", selenium_core.by_locator("id", "main"),
-             "{\"using\":\"css selector\",\"value\":\"*[id=\\\"main\\\"]\"}")
-    fails = fails + check_eq("by className -> css", selenium_core.by_locator("className", "btn"),
-             "{\"using\":\"css selector\",\"value\":\".btn\"}")
-    fails = fails + check_eq("by name -> css", selenium_core.by_locator("name", "q"),
-             "{\"using\":\"css selector\",\"value\":\"*[name=\\\"q\\\"]\"}")
-    fails = fails + check_eq("by xpath passthrough", selenium_core.by_locator("xpath", "//a"),
-             "{\"using\":\"xpath\",\"value\":\"//a\"}")
-
-    // ---- build_request (the pure request-builder shared with execute) ----
-    // GET with a path param: :sessionId injected, :name from params, no body.
-    fails = fails + check_eq("build_request getCookie",
-             selenium_core.build_request("getCookie", "S1", "{\"name\":\"foo\"}"),
-             "GET\t/session/S1/cookie/foo\t")
-    // POST navigation: :sessionId injected, url stays in the body.
-    fails = fails + check_eq("build_request get(url)",
-             selenium_core.build_request("get", "S1", "{\"url\":\"http://x/\"}"),
-             "POST\t/session/S1/url\t{\"url\":\"http://x/\"}")
-    // Element command: :id consumed from params into the path, NOT the body.
-    fails = fails + check_eq("build_request sendKeys",
-             selenium_core.build_request("sendKeysToElement", "S1",
-                 "{\"id\":\"E9\",\"text\":\"hi\"}"),
-             "POST\t/session/S1/element/E9/value\t{\"text\":\"hi\"}")
-    // newSession: no session yet, whole params object becomes the body.
-    fails = fails + check_eq("build_request newSession",
-             selenium_core.build_request("newSession", "",
-                 "{\"capabilities\":{\"alwaysMatch\":{}}}"),
-             "POST\t/session\t{\"capabilities\":{\"alwaysMatch\":{}}}")
-    // Unknown command -> ERR envelope.
-    fails = fails + check_eq("build_request unknown",
-             selenium_core.build_request("bogus", "S1", "{}"),
-             "ERR\tUnrecognized command: bogus\t")
-    // DELETE with only a path param: empty body.
-    fails = fails + check_eq("build_request quit",
-             selenium_core.build_request("quit", "S1", "{}"),
-             "DELETE\t/session/S1\t")
-
-    // ---- surface commands (pin the wire format for every binding) ----
-    // Windows.
-    fails = fails + check_eq("build_request getWindowHandles",
-             selenium_core.build_request("getWindowHandles", "S1", "{}"),
-             "GET\t/session/S1/window/handles\t")
-    fails = fails + check_eq("build_request setWindowRect",
-             selenium_core.build_request("setWindowRect", "S1",
-                 "{\"width\":800,\"height\":600}"),
-             "POST\t/session/S1/window/rect\t{\"width\":800,\"height\":600}")
-    // Cookies: POST body carries the cookie object; GET/:name uses the path.
-    fails = fails + check_eq("build_request addCookie",
-             selenium_core.build_request("addCookie", "S1",
-                 "{\"cookie\":{\"name\":\"k\",\"value\":\"v\"}}"),
-             "POST\t/session/S1/cookie\t{\"cookie\":{\"name\":\"k\",\"value\":\"v\"}}")
-    fails = fails + check_eq("build_request deleteCookie",
-             selenium_core.build_request("deleteCookie", "S1", "{\"name\":\"k\"}"),
-             "DELETE\t/session/S1/cookie/k\t")
-    // Alerts.
-    fails = fails + check_eq("build_request acceptAlert",
-             selenium_core.build_request("acceptAlert", "S1", "{}"),
-             "POST\t/session/S1/alert/accept\t{}")
-    fails = fails + check_eq("build_request setAlertValue",
-             selenium_core.build_request("setAlertValue", "S1", "{\"text\":\"hi\"}"),
-             "POST\t/session/S1/alert/text\t{\"text\":\"hi\"}")
-    // Actions (the whole actions array is the body).
-    fails = fails + check_eq("build_request actions",
-             selenium_core.build_request("actions", "S1", "{\"actions\":[]}"),
-             "POST\t/session/S1/actions\t{\"actions\":[]}")
-    fails = fails + check_eq("build_request clearActions",
-             selenium_core.build_request("clearActions", "S1", "{}"),
-             "DELETE\t/session/S1/actions\t")
-    // Timeouts.
-    fails = fails + check_eq("build_request setTimeout",
-             selenium_core.build_request("setTimeout", "S1", "{\"implicit\":5000}"),
-             "POST\t/session/S1/timeouts\t{\"implicit\":5000}")
-    // Screenshot (GET, empty body).
-    fails = fails + check_eq("build_request screenshot",
-             selenium_core.build_request("screenshot", "S1", "{}"),
-             "GET\t/session/S1/screenshot\t")
-
-    // ---- error code map ----
-    fails = fails + check_int("err success", selenium_core.error_code(""), 0)
-    fails = fails + check_int("err no such element", selenium_core.error_code("no such element"), 17)
-    fails = fails + check_int("err stale", selenium_core.error_code("stale element reference"), 23)
-    fails = fails + check_int("err unknown command", selenium_core.error_code("unknown command"), 28)
-    fails = fails + check_int("err unmapped -> unknown", selenium_core.error_code("some new error"), 1)
-
-    // ---- response error detection (pins the JSON-type-3 invariant) ----
-    // A W3C error envelope must be decoded to its code, NOT swallowed as success.
-    fails = fails + check_int("resp err no such element",
-             selenium_core.response_error_code(
-                 "{\"value\":{\"error\":\"no such element\",\"message\":\"nope\"}}"), 17)
-    fails = fails + check_int("resp err stale",
-             selenium_core.response_error_code(
-                 "{\"value\":{\"error\":\"stale element reference\"}}"), 23)
-    // A success payload (value is a plain object with no `error` key) is code 0.
-    fails = fails + check_int("resp success object",
-             selenium_core.response_error_code(
-                 "{\"value\":{\"element-6066-11e4-a52e-4f735466cecf\":\"e.1\"}}"), 0)
-    // A scalar value (e.g. a title string) is success.
-    fails = fails + check_int("resp success string",
-             selenium_core.response_error_code("{\"value\":\"Some Title\"}"), 0)
-    // A null value is success.
-    fails = fails + check_int("resp success null",
-             selenium_core.response_error_code("{\"value\":null}"), 0)
-
-    if fails == 0 {
-        println("PASS: all engine probes green")
-        exit(0)
+    spec.describe(fw, "route table") {
+        spec.it("known commands map to their W3C route") callback {
+            spec.assert_str_eq(selenium_core.route("newSession"), "POST /session", "newSession")
+            spec.assert_str_eq(selenium_core.route("quit"), "DELETE /session/:sessionId", "quit")
+            spec.assert_str_eq(selenium_core.route("get"), "POST /session/:sessionId/url", "get")
+            spec.assert_str_eq(selenium_core.route("findElement"), "POST /session/:sessionId/element", "findElement")
+            spec.assert_str_eq(selenium_core.route("clickElement"), "POST /session/:sessionId/element/:id/click", "clickElement")
+            spec.assert_str_eq(selenium_core.route("getElementText"), "GET /session/:sessionId/element/:id/text", "getElementText")
+            spec.assert_str_eq(selenium_core.route("getDomAttribute"), "GET /session/:sessionId/element/:id/attribute/:name", "getDomAttribute")
+        }
+        spec.it("an unknown command has no route") callback {
+            spec.assert_str_eq(selenium_core.route("no_such_command"), "", "unknown")
+        }
     }
-    println("FAILED: ${fails} probe(s)")
-    exit(1)
+
+    spec.describe(fw, "path templating") {
+        spec.it("substitutes :sessionId and :id") callback {
+            params = json.obj()
+            _e1 = json.set(params, "sessionId", json.str("abc123"))
+            _e2 = json.set(params, "id", json.str("elem-9"))
+            spec.assert_str_eq(selenium_core.build_path("/session/:sessionId/element/:id/click", params),
+                "/session/abc123/element/elem-9/click", "click path")
+            json.free(params)
+        }
+        spec.it("substitutes :name") callback {
+            params2 = json.obj()
+            _e3 = json.set(params2, "sessionId", json.str("S"))
+            _e4 = json.set(params2, "name", json.str("cookieName"))
+            spec.assert_str_eq(selenium_core.build_path("/session/:sessionId/cookie/:name", params2),
+                "/session/S/cookie/cookieName", "cookie path")
+            json.free(params2)
+        }
+    }
+
+    spec.describe(fw, "By normalization") {
+        spec.it("css passthrough + id/className/name rewritten to CSS") callback {
+            spec.assert_str_eq(selenium_core.by_locator("css selector", "div.foo"),
+                "{\"using\":\"css selector\",\"value\":\"div.foo\"}", "css")
+            spec.assert_str_eq(selenium_core.by_locator("id", "main"),
+                "{\"using\":\"css selector\",\"value\":\"*[id=\\\"main\\\"]\"}", "id -> css")
+            spec.assert_str_eq(selenium_core.by_locator("className", "btn"),
+                "{\"using\":\"css selector\",\"value\":\".btn\"}", "className -> css")
+            spec.assert_str_eq(selenium_core.by_locator("name", "q"),
+                "{\"using\":\"css selector\",\"value\":\"*[name=\\\"q\\\"]\"}", "name -> css")
+            spec.assert_str_eq(selenium_core.by_locator("xpath", "//a"),
+                "{\"using\":\"xpath\",\"value\":\"//a\"}", "xpath passthrough")
+        }
+    }
+
+    spec.describe(fw, "build_request (the pure request builder)") {
+        spec.it("path params, body split, unknown, and DELETE") callback {
+            spec.assert_str_eq(selenium_core.build_request("getCookie", "S1", "{\"name\":\"foo\"}"),
+                "GET\t/session/S1/cookie/foo\t", "getCookie")
+            spec.assert_str_eq(selenium_core.build_request("get", "S1", "{\"url\":\"http://x/\"}"),
+                "POST\t/session/S1/url\t{\"url\":\"http://x/\"}", "get(url)")
+            spec.assert_str_eq(selenium_core.build_request("sendKeysToElement", "S1", "{\"id\":\"E9\",\"text\":\"hi\"}"),
+                "POST\t/session/S1/element/E9/value\t{\"text\":\"hi\"}", "sendKeys (:id to path)")
+            spec.assert_str_eq(selenium_core.build_request("newSession", "", "{\"capabilities\":{\"alwaysMatch\":{}}}"),
+                "POST\t/session\t{\"capabilities\":{\"alwaysMatch\":{}}}", "newSession")
+            spec.assert_str_eq(selenium_core.build_request("bogus", "S1", "{}"),
+                "ERR\tUnrecognized command: bogus\t", "unknown -> ERR")
+            spec.assert_str_eq(selenium_core.build_request("quit", "S1", "{}"),
+                "DELETE\t/session/S1\t", "quit")
+        }
+        spec.it("surface commands pin the wire format for every binding") callback {
+            spec.assert_str_eq(selenium_core.build_request("getWindowHandles", "S1", "{}"),
+                "GET\t/session/S1/window/handles\t", "getWindowHandles")
+            spec.assert_str_eq(selenium_core.build_request("setWindowRect", "S1", "{\"width\":800,\"height\":600}"),
+                "POST\t/session/S1/window/rect\t{\"width\":800,\"height\":600}", "setWindowRect")
+            spec.assert_str_eq(selenium_core.build_request("addCookie", "S1", "{\"cookie\":{\"name\":\"k\",\"value\":\"v\"}}"),
+                "POST\t/session/S1/cookie\t{\"cookie\":{\"name\":\"k\",\"value\":\"v\"}}", "addCookie")
+            spec.assert_str_eq(selenium_core.build_request("deleteCookie", "S1", "{\"name\":\"k\"}"),
+                "DELETE\t/session/S1/cookie/k\t", "deleteCookie")
+            spec.assert_str_eq(selenium_core.build_request("acceptAlert", "S1", "{}"),
+                "POST\t/session/S1/alert/accept\t{}", "acceptAlert")
+            spec.assert_str_eq(selenium_core.build_request("setAlertValue", "S1", "{\"text\":\"hi\"}"),
+                "POST\t/session/S1/alert/text\t{\"text\":\"hi\"}", "setAlertValue")
+            spec.assert_str_eq(selenium_core.build_request("actions", "S1", "{\"actions\":[]}"),
+                "POST\t/session/S1/actions\t{\"actions\":[]}", "actions")
+            spec.assert_str_eq(selenium_core.build_request("clearActions", "S1", "{}"),
+                "DELETE\t/session/S1/actions\t", "clearActions")
+            spec.assert_str_eq(selenium_core.build_request("setTimeout", "S1", "{\"implicit\":5000}"),
+                "POST\t/session/S1/timeouts\t{\"implicit\":5000}", "setTimeout")
+            spec.assert_str_eq(selenium_core.build_request("screenshot", "S1", "{}"),
+                "GET\t/session/S1/screenshot\t", "screenshot")
+        }
+    }
+
+    spec.describe(fw, "error-code map + response error detection") {
+        spec.it("error_code maps W3C strings to stable ints") callback {
+            spec.assert_eq(selenium_core.error_code(""), 0, "success")
+            spec.assert_eq(selenium_core.error_code("no such element"), 17, "no such element")
+            spec.assert_eq(selenium_core.error_code("stale element reference"), 23, "stale")
+            spec.assert_eq(selenium_core.error_code("unknown command"), 28, "unknown command")
+            spec.assert_eq(selenium_core.error_code("some new error"), 1, "unmapped -> unknown")
+        }
+        spec.it("response_error_code decodes error envelopes, not swallows them") callback {
+            spec.assert_eq(selenium_core.response_error_code(
+                "{\"value\":{\"error\":\"no such element\",\"message\":\"nope\"}}"), 17, "err no such element")
+            spec.assert_eq(selenium_core.response_error_code(
+                "{\"value\":{\"error\":\"stale element reference\"}}"), 23, "err stale")
+            spec.assert_eq(selenium_core.response_error_code(
+                "{\"value\":{\"element-6066-11e4-a52e-4f735466cecf\":\"e.1\"}}"), 0, "success object")
+            spec.assert_eq(selenium_core.response_error_code("{\"value\":\"Some Title\"}"), 0, "success string")
+            spec.assert_eq(selenium_core.response_error_code("{\"value\":null}"), 0, "success null")
+        }
+    }
+
+    return spec.run_summary(fw)
 }

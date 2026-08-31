@@ -1,88 +1,98 @@
 // core_tests/atoms_probe.ae — pure-Aether unit test for the atom builders
-// (atoms.ae). Proves the executeScript params assembly for atom-backed commands
-// (isDisplayed / getAttribute / getText) with NO browser and NO FFI: the atom
-// source is present, the args array carries the element ref first, extra args
-// splice correctly, and unknown atoms yield "". Run via core_tests/.tests.ae
-// (lib("..") resolves atoms). The live behavior is proven separately (a browser
-// test that actually runs the atoms).
+// (atoms.ae), using std.spec. Proves the executeScript params assembly for
+// atom-backed commands (isDisplayed / getAttribute / getText / findElementsRelative)
+// with NO browser and NO FFI: the atom source is present, the args array carries
+// the element ref first, extra args splice correctly, and unknown atoms yield "".
+// Run via core_tests/.tests.ae (lib("..") resolves atoms). The live behavior is
+// proven separately (a browser test that actually runs the atoms).
+//
+// main() returns spec.run_summary(fw) — its verdict (0 green / 1 failed) becomes
+// the process exit status (needs ae >= 0.612, where run_summary returns instead
+// of exiting). A bare run_summary() would silently exit 0 on failure.
 import atoms
 import std.string
+import std.spec
 
-extern exit(code: int)
-
-check(label: string, cond: int) -> int {
-    if cond == 1 { println("  ok: ${label}"); return 0 }
-    println("FAIL: ${label}"); return 1
-}
-
-check_eq(label: string, got: string, want: string) -> int {
-    if string.equals(got, want) == 1 { println("  ok: ${label}"); return 0 }
-    println("FAIL: ${label}")
-    println("      got:  ${got}")
-    println("      want: ${want}")
-    return 1
-}
-
+// has(hay, needle) -> 1 if needle is a substring of hay. (spec has no substring
+// matcher; assert_true on this keeps the intent readable.)
 has(hay: string, needle: string) -> int {
     if string.contains(hay, needle) == 1 { return 1 }
     return 0
 }
 
-main() {
-    println("== atoms probe ==")
-    fails = 0
-
-    // ---- atom bodies exist for the known atoms, empty for unknown ----
-    fails = fails + check("isDisplayed body present", _gt0(string.length(atoms.atom_body("isDisplayed"))))
-    fails = fails + check("getAttribute body present", _gt0(string.length(atoms.atom_body("getAttribute"))))
-    fails = fails + check("getText body present", _gt0(string.length(atoms.atom_body("getText"))))
-    fails = fails + check_eq("unknown atom body empty", atoms.atom_body("noSuchAtom"), "")
-
-    // ---- atom_script wraps the body as an applied function ----
-    scr = atoms.atom_script("isDisplayed")
-    fails = fails + check("script starts with return (", has(scr, "return (function(el)"))
-    fails = fails + check("script applies arguments", has(scr, ".apply(null, arguments);"))
-    fails = fails + check_eq("unknown atom script empty", atoms.atom_script("noSuchAtom"), "")
-
-    // ---- atom_args: element ref first, then extras ----
-    a0 = atoms.atom_args("e.1", "")
-    fails = fails + check_eq("args, no extra",
-             a0, "[{\"element-6066-11e4-a52e-4f735466cecf\":\"e.1\"}]")
-    a1 = atoms.atom_args("e.2", "[\"href\"]")
-    fails = fails + check_eq("args, one extra",
-             a1, "[{\"element-6066-11e4-a52e-4f735466cecf\":\"e.2\"},\"href\"]")
-    a2 = atoms.atom_args("e.3", "[]")
-    fails = fails + check_eq("args, empty extra array",
-             a2, "[{\"element-6066-11e4-a52e-4f735466cecf\":\"e.3\"}]")
-
-    // ---- atom_params: full executeScript params {script,args} ----
-    p = atoms.atom_params("getAttribute", "e.9", "[\"value\"]")
-    fails = fails + check("params has script key", has(p, "\"script\":"))
-    fails = fails + check("params has args key", has(p, "\"args\":"))
-    fails = fails + check("params carries the element ref", has(p, "element-6066-11e4-a52e-4f735466cecf"))
-    fails = fails + check("params carries the extra arg", has(p, "value"))
-    // the script value is a JSON string literal: "script":"return (function...
-    fails = fails + check("params script is a JSON string literal",
-             has(p, "\"script\":\"return (function"))
-    fails = fails + check_eq("unknown atom params empty", atoms.atom_params("noSuchAtom", "e.1", ""), "")
-
-    // ---- relative locators: findElementsRelative params ----
-    fails = fails + check("relative atom body present", _gt0(string.length(atoms.atom_body("findElementsRelative"))))
-    rp = atoms.relative_params("button", "[{\"kind\":\"below\",\"sel\":\"#anchor\"}]")
-    fails = fails + check("relative params has script", has(rp, "\"script\":"))
-    fails = fails + check("relative params carries base sel", has(rp, "button"))
-    fails = fails + check("relative params carries the filter", has(rp, "below"))
-    fails = fails + check("relative params carries the anchor sel", has(rp, "#anchor"))
-    // empty filters default to []
-    rp0 = atoms.relative_params("a", "")
-    fails = fails + check("relative params empty filters -> []", has(rp0, "\"args\":[\"a\",[]]"))
-
-    if fails == 0 {
-        println("PASS: all atoms probes green")
-        exit(0)
-    }
-    println("FAILED: ${fails} probe(s)")
-    exit(1)
-}
-
 _gt0(n: int) -> int { if n > 0 { return 1 } return 0 }
+
+main() {
+    fw = spec.init()
+
+    spec.describe(fw, "atom_body / atom_script") {
+        spec.it("isDisplayed body present") callback {
+            spec.assert_true(_gt0(string.length(atoms.atom_body("isDisplayed"))), "isDisplayed body")
+        }
+        spec.it("getAttribute body present") callback {
+            spec.assert_true(_gt0(string.length(atoms.atom_body("getAttribute"))), "getAttribute body")
+        }
+        spec.it("getText body present") callback {
+            spec.assert_true(_gt0(string.length(atoms.atom_body("getText"))), "getText body")
+        }
+        spec.it("unknown atom body empty") callback {
+            spec.assert_str_eq(atoms.atom_body("noSuchAtom"), "", "unknown body")
+        }
+        spec.it("script wraps the body as an applied function") callback {
+            scr = atoms.atom_script("isDisplayed")
+            spec.assert_true(has(scr, "return (function(el)"), "script starts with return (")
+            spec.assert_true(has(scr, ".apply(null, arguments);"), "script applies arguments")
+        }
+        spec.it("unknown atom script empty") callback {
+            spec.assert_str_eq(atoms.atom_script("noSuchAtom"), "", "unknown script")
+        }
+    }
+
+    spec.describe(fw, "atom_args") {
+        spec.it("element ref first, no extra") callback {
+            spec.assert_str_eq(atoms.atom_args("e.1", ""),
+                "[{\"element-6066-11e4-a52e-4f735466cecf\":\"e.1\"}]", "no extra")
+        }
+        spec.it("element ref then one extra") callback {
+            spec.assert_str_eq(atoms.atom_args("e.2", "[\"href\"]"),
+                "[{\"element-6066-11e4-a52e-4f735466cecf\":\"e.2\"},\"href\"]", "one extra")
+        }
+        spec.it("empty extra array collapses to just the ref") callback {
+            spec.assert_str_eq(atoms.atom_args("e.3", "[]"),
+                "[{\"element-6066-11e4-a52e-4f735466cecf\":\"e.3\"}]", "empty extra")
+        }
+    }
+
+    spec.describe(fw, "atom_params") {
+        spec.it("full executeScript params for getAttribute") callback {
+            p = atoms.atom_params("getAttribute", "e.9", "[\"value\"]")
+            spec.assert_true(has(p, "\"script\":"), "has script key")
+            spec.assert_true(has(p, "\"args\":"), "has args key")
+            spec.assert_true(has(p, "element-6066-11e4-a52e-4f735466cecf"), "carries element ref")
+            spec.assert_true(has(p, "value"), "carries extra arg")
+            spec.assert_true(has(p, "\"script\":\"return (function"), "script is a JSON string literal")
+        }
+        spec.it("unknown atom params empty") callback {
+            spec.assert_str_eq(atoms.atom_params("noSuchAtom", "e.1", ""), "", "unknown params")
+        }
+    }
+
+    spec.describe(fw, "relative locators (findElementsRelative)") {
+        spec.it("relative atom body present") callback {
+            spec.assert_true(_gt0(string.length(atoms.atom_body("findElementsRelative"))), "relative body")
+        }
+        spec.it("relative_params carries script/base/filter/anchor") callback {
+            rp = atoms.relative_params("button", "[{\"kind\":\"below\",\"sel\":\"#anchor\"}]")
+            spec.assert_true(has(rp, "\"script\":"), "has script")
+            spec.assert_true(has(rp, "button"), "carries base sel")
+            spec.assert_true(has(rp, "below"), "carries the filter")
+            spec.assert_true(has(rp, "#anchor"), "carries the anchor sel")
+        }
+        spec.it("empty filters default to []") callback {
+            rp0 = atoms.relative_params("a", "")
+            spec.assert_true(has(rp0, "\"args\":[\"a\",[]]"), "empty filters -> []")
+        }
+    }
+
+    return spec.run_summary(fw)
+}
