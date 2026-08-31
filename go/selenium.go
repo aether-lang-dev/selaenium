@@ -675,6 +675,7 @@ type bidiEventNames struct {
 	Load              string
 	DownloadWillBegin string
 	BeforeRequestSent string
+	AuthRequired      string
 	ResponseStarted   string
 	ResponseCompleted string
 	FetchError        string
@@ -693,6 +694,7 @@ var BidiEvent = bidiEventNames{
 	Load:              "browsingContext.load",
 	DownloadWillBegin: "browsingContext.downloadWillBegin",
 	BeforeRequestSent: "network.beforeRequestSent",
+	AuthRequired:      "network.authRequired",
 	ResponseStarted:   "network.responseStarted",
 	ResponseCompleted: "network.responseCompleted",
 	FetchError:        "network.fetchError",

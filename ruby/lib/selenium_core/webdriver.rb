@@ -358,6 +358,7 @@ module SeleniumCore
     LOAD                = 'browsingContext.load'
     DOWNLOAD_WILL_BEGIN = 'browsingContext.downloadWillBegin'
     BEFORE_REQUEST_SENT = 'network.beforeRequestSent'
+    AUTH_REQUIRED = 'network.authRequired'
     RESPONSE_STARTED    = 'network.responseStarted'
     RESPONSE_COMPLETED  = 'network.responseCompleted'
     FETCH_ERROR         = 'network.fetchError'

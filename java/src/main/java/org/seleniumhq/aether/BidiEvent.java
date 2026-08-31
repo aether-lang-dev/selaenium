@@ -18,6 +18,7 @@ public final class BidiEvent {
     public static final String LOAD = "browsingContext.load";
     public static final String DOWNLOAD_WILL_BEGIN = "browsingContext.downloadWillBegin";
     public static final String BEFORE_REQUEST_SENT = "network.beforeRequestSent";
+    public static final String AUTH_REQUIRED = "network.authRequired";
     public static final String RESPONSE_STARTED = "network.responseStarted";
     public static final String RESPONSE_COMPLETED = "network.responseCompleted";
     public static final String FETCH_ERROR = "network.fetchError";

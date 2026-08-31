@@ -633,6 +633,7 @@ impl BidiEvent {
     pub const LOAD: &'static str = "browsingContext.load";
     pub const DOWNLOAD_WILL_BEGIN: &'static str = "browsingContext.downloadWillBegin";
     pub const BEFORE_REQUEST_SENT: &'static str = "network.beforeRequestSent";
+    pub const AUTH_REQUIRED: &'static str = "network.authRequired";
     pub const RESPONSE_STARTED: &'static str = "network.responseStarted";
     pub const RESPONSE_COMPLETED: &'static str = "network.responseCompleted";
     pub const FETCH_ERROR: &'static str = "network.fetchError";

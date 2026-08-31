@@ -373,6 +373,7 @@ const
   Load* = "browsingContext.load"
   DownloadWillBegin* = "browsingContext.downloadWillBegin"
   BeforeRequestSent* = "network.beforeRequestSent"
+  AuthRequired* = "network.authRequired"
   ResponseStarted* = "network.responseStarted"
   ResponseCompleted* = "network.responseCompleted"
   FetchError* = "network.fetchError"

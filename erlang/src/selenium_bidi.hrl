@@ -15,6 +15,7 @@
 -define(BIDI_LOAD,                <<"browsingContext.load">>).
 -define(BIDI_DOWNLOAD_WILL_BEGIN, <<"browsingContext.downloadWillBegin">>).
 -define(BIDI_BEFORE_REQUEST_SENT, <<"network.beforeRequestSent">>).
+-define(BIDI_AUTH_REQUIRED,       <<"network.authRequired">>).
 -define(BIDI_RESPONSE_STARTED,    <<"network.responseStarted">>).
 -define(BIDI_RESPONSE_COMPLETED,  <<"network.responseCompleted">>).
 -define(BIDI_FETCH_ERROR,         <<"network.fetchError">>).

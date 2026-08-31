@@ -582,6 +582,7 @@ pub const BidiEvent = struct {
     pub const load = "browsingContext.load";
     pub const download_will_begin = "browsingContext.downloadWillBegin";
     pub const before_request_sent = "network.beforeRequestSent";
+    pub const auth_required = "network.authRequired";
     pub const response_started = "network.responseStarted";
     pub const response_completed = "network.responseCompleted";
     pub const fetch_error = "network.fetchError";

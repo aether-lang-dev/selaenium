@@ -455,6 +455,7 @@ BidiEvent_DOM_CONTENT_LOADED() -> string { return "browsingContext.domContentLoa
 BidiEvent_LOAD() -> string { return "browsingContext.load" }
 BidiEvent_DOWNLOAD_WILL_BEGIN() -> string { return "browsingContext.downloadWillBegin" }
 BidiEvent_BEFORE_REQUEST_SENT() -> string { return "network.beforeRequestSent" }
+BidiEvent_AUTH_REQUIRED() -> string { return "network.authRequired" }
 BidiEvent_RESPONSE_STARTED() -> string { return "network.responseStarted" }
 BidiEvent_RESPONSE_COMPLETED() -> string { return "network.responseCompleted" }
 BidiEvent_FETCH_ERROR() -> string { return "network.fetchError" }

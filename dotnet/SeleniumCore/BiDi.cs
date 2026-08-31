@@ -18,6 +18,7 @@ public static class BidiEvent
     public const string Load = "browsingContext.load";
     public const string DownloadWillBegin = "browsingContext.downloadWillBegin";
     public const string BeforeRequestSent = "network.beforeRequestSent";
+    public const string AuthRequired = "network.authRequired";
     public const string ResponseStarted = "network.responseStarted";
     public const string ResponseCompleted = "network.responseCompleted";
     public const string FetchError = "network.fetchError";

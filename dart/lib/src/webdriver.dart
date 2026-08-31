@@ -342,6 +342,7 @@ class BidiEvent {
   static const String load = 'browsingContext.load';
   static const String downloadWillBegin = 'browsingContext.downloadWillBegin';
   static const String beforeRequestSent = 'network.beforeRequestSent';
+  static const String authRequired = 'network.authRequired';
   static const String responseStarted = 'network.responseStarted';
   static const String responseCompleted = 'network.responseCompleted';
   static const String fetchError = 'network.fetchError';
