@@ -511,6 +511,25 @@ class BiDi {
     return raw ? JSON.parse(raw) : {}
   }
 
+  // Fulfill a paused request with a MOCK response (network.provideResponse),
+  // never hitting the network — mock an API, serve stub content, or test an
+  // error status. requestId comes from a network event (see eventRequestId).
+  // The mock auto-allows any origin to read the body. Returns the parsed reply.
+  provideResponse(requestId, { status = 200, contentType = '', body = '', timeoutMs = 10000 } = {}) {
+    const raw = native.takeString(
+      native.bidiNetworkProvideResponse(
+        this._handle,
+        this._id(),
+        requestId,
+        status,
+        contentType,
+        body,
+        timeoutMs,
+      ),
+    )
+    return raw ? JSON.parse(raw) : {}
+  }
+
   // The network.request id out of a network.beforeRequestSent (or other network)
   // event: params.request.request.
   static eventRequestId(event) {

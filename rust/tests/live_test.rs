@@ -317,6 +317,49 @@ fn live_bidi() {
         "continue_request reply: {cont:?}"
     );
 
+    // ---- BiDi request mocking (provide_response fulfills a paused request) ----
+
+    // A fresh fetch that pauses at beforeRequestSent; the caught catch keeps
+    // executeScript from throwing while the request is held.
+    d.execute_script(
+        "window.__mock='';fetch('https://example.com/api').then(r=>r.text()).then(t=>{window.__mock=t}).catch(()=>{});",
+        vec![],
+    )
+    .unwrap();
+
+    let ev2 = d
+        .bidi()
+        .unwrap()
+        .next_event(BidiEvent::BEFORE_REQUEST_SENT, 8000)
+        .unwrap()
+        .expect("a network.beforeRequestSent event for the mocked fetch");
+    let rid2 = selenium_core::BiDi::event_request_id(&ev2)
+        .expect("beforeRequestSent event should carry params.request.request");
+
+    // Fulfill it with a mock body; the reply must be a success.
+    let mock = d
+        .bidi()
+        .unwrap()
+        .provide_response(&rid2, 200, "text/plain", "MOCKED-BODY", 10000)
+        .unwrap();
+    assert_eq!(
+        mock.get("type").and_then(|v| v.as_str()),
+        Some("success"),
+        "provide_response reply: {mock:?}"
+    );
+
+    // The fetch resolves in-page with the mocked body; poll until it lands.
+    let mut got = String::new();
+    for _ in 0..25 {
+        let v = d.execute_script("return window.__mock;", vec![]).unwrap();
+        got = v.as_str().unwrap_or("").to_string();
+        if got.contains("MOCKED-BODY") {
+            break;
+        }
+        thread::sleep(Duration::from_millis(200));
+    }
+    assert!(got.contains("MOCKED-BODY"), "fetch should see the mocked body, got {got:?}");
+
     d.quit().unwrap();
 }
 

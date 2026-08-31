@@ -347,5 +347,45 @@ func TestLiveBidi(t *testing.T) {
 		t.Fatalf("ContinueRequest(%s): %v", rid, err)
 	}
 
+	// Request mocking: fetch a URL, intercept the paused request, and fulfill it
+	// with a MOCK response body (network.provideResponse) — never hitting the
+	// network — then confirm the page saw the mocked body.
+	if _, err := drv.ExecuteScript("window.__mock='';fetch('https://example.com/api').then(r=>r.text()).then(t=>{window.__mock=t}).catch(()=>{});"); err != nil {
+		t.Fatalf("ExecuteScript(fetch mock): %v", err)
+	}
+	mev, err := bidi.NextEvent(BidiEvent.BeforeRequestSent, 8000)
+	if err != nil {
+		t.Fatalf("NextEvent(beforeRequestSent, mock): %v", err)
+	}
+	if mev == nil {
+		t.Fatal("NextEvent returned nil (timed out waiting for mock network.beforeRequestSent)")
+	}
+	rid2 := EventRequestID(mev)
+	if rid2 == "" {
+		t.Fatalf("EventRequestID returned empty id; event = %v", mev)
+	}
+	reply, err := bidi.ProvideResponse(rid2, 200, "text/plain", "MOCKED-BODY")
+	if err != nil {
+		t.Fatalf("ProvideResponse(%s): %v", rid2, err)
+	}
+	if reply["type"] != "success" {
+		t.Fatalf("ProvideResponse reply type = %v, want success; reply = %v", reply["type"], reply)
+	}
+	var got string
+	for i := 0; i < 25; i++ {
+		v, err := drv.ExecuteScript("return window.__mock;")
+		if err != nil {
+			t.Fatalf("ExecuteScript(read mock): %v", err)
+		}
+		got, _ = v.(string)
+		if strings.Contains(got, "MOCKED-BODY") {
+			break
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	if !strings.Contains(got, "MOCKED-BODY") {
+		t.Fatalf("window.__mock = %q; want to contain MOCKED-BODY", got)
+	}
+
 	t.Log("live BiDi test green")
 }

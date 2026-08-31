@@ -252,6 +252,27 @@ void main() {
         final rid = BiDi.eventRequestId(netEv!);
         expect(rid, isNotNull);
         expect(d.bidi.continueRequest(rid!)['type'], 'success');
+
+        // request mocking: fulfil a paused request with a mock response.
+        d.executeScript("window.__mock='';"
+            "fetch('https://example.com/api').then((r)=>r.text())"
+            ".then((t)=>{window.__mock=t;}).catch((e)=>{});");
+        final ev2 =
+            d.bidi.nextEvent(BidiEvent.beforeRequestSent, timeoutMs: 8000);
+        expect(ev2, isNotNull);
+        final rid2 = BiDi.eventRequestId(ev2!);
+        expect(rid2, isNotNull);
+        final resp = d.bidi.provideResponse(rid2!,
+            status: 200, contentType: 'text/plain', body: 'MOCKED-BODY');
+        expect(resp['type'], 'success');
+
+        var mocked = '';
+        for (var i = 0; i < 25; i++) {
+          mocked = (d.executeScript('return window.__mock;') as String?) ?? '';
+          if (mocked.contains('MOCKED-BODY')) break;
+          sleep(const Duration(milliseconds: 200));
+        }
+        expect(mocked, contains('MOCKED-BODY'));
       } finally {
         d.quit();
       }

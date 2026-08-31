@@ -134,6 +134,9 @@ const bidiNetworkContinueRequest = lazy(
 const bidiNetworkFailRequest = lazy(
   'void* aether_sel_embed_bidi_network_fail_request(void* h, int id, const char* request_id, int timeout_ms)',
 )
+const bidiNetworkProvideResponse = lazy(
+  'void* aether_sel_embed_bidi_network_provide_response(void* h, int id, const char* request_id, int status, const char* content_type, const char* body, int timeout_ms)',
+)
 
 // ---- string ownership ----
 const freeString = lazy('void aether_sel_embed_free_string(void* s)')
@@ -190,6 +193,7 @@ module.exports = {
   bidiNetworkRemoveIntercept,
   bidiNetworkContinueRequest,
   bidiNetworkFailRequest,
+  bidiNetworkProvideResponse,
   takeString,
   isNull,
 }

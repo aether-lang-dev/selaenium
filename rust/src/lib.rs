@@ -105,6 +105,15 @@ extern "C" {
         request_id: *const c_char,
         timeout_ms: c_int,
     ) -> *mut c_char;
+    fn aether_sel_embed_bidi_network_provide_response(
+        h: Handle,
+        id: c_int,
+        request_id: *const c_char,
+        status: c_int,
+        content_type: *const c_char,
+        body: *const c_char,
+        timeout_ms: c_int,
+    ) -> *mut c_char;
 }
 
 /// Copy a caller-owned native `char*` into a Rust `String`, then free it per the
@@ -838,6 +847,36 @@ impl BiDi {
         let rid = cstr(request_id);
         let raw = take_string(unsafe {
             aether_sel_embed_bidi_network_fail_request(self.handle, id, rid.as_ptr(), timeout_ms)
+        });
+        Self::decode(&raw)
+    }
+
+    /// Fulfill a paused request with a mock response (`network.provideResponse`),
+    /// bypassing the network. `request_id` comes from a network event's
+    /// `params.request.request`. The engine adds `Access-Control-Allow-Origin: *`
+    /// so cross-origin fetches can read the mocked body. Returns the reply payload.
+    pub fn provide_response(
+        &mut self,
+        request_id: &str,
+        status: i32,
+        content_type: &str,
+        body: &str,
+        timeout_ms: i32,
+    ) -> Result<Json> {
+        let id = self.next_id();
+        let rid = cstr(request_id);
+        let ct = cstr(content_type);
+        let b = cstr(body);
+        let raw = take_string(unsafe {
+            aether_sel_embed_bidi_network_provide_response(
+                self.handle,
+                id,
+                rid.as_ptr(),
+                status,
+                ct.as_ptr(),
+                b.as_ptr(),
+                timeout_ms,
+            )
         });
         Self::decode(&raw)
     }

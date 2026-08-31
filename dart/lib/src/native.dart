@@ -126,6 +126,26 @@ typedef _BidiNetStrArgC = ffi.Pointer<pkgffi.Utf8> Function(
 typedef _BidiNetStrArg = ffi.Pointer<pkgffi.Utf8> Function(
     ffi.Pointer<ffi.Void>, int, ffi.Pointer<pkgffi.Utf8>, int);
 
+// provide_response: fulfil a paused request with a mock response.
+// (void* handle, int id, char* request_id, int status, char* content_type,
+//  char* body, int timeout_ms) -> char* reply JSON.
+typedef _BidiNetProvideResponseC = ffi.Pointer<pkgffi.Utf8> Function(
+    ffi.Pointer<ffi.Void>,
+    ffi.Int32,
+    ffi.Pointer<pkgffi.Utf8>,
+    ffi.Int32,
+    ffi.Pointer<pkgffi.Utf8>,
+    ffi.Pointer<pkgffi.Utf8>,
+    ffi.Int32);
+typedef _BidiNetProvideResponse = ffi.Pointer<pkgffi.Utf8> Function(
+    ffi.Pointer<ffi.Void>,
+    int,
+    ffi.Pointer<pkgffi.Utf8>,
+    int,
+    ffi.Pointer<pkgffi.Utf8>,
+    ffi.Pointer<pkgffi.Utf8>,
+    int);
+
 /// A loaded engine: the [ffi.DynamicLibrary] plus every symbol bound once.
 class Native {
   final _Open open;
@@ -168,6 +188,7 @@ class Native {
   final _BidiNetStrArg bidiNetworkRemoveIntercept;
   final _BidiNetStrArg bidiNetworkContinueRequest;
   final _BidiNetStrArg bidiNetworkFailRequest;
+  final _BidiNetProvideResponse bidiNetworkProvideResponse;
 
   Native._(ffi.DynamicLibrary lib)
       : open = lib.lookupFunction<_OpenC, _Open>('aether_sel_embed_open'),
@@ -244,7 +265,10 @@ class Native {
                 'aether_sel_embed_bidi_network_continue_request'),
         bidiNetworkFailRequest =
             lib.lookupFunction<_BidiNetStrArgC, _BidiNetStrArg>(
-                'aether_sel_embed_bidi_network_fail_request');
+                'aether_sel_embed_bidi_network_fail_request'),
+        bidiNetworkProvideResponse = lib.lookupFunction<
+            _BidiNetProvideResponseC, _BidiNetProvideResponse>(
+            'aether_sel_embed_bidi_network_provide_response');
 
   static Native? _instance;
   static String? _explicitPath;

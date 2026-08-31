@@ -72,6 +72,7 @@ char*  aether_sel_embed_bidi_network_add_intercept(void* h, int id, const char* 
 char*  aether_sel_embed_bidi_network_remove_intercept(void* h, int id, const char* intercept_id, int timeout_ms);
 char*  aether_sel_embed_bidi_network_continue_request(void* h, int id, const char* request_id, int timeout_ms);
 char*  aether_sel_embed_bidi_network_fail_request(void* h, int id, const char* request_id, int timeout_ms);
+char*  aether_sel_embed_bidi_network_provide_response(void* h, int id, const char* request_id, int status, const char* content_type, const char* body, int timeout_ms);
 */
 import "C"
 
@@ -944,6 +945,22 @@ func (b *BiDi) FailRequest(requestID string, timeoutMs ...int) (map[string]inter
 	cID := cstr(requestID)
 	defer C.free(unsafe.Pointer(cID))
 	return decodeBidiReply(takeString(C.aether_sel_embed_bidi_network_fail_request(b.h, b.id(), cID, C.int(firstTimeout(timeoutMs)))))
+}
+
+// ProvideResponse fulfills a paused request with a MOCK response
+// (network.provideResponse), never hitting the network — mock an API, serve stub
+// content, or test an error status. The engine adds Access-Control-Allow-Origin:*
+// so any origin may read the mocked body. requestID comes from a network event's
+// params.request.request (see EventRequestID). An optional trailing timeout (ms)
+// overrides the default.
+func (b *BiDi) ProvideResponse(requestID string, status int, contentType, body string, timeoutMs ...int) (map[string]interface{}, error) {
+	cID := cstr(requestID)
+	cType := cstr(contentType)
+	cBody := cstr(body)
+	defer C.free(unsafe.Pointer(cID))
+	defer C.free(unsafe.Pointer(cType))
+	defer C.free(unsafe.Pointer(cBody))
+	return decodeBidiReply(takeString(C.aether_sel_embed_bidi_network_provide_response(b.h, b.id(), cID, C.int(status), cType, cBody, C.int(firstTimeout(timeoutMs)))))
 }
 
 // EventRequestID reads the network request id out of a network.beforeRequestSent

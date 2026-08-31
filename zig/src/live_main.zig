@@ -325,6 +325,49 @@ pub fn main() !void {
             assert(std.mem.eql(u8, cont_type, "success"), "network.continueRequest success");
         }
         std.debug.print("  ok: bidi network intercept -> beforeRequestSent -> continueRequest\n", .{});
+
+        // request MOCKING: fulfill a paused request with a fake body.
+        {
+            var fv = try d.executeScript("window.__mock='';fetch('https://example.com/api').then(function(r){return r.text()}).then(function(t){window.__mock=t}).catch(function(){});", "[]");
+            fv.deinit();
+            var netev2 = (try bidi.nextEvent(sel.BidiEvent.before_request_sent, 8000)) orelse {
+                assert(false, "mock: beforeRequestSent event received");
+                return;
+            };
+            defer netev2.deinit();
+            const rid2 = (try sel.BiDi.eventRequestId(a, netev2.value)) orelse {
+                assert(false, "mock: request id");
+                return;
+            };
+            defer a.free(rid2);
+            var resp = try bidi.provideResponse(rid2, 200, "text/plain", "MOCKED-BODY", 10000);
+            defer resp.deinit();
+            const resp_type = switch (resp.value) {
+                .object => |o| switch (o.get("type") orelse std.json.Value{ .null = {} }) {
+                    .string => |s| s,
+                    else => "",
+                },
+                else => "",
+            };
+            assert(std.mem.eql(u8, resp_type, "success"), "network.provideResponse success");
+            // poll window.__mock for the mocked body. Each executeScript is a
+            // round-trip to chromedriver (~ms), which paces the loop without an
+            // explicit sleep (zig 0.16 moved sleep behind the std.Io interface).
+            var got = false;
+            var tries: u32 = 0;
+            while (tries < 200) : (tries += 1) {
+                var mv = try d.executeScript("return window.__mock;", "[]");
+                const m = switch (mv.value) {
+                    .string => |s| s,
+                    else => "",
+                };
+                if (std.mem.indexOf(u8, m, "MOCKED-BODY") != null) got = true;
+                mv.deinit();
+                if (got) break;
+            }
+            assert(got, "page received the mocked body");
+        }
+        std.debug.print("  ok: bidi network provideResponse mocked the body\n", .{});
     }
 
     // ---- atom-backed commands (isDisplayed / getAttribute / findRelative) ----

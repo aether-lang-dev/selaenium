@@ -212,6 +212,34 @@ proc main() =
       doAssert d.bidi.removeIntercept(ic)["type"].getStr == "success"
       echo "  ok: BiDi network interception (addIntercept + continueRequest)"
 
+      # BiDi request mocking: intercept a fetch and fulfill it with a mock
+      # response (network.provideResponse) — the request never hits the network,
+      # and the page reads back our MOCKED-BODY. The engine auto-adds
+      # Access-Control-Allow-Origin:* so the cross-origin fetch can read it.
+      let ic2 = d.bidi.addIntercept(phases = "beforeRequestSent",
+                                    urlPattern = "https://example.com/api")
+      doAssert ic2.len > 0
+      discard d.executeScript(
+        "window.__mock='';" &
+        "fetch('https://example.com/api')" &
+        ".then(function(r){return r.text();})" &
+        ".then(function(t){window.__mock=t;})" &
+        ".catch(function(e){window.__mock='ERR:'+e;});")
+      let ev2 = d.bidi.nextEvent(BeforeRequestSent, 8000)
+      doAssert ev2 != nil
+      let rid2 = eventRequestId(ev2)
+      doAssert rid2.len > 0
+      let resp = d.bidi.provideResponse(rid2, 200, "text/plain", "MOCKED-BODY")
+      doAssert resp["type"].getStr == "success"
+      var mocked = ""
+      for _ in 0 ..< 25:
+        mocked = d.executeScript("return window.__mock;").getStr
+        if mocked.contains("MOCKED-BODY"): break
+        sleep(200)
+      doAssert mocked.contains("MOCKED-BODY")
+      doAssert d.bidi.removeIntercept(ic2)["type"].getStr == "success"
+      echo "  ok: BiDi request mocking (provideResponse -> MOCKED-BODY)"
+
       echo "PASS: Nim live surface test green"
     finally:
       d.quit()

@@ -198,6 +198,8 @@ final class Native {
                 FunctionDescriptor.of(C_STR, C_PTR, C_INT, C_PTR, C_INT));
         static final MethodHandle BIDI_NETWORK_FAIL_REQUEST = down("aether_sel_embed_bidi_network_fail_request",
                 FunctionDescriptor.of(C_STR, C_PTR, C_INT, C_PTR, C_INT));
+        static final MethodHandle BIDI_NETWORK_PROVIDE_RESPONSE = down("aether_sel_embed_bidi_network_provide_response",
+                FunctionDescriptor.of(C_STR, C_PTR, C_INT, C_PTR, C_INT, C_PTR, C_PTR, C_INT));
 
         static final MethodHandle FREE_STRING = down("aether_sel_embed_free_string",
                 FunctionDescriptor.ofVoid(C_PTR));
@@ -511,6 +513,17 @@ final class Native {
                     handle, id, a.allocateFrom(requestId), timeoutMs));
         } catch (Throwable t) {
             throw wrap(t, "bidi_network_fail_request");
+        }
+    }
+
+    static String bidiNetworkProvideResponse(MemorySegment handle, int id, String requestId,
+            int status, String contentType, String body, int timeoutMs) {
+        try (Arena a = Arena.ofConfined()) {
+            return takeString((MemorySegment) MH.BIDI_NETWORK_PROVIDE_RESPONSE.invokeExact(
+                    handle, id, a.allocateFrom(requestId), status,
+                    a.allocateFrom(contentType), a.allocateFrom(body), timeoutMs));
+        } catch (Throwable t) {
+            throw wrap(t, "bidi_network_provide_response");
         }
     }
 

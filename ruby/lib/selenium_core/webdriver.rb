@@ -494,6 +494,18 @@ module SeleniumCore
       raw.empty? ? {} : JSON.parse(raw)
     end
 
+    # Fulfill a paused request with a mock response — the request never hits the
+    # network. request_id comes from a network event's +params.request.request+
+    # (see .event_request_id). The engine adds Access-Control-Allow-Origin:* to
+    # the mock so a cross-origin page can read the body. Returns the reply Hash.
+    def provide_response(request_id, status: 200, content_type: '', body: '', timeout_ms: 10_000)
+      raw = Native.take_string(
+        Native.call(:bidi_network_provide_response, @handle, next_id, request_id, status, content_type, body,
+                    timeout_ms)
+      )
+      raw.empty? ? {} : JSON.parse(raw)
+    end
+
     # The network.request id out of a network.beforeRequestSent (or other
     # network) event: +params.request.request+.
     def self.event_request_id(event)

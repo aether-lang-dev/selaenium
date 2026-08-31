@@ -247,6 +247,43 @@ test('live chrome + bidi', async (t) => {
 
       const rem = d.bidi.removeIntercept(ic)
       assert.strictEqual(rem.type, 'success', `removeIntercept reply: ${JSON.stringify(rem)}`)
+
+      // request MOCKING: intercept beforeRequestSent, fire a cross-origin fetch,
+      // catch the paused request, and fulfill it with provideResponse — the page
+      // sees our mock body, never the real network.
+      const ic2 = d.bidi.addIntercept('beforeRequestSent', '')
+      assert.ok(ic2, `addIntercept(2) returned falsy: ${JSON.stringify(ic2)}`)
+
+      d.executeScript(
+        "window.__mock='';fetch('https://example.com/api').then(r=>r.text()).then(t=>{window.__mock=t}).catch(()=>{});",
+      )
+
+      const ev2 = d.bidi.nextEvent(s.BidiEvent.BEFORE_REQUEST_SENT, 8000)
+      assert.ok(ev2, 'no network.beforeRequestSent event for mock fetch')
+      const rid2 = s.BiDi.eventRequestId(ev2)
+      assert.ok(rid2, `eventRequestId(2) returned falsy: ${JSON.stringify(ev2)}`)
+
+      const resp = d.bidi.provideResponse(rid2, {
+        status: 200,
+        contentType: 'text/plain',
+        body: 'MOCKED-BODY',
+      })
+      assert.strictEqual(resp.type, 'success', `provideResponse reply: ${JSON.stringify(resp)}`)
+
+      // The fetch resolves asynchronously in the page; poll (synchronously,
+      // since the client is blocking) until the mock body lands.
+      const sleep = (ms) => {
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms)
+      }
+      let mock = ''
+      for (let i = 0; i < 25 && !mock.includes('MOCKED-BODY'); i++) {
+        mock = d.executeScript('return window.__mock;') || ''
+        if (mock.includes('MOCKED-BODY')) break
+        sleep(200)
+      }
+      assert.ok(mock.includes('MOCKED-BODY'), `page never saw mock body: ${JSON.stringify(mock)}`)
+
+      d.bidi.removeIntercept(ic2)
     } finally {
       d.quit()
     }

@@ -102,6 +102,10 @@ proc selBidiNetworkContinueRequest(h: pointer, id: cint, requestId: cstring,
 proc selBidiNetworkFailRequest(h: pointer, id: cint, requestId: cstring,
                                timeoutMs: cint): cstring
   {.importc: "aether_sel_embed_bidi_network_fail_request", cdecl.}
+proc selBidiNetworkProvideResponse(h: pointer, id: cint, requestId: cstring,
+                                   status: cint, contentType, body: cstring,
+                                   timeoutMs: cint): cstring
+  {.importc: "aether_sel_embed_bidi_network_provide_response", cdecl.}
 
 proc takeString(p: cstring): string =
   ## Copy an ABI-returned string into a Nim string and free the original. Every
@@ -501,6 +505,18 @@ proc failRequest*(b: BiDi, requestId: string, timeoutMs = 10000): JsonNode =
   ## Block a paused request (the ad/tracker-blocking case).
   let raw = takeString(selBidiNetworkFailRequest(b.handle, b.nextBidiId,
     requestId.cstring, timeoutMs.cint))
+  if raw.len == 0: newJObject() else: parseJson(raw)
+
+proc provideResponse*(b: BiDi, requestId: string, status = 200,
+                      contentType = "", body = "", timeoutMs = 10000): JsonNode =
+  ## Fulfill a paused (intercepted) request with a MOCK response
+  ## (network.provideResponse), never hitting the network — mock an API, serve
+  ## stub content, or test an error status. The mock auto-allows any origin to
+  ## read the body. requestId comes from a network event's
+  ## `params.request.request` (see `eventRequestId`).
+  let raw = takeString(selBidiNetworkProvideResponse(b.handle, b.nextBidiId,
+    requestId.cstring, status.cint, contentType.cstring, body.cstring,
+    timeoutMs.cint))
   if raw.len == 0: newJObject() else: parseJson(raw)
 
 proc eventRequestId*(event: JsonNode): string =

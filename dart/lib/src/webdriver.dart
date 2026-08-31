@@ -533,6 +533,28 @@ class BiDi {
     return raw.isEmpty ? {} : jsonDecode(raw) as Map<String, dynamic>;
   }
 
+  /// Fulfil a paused (intercepted) request with a mock response
+  /// (network.provideResponse) — the request never reaches the network.
+  /// [requestId] comes from a network event's `params.request.request`. The
+  /// engine adds `Access-Control-Allow-Origin: *` so cross-origin fetches see
+  /// the mock. Returns the command reply.
+  Map<String, dynamic> provideResponse(String requestId,
+      {int status = 200,
+      String contentType = '',
+      String body = '',
+      int timeoutMs = 10000}) {
+    final raw = _withCStr(
+        requestId,
+        (r) => _withCStr(
+            contentType,
+            (ct) => _withCStr(
+                body,
+                (b) => Native.instance.takeString(
+                    Native.instance.bidiNetworkProvideResponse(
+                        _handle, _id(), r, status, ct, b, timeoutMs)))));
+    return raw.isEmpty ? {} : jsonDecode(raw) as Map<String, dynamic>;
+  }
+
   /// The network.request id out of a network.beforeRequestSent (or other
   /// network) event: `params.request.request`.
   static String? eventRequestId(Map<String, dynamic> event) {

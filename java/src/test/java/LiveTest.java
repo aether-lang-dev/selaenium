@@ -189,6 +189,29 @@ class LiveTest {
                 assertTrue(rid != null, "event carried a request id");
                 assertEquals("success", d.bidi().continueRequest(rid, 10000).get("type"),
                         "continueRequest succeeded");
+
+                // request mocking: fulfill a paused request with a stub body (never hits network).
+                d.executeScript("window.__mock='';"
+                        + "fetch('https://example.com/api').then(function(r){return r.text()})"
+                        + ".then(function(t){window.__mock=t}).catch(function(){});");
+                Map<String, Object> ev2 = d.bidi().nextEvent(BidiEvent.BEFORE_REQUEST_SENT, 8000);
+                assertTrue(ev2 != null, "network.beforeRequestSent for mocked request arrived");
+                String rid2 = org.seleniumhq.aether.BiDi.eventRequestId(ev2);
+                assertTrue(rid2 != null, "mocked event carried a request id");
+                Map<String, Object> resp =
+                        d.bidi().provideResponse(rid2, 200, "text/plain", "MOCKED-BODY", 10000);
+                assertEquals("success", resp.get("type"), "provideResponse succeeded");
+
+                boolean mocked = false;
+                for (int i = 0; i < 25; i++) {
+                    Object v = d.executeScript("return window.__mock;");
+                    if (v instanceof String s && s.contains("MOCKED-BODY")) {
+                        mocked = true;
+                        break;
+                    }
+                    Thread.sleep(200);
+                }
+                assertTrue(mocked, "fetch received the MOCKED-BODY stub");
             } finally {
                 d.quit();
             }

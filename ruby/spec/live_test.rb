@@ -117,6 +117,17 @@ class LiveTest < Minitest::Test
 
       assert_equal 'success', driver.bidi.continue_request(rid)['type'],
                    'continue_request should succeed'
+
+      # BiDi request mocking: fulfill a paused request with a mock response
+      # (never hits the network) and prove the page reads the mocked body.
+      driver.execute_script("window.__mock='';fetch('https://example.com/api').then(function(r){return r.text()}).then(function(t){window.__mock=t}).catch(function(){});")
+      ev2 = driver.bidi.next_event(SeleniumCore::BidiEvent::BEFORE_REQUEST_SENT, timeout_ms: 8000)
+      rid2 = SeleniumCore::BiDi.event_request_id(ev2)
+      resp = driver.bidi.provide_response(rid2, status: 200, content_type: 'text/plain', body: 'MOCKED-BODY')
+      assert_equal 'success', resp['type']
+      got = ''
+      25.times { got = driver.execute_script('return window.__mock;').to_s; break if got.include?('MOCKED-BODY'); sleep 0.2 }
+      assert got.include?('MOCKED-BODY'), "page did not receive mock: #{got}"
     ensure
       driver.quit
     end

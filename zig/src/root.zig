@@ -59,6 +59,7 @@ const c = struct {
     extern "c" fn aether_sel_embed_bidi_network_remove_intercept(h: ?*anyopaque, id: c_int, intercept_id: [*c]const u8, timeout_ms: c_int) [*c]u8;
     extern "c" fn aether_sel_embed_bidi_network_continue_request(h: ?*anyopaque, id: c_int, request_id: [*c]const u8, timeout_ms: c_int) [*c]u8;
     extern "c" fn aether_sel_embed_bidi_network_fail_request(h: ?*anyopaque, id: c_int, request_id: [*c]const u8, timeout_ms: c_int) [*c]u8;
+    extern "c" fn aether_sel_embed_bidi_network_provide_response(h: ?*anyopaque, id: c_int, request_id: [*c]const u8, status: c_int, content_type: [*c]const u8, body: [*c]const u8, timeout_ms: c_int) [*c]u8;
 };
 
 pub const w3c_element_key = "element-6066-11e4-a52e-4f735466cecf";
@@ -812,6 +813,19 @@ pub const BiDi = struct {
         const rc = try cstr(self.allocator, request_id);
         defer self.allocator.free(rc);
         return (try self.parseOwned(c.aether_sel_embed_bidi_network_fail_request(self.handle, self.takeId(), rc.ptr, timeout_ms))) orelse Error.BadResponse;
+    }
+
+    /// network.provideResponse — fulfill a paused request with a MOCK response
+    /// (never hits the network). The engine adds Access-Control-Allow-Origin:* so
+    /// the requesting page can read a cross-origin mocked body.
+    pub fn provideResponse(self: *BiDi, request_id: []const u8, status: c_int, content_type: []const u8, body: []const u8, timeout_ms: c_int) Error!std.json.Parsed(std.json.Value) {
+        const rc = try cstr(self.allocator, request_id);
+        defer self.allocator.free(rc);
+        const ctc = try cstr(self.allocator, content_type);
+        defer self.allocator.free(ctc);
+        const bc = try cstr(self.allocator, body);
+        defer self.allocator.free(bc);
+        return (try self.parseOwned(c.aether_sel_embed_bidi_network_provide_response(self.handle, self.takeId(), rc.ptr, status, ctc.ptr, bc.ptr, timeout_ms))) orelse Error.BadResponse;
     }
 
     /// The network.request id out of a network.beforeRequestSent (or other
