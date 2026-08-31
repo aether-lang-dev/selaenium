@@ -213,6 +213,24 @@ public sealed class BiDi
         return raw.Length == 0 ? new Dictionary<string, object?>() : ParseObject(raw);
     }
 
+    /// <summary>Answer a paused authRequired with credentials (network.continueWithAuth,
+    /// action provideCredentials). Needs a WWW-Authenticate challenge to exercise.</summary>
+    public Dictionary<string, object?> ContinueWithAuth(string requestId, string username, string password, int timeoutMs = 10000)
+    {
+        string raw = NativeMethods.TakeString(
+            NativeMethods.BidiNetworkContinueWithAuth(_handle, NextId(), requestId, username, password, timeoutMs));
+        return raw.Length == 0 ? new Dictionary<string, object?>() : ParseObject(raw);
+    }
+
+    /// <summary>Disable ("bypass") or restore ("default") the session HTTP cache
+    /// (network.setCacheBehavior), so every request hits the network / an intercept.</summary>
+    public Dictionary<string, object?> SetCacheBehavior(string behavior = "bypass", int timeoutMs = 10000)
+    {
+        string raw = NativeMethods.TakeString(
+            NativeMethods.BidiNetworkSetCacheBehavior(_handle, NextId(), behavior, timeoutMs));
+        return raw.Length == 0 ? new Dictionary<string, object?>() : ParseObject(raw);
+    }
+
     /// <summary>The network.request id out of a network event: params.request.request.</summary>
     public static string? EventRequestId(Dictionary<string, object?> ev)
     {

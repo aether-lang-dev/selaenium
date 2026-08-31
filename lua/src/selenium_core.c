@@ -53,6 +53,7 @@ typedef char* (*fn_bidi_wait)(void*, const char*, int);       /* -> owned string
 typedef char* (*fn_bidi_tree)(void*, int, int);                          /* get_tree -> owned */
 typedef char* (*fn_bidi_2str)(void*, int, const char*, const char*, int); /* evaluate/navigate -> owned */
 typedef char* (*fn_bidi_provide)(void*, int, const char*, int, const char*, const char*, int); /* provideResponse -> owned */
+typedef char* (*fn_bidi_auth)(void*, int, const char*, const char*, const char*, int); /* continueWithAuth -> owned */
 
 /* ---- atom-backed commands ---- */
 typedef int   (*fn_atom4)(void*, const char*, const char*, const char*);  /* execute_atom */
@@ -95,6 +96,8 @@ static struct {
     fn_bidi_sub         bidi_network_continue_request;
     fn_bidi_sub         bidi_network_fail_request;
     fn_bidi_provide     bidi_network_provide_response;
+    fn_bidi_auth        bidi_network_continue_with_auth;
+    fn_bidi_sub         bidi_network_set_cache_behavior;
     /* ---- atoms ---- */
     fn_atom4            execute_atom;
     fn_atom1            is_displayed;
@@ -148,6 +151,8 @@ static int load_symbols(lua_State* L, void* lib, const char* path) {
     SYM(bidi_network_continue_request, "aether_sel_embed_bidi_network_continue_request");
     SYM(bidi_network_fail_request,     "aether_sel_embed_bidi_network_fail_request");
     SYM(bidi_network_provide_response, "aether_sel_embed_bidi_network_provide_response");
+    SYM(bidi_network_continue_with_auth, "aether_sel_embed_bidi_network_continue_with_auth");
+    SYM(bidi_network_set_cache_behavior, "aether_sel_embed_bidi_network_set_cache_behavior");
     SYM(execute_atom,     "aether_sel_embed_execute_atom");
     SYM(is_displayed,     "aether_sel_embed_is_displayed");
     SYM(get_attribute,    "aether_sel_embed_get_attribute");
@@ -434,6 +439,24 @@ static int l_bidi_network_provide_response(lua_State* L) {
     push_owned(L, ENGINE.bidi_network_provide_response(h, id, rid, status, ct, body, timeout_ms));
     return 1;
 }
+static int l_bidi_network_continue_with_auth(lua_State* L) {
+    void* h = check_handle(L, 1);
+    int id = (int)luaL_checkinteger(L, 2);
+    const char* rid = luaL_checkstring(L, 3);
+    const char* user = luaL_checkstring(L, 4);
+    const char* pass = luaL_checkstring(L, 5);
+    int timeout_ms = (int)luaL_checkinteger(L, 6);
+    push_owned(L, ENGINE.bidi_network_continue_with_auth(h, id, rid, user, pass, timeout_ms));
+    return 1;
+}
+static int l_bidi_network_set_cache_behavior(lua_State* L) {
+    void* h = check_handle(L, 1);
+    int id = (int)luaL_checkinteger(L, 2);
+    const char* behavior = luaL_checkstring(L, 3);
+    int timeout_ms = (int)luaL_checkinteger(L, 4);
+    push_owned(L, ENGINE.bidi_network_set_cache_behavior(h, id, behavior, timeout_ms));
+    return 1;
+}
 
 /* ---- atom-backed commands (result via last_value, drained the normal way) ---- */
 static int l_execute_atom(lua_State* L) {
@@ -503,6 +526,8 @@ static const luaL_Reg MODULE[] = {
     {"bidi_network_continue_request", l_bidi_network_continue_request},
     {"bidi_network_fail_request",     l_bidi_network_fail_request},
     {"bidi_network_provide_response", l_bidi_network_provide_response},
+    {"bidi_network_continue_with_auth", l_bidi_network_continue_with_auth},
+    {"bidi_network_set_cache_behavior", l_bidi_network_set_cache_behavior},
     {"execute_atom",      l_execute_atom},
     {"is_displayed",      l_is_displayed},
     {"get_attribute",     l_get_attribute},

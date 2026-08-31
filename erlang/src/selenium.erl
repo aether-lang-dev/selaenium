@@ -31,7 +31,8 @@
     bidi_get_tree/1, bidi_top_context/1, bidi_evaluate/2, bidi_evaluate_value/2, bidi_navigate/2,
     bidi_add_intercept/2, bidi_add_intercept/3, bidi_remove_intercept/2,
     bidi_continue_request/2, bidi_fail_request/2, bidi_event_request_id/1,
-    bidi_provide_response/2, bidi_provide_response/5
+    bidi_provide_response/2, bidi_provide_response/5,
+    bidi_continue_with_auth/4, bidi_set_cache_behavior/1, bidi_set_cache_behavior/2
 ]).
 
 -define(W3C_KEY, <<"element-6066-11e4-a52e-4f735466cecf">>).
@@ -394,6 +395,24 @@ bidi_provide_response(H, RequestId, Status, ContentType, Body) ->
     with_bidi(H, fun(BH) ->
         {ok, decode(selenium_nif:bidi_network_provide_response(BH, bidi_next_id(H),
             to_bin(RequestId), Status, to_bin(ContentType), to_bin(Body), 10000))}
+    end).
+
+%% Answer a paused authRequired with credentials (action provideCredentials).
+%% Needs a WWW-Authenticate challenge to exercise.
+bidi_continue_with_auth(H, RequestId, Username, Password) ->
+    with_bidi(H, fun(BH) ->
+        {ok, decode(selenium_nif:bidi_network_continue_with_auth(BH, bidi_next_id(H),
+            to_bin(RequestId), to_bin(Username), to_bin(Password), 10000))}
+    end).
+
+%% Disable ("bypass") or restore ("default") the session HTTP cache.
+%% set_cache_behavior/1 defaults the behavior to "bypass".
+bidi_set_cache_behavior(H) ->
+    bidi_set_cache_behavior(H, <<"bypass">>).
+bidi_set_cache_behavior(H, Behavior) ->
+    with_bidi(H, fun(BH) ->
+        {ok, decode(selenium_nif:bidi_network_set_cache_behavior(BH, bidi_next_id(H),
+            to_bin(Behavior), 10000))}
     end).
 
 %% The network.request id out of a network event: params.request.request.

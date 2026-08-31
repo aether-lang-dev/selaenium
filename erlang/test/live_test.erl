@@ -151,6 +151,13 @@ run(DriverBin) ->
             true = binary:match(Mocked, <<"MOCKED-BODY">>) =/= nomatch,
             io:format("  ok: BiDi network provideResponse mocked the body~n"),
 
+            %% network.setCacheBehavior — disable then restore the session HTTP cache.
+            {ok, CacheBypass} = selenium:bidi_set_cache_behavior(D, <<"bypass">>),
+            <<"success">> = maps:get(<<"type">>, CacheBypass),
+            {ok, CacheDefault} = selenium:bidi_set_cache_behavior(D, <<"default">>),
+            <<"success">> = maps:get(<<"type">>, CacheDefault),
+            io:format("  ok: BiDi network setCacheBehavior (bypass/default)~n"),
+
             %% atom-backed commands: isDisplayed / getAttribute / relative
             %% locators — the shared JS atoms run in-page by the engine (the
             %% same atoms every other binding uses), reached through the NIF.

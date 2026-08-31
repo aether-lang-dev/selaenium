@@ -210,6 +210,10 @@ namespace SeleniumCore.Tests
                         System.Threading.Thread.Sleep(200);
                     }
                     mocked.ShouldContain("MOCKED-BODY");
+
+                    // network.setCacheBehavior — disable then restore the session HTTP cache.
+                    d.Bidi.SetCacheBehavior("bypass")["type"].ShouldBe("success");
+                    d.Bidi.SetCacheBehavior("default")["type"].ShouldBe("success");
                 }
                 finally { d.Quit(); }
             }

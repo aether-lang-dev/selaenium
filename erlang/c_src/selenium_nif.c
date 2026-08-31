@@ -71,6 +71,8 @@ extern char *aether_sel_embed_bidi_network_remove_intercept(void *h, int id, con
 extern char *aether_sel_embed_bidi_network_continue_request(void *h, int id, const char *rid, int timeout_ms);
 extern char *aether_sel_embed_bidi_network_fail_request(void *h, int id, const char *rid, int timeout_ms);
 extern char *aether_sel_embed_bidi_network_provide_response(void *h, int id, const char *rid, int status, const char *ct, const char *body, int timeout_ms);
+extern char *aether_sel_embed_bidi_network_continue_with_auth(void *h, int id, const char *rid, const char *user, const char *pass, int timeout_ms);
+extern char *aether_sel_embed_bidi_network_set_cache_behavior(void *h, int id, const char *behavior, int timeout_ms);
 
 /* ---- helpers ---- */
 
@@ -510,6 +512,33 @@ static ERL_NIF_TERM nif_bidi_network_provide_response(ErlNifEnv *env, int argc, 
     return r;
 }
 
+static ERL_NIF_TERM nif_bidi_network_continue_with_auth(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
+{
+    UNUSED(argc);
+    void *h;
+    int id, timeout_ms;
+    if (!get_handle(env, argv[0], &h)) return enif_make_badarg(env);
+    if (!enif_get_int(env, argv[1], &id)) return enif_make_badarg(env);
+    char *rid = term_to_cstr(env, argv[2]);
+    if (!rid) return enif_make_badarg(env);
+    char *user = term_to_cstr(env, argv[3]);
+    if (!user) { enif_free(rid); return enif_make_badarg(env); }
+    char *pass = term_to_cstr(env, argv[4]);
+    if (!pass) { enif_free(rid); enif_free(user); return enif_make_badarg(env); }
+    if (!enif_get_int(env, argv[5], &timeout_ms)) {
+        enif_free(rid); enif_free(user); enif_free(pass);
+        return enif_make_badarg(env);
+    }
+    ERL_NIF_TERM r = take_cstr(env, aether_sel_embed_bidi_network_continue_with_auth(h, id, rid, user, pass, timeout_ms));
+    enif_free(rid);
+    enif_free(user);
+    enif_free(pass);
+    return r;
+}
+
+static ERL_NIF_TERM nif_bidi_network_set_cache_behavior(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
+{ UNUSED(argc); return nif_bidi_net_str(env, argv, aether_sel_embed_bidi_network_set_cache_behavior); }
+
 /* ---- atom-backed commands ----
  * The int-returning verbs leave the result in last_value; the caller reads it
  * with last_value/1 (via selenium.erl's atom_result), just like execute. */
@@ -625,6 +654,8 @@ static ErlNifFunc nif_funcs[] = {
     {"bidi_network_continue_request", 4, nif_bidi_network_continue_request, 0},
     {"bidi_network_fail_request",     4, nif_bidi_network_fail_request,     0},
     {"bidi_network_provide_response", 7, nif_bidi_network_provide_response, 0},
+    {"bidi_network_continue_with_auth", 6, nif_bidi_network_continue_with_auth, 0},
+    {"bidi_network_set_cache_behavior", 4, nif_bidi_network_set_cache_behavior, 0},
     {"execute_atom",   4, nif_execute_atom,   0},
     {"is_displayed",   2, nif_is_displayed,   0},
     {"get_attribute",  3, nif_get_attribute,  0},

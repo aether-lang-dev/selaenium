@@ -158,6 +158,11 @@ local ok, err = pcall(function()
   end
   assert(got:find("MOCKED-BODY", 1, true), "page received the mocked body")
   print("  ok: BiDi network provideResponse mocked the body")
+
+  -- network.setCacheBehavior — disable then restore the session HTTP cache.
+  assert_eq(bidi:set_cache_behavior("bypass").type, "success", "setCacheBehavior bypass")
+  assert_eq(bidi:set_cache_behavior("default").type, "success", "setCacheBehavior default")
+  print("  ok: BiDi network setCacheBehavior (bypass/default)")
 end)
 
 d:quit()
