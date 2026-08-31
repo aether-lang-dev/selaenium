@@ -31,7 +31,7 @@ run(DriverBin) ->
             false -> io:format("SKIPPED: chromedriver did not come up~n"), halt(0);
             true -> ok
         end,
-        {ok, D} = selenium:headless_chrome("http://127.0.0.1:" ++ CdPortS),
+        {ok, D} = selenium:chrome("http://127.0.0.1:" ++ CdPortS, chrome_opts()),
         try
             Sid = selenium:session_id(D),
             true = byte_size(Sid) > 0,
@@ -167,6 +167,18 @@ run(DriverBin) ->
 
 %% Minimal percent-encoding so the HTML rides safely in a data: URL (spaces,
 %% quotes, '#' and the like would otherwise derail the URL parse).
+%% Headless-chrome caps; point at an explicit binary when SEL_CHROME_BINARY is
+%% set (a box with no system Chrome but a cached Chrome-for-Testing).
+chrome_opts() ->
+    Args = [<<"--headless=new">>, <<"--no-sandbox">>, <<"--disable-gpu">>, <<"--disable-dev-shm-usage">>],
+    ChromeOpts0 = #{<<"args">> => Args},
+    ChromeOpts = case os:getenv("SEL_CHROME_BINARY") of
+        false -> ChromeOpts0;
+        "" -> ChromeOpts0;
+        Bin -> ChromeOpts0#{<<"binary">> => list_to_binary(Bin)}
+    end,
+    #{<<"goog:chromeOptions">> => ChromeOpts}.
+
 uri_pct(Bin) -> uri_pct(Bin, <<>>).
 uri_pct(<<>>, Acc) -> Acc;
 uri_pct(<<C, R/binary>>, Acc)
