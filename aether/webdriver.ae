@@ -321,6 +321,64 @@ bidi_evaluate_int(sp: ptr, expression: string) -> int {
     return _bidi_result_int(rj)
 }
 
+// ---- network interception ----
+
+// bidi_network_intercept(session, phases_csv, url_pattern) — network.addIntercept.
+// Returns the intercept id ("" on failure). Subscribe to network.beforeRequestSent
+// first if you want the paused-request events. Empty url_pattern intercepts all.
+bidi_network_intercept(sp: ptr, phases_csv: string, url_pattern: string) -> string {
+    ch = _ensure_bidi(sp)
+    if ch == null { return "" }
+    s = sp as *WdSession
+    rj = selenium_bidi.bidi_network_add_intercept(ch, _bidi_id(s), phases_csv, url_pattern, 10000)
+    return _bidi_intercept_id(rj)
+}
+
+// bidi_network_continue(session, request_id) — let a paused request proceed.
+bidi_network_continue(sp: ptr, request_id: string) -> int {
+    ch = _ensure_bidi(sp)
+    if ch == null { return 0 }
+    s = sp as *WdSession
+    rj = selenium_bidi.bidi_network_continue_request(ch, _bidi_id(s), request_id, 10000)
+    if string.contains(rj, "\"type\":\"success\"") == 1 { return 1 }
+    return 0
+}
+
+// bidi_network_fail(session, request_id) — block a paused request.
+bidi_network_fail(sp: ptr, request_id: string) -> int {
+    ch = _ensure_bidi(sp)
+    if ch == null { return 0 }
+    s = sp as *WdSession
+    rj = selenium_bidi.bidi_network_fail_request(ch, _bidi_id(s), request_id, 10000)
+    if string.contains(rj, "\"type\":\"success\"") == 1 { return 1 }
+    return 0
+}
+
+// bidi_event_request_id(event_json) — the network.request id out of a
+// network.beforeRequestSent (or other network) event: params.request.request.
+bidi_event_request_id(sp: ptr, event_json: string) -> string {
+    root, perr = json.parse(event_json)
+    if string.length(perr) > 0 { return "" }
+    params, _p = json.object_get(root, "params")
+    if params == null { return "" }
+    req, _r = json.object_get(params, "request")
+    if req == null { return "" }
+    ridv, _i = json.object_get(req, "request")
+    rid, _s = json.get_string(ridv)
+    return rid
+}
+
+// _bidi_intercept_id(add_intercept_reply) — result.intercept, or "".
+_bidi_intercept_id(reply_json: string) -> string {
+    root, perr = json.parse(reply_json)
+    if string.length(perr) > 0 { return "" }
+    res, _r = json.object_get(root, "result")
+    if res == null { return "" }
+    iv, _i = json.object_get(res, "intercept")
+    iid, _s = json.get_string(iv)
+    return iid
+}
+
 // _first_context_id(getTree_reply) — result.contexts[0].context, or "".
 _first_context_id(reply_json: string) -> string {
     root, perr = json.parse(reply_json)

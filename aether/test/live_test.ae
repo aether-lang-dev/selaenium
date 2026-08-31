@@ -112,6 +112,25 @@ main() {
         // awaitPromise: a resolved promise's value comes back unwrapped.
         fails = fails + ck("bidi script.evaluate awaits a promise",
                  webdriver.bidi_evaluate_int(d, "Promise.resolve(41+1)") == 42)
+
+        // Network interception — observe + release a paused request. The BiDi
+        // capability classic WebDriver has no equivalent for. Subscribe, add an
+        // intercept at beforeRequestSent, trigger a fetch, catch the paused
+        // request, and continue it.
+        _sub2 = webdriver.bidi_subscribe(d, webdriver.BidiEvent_BEFORE_REQUEST_SENT())
+        // Intercept ALL requests at beforeRequestSent ("" -> empty urlPatterns).
+        // (A "string" URL pattern must be a full parseable URL, not a substring.)
+        icid = webdriver.bidi_network_intercept(d, "beforeRequestSent", "")
+        fails = fails + ck("network.addIntercept -> intercept id", _gt0(string.length(icid)))
+        // fire a fetch (it'll be paused by the intercept, so we don't await it).
+        webdriver.execute_script(d, "fetch('https://example.com/blocked').catch(function(){});", "[]")
+        reqev = webdriver.bidi_next_event(d, webdriver.BidiEvent_BEFORE_REQUEST_SENT(), 8000)
+        fails = fails + ck("network.beforeRequestSent event received",
+                 string.contains(reqev, "beforeRequestSent"))
+        rid = webdriver.bidi_event_request_id(d, reqev)
+        fails = fails + ck("intercepted request has a request id", _gt0(string.length(rid)))
+        fails = fails + ck("network.continueRequest releases it",
+                 webdriver.bidi_network_continue(d, rid))
     } else {
         println("  (bidi unavailable — remote end granted no webSocketUrl; skipping BiDi checks)")
     }

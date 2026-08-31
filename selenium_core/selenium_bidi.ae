@@ -175,6 +175,49 @@ bidi_navigate(sp: ptr, id: int, context_id: string, url: string, timeout_ms: int
     return bidi_command(sp, id, "browsingContext.navigate", params, timeout_ms)
 }
 
+// ---- network interception (network.*) — observe/modify/block requests ----
+// The marquee BiDi capability classic WebDriver has no equivalent for. Flow:
+// subscribe to network.beforeRequestSent, addIntercept for a URL pattern at the
+// beforeRequestSent phase, navigate → the intercepted request surfaces as an
+// event carrying its network.request id, then continue/fail it by that id.
+
+// bidi_network_add_intercept(session, id, phases_csv, url_pattern, timeout_ms) —
+// network.addIntercept for a "string" URL pattern (a substring match per the
+// spec's UrlPatternString) at the given phases (e.g.
+// "beforeRequestSent,responseStarted"). Empty url_pattern intercepts everything.
+// Returns the reply JSON (result.intercept is the intercept id).
+bidi_network_add_intercept(sp: ptr, id: int, phases_csv: string, url_pattern: string, timeout_ms: int) -> string {
+    patterns = ""
+    if string.length(url_pattern) > 0 {
+        patterns = "[{\"type\":\"string\",\"pattern\":${_qjson(url_pattern)}}]"
+    } else {
+        patterns = "[]"
+    }
+    params = "{\"phases\":[${_csv_to_json_array(phases_csv)}],\"urlPatterns\":${patterns}}"
+    return bidi_command(sp, id, "network.addIntercept", params, timeout_ms)
+}
+
+// bidi_network_remove_intercept(session, id, intercept_id, timeout_ms).
+bidi_network_remove_intercept(sp: ptr, id: int, intercept_id: string, timeout_ms: int) -> string {
+    params = "{\"intercept\":${_qjson(intercept_id)}}"
+    return bidi_command(sp, id, "network.removeIntercept", params, timeout_ms)
+}
+
+// bidi_network_continue_request(session, id, request_id, timeout_ms) — let a
+// paused (intercepted) request proceed unchanged. request_id comes from the
+// network.beforeRequestSent event's params.request.request.
+bidi_network_continue_request(sp: ptr, id: int, request_id: string, timeout_ms: int) -> string {
+    params = "{\"request\":${_qjson(request_id)}}"
+    return bidi_command(sp, id, "network.continueRequest", params, timeout_ms)
+}
+
+// bidi_network_fail_request(session, id, request_id, timeout_ms) — block a paused
+// request (the ad/tracker-blocking use case). The request errors, never sent.
+bidi_network_fail_request(sp: ptr, id: int, request_id: string, timeout_ms: int) -> string {
+    params = "{\"request\":${_qjson(request_id)}}"
+    return bidi_command(sp, id, "network.failRequest", params, timeout_ms)
+}
+
 // bidi_wait_event(session, method, timeout_ms) — pump the demux until an event
 // whose "method" matches arrives (from the bounded event queue), or timeout.
 // Returns the event JSON, or "" on timeout/close. Non-matching events that arrive

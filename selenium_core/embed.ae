@@ -334,6 +334,31 @@ sel_embed_bidi_navigate(h: ptr, id: int, context_id: string, url: string, timeou
     return sel_embed_dup(selenium_bidi.bidi_navigate(h, id, context_id, url, timeout_ms))
 }
 
+// ---- network interception (network.*) ----
+// The BiDi capability classic WebDriver lacks: observe/modify/block requests.
+// All return the reply JSON (caller frees). request ids come from the
+// network.beforeRequestSent event; the intercept id from add_intercept's reply.
+
+// network.addIntercept for a URL pattern (substring; "" = all) at phases_csv
+// (e.g. "beforeRequestSent"). Reply's result.intercept is the intercept id.
+sel_embed_bidi_network_add_intercept(h: ptr, id: int, phases_csv: string, url_pattern: string, timeout_ms: int) -> string {
+    return sel_embed_dup(selenium_bidi.bidi_network_add_intercept(h, id, phases_csv, url_pattern, timeout_ms))
+}
+
+sel_embed_bidi_network_remove_intercept(h: ptr, id: int, intercept_id: string, timeout_ms: int) -> string {
+    return sel_embed_dup(selenium_bidi.bidi_network_remove_intercept(h, id, intercept_id, timeout_ms))
+}
+
+// Let a paused (intercepted) request proceed unchanged.
+sel_embed_bidi_network_continue_request(h: ptr, id: int, request_id: string, timeout_ms: int) -> string {
+    return sel_embed_dup(selenium_bidi.bidi_network_continue_request(h, id, request_id, timeout_ms))
+}
+
+// Block a paused request (ad/tracker blocking).
+sel_embed_bidi_network_fail_request(h: ptr, id: int, request_id: string, timeout_ms: int) -> string {
+    return sel_embed_dup(selenium_bidi.bidi_network_fail_request(h, id, request_id, timeout_ms))
+}
+
 // ---- string ownership ----
 
 // Free any char* returned by a sel_embed_* function above.
