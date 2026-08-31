@@ -60,6 +60,8 @@ const c = struct {
     extern "c" fn aether_sel_embed_bidi_network_continue_request(h: ?*anyopaque, id: c_int, request_id: [*c]const u8, timeout_ms: c_int) [*c]u8;
     extern "c" fn aether_sel_embed_bidi_network_fail_request(h: ?*anyopaque, id: c_int, request_id: [*c]const u8, timeout_ms: c_int) [*c]u8;
     extern "c" fn aether_sel_embed_bidi_network_provide_response(h: ?*anyopaque, id: c_int, request_id: [*c]const u8, status: c_int, content_type: [*c]const u8, body: [*c]const u8, timeout_ms: c_int) [*c]u8;
+    extern "c" fn aether_sel_embed_bidi_network_continue_with_auth(h: ?*anyopaque, id: c_int, request_id: [*c]const u8, username: [*c]const u8, password: [*c]const u8, timeout_ms: c_int) [*c]u8;
+    extern "c" fn aether_sel_embed_bidi_network_set_cache_behavior(h: ?*anyopaque, id: c_int, behavior: [*c]const u8, timeout_ms: c_int) [*c]u8;
 };
 
 pub const w3c_element_key = "element-6066-11e4-a52e-4f735466cecf";
@@ -826,6 +828,27 @@ pub const BiDi = struct {
         const bc = try cstr(self.allocator, body);
         defer self.allocator.free(bc);
         return (try self.parseOwned(c.aether_sel_embed_bidi_network_provide_response(self.handle, self.takeId(), rc.ptr, status, ctc.ptr, bc.ptr, timeout_ms))) orelse Error.BadResponse;
+    }
+
+    /// network.continueWithAuth — answer a paused authRequired with credentials
+    /// (action: provideCredentials). Returns the parsed reply (owned; `.deinit()`).
+    pub fn continueWithAuth(self: *BiDi, request_id: []const u8, username: []const u8, password: []const u8, timeout_ms: c_int) Error!std.json.Parsed(std.json.Value) {
+        const rc = try cstr(self.allocator, request_id);
+        defer self.allocator.free(rc);
+        const uc = try cstr(self.allocator, username);
+        defer self.allocator.free(uc);
+        const pc = try cstr(self.allocator, password);
+        defer self.allocator.free(pc);
+        return (try self.parseOwned(c.aether_sel_embed_bidi_network_continue_with_auth(self.handle, self.takeId(), rc.ptr, uc.ptr, pc.ptr, timeout_ms))) orelse Error.BadResponse;
+    }
+
+    /// network.setCacheBehavior — "bypass" disables the session HTTP cache (every
+    /// request hits the network / an intercept), "default" restores it. Returns
+    /// the parsed reply (owned; `.deinit()`).
+    pub fn setCacheBehavior(self: *BiDi, behavior: []const u8, timeout_ms: c_int) Error!std.json.Parsed(std.json.Value) {
+        const bc = try cstr(self.allocator, behavior);
+        defer self.allocator.free(bc);
+        return (try self.parseOwned(c.aether_sel_embed_bidi_network_set_cache_behavior(self.handle, self.takeId(), bc.ptr, timeout_ms))) orelse Error.BadResponse;
     }
 
     /// The network.request id out of a network.beforeRequestSent (or other

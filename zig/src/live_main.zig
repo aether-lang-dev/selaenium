@@ -368,6 +368,36 @@ pub fn main() !void {
             assert(got, "page received the mocked body");
         }
         std.debug.print("  ok: bidi network provideResponse mocked the body\n", .{});
+
+        // network.setCacheBehavior: bypass disables the session HTTP cache, then
+        // default restores it — each returns a success reply.
+        {
+            var bypass = try bidi.setCacheBehavior("bypass", 10000);
+            defer bypass.deinit();
+            const bt = switch (bypass.value) {
+                .object => |o| switch (o.get("type") orelse std.json.Value{ .null = {} }) {
+                    .string => |s| s,
+                    else => "",
+                },
+                else => "",
+            };
+            assert(std.mem.eql(u8, bt, "success"), "network.setCacheBehavior bypass success");
+
+            var deflt = try bidi.setCacheBehavior("default", 10000);
+            defer deflt.deinit();
+            const dt = switch (deflt.value) {
+                .object => |o| switch (o.get("type") orelse std.json.Value{ .null = {} }) {
+                    .string => |s| s,
+                    else => "",
+                },
+                else => "",
+            };
+            assert(std.mem.eql(u8, dt, "success"), "network.setCacheBehavior default success");
+        }
+        std.debug.print("  ok: bidi network setCacheBehavior (bypass/default)\n", .{});
+        // continueWithAuth needs a WWW-Authenticate server; bind it for compile
+        // coverage without invoking it here.
+        _ = &sel.BiDi.continueWithAuth;
     }
 
     // ---- atom-backed commands (isDisplayed / getAttribute / findRelative) ----
