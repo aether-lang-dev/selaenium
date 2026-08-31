@@ -628,6 +628,18 @@ class BiDi:
         )
         return json.loads(raw) if raw else {}
 
+    def provide_response(self, request_id: str, *, status: int = 200,
+                         content_type: str = "", body: str = "", timeout_ms: int = 10000) -> dict:
+        """Fulfill a paused request with a MOCK response (network.provideResponse),
+        never hitting the network — mock an API, serve stub content, or test an
+        error status. The mock auto-allows any origin to read the body."""
+        raw = _native.take_string(
+            _native.bidi_network_provide_response(
+                self._handle, self._id(), _native.encode(request_id), status,
+                _native.encode(content_type), _native.encode(body), timeout_ms)
+        )
+        return json.loads(raw) if raw else {}
+
     @staticmethod
     def event_request_id(event: dict) -> str | None:
         """The network.request id out of a network.beforeRequestSent (or other

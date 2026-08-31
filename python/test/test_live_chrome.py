@@ -253,6 +253,25 @@ def test_live_bidi():
             assert cont.get("type") == "success", f"continue={cont!r}"
             print("  ok: network intercept -> beforeRequestSent -> continueRequest")
 
+            # request mocking — provideResponse fulfills a paused request with a
+            # fake body, never hitting the network.
+            driver.execute_script(
+                "window.__mock='';fetch('https://example.com/api')"
+                ".then(r=>r.text()).then(t=>{window.__mock=t}).catch(()=>{});")
+            req2 = driver.bidi.next_event(BidiEvent.BEFORE_REQUEST_SENT, timeout_ms=8000)
+            rid2 = BiDi.event_request_id(req2)
+            assert rid2, "no api request id"
+            resp = driver.bidi.provide_response(rid2, status=200, content_type="text/plain", body="MOCKED-BODY")
+            assert resp.get("type") == "success", f"provideResponse={resp!r}"
+            got = ""
+            for _ in range(25):
+                got = driver.execute_script("return window.__mock;") or ""
+                if "MOCKED-BODY" in got:
+                    break
+                time.sleep(0.2)
+            assert "MOCKED-BODY" in got, f"page did not receive the mock: {got!r}"
+            print("  ok: network provideResponse mocked the body")
+
             print("PASS: live BiDi test green")
         finally:
             driver.quit()
