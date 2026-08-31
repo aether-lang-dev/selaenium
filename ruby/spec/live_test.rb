@@ -139,6 +139,49 @@ class LiveTest < Minitest::Test
     end
   end
 
+  # BiDi network.continueWithAuth: intercept the authRequired phase, catch the
+  # Basic-Auth challenge Chrome raises for a protected fetch, answer it with
+  # credentials, and prove the page reads the protected body — the full
+  # authRequired -> provideCredentials round-trip.
+  def test_live_bidi_auth
+    server, srv_port = basic_auth_server
+    driver = SeleniumCore::WebDriver.headless_chrome("http://127.0.0.1:#{@port}")
+    begin
+      assert driver.bidi_available?, 'session negotiated no webSocketUrl'
+
+      origin = "http://127.0.0.1:#{srv_port}"
+      driver.get("#{origin}/")
+
+      driver.bidi.subscribe(SeleniumCore::BidiEvent::AUTH_REQUIRED)
+      ic = driver.bidi.add_intercept(phases: 'authRequired')
+      refute_nil ic, 'add_intercept(authRequired) should return an intercept id'
+
+      # The protected fetch (same-origin) pauses at the 401 challenge; stash its
+      # eventual body in window.__auth.
+      driver.execute_script(
+        "window.__auth='';fetch('/secret')" \
+        '.then(function(r){return r.text()}).then(function(t){window.__auth=t})' \
+        ".catch(function(e){window.__auth='ERR:'+e});"
+      )
+
+      ev = driver.bidi.next_event(SeleniumCore::BidiEvent::AUTH_REQUIRED, timeout_ms: 8000)
+      refute_nil ev, 'no network.authRequired event received'
+      assert_equal SeleniumCore::BidiEvent::AUTH_REQUIRED, ev['method']
+      rid = SeleniumCore::BiDi.event_request_id(ev)
+      refute_nil rid, "event should carry a request id: #{ev.inspect}"
+
+      ack = driver.bidi.continue_with_auth(rid, BASIC_AUTH_USER, BASIC_AUTH_PASS)
+      assert_equal 'success', ack['type'], "continue_with_auth=#{ack.inspect}"
+
+      got = ''
+      40.times { got = driver.execute_script('return window.__auth;').to_s; break unless got.empty?; sleep 0.2 }
+      assert got.include?('THE-SECRET'), "page did not read the protected body: #{got.inspect}"
+    ensure
+      driver.quit
+      server.close
+    end
+  end
+
   # Atom-backed commands (isDisplayed / getAttribute / relative locators) run as
   # JS atoms via executeScript — no W3C HTTP endpoint — proven against real Chrome.
   ATOMS_HTML = '<html><head><title>Atoms</title></head><body>' \
@@ -170,6 +213,55 @@ class LiveTest < Minitest::Test
   end
 
   private
+
+  BASIC_AUTH_USER = 'neo'
+  BASIC_AUTH_PASS = 'trinity'
+
+  # A tiny in-process HTTP server: a landing page at /, and a Basic-Auth-
+  # protected /secret that 401s (with a WWW-Authenticate challenge) until the
+  # right credentials arrive — the challenge Chrome surfaces as authRequired.
+  # Raw TCPServer thread (no webrick dependency), mirroring the Python harness.
+  def basic_auth_server
+    require 'base64'
+    expected = 'Basic ' + Base64.strict_encode64("#{BASIC_AUTH_USER}:#{BASIC_AUTH_PASS}")
+    server = TCPServer.new('127.0.0.1', 0)
+    port = server.addr[1]
+    Thread.new do
+      loop do
+        begin
+          conn = server.accept
+        rescue IOError, Errno::EBADF
+          break # server closed
+        end
+        Thread.new(conn) do |c|
+          request_line = c.gets.to_s
+          headers = {}
+          while (line = c.gets) && line != "\r\n"
+            k, v = line.split(':', 2)
+            headers[k.to_s.strip.downcase] = v.to_s.strip if v
+          end
+          path = request_line.split(' ')[1].to_s
+          if path == '/secret'
+            if headers['authorization'] == expected
+              body = 'THE-SECRET'
+              c.write "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: #{body.bytesize}\r\n\r\n#{body}"
+            else
+              body = 'denied'
+              c.write "HTTP/1.1 401 Unauthorized\r\nWWW-Authenticate: Basic realm=\"matrix\"\r\nContent-Type: text/plain\r\nContent-Length: #{body.bytesize}\r\n\r\n#{body}"
+            end
+          else
+            body = '<!doctype html><title>Auth</title><h1>landing</h1>'
+            c.write "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: #{body.bytesize}\r\n\r\n#{body}"
+          end
+        rescue StandardError
+          # best-effort test server
+        ensure
+          c.close rescue nil
+        end
+      end
+    end
+    [server, port]
+  end
 
   def which(cmd)
     ENV['PATH'].split(File::PATH_SEPARATOR).each do |dir|

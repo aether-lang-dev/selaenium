@@ -5,8 +5,11 @@
 package selenium
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"os/exec"
 	"strconv"
@@ -403,9 +406,125 @@ func TestLiveBidi(t *testing.T) {
 		t.Fatalf("SetCacheBehavior(default) type = %v, want success; reply = %v", restore["type"], restore)
 	}
 
-	// ContinueWithAuth needs an auth-challenging server to exercise live; here we
-	// only bind it so the wrapper stays compiled and its signature is covered.
-	_ = bidi.ContinueWithAuth
+	// ContinueWithAuth is exercised live in TestLiveBidiAuth (it needs a
+	// WWW-Authenticate server, so it lives in its own test).
 
 	t.Log("live BiDi test green")
+}
+
+// TestLiveBidiAuth drives the full network.continueWithAuth round-trip:
+// intercept the authRequired phase, catch the Basic-Auth challenge Chrome
+// raises for a protected fetch, answer it with credentials, and prove the page
+// reads the protected body.
+func TestLiveBidiAuth(t *testing.T) {
+	driverBin, err := exec.LookPath("chromedriver")
+	if err != nil {
+		t.Skip("chromedriver not on PATH")
+	}
+
+	const authUser, authPass = "neo", "trinity"
+	expected := "Basic " + base64.StdEncoding.EncodeToString([]byte(authUser+":"+authPass))
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/secret" {
+			if r.Header.Get("Authorization") == expected {
+				w.Header().Set("Content-Type", "text/plain")
+				_, _ = w.Write([]byte("THE-SECRET"))
+				return
+			}
+			w.Header().Set("WWW-Authenticate", `Basic realm="matrix"`)
+			w.Header().Set("Content-Type", "text/plain")
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = w.Write([]byte("denied"))
+			return
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write([]byte("<!doctype html><title>Auth</title><h1>landing</h1>"))
+	}))
+	defer srv.Close()
+
+	port := freePort(t)
+	cmd := exec.Command(driverBin, "--port="+strconv.Itoa(port))
+	if err := cmd.Start(); err != nil {
+		t.Skipf("could not start chromedriver: %v", err)
+	}
+	defer func() {
+		_ = cmd.Process.Kill()
+		_, _ = cmd.Process.Wait()
+	}()
+	if !waitUp(port, 10*time.Second) {
+		t.Skip("chromedriver did not come up")
+	}
+
+	drv, err := NewChrome("http://127.0.0.1:"+strconv.Itoa(port), Headless())
+	if err != nil {
+		t.Fatalf("NewChrome: %v", err)
+	}
+	defer drv.Quit()
+
+	if !drv.BidiAvailable() {
+		t.Fatal("BidiAvailable = false; session negotiated no webSocketUrl")
+	}
+	if err := drv.Get(srv.URL + "/"); err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+
+	bidi, err := drv.Bidi()
+	if err != nil {
+		t.Fatalf("Bidi: %v", err)
+	}
+	if _, err := bidi.Subscribe(BidiEvent.AuthRequired); err != nil {
+		t.Fatalf("Subscribe(authRequired): %v", err)
+	}
+	ic, err := bidi.AddIntercept("authRequired", "")
+	if err != nil {
+		t.Fatalf("AddIntercept(authRequired): %v", err)
+	}
+	if ic == "" {
+		t.Fatal("AddIntercept(authRequired) returned empty intercept id")
+	}
+
+	// Same-origin protected fetch pauses at the 401 challenge; stash the body.
+	if _, err := drv.ExecuteScript("window.__auth='';fetch('/secret').then(r=>r.text()).then(t=>{window.__auth=t}).catch(e=>{window.__auth='ERR:'+e});"); err != nil {
+		t.Fatalf("ExecuteScript(fetch /secret): %v", err)
+	}
+
+	ev, err := bidi.NextEvent(BidiEvent.AuthRequired, 8000)
+	if err != nil {
+		t.Fatalf("NextEvent(authRequired): %v", err)
+	}
+	if ev == nil {
+		t.Fatal("NextEvent returned nil (timed out waiting for network.authRequired)")
+	}
+	if ev["method"] != BidiEvent.AuthRequired {
+		t.Fatalf("event method = %v, want %v", ev["method"], BidiEvent.AuthRequired)
+	}
+	rid := EventRequestID(ev)
+	if rid == "" {
+		t.Fatalf("EventRequestID returned empty id; event = %v", ev)
+	}
+
+	ack, err := bidi.ContinueWithAuth(rid, authUser, authPass)
+	if err != nil {
+		t.Fatalf("ContinueWithAuth(%s): %v", rid, err)
+	}
+	if ack["type"] != "success" {
+		t.Fatalf("ContinueWithAuth type = %v, want success; reply = %v", ack["type"], ack)
+	}
+
+	var got string
+	for i := 0; i < 40; i++ {
+		v, err := drv.ExecuteScript("return window.__auth;")
+		if err != nil {
+			t.Fatalf("ExecuteScript(read auth): %v", err)
+		}
+		got, _ = v.(string)
+		if got != "" {
+			break
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	if !strings.Contains(got, "THE-SECRET") {
+		t.Fatalf("window.__auth = %q; want to contain THE-SECRET", got)
+	}
+	t.Log("live BiDi continueWithAuth test green")
 }
