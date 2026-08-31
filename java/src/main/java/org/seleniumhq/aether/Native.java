@@ -200,6 +200,10 @@ final class Native {
                 FunctionDescriptor.of(C_STR, C_PTR, C_INT, C_PTR, C_INT));
         static final MethodHandle BIDI_NETWORK_PROVIDE_RESPONSE = down("aether_sel_embed_bidi_network_provide_response",
                 FunctionDescriptor.of(C_STR, C_PTR, C_INT, C_PTR, C_INT, C_PTR, C_PTR, C_INT));
+        static final MethodHandle BIDI_NETWORK_CONTINUE_WITH_AUTH = down("aether_sel_embed_bidi_network_continue_with_auth",
+                FunctionDescriptor.of(C_STR, C_PTR, C_INT, C_PTR, C_PTR, C_PTR, C_INT));
+        static final MethodHandle BIDI_NETWORK_SET_CACHE_BEHAVIOR = down("aether_sel_embed_bidi_network_set_cache_behavior",
+                FunctionDescriptor.of(C_STR, C_PTR, C_INT, C_PTR, C_INT));
 
         static final MethodHandle FREE_STRING = down("aether_sel_embed_free_string",
                 FunctionDescriptor.ofVoid(C_PTR));
@@ -524,6 +528,26 @@ final class Native {
                     a.allocateFrom(contentType), a.allocateFrom(body), timeoutMs));
         } catch (Throwable t) {
             throw wrap(t, "bidi_network_provide_response");
+        }
+    }
+
+    static String bidiNetworkContinueWithAuth(MemorySegment handle, int id, String requestId,
+            String username, String password, int timeoutMs) {
+        try (Arena a = Arena.ofConfined()) {
+            return takeString((MemorySegment) MH.BIDI_NETWORK_CONTINUE_WITH_AUTH.invokeExact(
+                    handle, id, a.allocateFrom(requestId),
+                    a.allocateFrom(username), a.allocateFrom(password), timeoutMs));
+        } catch (Throwable t) {
+            throw wrap(t, "bidi_network_continue_with_auth");
+        }
+    }
+
+    static String bidiNetworkSetCacheBehavior(MemorySegment handle, int id, String behavior, int timeoutMs) {
+        try (Arena a = Arena.ofConfined()) {
+            return takeString((MemorySegment) MH.BIDI_NETWORK_SET_CACHE_BEHAVIOR.invokeExact(
+                    handle, id, a.allocateFrom(behavior), timeoutMs));
+        } catch (Throwable t) {
+            throw wrap(t, "bidi_network_set_cache_behavior");
         }
     }
 

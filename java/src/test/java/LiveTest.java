@@ -212,6 +212,12 @@ class LiveTest {
                     Thread.sleep(200);
                 }
                 assertTrue(mocked, "fetch received the MOCKED-BODY stub");
+
+                // network.setCacheBehavior: bypass then restore default.
+                assertEquals("success", d.bidi().setCacheBehavior("bypass", 10000).get("type"),
+                        "setCacheBehavior(bypass) succeeded");
+                assertEquals("success", d.bidi().setCacheBehavior("default", 10000).get("type"),
+                        "setCacheBehavior(default) succeeded");
             } finally {
                 d.quit();
             }
