@@ -97,6 +97,11 @@ module SeleniumCore
       [:bidi_get_tree,        'aether_sel_embed_bidi_get_tree',        VOIDP, [VOIDP, INT, INT]],
       [:bidi_script_evaluate, 'aether_sel_embed_bidi_script_evaluate', VOIDP, [VOIDP, INT, VOIDP, VOIDP, INT]],
       [:bidi_navigate,        'aether_sel_embed_bidi_navigate',        VOIDP, [VOIDP, INT, VOIDP, VOIDP, INT]],
+      # ---- BiDi network interception (observe / release / block requests) ----
+      [:bidi_network_add_intercept,     'aether_sel_embed_bidi_network_add_intercept',     VOIDP, [VOIDP, INT, VOIDP, VOIDP, INT]],
+      [:bidi_network_remove_intercept,  'aether_sel_embed_bidi_network_remove_intercept',  VOIDP, [VOIDP, INT, VOIDP, INT]],
+      [:bidi_network_continue_request,  'aether_sel_embed_bidi_network_continue_request',  VOIDP, [VOIDP, INT, VOIDP, INT]],
+      [:bidi_network_fail_request,      'aether_sel_embed_bidi_network_fail_request',      VOIDP, [VOIDP, INT, VOIDP, INT]],
       [:free_string,     'aether_sel_embed_free_string',     VOID,  [VOIDP]]
     ].freeze
 

@@ -121,6 +121,20 @@ const bidiNavigate = lazy(
   'void* aether_sel_embed_bidi_navigate(void* h, int id, const char* context_id, const char* url, int timeout_ms)',
 )
 
+// ---- BiDi network interception (char* replies returned as void*) ----
+const bidiNetworkAddIntercept = lazy(
+  'void* aether_sel_embed_bidi_network_add_intercept(void* h, int id, const char* phases_csv, const char* url_pattern, int timeout_ms)',
+)
+const bidiNetworkRemoveIntercept = lazy(
+  'void* aether_sel_embed_bidi_network_remove_intercept(void* h, int id, const char* intercept_id, int timeout_ms)',
+)
+const bidiNetworkContinueRequest = lazy(
+  'void* aether_sel_embed_bidi_network_continue_request(void* h, int id, const char* request_id, int timeout_ms)',
+)
+const bidiNetworkFailRequest = lazy(
+  'void* aether_sel_embed_bidi_network_fail_request(void* h, int id, const char* request_id, int timeout_ms)',
+)
+
 // ---- string ownership ----
 const freeString = lazy('void aether_sel_embed_free_string(void* s)')
 
@@ -172,6 +186,10 @@ module.exports = {
   bidiGetTree,
   bidiScriptEvaluate,
   bidiNavigate,
+  bidiNetworkAddIntercept,
+  bidiNetworkRemoveIntercept,
+  bidiNetworkContinueRequest,
+  bidiNetworkFailRequest,
   takeString,
   isNull,
 }

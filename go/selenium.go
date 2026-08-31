@@ -66,6 +66,12 @@ char*  aether_sel_embed_bidi_wait_event(void* h, const char* method, int timeout
 char*  aether_sel_embed_bidi_get_tree(void* h, int id, int timeout_ms);
 char*  aether_sel_embed_bidi_script_evaluate(void* h, int id, const char* expr, const char* context_id, int timeout_ms);
 char*  aether_sel_embed_bidi_navigate(void* h, int id, const char* context_id, const char* url, int timeout_ms);
+
+// ---- BiDi network interception (observe / release / block requests) ----
+char*  aether_sel_embed_bidi_network_add_intercept(void* h, int id, const char* phases_csv, const char* url_pattern, int timeout_ms);
+char*  aether_sel_embed_bidi_network_remove_intercept(void* h, int id, const char* intercept_id, int timeout_ms);
+char*  aether_sel_embed_bidi_network_continue_request(void* h, int id, const char* request_id, int timeout_ms);
+char*  aether_sel_embed_bidi_network_fail_request(void* h, int id, const char* request_id, int timeout_ms);
 */
 import "C"
 
@@ -890,6 +896,63 @@ func (b *BiDi) Navigate(url string, timeoutMs ...int) (map[string]interface{}, e
 	defer C.free(unsafe.Pointer(cCtx))
 	defer C.free(unsafe.Pointer(cURL))
 	return decodeBidiReply(takeString(C.aether_sel_embed_bidi_navigate(b.h, b.id(), cCtx, cURL, C.int(t))))
+}
+
+// ---- network interception (observe / release / block requests) ----
+
+// AddIntercept issues network.addIntercept for a URL pattern (a full parseable
+// URL as a "string" pattern; empty intercepts all) at the given comma-separated
+// phases (e.g. "beforeRequestSent"). Subscribe to the matching network.* event
+// first if you want the paused-request events. Returns the intercept id from
+// reply["result"]["intercept"].
+func (b *BiDi) AddIntercept(phasesCsv, urlPattern string, timeoutMs ...int) (string, error) {
+	cPhases := cstr(phasesCsv)
+	cPattern := cstr(urlPattern)
+	defer C.free(unsafe.Pointer(cPhases))
+	defer C.free(unsafe.Pointer(cPattern))
+	reply, err := decodeBidiReply(takeString(C.aether_sel_embed_bidi_network_add_intercept(b.h, b.id(), cPhases, cPattern, C.int(firstTimeout(timeoutMs)))))
+	if err != nil {
+		return "", err
+	}
+	result, _ := reply["result"].(map[string]interface{})
+	id, _ := result["intercept"].(string)
+	return id, nil
+}
+
+// RemoveIntercept issues network.removeIntercept for a previously added
+// intercept id.
+func (b *BiDi) RemoveIntercept(interceptID string, timeoutMs ...int) error {
+	cID := cstr(interceptID)
+	defer C.free(unsafe.Pointer(cID))
+	_, err := decodeBidiReply(takeString(C.aether_sel_embed_bidi_network_remove_intercept(b.h, b.id(), cID, C.int(firstTimeout(timeoutMs)))))
+	return err
+}
+
+// ContinueRequest lets a paused (intercepted) request proceed unchanged and
+// returns the reply. requestID comes from a network event's
+// params.request.request (see EventRequestID).
+func (b *BiDi) ContinueRequest(requestID string, timeoutMs ...int) (map[string]interface{}, error) {
+	cID := cstr(requestID)
+	defer C.free(unsafe.Pointer(cID))
+	return decodeBidiReply(takeString(C.aether_sel_embed_bidi_network_continue_request(b.h, b.id(), cID, C.int(firstTimeout(timeoutMs)))))
+}
+
+// FailRequest blocks a paused request (the ad/tracker-blocking case) and
+// returns the reply. requestID comes from a network event's
+// params.request.request (see EventRequestID).
+func (b *BiDi) FailRequest(requestID string, timeoutMs ...int) (map[string]interface{}, error) {
+	cID := cstr(requestID)
+	defer C.free(unsafe.Pointer(cID))
+	return decodeBidiReply(takeString(C.aether_sel_embed_bidi_network_fail_request(b.h, b.id(), cID, C.int(firstTimeout(timeoutMs)))))
+}
+
+// EventRequestID reads the network request id out of a network.beforeRequestSent
+// (or other network) event: params.request.request. Returns "" if absent.
+func EventRequestID(event map[string]interface{}) string {
+	params, _ := event["params"].(map[string]interface{})
+	request, _ := params["request"].(map[string]interface{})
+	id, _ := request["request"].(string)
+	return id
 }
 
 // LostEvents reports how many events the bounded queue has dropped since the

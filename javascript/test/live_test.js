@@ -225,6 +225,28 @@ test('live chrome + bidi', async (t) => {
         42,
         'evaluateValue(Promise.resolve(41+1)) !== 42 (promise-await)',
       )
+
+      // network interception: subscribe, add an intercept, trigger a fetch,
+      // catch the paused beforeRequestSent event, and let it continue.
+      const subNet = d.bidi.subscribe(s.BidiEvent.BEFORE_REQUEST_SENT)
+      assert.strictEqual(subNet.type, 'success', `network subscribe ack: ${JSON.stringify(subNet)}`)
+
+      const ic = d.bidi.addIntercept('beforeRequestSent', '')
+      assert.ok(ic, `addIntercept returned falsy: ${JSON.stringify(ic)}`)
+
+      d.executeScript("fetch('https://example.com/blocked').catch(()=>{});")
+
+      const netEv = d.bidi.nextEvent(s.BidiEvent.BEFORE_REQUEST_SENT, 8000)
+      assert.ok(netEv, 'no network.beforeRequestSent event received')
+
+      const rid = s.BiDi.eventRequestId(netEv)
+      assert.ok(rid, `eventRequestId returned falsy: ${JSON.stringify(netEv)}`)
+
+      const cont = d.bidi.continueRequest(rid)
+      assert.strictEqual(cont.type, 'success', `continueRequest reply: ${JSON.stringify(cont)}`)
+
+      const rem = d.bidi.removeIntercept(ic)
+      assert.strictEqual(rem.type, 'success', `removeIntercept reply: ${JSON.stringify(rem)}`)
     } finally {
       d.quit()
     }

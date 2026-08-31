@@ -89,6 +89,20 @@ proc selBidiNavigate(h: pointer, id: cint, contextId, url: cstring,
                      timeoutMs: cint): cstring
   {.importc: "aether_sel_embed_bidi_navigate", cdecl.}
 
+# ---- BiDi network interception (observe / release / block requests) ----
+proc selBidiNetworkAddIntercept(h: pointer, id: cint, phasesCsv, urlPattern: cstring,
+                                timeoutMs: cint): cstring
+  {.importc: "aether_sel_embed_bidi_network_add_intercept", cdecl.}
+proc selBidiNetworkRemoveIntercept(h: pointer, id: cint, interceptId: cstring,
+                                   timeoutMs: cint): cstring
+  {.importc: "aether_sel_embed_bidi_network_remove_intercept", cdecl.}
+proc selBidiNetworkContinueRequest(h: pointer, id: cint, requestId: cstring,
+                                   timeoutMs: cint): cstring
+  {.importc: "aether_sel_embed_bidi_network_continue_request", cdecl.}
+proc selBidiNetworkFailRequest(h: pointer, id: cint, requestId: cstring,
+                               timeoutMs: cint): cstring
+  {.importc: "aether_sel_embed_bidi_network_fail_request", cdecl.}
+
 proc takeString(p: cstring): string =
   ## Copy an ABI-returned string into a Nim string and free the original. Every
   ## cstring this module returns goes through here; the pointer is dead after.
@@ -451,6 +465,56 @@ proc navigate*(b: BiDi, url: string, timeoutMs = 30000): JsonNode =
   let raw = takeString(selBidiNavigate(b.handle, b.nextBidiId,
     ctx.cstring, url.cstring, timeoutMs.cint))
   if raw.len == 0: newJObject() else: parseJson(raw)
+
+# ---- network interception (observe / release / block requests) ----
+
+proc addIntercept*(b: BiDi, phases = "beforeRequestSent", urlPattern = "",
+                   timeoutMs = 10000): string =
+  ## network.addIntercept for a URL pattern (a full parseable URL as a "string"
+  ## pattern; empty intercepts all) at the given comma-separated phases.
+  ## Subscribe to the matching network.* event first if you want the
+  ## paused-request events. Returns the intercept id, or "" if none.
+  let raw = takeString(selBidiNetworkAddIntercept(b.handle, b.nextBidiId,
+    phases.cstring, urlPattern.cstring, timeoutMs.cint))
+  if raw.len == 0: return ""
+  let reply = parseJson(raw)
+  if reply.kind == JObject and reply.hasKey("result"):
+    let res = reply["result"]
+    if res.kind == JObject and res.hasKey("intercept"):
+      return res["intercept"].getStr
+  ""
+
+proc removeIntercept*(b: BiDi, interceptId: string, timeoutMs = 10000): JsonNode =
+  ## network.removeIntercept — stop intercepting for a previously added id.
+  let raw = takeString(selBidiNetworkRemoveIntercept(b.handle, b.nextBidiId,
+    interceptId.cstring, timeoutMs.cint))
+  if raw.len == 0: newJObject() else: parseJson(raw)
+
+proc continueRequest*(b: BiDi, requestId: string, timeoutMs = 10000): JsonNode =
+  ## Let a paused (intercepted) request proceed unchanged. requestId comes from a
+  ## network event's `params.request.request` (see `eventRequestId`).
+  let raw = takeString(selBidiNetworkContinueRequest(b.handle, b.nextBidiId,
+    requestId.cstring, timeoutMs.cint))
+  if raw.len == 0: newJObject() else: parseJson(raw)
+
+proc failRequest*(b: BiDi, requestId: string, timeoutMs = 10000): JsonNode =
+  ## Block a paused request (the ad/tracker-blocking case).
+  let raw = takeString(selBidiNetworkFailRequest(b.handle, b.nextBidiId,
+    requestId.cstring, timeoutMs.cint))
+  if raw.len == 0: newJObject() else: parseJson(raw)
+
+proc eventRequestId*(event: JsonNode): string =
+  ## The network.request id out of a network.beforeRequestSent (or other network)
+  ## event: `params.request.request`. Returns "" if absent.
+  if event == nil or event.kind != JObject or not event.hasKey("params"):
+    return ""
+  let params = event["params"]
+  if params.kind != JObject or not params.hasKey("request"):
+    return ""
+  let request = params["request"]
+  if request.kind != JObject or not request.hasKey("request"):
+    return ""
+  request["request"].getStr
 
 proc lostEvents*(b: BiDi): int =
   ## How many events the bounded queue has dropped since the last call (then

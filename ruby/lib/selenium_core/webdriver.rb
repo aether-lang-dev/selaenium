@@ -456,6 +456,50 @@ module SeleniumCore
       raw.empty? ? {} : JSON.parse(raw)
     end
 
+    # ---- network interception (observe / release / block requests) ----
+
+    # network.addIntercept for a URL pattern (a full parseable URL as a "string"
+    # pattern; empty intercepts all) at the given comma-separated phases.
+    # Subscribe to the matching network.* event first if you want the
+    # paused-request events. Returns the intercept id String, or nil.
+    def add_intercept(phases: 'beforeRequestSent', url_pattern: '', timeout_ms: 10_000)
+      raw = Native.take_string(
+        Native.call(:bidi_network_add_intercept, @handle, next_id, phases, url_pattern, timeout_ms)
+      )
+      reply = raw.empty? ? {} : JSON.parse(raw)
+      reply.dig('result', 'intercept')
+    end
+
+    def remove_intercept(intercept_id, timeout_ms: 10_000)
+      raw = Native.take_string(
+        Native.call(:bidi_network_remove_intercept, @handle, next_id, intercept_id, timeout_ms)
+      )
+      raw.empty? ? {} : JSON.parse(raw)
+    end
+
+    # Let a paused (intercepted) request proceed unchanged. request_id comes from
+    # a network event's +params.request.request+ (see .event_request_id).
+    def continue_request(request_id, timeout_ms: 10_000)
+      raw = Native.take_string(
+        Native.call(:bidi_network_continue_request, @handle, next_id, request_id, timeout_ms)
+      )
+      raw.empty? ? {} : JSON.parse(raw)
+    end
+
+    # Block a paused request (the ad/tracker-blocking case).
+    def fail_request(request_id, timeout_ms: 10_000)
+      raw = Native.take_string(
+        Native.call(:bidi_network_fail_request, @handle, next_id, request_id, timeout_ms)
+      )
+      raw.empty? ? {} : JSON.parse(raw)
+    end
+
+    # The network.request id out of a network.beforeRequestSent (or other
+    # network) event: +params.request.request+.
+    def self.event_request_id(event)
+      event.dig('params', 'request', 'request')
+    end
+
     # How many events the bounded queue dropped since the last call (then resets).
     def lost_events = Native.call(:bidi_lost_events, @handle)
 

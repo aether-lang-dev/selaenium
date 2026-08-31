@@ -317,5 +317,35 @@ func TestLiveBidi(t *testing.T) {
 		t.Fatalf("EvaluateValue(Promise.resolve(41+1)) = %v (%T); want 42", pv, pv)
 	}
 
+	// Network interception: subscribe to beforeRequestSent, add an intercept,
+	// trigger a fetch, receive the paused-request event, then continue it.
+	if _, err := bidi.Subscribe(BidiEvent.BeforeRequestSent); err != nil {
+		t.Fatalf("Subscribe(beforeRequestSent): %v", err)
+	}
+	ic, err := bidi.AddIntercept("beforeRequestSent", "")
+	if err != nil {
+		t.Fatalf("AddIntercept: %v", err)
+	}
+	if ic == "" {
+		t.Fatal("AddIntercept returned empty intercept id")
+	}
+	if _, err := drv.ExecuteScript("fetch('https://example.com/blocked').catch(()=>{});"); err != nil {
+		t.Fatalf("ExecuteScript(fetch): %v", err)
+	}
+	nev, err := bidi.NextEvent(BidiEvent.BeforeRequestSent, 8000)
+	if err != nil {
+		t.Fatalf("NextEvent(beforeRequestSent): %v", err)
+	}
+	if nev == nil {
+		t.Fatal("NextEvent returned nil (timed out waiting for network.beforeRequestSent)")
+	}
+	rid := EventRequestID(nev)
+	if rid == "" {
+		t.Fatalf("EventRequestID returned empty id; event = %v", nev)
+	}
+	if _, err := bidi.ContinueRequest(rid); err != nil {
+		t.Fatalf("ContinueRequest(%s): %v", rid, err)
+	}
+
 	t.Log("live BiDi test green")
 }

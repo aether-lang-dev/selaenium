@@ -196,6 +196,22 @@ proc main() =
       doAssert d.bidi.evaluateValue("Promise.resolve(41+1)").getInt == 42
       echo "  ok: BiDi typed (topContext + evaluateValue sync/promise)"
 
+      # BiDi network interception: add an intercept at the beforeRequestSent
+      # phase, trigger a matching fetch, drain the paused-request event, pull its
+      # request id, and let it continue — all over real Chrome.
+      discard d.bidi.subscribe(BeforeRequestSent)
+      let ic = d.bidi.addIntercept(phases = "beforeRequestSent",
+                                   urlPattern = "https://example.com/blocked")
+      doAssert ic.len > 0
+      discard d.executeScript("fetch('https://example.com/blocked').catch(()=>{});")
+      let netEv = d.bidi.nextEvent(BeforeRequestSent, 8000)
+      doAssert netEv != nil
+      let rid = eventRequestId(netEv)
+      doAssert rid.len > 0
+      doAssert d.bidi.continueRequest(rid)["type"].getStr == "success"
+      doAssert d.bidi.removeIntercept(ic)["type"].getStr == "success"
+      echo "  ok: BiDi network interception (addIntercept + continueRequest)"
+
       echo "PASS: Nim live surface test green"
     finally:
       d.quit()

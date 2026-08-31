@@ -177,6 +177,18 @@ class LiveTest {
                 Object promised = d.bidi().evaluateValue("Promise.resolve(41+1)", 30000);
                 assertTrue(promised instanceof Number, "evaluateValue(promise) is a Number, was: " + promised);
                 assertEquals(42, ((Number) promised).intValue(), "evaluateValue(Promise.resolve(41+1)) == 42");
+
+                // network interception: intercept a request, catch the paused event, continue it.
+                d.bidi().subscribe(BidiEvent.BEFORE_REQUEST_SENT);
+                String ic = d.bidi().addIntercept("beforeRequestSent", "", 10000);
+                assertTrue(ic != null, "addIntercept returned an intercept id");
+                d.executeScript("fetch('https://example.com/blocked').catch(function(){});");
+                Map<String, Object> netEv = d.bidi().nextEvent(BidiEvent.BEFORE_REQUEST_SENT, 8000);
+                assertTrue(netEv != null, "network.beforeRequestSent event arrived");
+                String rid = org.seleniumhq.aether.BiDi.eventRequestId(netEv);
+                assertTrue(rid != null, "event carried a request id");
+                assertEquals("success", d.bidi().continueRequest(rid, 10000).get("type"),
+                        "continueRequest succeeded");
             } finally {
                 d.quit();
             }

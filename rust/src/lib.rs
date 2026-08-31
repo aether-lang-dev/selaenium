@@ -78,6 +78,33 @@ extern "C" {
         url: *const c_char,
         timeout_ms: c_int,
     ) -> *mut c_char;
+
+    // ---- BiDi network interception (each returns a BiDi reply JSON) ----
+    fn aether_sel_embed_bidi_network_add_intercept(
+        h: Handle,
+        id: c_int,
+        phases_csv: *const c_char,
+        url_pattern: *const c_char,
+        timeout_ms: c_int,
+    ) -> *mut c_char;
+    fn aether_sel_embed_bidi_network_remove_intercept(
+        h: Handle,
+        id: c_int,
+        intercept_id: *const c_char,
+        timeout_ms: c_int,
+    ) -> *mut c_char;
+    fn aether_sel_embed_bidi_network_continue_request(
+        h: Handle,
+        id: c_int,
+        request_id: *const c_char,
+        timeout_ms: c_int,
+    ) -> *mut c_char;
+    fn aether_sel_embed_bidi_network_fail_request(
+        h: Handle,
+        id: c_int,
+        request_id: *const c_char,
+        timeout_ms: c_int,
+    ) -> *mut c_char;
 }
 
 /// Copy a caller-owned native `char*` into a Rust `String`, then free it per the
@@ -746,6 +773,84 @@ impl BiDi {
             aether_sel_embed_bidi_navigate(self.handle, self.next_id(), c.as_ptr(), u.as_ptr(), timeout_ms)
         });
         Self::decode(&raw)
+    }
+
+    // ---- network interception (observe / release / block requests) ----
+
+    /// `network.addIntercept` for a URL pattern (a full parseable URL as a
+    /// "string" pattern; empty intercepts all) at the given comma-separated
+    /// phases. Subscribe to the matching `network.*` event first if you want the
+    /// paused-request events. Returns the intercept id (`result.intercept`), or
+    /// `None`.
+    pub fn add_intercept(
+        &mut self,
+        phases_csv: &str,
+        url_pattern: &str,
+        timeout_ms: i32,
+    ) -> Result<Option<String>> {
+        let id = self.next_id();
+        let phases = cstr(phases_csv);
+        let pattern = cstr(url_pattern);
+        let raw = take_string(unsafe {
+            aether_sel_embed_bidi_network_add_intercept(
+                self.handle,
+                id,
+                phases.as_ptr(),
+                pattern.as_ptr(),
+                timeout_ms,
+            )
+        });
+        let reply = Self::decode(&raw)?;
+        Ok(reply
+            .get("result")
+            .and_then(|r| r.get("intercept"))
+            .and_then(|i| i.as_str())
+            .map(String::from))
+    }
+
+    /// `network.removeIntercept` — stop intercepting for a prior intercept id.
+    /// Returns the reply payload.
+    pub fn remove_intercept(&mut self, intercept_id: &str, timeout_ms: i32) -> Result<Json> {
+        let id = self.next_id();
+        let iid = cstr(intercept_id);
+        let raw = take_string(unsafe {
+            aether_sel_embed_bidi_network_remove_intercept(self.handle, id, iid.as_ptr(), timeout_ms)
+        });
+        Self::decode(&raw)
+    }
+
+    /// Let a paused (intercepted) request proceed unchanged. `request_id` comes
+    /// from a network event's `params.request.request` (see
+    /// [`BiDi::event_request_id`]). Returns the reply payload.
+    pub fn continue_request(&mut self, request_id: &str, timeout_ms: i32) -> Result<Json> {
+        let id = self.next_id();
+        let rid = cstr(request_id);
+        let raw = take_string(unsafe {
+            aether_sel_embed_bidi_network_continue_request(self.handle, id, rid.as_ptr(), timeout_ms)
+        });
+        Self::decode(&raw)
+    }
+
+    /// Block a paused request (the ad/tracker-blocking case). `request_id` comes
+    /// from a network event's `params.request.request`. Returns the reply payload.
+    pub fn fail_request(&mut self, request_id: &str, timeout_ms: i32) -> Result<Json> {
+        let id = self.next_id();
+        let rid = cstr(request_id);
+        let raw = take_string(unsafe {
+            aether_sel_embed_bidi_network_fail_request(self.handle, id, rid.as_ptr(), timeout_ms)
+        });
+        Self::decode(&raw)
+    }
+
+    /// The `network.request` id out of a `network.beforeRequestSent` (or other
+    /// network) event: `params.request.request`.
+    pub fn event_request_id(event: &Json) -> Option<String> {
+        event
+            .get("params")
+            .and_then(|p| p.get("request"))
+            .and_then(|r| r.get("request"))
+            .and_then(|r| r.as_str())
+            .map(String::from)
     }
 
     /// How many events the bounded queue has dropped since the last call (then

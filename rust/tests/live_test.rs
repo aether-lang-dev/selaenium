@@ -283,6 +283,40 @@ fn live_bidi() {
         "evaluate_value(Promise.resolve(41+1)) should await to 42"
     );
 
+    // ---- BiDi network interception (add intercept -> pause -> continue) ----
+
+    // Subscribe to the paused-request phase, then intercept all requests at it.
+    let sub = d.bidi().unwrap().subscribe(&[BidiEvent::BEFORE_REQUEST_SENT]).unwrap();
+    assert_eq!(
+        sub.get("type").and_then(|v| v.as_str()),
+        Some("success"),
+        "beforeRequestSent subscribe ack: {sub:?}"
+    );
+    let intercept = d.bidi().unwrap().add_intercept("beforeRequestSent", "", 10000).unwrap();
+    assert!(intercept.is_some(), "add_intercept should return an intercept id, got {intercept:?}");
+
+    // Trigger a request; it will pause at beforeRequestSent (caught catch swallows
+    // the eventual failure/abort so executeScript doesn't throw).
+    d.execute_script("fetch('https://example.com/blocked').catch(()=>{});", vec![]).unwrap();
+
+    // The paused-request event must arrive and carry a request id.
+    let ev = d
+        .bidi()
+        .unwrap()
+        .next_event(BidiEvent::BEFORE_REQUEST_SENT, 8000)
+        .unwrap()
+        .expect("a network.beforeRequestSent event within the timeout");
+    let rid = selenium_core::BiDi::event_request_id(&ev)
+        .expect("beforeRequestSent event should carry params.request.request");
+
+    // Release the paused request; the reply must be a success.
+    let cont = d.bidi().unwrap().continue_request(&rid, 10000).unwrap();
+    assert_eq!(
+        cont.get("type").and_then(|v| v.as_str()),
+        Some("success"),
+        "continue_request reply: {cont:?}"
+    );
+
     d.quit().unwrap();
 }
 

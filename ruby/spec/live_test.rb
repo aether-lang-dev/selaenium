@@ -100,6 +100,23 @@ class LiveTest < Minitest::Test
       # A promise the classic execute_script channel cannot await:
       assert_equal 42, driver.bidi.evaluate_value('Promise.resolve(41+1)'),
                    'script.evaluate should await the resolved promise to 42'
+
+      # BiDi network interception: intercept all requests at beforeRequestSent,
+      # trigger a fetch, receive the paused-request event, then release it.
+      driver.bidi.subscribe(SeleniumCore::BidiEvent::BEFORE_REQUEST_SENT)
+      ic = driver.bidi.add_intercept(url_pattern: '')
+      refute_nil ic, 'add_intercept should return an intercept id'
+
+      driver.execute_script("fetch('https://example.com/blocked').catch(function(){});")
+
+      ev = driver.bidi.next_event(SeleniumCore::BidiEvent::BEFORE_REQUEST_SENT, timeout_ms: 8000)
+      refute_nil ev, 'no network.beforeRequestSent event received'
+
+      rid = SeleniumCore::BiDi.event_request_id(ev)
+      refute_nil rid, 'event should carry a request id'
+
+      assert_equal 'success', driver.bidi.continue_request(rid)['type'],
+                   'continue_request should succeed'
     ensure
       driver.quit
     end

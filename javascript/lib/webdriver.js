@@ -473,6 +473,50 @@ class BiDi {
     return raw ? JSON.parse(raw) : {}
   }
 
+  // ---- network interception (observe / release / block requests) ----
+
+  // network.addIntercept for a URL pattern (a full parseable URL as a "string"
+  // pattern; empty intercepts all) at the given comma-separated phases.
+  // Subscribe to the matching network.* event first if you want the paused-
+  // request events. Returns the intercept id, or null.
+  addIntercept(phasesCsv = 'beforeRequestSent', urlPattern = '', timeoutMs = 10000) {
+    const raw = native.takeString(
+      native.bidiNetworkAddIntercept(this._handle, this._id(), phasesCsv, urlPattern, timeoutMs),
+    )
+    const reply = raw ? JSON.parse(raw) : {}
+    return (reply.result || {}).intercept || null
+  }
+
+  removeIntercept(interceptId, timeoutMs = 10000) {
+    const raw = native.takeString(
+      native.bidiNetworkRemoveIntercept(this._handle, this._id(), interceptId, timeoutMs),
+    )
+    return raw ? JSON.parse(raw) : {}
+  }
+
+  // Let a paused (intercepted) request proceed unchanged. requestId comes from a
+  // network event's params.request.request (see BiDi.eventRequestId).
+  continueRequest(requestId, timeoutMs = 10000) {
+    const raw = native.takeString(
+      native.bidiNetworkContinueRequest(this._handle, this._id(), requestId, timeoutMs),
+    )
+    return raw ? JSON.parse(raw) : {}
+  }
+
+  // Block a paused request (the ad/tracker-blocking case).
+  failRequest(requestId, timeoutMs = 10000) {
+    const raw = native.takeString(
+      native.bidiNetworkFailRequest(this._handle, this._id(), requestId, timeoutMs),
+    )
+    return raw ? JSON.parse(raw) : {}
+  }
+
+  // The network.request id out of a network.beforeRequestSent (or other network)
+  // event: params.request.request.
+  static eventRequestId(event) {
+    return (((event || {}).params || {}).request || {}).request || null
+  }
+
   // How many events the bounded queue has dropped since the last call (then
   // resets) — so a consumer knows it missed events.
   lostEvents() {

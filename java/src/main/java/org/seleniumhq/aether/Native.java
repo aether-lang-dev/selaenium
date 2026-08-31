@@ -189,6 +189,16 @@ final class Native {
         static final MethodHandle BIDI_NAVIGATE = down("aether_sel_embed_bidi_navigate",
                 FunctionDescriptor.of(C_STR, C_PTR, C_INT, C_PTR, C_PTR, C_INT));
 
+        // ---- BiDi network interception (observe / release / block requests) ----
+        static final MethodHandle BIDI_NETWORK_ADD_INTERCEPT = down("aether_sel_embed_bidi_network_add_intercept",
+                FunctionDescriptor.of(C_STR, C_PTR, C_INT, C_PTR, C_PTR, C_INT));
+        static final MethodHandle BIDI_NETWORK_REMOVE_INTERCEPT = down("aether_sel_embed_bidi_network_remove_intercept",
+                FunctionDescriptor.of(C_STR, C_PTR, C_INT, C_PTR, C_INT));
+        static final MethodHandle BIDI_NETWORK_CONTINUE_REQUEST = down("aether_sel_embed_bidi_network_continue_request",
+                FunctionDescriptor.of(C_STR, C_PTR, C_INT, C_PTR, C_INT));
+        static final MethodHandle BIDI_NETWORK_FAIL_REQUEST = down("aether_sel_embed_bidi_network_fail_request",
+                FunctionDescriptor.of(C_STR, C_PTR, C_INT, C_PTR, C_INT));
+
         static final MethodHandle FREE_STRING = down("aether_sel_embed_free_string",
                 FunctionDescriptor.ofVoid(C_PTR));
     }
@@ -463,6 +473,44 @@ final class Native {
                     handle, id, a.allocateFrom(contextId), a.allocateFrom(url), timeoutMs));
         } catch (Throwable t) {
             throw wrap(t, "bidi_navigate");
+        }
+    }
+
+    // ---- BiDi network interception wrappers ----
+
+    static String bidiNetworkAddIntercept(MemorySegment handle, int id, String phasesCsv, String urlPattern, int timeoutMs) {
+        try (Arena a = Arena.ofConfined()) {
+            return takeString((MemorySegment) MH.BIDI_NETWORK_ADD_INTERCEPT.invokeExact(
+                    handle, id, a.allocateFrom(phasesCsv), a.allocateFrom(urlPattern), timeoutMs));
+        } catch (Throwable t) {
+            throw wrap(t, "bidi_network_add_intercept");
+        }
+    }
+
+    static String bidiNetworkRemoveIntercept(MemorySegment handle, int id, String interceptId, int timeoutMs) {
+        try (Arena a = Arena.ofConfined()) {
+            return takeString((MemorySegment) MH.BIDI_NETWORK_REMOVE_INTERCEPT.invokeExact(
+                    handle, id, a.allocateFrom(interceptId), timeoutMs));
+        } catch (Throwable t) {
+            throw wrap(t, "bidi_network_remove_intercept");
+        }
+    }
+
+    static String bidiNetworkContinueRequest(MemorySegment handle, int id, String requestId, int timeoutMs) {
+        try (Arena a = Arena.ofConfined()) {
+            return takeString((MemorySegment) MH.BIDI_NETWORK_CONTINUE_REQUEST.invokeExact(
+                    handle, id, a.allocateFrom(requestId), timeoutMs));
+        } catch (Throwable t) {
+            throw wrap(t, "bidi_network_continue_request");
+        }
+    }
+
+    static String bidiNetworkFailRequest(MemorySegment handle, int id, String requestId, int timeoutMs) {
+        try (Arena a = Arena.ofConfined()) {
+            return takeString((MemorySegment) MH.BIDI_NETWORK_FAIL_REQUEST.invokeExact(
+                    handle, id, a.allocateFrom(requestId), timeoutMs));
+        } catch (Throwable t) {
+            throw wrap(t, "bidi_network_fail_request");
         }
     }
 

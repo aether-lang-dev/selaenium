@@ -159,6 +159,68 @@ public final class BiDi {
         return raw.isEmpty() ? Map.of() : (Map<String, Object>) Json.decode(raw);
     }
 
+    // ---- network interception (observe / release / block requests) ----
+
+    /**
+     * {@code network.addIntercept} for a URL pattern (a full parseable URL as a
+     * "string" pattern; empty intercepts all) at the given comma-separated
+     * phases (e.g. {@code "beforeRequestSent"}). Subscribe to the matching
+     * {@code network.*} event first if you want the paused-request events.
+     * Returns the intercept id, or {@code null}.
+     */
+    @SuppressWarnings("unchecked")
+    public String addIntercept(String phasesCsv, String urlPattern, int timeoutMs) {
+        String raw = Native.bidiNetworkAddIntercept(handle, id(), phasesCsv, urlPattern, timeoutMs);
+        if (raw.isEmpty()) {
+            return null;
+        }
+        Object reply = Json.decode(raw);
+        if (!(reply instanceof Map<?, ?> m) || !(m.get("result") instanceof Map<?, ?> r)) {
+            return null;
+        }
+        Object intercept = r.get("intercept");
+        return intercept == null ? null : intercept.toString();
+    }
+
+    @SuppressWarnings("unchecked")
+    public Map<String, Object> removeIntercept(String interceptId, int timeoutMs) {
+        String raw = Native.bidiNetworkRemoveIntercept(handle, id(), interceptId, timeoutMs);
+        return raw.isEmpty() ? Map.of() : (Map<String, Object>) Json.decode(raw);
+    }
+
+    /**
+     * Let a paused (intercepted) request proceed unchanged. The {@code requestId}
+     * comes from a network event's {@code params.request.request} (see
+     * {@link #eventRequestId(Map)}).
+     */
+    @SuppressWarnings("unchecked")
+    public Map<String, Object> continueRequest(String requestId, int timeoutMs) {
+        String raw = Native.bidiNetworkContinueRequest(handle, id(), requestId, timeoutMs);
+        return raw.isEmpty() ? Map.of() : (Map<String, Object>) Json.decode(raw);
+    }
+
+    /** Block a paused request (the ad/tracker-blocking case). */
+    @SuppressWarnings("unchecked")
+    public Map<String, Object> failRequest(String requestId, int timeoutMs) {
+        String raw = Native.bidiNetworkFailRequest(handle, id(), requestId, timeoutMs);
+        return raw.isEmpty() ? Map.of() : (Map<String, Object>) Json.decode(raw);
+    }
+
+    /**
+     * The {@code network.request} id out of a {@code network.beforeRequestSent}
+     * (or other network) event: {@code params.request.request}, or {@code null}.
+     */
+    public static String eventRequestId(Map<String, Object> event) {
+        if (event == null || !(event.get("params") instanceof Map<?, ?> params)) {
+            return null;
+        }
+        if (!(params.get("request") instanceof Map<?, ?> request)) {
+            return null;
+        }
+        Object rid = request.get("request");
+        return rid == null ? null : rid.toString();
+    }
+
     /**
      * How many events the bounded queue has dropped since the last call (then
      * resets) — so a consumer knows it missed events.

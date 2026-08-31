@@ -483,6 +483,64 @@ class BiDi {
     return raw.isEmpty ? {} : jsonDecode(raw) as Map<String, dynamic>;
   }
 
+  // ---- network interception (observe / release / block requests) ----
+
+  /// network.addIntercept for a URL pattern (a full parseable URL as a "string"
+  /// pattern; empty intercepts all) at the given comma-separated [phases].
+  /// Subscribe to the matching network.* event first if you want the
+  /// paused-request events. Returns the intercept id, or null.
+  String? addIntercept(
+      {String phases = 'beforeRequestSent',
+      String urlPattern = '',
+      int timeoutMs = 10000}) {
+    final raw = _withCStr(
+        phases,
+        (ph) => _withCStr(
+            urlPattern,
+            (up) => Native.instance.takeString(Native.instance
+                .bidiNetworkAddIntercept(_handle, _id(), ph, up, timeoutMs))));
+    final reply = raw.isEmpty ? {} : jsonDecode(raw) as Map<String, dynamic>;
+    final result = reply['result'];
+    return result is Map<String, dynamic> ? result['intercept'] as String? : null;
+  }
+
+  Map<String, dynamic> removeIntercept(String interceptId,
+      {int timeoutMs = 10000}) {
+    final raw = _withCStr(
+        interceptId,
+        (i) => Native.instance.takeString(Native.instance
+            .bidiNetworkRemoveIntercept(_handle, _id(), i, timeoutMs)));
+    return raw.isEmpty ? {} : jsonDecode(raw) as Map<String, dynamic>;
+  }
+
+  /// Let a paused (intercepted) request proceed unchanged. [requestId] comes
+  /// from a network event's `params.request.request`.
+  Map<String, dynamic> continueRequest(String requestId,
+      {int timeoutMs = 10000}) {
+    final raw = _withCStr(
+        requestId,
+        (r) => Native.instance.takeString(Native.instance
+            .bidiNetworkContinueRequest(_handle, _id(), r, timeoutMs)));
+    return raw.isEmpty ? {} : jsonDecode(raw) as Map<String, dynamic>;
+  }
+
+  /// Block a paused request (the ad/tracker-blocking case).
+  Map<String, dynamic> failRequest(String requestId, {int timeoutMs = 10000}) {
+    final raw = _withCStr(
+        requestId,
+        (r) => Native.instance.takeString(Native.instance
+            .bidiNetworkFailRequest(_handle, _id(), r, timeoutMs)));
+    return raw.isEmpty ? {} : jsonDecode(raw) as Map<String, dynamic>;
+  }
+
+  /// The network.request id out of a network.beforeRequestSent (or other
+  /// network) event: `params.request.request`.
+  static String? eventRequestId(Map<String, dynamic> event) {
+    final params = event['params'];
+    final request = (params is Map<String, dynamic> ? params['request'] : null);
+    return request is Map<String, dynamic> ? request['request'] as String? : null;
+  }
+
   /// How many events the bounded queue has dropped since the last call (then
   /// resets) — so a consumer knows it missed events.
   int lostEvents() => Native.instance.bidiLostEvents(_handle);

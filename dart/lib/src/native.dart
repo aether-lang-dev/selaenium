@@ -108,6 +108,24 @@ typedef _BidiNavigateC = ffi.Pointer<pkgffi.Utf8> Function(ffi.Pointer<ffi.Void>
 typedef _BidiNavigate = ffi.Pointer<pkgffi.Utf8> Function(ffi.Pointer<ffi.Void>,
     int, ffi.Pointer<pkgffi.Utf8>, ffi.Pointer<pkgffi.Utf8>, int);
 
+// ---- BiDi network interception (add/remove intercept, continue/fail request) ----
+// add_intercept: (void* handle, int id, char* phases_csv, char* url_pattern, int timeout_ms) -> char* reply JSON.
+typedef _BidiNetAddInterceptC = ffi.Pointer<pkgffi.Utf8> Function(
+    ffi.Pointer<ffi.Void>,
+    ffi.Int32,
+    ffi.Pointer<pkgffi.Utf8>,
+    ffi.Pointer<pkgffi.Utf8>,
+    ffi.Int32);
+typedef _BidiNetAddIntercept = ffi.Pointer<pkgffi.Utf8> Function(
+    ffi.Pointer<ffi.Void>, int, ffi.Pointer<pkgffi.Utf8>, ffi.Pointer<pkgffi.Utf8>, int);
+
+// remove_intercept / continue_request / fail_request:
+// (void* handle, int id, char* str_arg, int timeout_ms) -> char* reply JSON.
+typedef _BidiNetStrArgC = ffi.Pointer<pkgffi.Utf8> Function(
+    ffi.Pointer<ffi.Void>, ffi.Int32, ffi.Pointer<pkgffi.Utf8>, ffi.Int32);
+typedef _BidiNetStrArg = ffi.Pointer<pkgffi.Utf8> Function(
+    ffi.Pointer<ffi.Void>, int, ffi.Pointer<pkgffi.Utf8>, int);
+
 /// A loaded engine: the [ffi.DynamicLibrary] plus every symbol bound once.
 class Native {
   final _Open open;
@@ -146,6 +164,10 @@ class Native {
   final _BidiGetTree bidiGetTree;
   final _BidiEvaluate bidiScriptEvaluate;
   final _BidiNavigate bidiNavigate;
+  final _BidiNetAddIntercept bidiNetworkAddIntercept;
+  final _BidiNetStrArg bidiNetworkRemoveIntercept;
+  final _BidiNetStrArg bidiNetworkContinueRequest;
+  final _BidiNetStrArg bidiNetworkFailRequest;
 
   Native._(ffi.DynamicLibrary lib)
       : open = lib.lookupFunction<_OpenC, _Open>('aether_sel_embed_open'),
@@ -210,7 +232,19 @@ class Native {
         bidiScriptEvaluate = lib.lookupFunction<_BidiEvaluateC, _BidiEvaluate>(
             'aether_sel_embed_bidi_script_evaluate'),
         bidiNavigate = lib.lookupFunction<_BidiNavigateC, _BidiNavigate>(
-            'aether_sel_embed_bidi_navigate');
+            'aether_sel_embed_bidi_navigate'),
+        bidiNetworkAddIntercept =
+            lib.lookupFunction<_BidiNetAddInterceptC, _BidiNetAddIntercept>(
+                'aether_sel_embed_bidi_network_add_intercept'),
+        bidiNetworkRemoveIntercept =
+            lib.lookupFunction<_BidiNetStrArgC, _BidiNetStrArg>(
+                'aether_sel_embed_bidi_network_remove_intercept'),
+        bidiNetworkContinueRequest =
+            lib.lookupFunction<_BidiNetStrArgC, _BidiNetStrArg>(
+                'aether_sel_embed_bidi_network_continue_request'),
+        bidiNetworkFailRequest =
+            lib.lookupFunction<_BidiNetStrArgC, _BidiNetStrArg>(
+                'aether_sel_embed_bidi_network_fail_request');
 
   static Native? _instance;
   static String? _explicitPath;

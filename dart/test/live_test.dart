@@ -239,6 +239,19 @@ void main() {
         expect(d.bidi.evaluateValue('6*7'), 42);
         // script.evaluate awaits a returned promise
         expect(d.bidi.evaluateValue('Promise.resolve(41+1)'), 42);
+
+        // network interception: pause a request, then release it.
+        d.bidi.subscribe([BidiEvent.beforeRequestSent]);
+        final ic = d.bidi.addIntercept(urlPattern: '');
+        expect(ic, isNotNull);
+        d.executeScript(
+            "fetch('https://example.com/blocked').catch(()=>{});");
+        final netEv =
+            d.bidi.nextEvent(BidiEvent.beforeRequestSent, timeoutMs: 8000);
+        expect(netEv, isNotNull);
+        final rid = BiDi.eventRequestId(netEv!);
+        expect(rid, isNotNull);
+        expect(d.bidi.continueRequest(rid!)['type'], 'success');
       } finally {
         d.quit();
       }
