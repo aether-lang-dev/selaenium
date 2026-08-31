@@ -41,6 +41,23 @@ function M.array(t) return setmetatable(t or {}, M.array_mt) end
 
 local json = {}
 
+-- Pure-Lua UTF-8 encode of a codepoint (Lua 5.1/LuaJIT have no `utf8` library;
+-- 5.3+ do). Used by the JSON decoder for \uXXXX escapes and by send_keys.
+local function utf8_encode(cp)
+  if cp < 0x80 then
+    return string.char(cp)
+  elseif cp < 0x800 then
+    return string.char(0xC0 + math.floor(cp / 0x40), 0x80 + (cp % 0x40))
+  elseif cp < 0x10000 then
+    return string.char(0xE0 + math.floor(cp / 0x1000),
+                       0x80 + (math.floor(cp / 0x40) % 0x40), 0x80 + (cp % 0x40))
+  else
+    return string.char(0xF0 + math.floor(cp / 0x40000),
+                       0x80 + (math.floor(cp / 0x1000) % 0x40),
+                       0x80 + (math.floor(cp / 0x40) % 0x40), 0x80 + (cp % 0x40))
+  end
+end
+
 local function esc(s)
   return (s:gsub('[%z\1-\31\\"]', function(c)
     if c == '"' then return '\\"'
@@ -114,7 +131,7 @@ function json.decode(s)
         local n = s:sub(i + 1, i + 1)
         if n == "u" then
           local hex = s:sub(i + 2, i + 5)
-          buf[#buf + 1] = utf8.char(tonumber(hex, 16))
+          buf[#buf + 1] = utf8_encode(tonumber(hex, 16))
           i = i + 6
         else
           local map = { ['"'] = '"', ['\\'] = '\\', ['/'] = '/', n = '\n', r = '\r', t = '\t', b = '\b', f = '\f' }
@@ -276,8 +293,18 @@ end
 
 function WebDriver:click(element_id) self:execute("clickElement", { id = element_id }) end
 function WebDriver:send_keys(element_id, text)
+  -- Split the UTF-8 `text` into one entry per character (W3C wants a `value`
+  -- array of single-code-point strings). Pure-5.1: walk UTF-8 lead bytes (no
+  -- `utf8` library on LuaJIT/5.1). Continuation bytes are 0x80..0xBF.
   local value = {}
-  for _, cp in utf8.codes(text) do value[#value + 1] = utf8.char(cp) end
+  local i, n = 1, #text
+  while i <= n do
+    local b = text:byte(i)
+    local len = 1
+    if b >= 0xF0 then len = 4 elseif b >= 0xE0 then len = 3 elseif b >= 0xC0 then len = 2 end
+    value[#value + 1] = text:sub(i, i + len - 1)
+    i = i + len
+  end
   self:execute("sendKeysToElement", { id = element_id, text = text, value = value })
 end
 function WebDriver:element_text(element_id) return self:execute("getElementText", { id = element_id }) end
