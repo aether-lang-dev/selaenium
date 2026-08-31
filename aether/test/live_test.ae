@@ -150,6 +150,11 @@ main() {
             if waited < 99999 { sleep(200); waited = waited + 200 }
         }
         fails = fails + ck("the page received the mocked body", string.contains(got, "MOCKED-BODY"))
+
+        // network.setCacheBehavior — disable the session HTTP cache (so every
+        // request hits the network / an intercept), then restore it.
+        fails = fails + ck("network.setCacheBehavior bypass", webdriver.bidi_network_set_cache(d, "bypass"))
+        fails = fails + ck("network.setCacheBehavior default", webdriver.bidi_network_set_cache(d, "default"))
     } else {
         println("  (bidi unavailable — remote end granted no webSocketUrl; skipping BiDi checks)")
     }

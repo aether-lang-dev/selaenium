@@ -367,6 +367,29 @@ bidi_network_mock(sp: ptr, request_id: string, status: int, content_type: string
     return 0
 }
 
+// bidi_network_auth(session, request_id, username, password) — answer an HTTP
+// auth challenge (a paused authRequired request) with credentials. Returns 1 on
+// success.
+bidi_network_auth(sp: ptr, request_id: string, username: string, password: string) -> int {
+    ch = _ensure_bidi(sp)
+    if ch == null { return 0 }
+    s = sp as *WdSession
+    rj = selenium_bidi.bidi_network_continue_with_auth(ch, _bidi_id(s), request_id, username, password, 10000)
+    if string.contains(rj, "\"type\":\"success\"") == 1 { return 1 }
+    return 0
+}
+
+// bidi_network_set_cache(session, behavior) — "bypass" to disable the HTTP cache
+// for this session, "default" to restore it. Returns 1 on success.
+bidi_network_set_cache(sp: ptr, behavior: string) -> int {
+    ch = _ensure_bidi(sp)
+    if ch == null { return 0 }
+    s = sp as *WdSession
+    rj = selenium_bidi.bidi_network_set_cache_behavior(ch, _bidi_id(s), behavior, 10000)
+    if string.contains(rj, "\"type\":\"success\"") == 1 { return 1 }
+    return 0
+}
+
 // bidi_event_request_id(event_json) — the network.request id out of a
 // network.beforeRequestSent (or other network) event: params.request.request.
 bidi_event_request_id(sp: ptr, event_json: string) -> string {

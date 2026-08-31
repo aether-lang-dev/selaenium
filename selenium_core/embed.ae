@@ -366,6 +366,16 @@ sel_embed_bidi_network_provide_response(h: ptr, id: int, request_id: string, sta
     return sel_embed_dup(selenium_bidi.bidi_network_provide_response(h, id, request_id, status, content_type, body, timeout_ms))
 }
 
+// Answer an HTTP auth challenge (a paused authRequired request) with credentials.
+sel_embed_bidi_network_continue_with_auth(h: ptr, id: int, request_id: string, username: string, password: string, timeout_ms: int) -> string {
+    return sel_embed_dup(selenium_bidi.bidi_network_continue_with_auth(h, id, request_id, username, password, timeout_ms))
+}
+
+// Set the session HTTP cache behavior ("bypass" to disable, "default" to restore).
+sel_embed_bidi_network_set_cache_behavior(h: ptr, id: int, behavior: string, timeout_ms: int) -> string {
+    return sel_embed_dup(selenium_bidi.bidi_network_set_cache_behavior(h, id, behavior, timeout_ms))
+}
+
 // ---- string ownership ----
 
 // Free any char* returned by a sel_embed_* function above.

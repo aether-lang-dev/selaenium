@@ -242,6 +242,23 @@ bidi_network_provide_response(sp: ptr, id: int, request_id: string, status: int,
     return bidi_command(sp, id, "network.provideResponse", params, timeout_ms)
 }
 
+// bidi_network_continue_with_auth(session, id, request_id, username, password,
+// timeout_ms) — network.continueWithAuth: answer an HTTP auth challenge (a paused
+// authRequired request) with credentials via the "provideCredentials" action.
+// Automates basic/digest auth that classic WebDriver can't handle in headless.
+bidi_network_continue_with_auth(sp: ptr, id: int, request_id: string, username: string, password: string, timeout_ms: int) -> string {
+    params = "{\"request\":${_qjson(request_id)},\"action\":\"provideCredentials\",\"credentials\":{\"type\":\"password\",\"username\":${_qjson(username)},\"password\":${_qjson(password)}}}"
+    return bidi_command(sp, id, "network.continueWithAuth", params, timeout_ms)
+}
+
+// bidi_network_set_cache_behavior(session, id, behavior, timeout_ms) —
+// network.setCacheBehavior: "bypass" to disable the HTTP cache for the session (so
+// every request hits the network / an intercept), or "default" to restore it.
+bidi_network_set_cache_behavior(sp: ptr, id: int, behavior: string, timeout_ms: int) -> string {
+    params = "{\"cacheBehavior\":${_qjson(behavior)}}"
+    return bidi_command(sp, id, "network.setCacheBehavior", params, timeout_ms)
+}
+
 // bidi_wait_event(session, method, timeout_ms) — pump the demux until an event
 // whose "method" matches arrives (from the bounded event queue), or timeout.
 // Returns the event JSON, or "" on timeout/close. Non-matching events that arrive
