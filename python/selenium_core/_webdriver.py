@@ -545,6 +545,50 @@ class BiDi:
             waited += step
         raise TimeoutError_(f"BiDi command timed out: {method}", 0)
 
+    # ---- typed convenience commands ----
+
+    def get_tree(self, timeout_ms: int = 10000) -> dict:
+        """browsingContext.getTree — the browsing contexts (each with a "context" id)."""
+        raw = _native.take_string(_native.bidi_get_tree(self._handle, self._id(), timeout_ms))
+        return json.loads(raw) if raw else {}
+
+    def top_context(self, timeout_ms: int = 10000) -> str | None:
+        """The top-level browsing context id (the anchor for evaluate/navigate)."""
+        contexts = (self.get_tree(timeout_ms).get("result") or {}).get("contexts") or []
+        return contexts[0]["context"] if contexts else None
+
+    def evaluate(self, expression: str, context: str | None = None, timeout_ms: int = 30000) -> dict:
+        """script.evaluate an expression in a context's realm, awaiting a returned
+        promise. Returns the reply; ``["result"]["result"]`` is the BiDi-typed value
+        (e.g. {"type": "number", "value": 42}). BiDi's richer alternative to
+        execute_script — real realms, promise-awaiting, structured value types."""
+        ctx = context or self.top_context(timeout_ms)
+        if not ctx:
+            raise WebDriverError("no browsing context for script.evaluate", 0)
+        raw = _native.take_string(
+            _native.bidi_script_evaluate(self._handle, self._id(),
+                                         _native.encode(expression), _native.encode(ctx), timeout_ms)
+        )
+        return json.loads(raw) if raw else {}
+
+    def evaluate_value(self, expression: str, context: str | None = None, timeout_ms: int = 30000):
+        """script.evaluate, returning just the unwrapped value (the ``.value`` of the
+        BiDi-typed result), or None if it wasn't a simple value."""
+        result = self.evaluate(expression, context, timeout_ms).get("result") or {}
+        inner = result.get("result") or {}
+        return inner.get("value")
+
+    def navigate(self, url: str, context: str | None = None, timeout_ms: int = 30000) -> dict:
+        """browsingContext.navigate a context to url (wait: complete)."""
+        ctx = context or self.top_context(timeout_ms)
+        if not ctx:
+            raise WebDriverError("no browsing context for navigate", 0)
+        raw = _native.take_string(
+            _native.bidi_navigate(self._handle, self._id(),
+                                  _native.encode(ctx), _native.encode(url), timeout_ms)
+        )
+        return json.loads(raw) if raw else {}
+
     def lost_events(self) -> int:
         """How many events the bounded queue has dropped since the last call
         (then resets) — so a consumer knows it missed events."""

@@ -232,6 +232,14 @@ def test_live_bidi():
             assert status.get("type") == "success", f"status={status!r}"
             print("  ok: bidi.command(session.status)")
 
+            # script.evaluate — the richer alternative to execute_script.
+            ctx = driver.bidi.top_context()
+            assert ctx, "no top browsing context"
+            assert driver.bidi.evaluate_value("6*7") == 42, "script.evaluate 6*7"
+            # awaitPromise: a resolved promise's value comes back unwrapped.
+            assert driver.bidi.evaluate_value("Promise.resolve(41+1)") == 42, "evaluate awaits promise"
+            print("  ok: bidi.evaluate (6*7 -> 42, Promise -> 42)")
+
             print("PASS: live BiDi test green")
         finally:
             driver.quit()

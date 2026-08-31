@@ -190,6 +190,18 @@ def _ensure_loaded() -> None:
         "aether_sel_embed_bidi_wait_event", _CSTR,
         [_HANDLE, ctypes.c_char_p, ctypes.c_int],
     )
+    # typed BiDi convenience commands
+    g["bidi_get_tree"] = _decl(
+        "aether_sel_embed_bidi_get_tree", _CSTR, [_HANDLE, ctypes.c_int, ctypes.c_int]
+    )
+    g["bidi_script_evaluate"] = _decl(
+        "aether_sel_embed_bidi_script_evaluate", _CSTR,
+        [_HANDLE, ctypes.c_int, ctypes.c_char_p, ctypes.c_char_p, ctypes.c_int],
+    )
+    g["bidi_navigate"] = _decl(
+        "aether_sel_embed_bidi_navigate", _CSTR,
+        [_HANDLE, ctypes.c_int, ctypes.c_char_p, ctypes.c_char_p, ctypes.c_int],
+    )
 
     # ---- string ownership ----
     g["free_string"] = _decl("aether_sel_embed_free_string", None, [ctypes.c_void_p])
