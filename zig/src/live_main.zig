@@ -287,6 +287,44 @@ pub fn main() !void {
             assert(n == 42, "bidi evaluate Promise.resolve(41+1) == 42");
         }
         std.debug.print("  ok: bidi evaluate (Promise.resolve(41+1) -> 42)\n", .{});
+
+        // ---- network interception: observe + release a paused request ----
+        {
+            _ = (try bidi.subscribe(&[_][]const u8{sel.BidiEvent.before_request_sent}, 10000)) orelse {
+                assert(false, "subscribe network.beforeRequestSent");
+                return;
+            };
+            const intercept = try bidi.addIntercept("beforeRequestSent", "", 10000);
+            defer a.free(intercept);
+            assert(intercept.len > 0, "network.addIntercept -> intercept id");
+
+            var fv = try d.executeScript("fetch('https://example.com/blocked').catch(function(){});", "[]");
+            fv.deinit();
+
+            var netev = (try bidi.nextEvent(sel.BidiEvent.before_request_sent, 8000)) orelse {
+                assert(false, "network.beforeRequestSent event received");
+                return;
+            };
+            defer netev.deinit();
+            const rid = (try sel.BiDi.eventRequestId(a, netev.value)) orelse {
+                assert(false, "intercepted request has a request id");
+                return;
+            };
+            defer a.free(rid);
+            assert(rid.len > 0, "request id non-empty");
+
+            var cont = try bidi.continueRequest(rid, 10000);
+            defer cont.deinit();
+            const cont_type = switch (cont.value) {
+                .object => |o| switch (o.get("type") orelse std.json.Value{ .null = {} }) {
+                    .string => |s| s,
+                    else => "",
+                },
+                else => "",
+            };
+            assert(std.mem.eql(u8, cont_type, "success"), "network.continueRequest success");
+        }
+        std.debug.print("  ok: bidi network intercept -> beforeRequestSent -> continueRequest\n", .{});
     }
 
     // ---- atom-backed commands (isDisplayed / getAttribute / findRelative) ----

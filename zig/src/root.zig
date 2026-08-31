@@ -55,6 +55,10 @@ const c = struct {
     extern "c" fn aether_sel_embed_bidi_get_tree(h: ?*anyopaque, id: c_int, timeout_ms: c_int) [*c]u8;
     extern "c" fn aether_sel_embed_bidi_script_evaluate(h: ?*anyopaque, id: c_int, expr: [*c]const u8, context_id: [*c]const u8, timeout_ms: c_int) [*c]u8;
     extern "c" fn aether_sel_embed_bidi_navigate(h: ?*anyopaque, id: c_int, context_id: [*c]const u8, url: [*c]const u8, timeout_ms: c_int) [*c]u8;
+    extern "c" fn aether_sel_embed_bidi_network_add_intercept(h: ?*anyopaque, id: c_int, phases_csv: [*c]const u8, url_pattern: [*c]const u8, timeout_ms: c_int) [*c]u8;
+    extern "c" fn aether_sel_embed_bidi_network_remove_intercept(h: ?*anyopaque, id: c_int, intercept_id: [*c]const u8, timeout_ms: c_int) [*c]u8;
+    extern "c" fn aether_sel_embed_bidi_network_continue_request(h: ?*anyopaque, id: c_int, request_id: [*c]const u8, timeout_ms: c_int) [*c]u8;
+    extern "c" fn aether_sel_embed_bidi_network_fail_request(h: ?*anyopaque, id: c_int, request_id: [*c]const u8, timeout_ms: c_int) [*c]u8;
 };
 
 pub const w3c_element_key = "element-6066-11e4-a52e-4f735466cecf";
@@ -760,6 +764,76 @@ pub const BiDi = struct {
         const uc = try cstr(self.allocator, url);
         defer self.allocator.free(uc);
         return (try self.parseOwned(c.aether_sel_embed_bidi_navigate(self.handle, self.takeId(), cc.ptr, uc.ptr, timeout_ms))) orelse Error.BadResponse;
+    }
+
+    // ---- network interception ----
+
+    /// network.addIntercept for a URL pattern (a full parseable URL as a "string"
+    /// pattern; empty intercepts all) at the given comma-separated phases (e.g.
+    /// "beforeRequestSent"). Returns the intercept id as an owned slice the caller
+    /// frees. `error.BadResponse` if the reply carries no intercept id.
+    pub fn addIntercept(self: *BiDi, phases_csv: []const u8, url_pattern: []const u8, timeout_ms: c_int) Error![]u8 {
+        const pc = try cstr(self.allocator, phases_csv);
+        defer self.allocator.free(pc);
+        const uc = try cstr(self.allocator, url_pattern);
+        defer self.allocator.free(uc);
+        var reply = (try self.parseOwned(c.aether_sel_embed_bidi_network_add_intercept(self.handle, self.takeId(), pc.ptr, uc.ptr, timeout_ms))) orelse return Error.BadResponse;
+        defer reply.deinit();
+        const result = switch (reply.value) {
+            .object => |o| o.get("result") orelse return Error.BadResponse,
+            else => return Error.BadResponse,
+        };
+        const iv = switch (result) {
+            .object => |o| o.get("intercept") orelse return Error.BadResponse,
+            else => return Error.BadResponse,
+        };
+        return switch (iv) {
+            .string => |s| self.allocator.dupe(u8, s) catch Error.OutOfMemory,
+            else => Error.BadResponse,
+        };
+    }
+
+    /// network.removeIntercept. Returns the parsed reply (owned; `.deinit()`).
+    pub fn removeIntercept(self: *BiDi, intercept_id: []const u8, timeout_ms: c_int) Error!std.json.Parsed(std.json.Value) {
+        const ic = try cstr(self.allocator, intercept_id);
+        defer self.allocator.free(ic);
+        return (try self.parseOwned(c.aether_sel_embed_bidi_network_remove_intercept(self.handle, self.takeId(), ic.ptr, timeout_ms))) orelse Error.BadResponse;
+    }
+
+    /// network.continueRequest — let a paused request proceed unchanged.
+    pub fn continueRequest(self: *BiDi, request_id: []const u8, timeout_ms: c_int) Error!std.json.Parsed(std.json.Value) {
+        const rc = try cstr(self.allocator, request_id);
+        defer self.allocator.free(rc);
+        return (try self.parseOwned(c.aether_sel_embed_bidi_network_continue_request(self.handle, self.takeId(), rc.ptr, timeout_ms))) orelse Error.BadResponse;
+    }
+
+    /// network.failRequest — block a paused request.
+    pub fn failRequest(self: *BiDi, request_id: []const u8, timeout_ms: c_int) Error!std.json.Parsed(std.json.Value) {
+        const rc = try cstr(self.allocator, request_id);
+        defer self.allocator.free(rc);
+        return (try self.parseOwned(c.aether_sel_embed_bidi_network_fail_request(self.handle, self.takeId(), rc.ptr, timeout_ms))) orelse Error.BadResponse;
+    }
+
+    /// The network.request id out of a network.beforeRequestSent (or other
+    /// network) event: `params.request.request`, as an owned slice. `null` if
+    /// absent.
+    pub fn eventRequestId(allocator: std.mem.Allocator, event: std.json.Value) Error!?[]u8 {
+        const params = switch (event) {
+            .object => |o| o.get("params") orelse return null,
+            else => return null,
+        };
+        const request = switch (params) {
+            .object => |o| o.get("request") orelse return null,
+            else => return null,
+        };
+        const rid = switch (request) {
+            .object => |o| o.get("request") orelse return null,
+            else => return null,
+        };
+        return switch (rid) {
+            .string => |s| allocator.dupe(u8, s) catch Error.OutOfMemory,
+            else => null,
+        };
     }
 
     /// How many events the bounded queue has dropped since the last call (then
