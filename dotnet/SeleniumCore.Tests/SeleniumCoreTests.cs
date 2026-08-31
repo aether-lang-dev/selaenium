@@ -69,7 +69,14 @@ namespace SeleniumCore.Tests
             {
                 Skip.IfNot(WaitUp(cdPort, 10000), "chromedriver did not come up");
 
-                var d = WebDriver.HeadlessChrome($"http://127.0.0.1:{cdPort}");
+                // Headless Chrome; point at an explicit binary when SEL_CHROME_BINARY
+                // is set (a box with no system Chrome but a cached Chrome-for-Testing).
+                var chromeArgs = new List<object?> { "--headless=new", "--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage" };
+                var chromeOpts = new Dictionary<string, object?> { ["args"] = chromeArgs };
+                string? chromeBin = Environment.GetEnvironmentVariable("SEL_CHROME_BINARY");
+                if (!string.IsNullOrEmpty(chromeBin)) chromeOpts["binary"] = chromeBin;
+                var d = WebDriver.Chrome($"http://127.0.0.1:{cdPort}",
+                    new Dictionary<string, object?> { ["goog:chromeOptions"] = chromeOpts });
                 try
                 {
                     d.SessionId.Length.ShouldBeGreaterThan(0);
