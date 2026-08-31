@@ -14,11 +14,12 @@ aeb(cap) {
             extra_source("_embed_strdup.c")
             output("libselenium_core.so")
         }
-        // Stage an in-tree copy for link-time bindings' fixed -L path. The
-        // shared_lib .so lands in this node's own target/build/lib/ (node-local
-        // target dir), i.e. selenium_core/target/build/lib/ from source_dir.
+        // Stage an in-tree copy for link-time bindings' fixed -L path. aeb emits
+        // the shared_lib to the repo-root build tree under the node's name:
+        // <repo-root>/target/build/selenium_core/lib/libselenium_core.so, i.e.
+        // ../target/build/selenium_core/lib/ from this node's source dir.
         copy.file() {
-            from("target/build/lib/libselenium_core.so")
+            from("../target/build/selenium_core/lib/libselenium_core.so")
             to("native/libselenium_core.so")
         }
     }
