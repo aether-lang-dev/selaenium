@@ -316,6 +316,24 @@ sel_embed_bidi_wait_event(h: ptr, method: string, timeout_ms: int) -> string {
     return sel_embed_dup(selenium_bidi.bidi_wait_event(h, method, timeout_ms))
 }
 
+// ---- typed BiDi convenience commands (thin wrappers over bidi_command) ----
+
+// browsingContext.getTree — result.contexts[] with each context's id. Caller frees.
+sel_embed_bidi_get_tree(h: ptr, id: int, timeout_ms: int) -> string {
+    return sel_embed_dup(selenium_bidi.bidi_get_tree(h, id, timeout_ms))
+}
+
+// script.evaluate an expression in context_id's realm (awaiting a promise). The
+// reply's result.result is the BiDi-serialized value. Caller frees.
+sel_embed_bidi_script_evaluate(h: ptr, id: int, expression: string, context_id: string, timeout_ms: int) -> string {
+    return sel_embed_dup(selenium_bidi.bidi_script_evaluate(h, id, expression, context_id, timeout_ms))
+}
+
+// browsingContext.navigate context_id to url (wait:complete). Caller frees.
+sel_embed_bidi_navigate(h: ptr, id: int, context_id: string, url: string, timeout_ms: int) -> string {
+    return sel_embed_dup(selenium_bidi.bidi_navigate(h, id, context_id, url, timeout_ms))
+}
+
 // ---- string ownership ----
 
 // Free any char* returned by a sel_embed_* function above.

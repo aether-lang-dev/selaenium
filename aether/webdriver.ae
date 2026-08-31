@@ -290,6 +290,66 @@ bidi_command(sp: ptr, method: string, params_json: string, timeout_ms: int) -> s
     return selenium_bidi.bidi_command(ch, id, method, params_json, timeout_ms)
 }
 
+// bidi_top_context(session) — the top-level browsing context id (via
+// browsingContext.getTree), or "" if unavailable. The anchor for script.evaluate
+// and BiDi navigation.
+bidi_top_context(sp: ptr) -> string {
+    ch = _ensure_bidi(sp)
+    if ch == null { return "" }
+    s = sp as *WdSession
+    rj = selenium_bidi.bidi_get_tree(ch, _bidi_id(s), 10000)
+    return _first_context_id(rj)
+}
+
+// bidi_evaluate(session, expression) — script.evaluate the expression in the top
+// context's realm (awaiting promises) and return the raw reply JSON (result.result
+// carries the BiDi-typed value). BiDi's richer alternative to execute_script.
+bidi_evaluate(sp: ptr, expression: string) -> string {
+    ch = _ensure_bidi(sp)
+    if ch == null { return "" }
+    s = sp as *WdSession
+    ctx = bidi_top_context(sp)
+    if string.length(ctx) == 0 { return "" }
+    return selenium_bidi.bidi_script_evaluate(ch, _bidi_id(s), expression, ctx, 30000)
+}
+
+// bidi_evaluate_int(session, expression) — script.evaluate returning a JS number,
+// unwrapped to an int (0 on any failure / non-number). Convenience over the raw
+// reply for the common "evaluate an arithmetic expression" case.
+bidi_evaluate_int(sp: ptr, expression: string) -> int {
+    rj = bidi_evaluate(sp, expression)
+    return _bidi_result_int(rj)
+}
+
+// _first_context_id(getTree_reply) — result.contexts[0].context, or "".
+_first_context_id(reply_json: string) -> string {
+    root, perr = json.parse(reply_json)
+    if string.length(perr) > 0 { return "" }
+    res, _r = json.object_get(root, "result")
+    if res == null { return "" }
+    ctxs, _c = json.object_get(res, "contexts")
+    if ctxs == null { return "" }
+    if json.array_size(ctxs) == 0 { return "" }
+    first, _f = json.array_get(ctxs, 0)
+    cidv, _ci = json.object_get(first, "context")
+    cid, _cs = json.get_string(cidv)
+    return cid
+}
+
+// _bidi_result_int(evaluate_reply) — result.result.value as an int (BiDi wraps a
+// number as {type:"number",value:N}). 0 if absent / not a number.
+_bidi_result_int(reply_json: string) -> int {
+    root, perr = json.parse(reply_json)
+    if string.length(perr) > 0 { return 0 }
+    res, _r = json.object_get(root, "result")
+    if res == null { return 0 }
+    rr, _rr = json.object_get(res, "result")
+    if rr == null { return 0 }
+    vv, _v = json.object_get(rr, "value")
+    if vv == null { return 0 }
+    return json.get_int(vv)
+}
+
 // ---- BiDi event-name catalog (the common events, as typed helpers) ----
 // Names per the W3C WebDriver-BiDi spec. Pass to bidi_subscribe (single or a
 // comma-joined list) and match in bidi_next_event.

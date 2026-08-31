@@ -148,6 +148,33 @@ bidi_unsubscribe(sp: ptr, id: int, events_csv: string, timeout_ms: int) -> strin
     return bidi_command(sp, id, "session.unsubscribe", params, timeout_ms)
 }
 
+// ---- typed convenience commands (thin wrappers over bidi_command) ----
+
+// bidi_get_tree(session, id, timeout_ms) — browsingContext.getTree. Returns the
+// reply JSON whose result.contexts[] lists the browsing contexts (each with its
+// "context" id). The top context id is the anchor for script.evaluate / navigate.
+bidi_get_tree(sp: ptr, id: int, timeout_ms: int) -> string {
+    return bidi_command(sp, id, "browsingContext.getTree", "{}", timeout_ms)
+}
+
+// bidi_script_evaluate(session, id, expression, context_id, timeout_ms) —
+// script.evaluate: run a JS expression in the given browsing context's default
+// realm, awaiting a returned promise. Returns the reply JSON (result.result holds
+// the BiDi-serialized value: {type:"number",value:42} etc.). This is BiDi's
+// richer alternative to executeScript — real realms, promise-awaiting, structured
+// value types. context_id comes from bidi_get_tree.
+bidi_script_evaluate(sp: ptr, id: int, expression: string, context_id: string, timeout_ms: int) -> string {
+    params = "{\"expression\":${_qjson(expression)},\"target\":{\"context\":${_qjson(context_id)}},\"awaitPromise\":true}"
+    return bidi_command(sp, id, "script.evaluate", params, timeout_ms)
+}
+
+// bidi_navigate(session, id, context_id, url, timeout_ms) — browsingContext.navigate
+// with wait:"complete". Returns the reply JSON (result.navigation / result.url).
+bidi_navigate(sp: ptr, id: int, context_id: string, url: string, timeout_ms: int) -> string {
+    params = "{\"context\":${_qjson(context_id)},\"url\":${_qjson(url)},\"wait\":\"complete\"}"
+    return bidi_command(sp, id, "browsingContext.navigate", params, timeout_ms)
+}
+
 // bidi_wait_event(session, method, timeout_ms) — pump the demux until an event
 // whose "method" matches arrives (from the bounded event queue), or timeout.
 // Returns the event JSON, or "" on timeout/close. Non-matching events that arrive

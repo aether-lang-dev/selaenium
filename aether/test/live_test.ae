@@ -102,6 +102,16 @@ main() {
                  string.contains(ev, "log.entryAdded"))
         fails = fails + ck("bidi event carries the logged text",
                  string.contains(ev, "bidi-hello"))
+
+        // BiDi script.evaluate — the richer alternative to executeScript: run an
+        // expression in the top context's realm and get a typed result.
+        ctx = webdriver.bidi_top_context(d)
+        fails = fails + ck("bidi top context id", _gt0(string.length(ctx)))
+        fails = fails + ck("bidi script.evaluate 6*7 -> 42",
+                 webdriver.bidi_evaluate_int(d, "6*7") == 42)
+        // awaitPromise: a resolved promise's value comes back unwrapped.
+        fails = fails + ck("bidi script.evaluate awaits a promise",
+                 webdriver.bidi_evaluate_int(d, "Promise.resolve(41+1)") == 42)
     } else {
         println("  (bidi unavailable — remote end granted no webSocketUrl; skipping BiDi checks)")
     }
