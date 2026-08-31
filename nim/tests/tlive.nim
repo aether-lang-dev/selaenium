@@ -188,6 +188,14 @@ proc main() =
       doAssert status["type"].getStr == "success"
       echo "  ok: BiDi (log.entryAdded event + session.status command)"
 
+      # Typed BiDi convenience: getTree/topContext, script.evaluate (unwrapped
+      # value), and a promise-awaiting evaluate — all against real Chrome.
+      let top = d.bidi.topContext()
+      doAssert top.len > 0
+      doAssert d.bidi.evaluateValue("6*7").getInt == 42
+      doAssert d.bidi.evaluateValue("Promise.resolve(41+1)").getInt == 42
+      echo "  ok: BiDi typed (topContext + evaluateValue sync/promise)"
+
       echo "PASS: Nim live surface test green"
     finally:
       d.quit()

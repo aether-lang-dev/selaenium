@@ -265,6 +265,24 @@ fn live_bidi() {
         "session.status reply: {status:?}"
     );
 
+    // ---- typed BiDi convenience verbs (getTree / script.evaluate) ----
+
+    // top_context resolves to the top-level browsing context id.
+    let ctx = d.bidi().unwrap().top_context(10000).unwrap();
+    assert!(ctx.is_some(), "top_context should be Some, got {ctx:?}");
+
+    // script.evaluate a plain expression -> a BiDi number value of 42.
+    let v = d.bidi().unwrap().evaluate_value("6*7", 30000).unwrap();
+    assert_eq!(v.and_then(|j| j.as_f64()), Some(42.0), "evaluate_value(6*7) should be 42");
+
+    // script.evaluate a promise -> the awaited value is 42 (promise-await).
+    let p = d.bidi().unwrap().evaluate_value("Promise.resolve(41+1)", 30000).unwrap();
+    assert_eq!(
+        p.and_then(|j| j.as_f64()),
+        Some(42.0),
+        "evaluate_value(Promise.resolve(41+1)) should await to 42"
+    );
+
     d.quit().unwrap();
 }
 

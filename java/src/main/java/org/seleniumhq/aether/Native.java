@@ -181,6 +181,14 @@ final class Native {
         static final MethodHandle BIDI_WAIT_EVENT = down("aether_sel_embed_bidi_wait_event",
                 FunctionDescriptor.of(C_STR, C_PTR, C_PTR, C_INT));
 
+        // ---- typed BiDi convenience commands (reply JSON out, caller frees) ----
+        static final MethodHandle BIDI_GET_TREE = down("aether_sel_embed_bidi_get_tree",
+                FunctionDescriptor.of(C_STR, C_PTR, C_INT, C_INT));
+        static final MethodHandle BIDI_SCRIPT_EVALUATE = down("aether_sel_embed_bidi_script_evaluate",
+                FunctionDescriptor.of(C_STR, C_PTR, C_INT, C_PTR, C_PTR, C_INT));
+        static final MethodHandle BIDI_NAVIGATE = down("aether_sel_embed_bidi_navigate",
+                FunctionDescriptor.of(C_STR, C_PTR, C_INT, C_PTR, C_PTR, C_INT));
+
         static final MethodHandle FREE_STRING = down("aether_sel_embed_free_string",
                 FunctionDescriptor.ofVoid(C_PTR));
     }
@@ -429,6 +437,32 @@ final class Native {
                     handle, a.allocateFrom(method), timeoutMs));
         } catch (Throwable t) {
             throw wrap(t, "bidi_wait_event");
+        }
+    }
+
+    static String bidiGetTree(MemorySegment handle, int id, int timeoutMs) {
+        try {
+            return takeString((MemorySegment) MH.BIDI_GET_TREE.invokeExact(handle, id, timeoutMs));
+        } catch (Throwable t) {
+            throw wrap(t, "bidi_get_tree");
+        }
+    }
+
+    static String bidiScriptEvaluate(MemorySegment handle, int id, String expr, String contextId, int timeoutMs) {
+        try (Arena a = Arena.ofConfined()) {
+            return takeString((MemorySegment) MH.BIDI_SCRIPT_EVALUATE.invokeExact(
+                    handle, id, a.allocateFrom(expr), a.allocateFrom(contextId), timeoutMs));
+        } catch (Throwable t) {
+            throw wrap(t, "bidi_script_evaluate");
+        }
+    }
+
+    static String bidiNavigate(MemorySegment handle, int id, String contextId, String url, int timeoutMs) {
+        try (Arena a = Arena.ofConfined()) {
+            return takeString((MemorySegment) MH.BIDI_NAVIGATE.invokeExact(
+                    handle, id, a.allocateFrom(contextId), a.allocateFrom(url), timeoutMs));
+        } catch (Throwable t) {
+            throw wrap(t, "bidi_navigate");
         }
     }
 

@@ -61,6 +61,23 @@ extern "C" {
     fn aether_sel_embed_bidi_subscribe(h: Handle, id: c_int, events_csv: *const c_char, timeout_ms: c_int) -> *mut c_char;
     fn aether_sel_embed_bidi_unsubscribe(h: Handle, id: c_int, events_csv: *const c_char, timeout_ms: c_int) -> *mut c_char;
     fn aether_sel_embed_bidi_wait_event(h: Handle, method: *const c_char, timeout_ms: c_int) -> *mut c_char;
+
+    // ---- typed BiDi convenience verbs (each returns a BiDi reply JSON) ----
+    fn aether_sel_embed_bidi_get_tree(h: Handle, id: c_int, timeout_ms: c_int) -> *mut c_char;
+    fn aether_sel_embed_bidi_script_evaluate(
+        h: Handle,
+        id: c_int,
+        expr: *const c_char,
+        context_id: *const c_char,
+        timeout_ms: c_int,
+    ) -> *mut c_char;
+    fn aether_sel_embed_bidi_navigate(
+        h: Handle,
+        id: c_int,
+        context_id: *const c_char,
+        url: *const c_char,
+        timeout_ms: c_int,
+    ) -> *mut c_char;
 }
 
 /// Copy a caller-owned native `char*` into a Rust `String`, then free it per the
@@ -661,6 +678,74 @@ impl BiDi {
             waited += step;
         }
         Err(WebDriverError::classify(21, format!("BiDi command timed out: {method}")))
+    }
+
+    // ---- typed convenience commands ----
+
+    /// `browsingContext.getTree` — the browsing contexts (each with a `context`
+    /// id). Returns the full reply payload.
+    pub fn get_tree(&mut self, timeout_ms: i32) -> Result<Json> {
+        let id = self.next_id();
+        let raw = take_string(unsafe { aether_sel_embed_bidi_get_tree(self.handle, id, timeout_ms) });
+        Self::decode(&raw)
+    }
+
+    /// The top-level browsing context id (the anchor for evaluate/navigate), or
+    /// `None` when the tree is empty.
+    pub fn top_context(&mut self, timeout_ms: i32) -> Result<Option<String>> {
+        let tree = self.get_tree(timeout_ms)?;
+        let ctx = tree
+            .get("result")
+            .and_then(|r| r.get("contexts"))
+            .and_then(|c| c.as_array())
+            .and_then(|a| a.first())
+            .and_then(|c| c.get("context"))
+            .and_then(|c| c.as_str())
+            .map(String::from);
+        Ok(ctx)
+    }
+
+    /// `script.evaluate` an expression in the top-level context's realm, awaiting
+    /// a returned promise. Returns the reply; `["result"]["result"]` is the
+    /// BiDi-typed value (e.g. `{"type": "number", "value": 42}`). BiDi's richer
+    /// alternative to execute_script — real realms, promise-awaiting, structured
+    /// value types.
+    pub fn evaluate(&mut self, expr: &str, timeout_ms: i32) -> Result<Json> {
+        let ctx = self
+            .top_context(timeout_ms)?
+            .ok_or_else(|| WebDriverError::classify(0, "no browsing context for script.evaluate".into()))?;
+        let e = cstr(expr);
+        let c = cstr(&ctx);
+        let raw = take_string(unsafe {
+            aether_sel_embed_bidi_script_evaluate(self.handle, self.next_id(), e.as_ptr(), c.as_ptr(), timeout_ms)
+        });
+        Self::decode(&raw)
+    }
+
+    /// `script.evaluate`, returning just the unwrapped value (the `.value` of the
+    /// BiDi-typed result), or `None` if it wasn't a simple value.
+    pub fn evaluate_value(&mut self, expr: &str, timeout_ms: i32) -> Result<Option<Json>> {
+        let reply = self.evaluate(expr, timeout_ms)?;
+        let value = reply
+            .get("result")
+            .and_then(|r| r.get("result"))
+            .and_then(|r| r.get("value"))
+            .cloned();
+        Ok(value)
+    }
+
+    /// `browsingContext.navigate` the top-level context to `url` (wait: complete).
+    /// Returns the reply payload.
+    pub fn navigate(&mut self, url: &str, timeout_ms: i32) -> Result<Json> {
+        let ctx = self
+            .top_context(timeout_ms)?
+            .ok_or_else(|| WebDriverError::classify(0, "no browsing context for navigate".into()))?;
+        let c = cstr(&ctx);
+        let u = cstr(url);
+        let raw = take_string(unsafe {
+            aether_sel_embed_bidi_navigate(self.handle, self.next_id(), c.as_ptr(), u.as_ptr(), timeout_ms)
+        });
+        Self::decode(&raw)
     }
 
     /// How many events the bounded queue has dropped since the last call (then

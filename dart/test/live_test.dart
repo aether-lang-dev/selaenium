@@ -233,6 +233,12 @@ void main() {
         // a plain command round-trips too
         final status = d.bidi.command('session.status');
         expect(status['type'], 'success');
+
+        // typed convenience commands: getTree/topContext, script.evaluate
+        expect(d.bidi.topContext(), isNotNull);
+        expect(d.bidi.evaluateValue('6*7'), 42);
+        // script.evaluate awaits a returned promise
+        expect(d.bidi.evaluateValue('Promise.resolve(41+1)'), 42);
       } finally {
         d.quit();
       }

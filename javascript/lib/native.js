@@ -112,6 +112,15 @@ const bidiSubscribe = lazy('void* aether_sel_embed_bidi_subscribe(void* h, int i
 const bidiUnsubscribe = lazy('void* aether_sel_embed_bidi_unsubscribe(void* h, int id, const char* events_csv, int timeout_ms)')
 const bidiWaitEvent = lazy('void* aether_sel_embed_bidi_wait_event(void* h, const char* method, int timeout_ms)')
 
+// ---- typed BiDi convenience commands (char* replies returned as void*) ----
+const bidiGetTree = lazy('void* aether_sel_embed_bidi_get_tree(void* h, int id, int timeout_ms)')
+const bidiScriptEvaluate = lazy(
+  'void* aether_sel_embed_bidi_script_evaluate(void* h, int id, const char* expr, const char* context_id, int timeout_ms)',
+)
+const bidiNavigate = lazy(
+  'void* aether_sel_embed_bidi_navigate(void* h, int id, const char* context_id, const char* url, int timeout_ms)',
+)
+
 // ---- string ownership ----
 const freeString = lazy('void aether_sel_embed_free_string(void* s)')
 
@@ -160,6 +169,9 @@ module.exports = {
   bidiSubscribe,
   bidiUnsubscribe,
   bidiWaitEvent,
+  bidiGetTree,
+  bidiScriptEvaluate,
+  bidiNavigate,
   takeString,
   isNull,
 }

@@ -61,6 +61,11 @@ void   aether_sel_embed_bidi_cancel(void* h, int id);
 char*  aether_sel_embed_bidi_subscribe(void* h, int id, const char* events_csv, int timeout_ms);
 char*  aether_sel_embed_bidi_unsubscribe(void* h, int id, const char* events_csv, int timeout_ms);
 char*  aether_sel_embed_bidi_wait_event(void* h, const char* method, int timeout_ms);
+
+// ---- typed BiDi convenience commands (each returns a BiDi reply JSON) ----
+char*  aether_sel_embed_bidi_get_tree(void* h, int id, int timeout_ms);
+char*  aether_sel_embed_bidi_script_evaluate(void* h, int id, const char* expr, const char* context_id, int timeout_ms);
+char*  aether_sel_embed_bidi_navigate(void* h, int id, const char* context_id, const char* url, int timeout_ms);
 */
 import "C"
 
@@ -783,6 +788,108 @@ func (b *BiDi) Command(method string, params map[string]interface{}, timeoutMs i
 		}
 	}
 	return nil, &Error{Code: codeTimeout, Message: "BiDi command timed out: " + method}
+}
+
+// ---- typed convenience commands ----
+
+// bidiConvenienceTimeout is the default timeout for the typed BiDi convenience
+// commands when the caller passes none (matches the Python surface's defaults).
+const bidiConvenienceTimeout = 30000
+
+// decodeBidiReply unmarshals a convenience-command reply JSON into a map (the
+// same reply shape as Command). An empty reply yields an empty map.
+func decodeBidiReply(raw string) (map[string]interface{}, error) {
+	if raw == "" {
+		return map[string]interface{}{}, nil
+	}
+	var m map[string]interface{}
+	if err := json.Unmarshal([]byte(raw), &m); err != nil {
+		return nil, fmt.Errorf("unmarshal bidi reply: %w", err)
+	}
+	return m, nil
+}
+
+// firstTimeout returns the single optional timeout, or bidiConvenienceTimeout.
+func firstTimeout(timeoutMs []int) int {
+	if len(timeoutMs) > 0 {
+		return timeoutMs[0]
+	}
+	return bidiConvenienceTimeout
+}
+
+// GetTree issues browsingContext.getTree and returns the reply. Its
+// ["result"]["contexts"] lists the browsing contexts (each with a "context" id).
+func (b *BiDi) GetTree(timeoutMs ...int) (map[string]interface{}, error) {
+	return decodeBidiReply(takeString(C.aether_sel_embed_bidi_get_tree(b.h, b.id(), C.int(firstTimeout(timeoutMs)))))
+}
+
+// TopContext returns the top-level browsing context id (the anchor for
+// Evaluate/Navigate), or "" if the tree has none.
+func (b *BiDi) TopContext(timeoutMs ...int) (string, error) {
+	tree, err := b.GetTree(timeoutMs...)
+	if err != nil {
+		return "", err
+	}
+	result, _ := tree["result"].(map[string]interface{})
+	contexts, _ := result["contexts"].([]interface{})
+	if len(contexts) == 0 {
+		return "", nil
+	}
+	c, _ := contexts[0].(map[string]interface{})
+	id, _ := c["context"].(string)
+	return id, nil
+}
+
+// Evaluate runs script.evaluate for an expression in the top context's realm,
+// awaiting a returned promise, and returns the reply. Its ["result"]["result"]
+// is the BiDi-typed value (e.g. {"type":"number","value":42}). This is BiDi's
+// richer alternative to ExecuteScript — real realms, promise-awaiting, and
+// structured value types.
+func (b *BiDi) Evaluate(expr string, timeoutMs ...int) (map[string]interface{}, error) {
+	t := firstTimeout(timeoutMs)
+	ctx, err := b.TopContext(t)
+	if err != nil {
+		return nil, err
+	}
+	if ctx == "" {
+		return nil, &Error{Code: 0, Message: "no browsing context for script.evaluate"}
+	}
+	cExpr := cstr(expr)
+	cCtx := cstr(ctx)
+	defer C.free(unsafe.Pointer(cExpr))
+	defer C.free(unsafe.Pointer(cCtx))
+	return decodeBidiReply(takeString(C.aether_sel_embed_bidi_script_evaluate(b.h, b.id(), cExpr, cCtx, C.int(t))))
+}
+
+// EvaluateValue runs script.evaluate and returns just the unwrapped value (the
+// .value of the BiDi-typed result), or nil if it was not a simple value. Note:
+// JSON numbers unmarshal to float64 in Go.
+func (b *BiDi) EvaluateValue(expr string, timeoutMs ...int) (interface{}, error) {
+	reply, err := b.Evaluate(expr, timeoutMs...)
+	if err != nil {
+		return nil, err
+	}
+	result, _ := reply["result"].(map[string]interface{})
+	inner, _ := result["result"].(map[string]interface{})
+	return inner["value"], nil
+}
+
+// Navigate issues browsingContext.navigate to url in the top context (waiting
+// for the navigation to complete) and returns the reply.
+func (b *BiDi) Navigate(url string, timeoutMs ...int) (map[string]interface{}, error) {
+	t := firstTimeout(timeoutMs)
+	ctx, err := b.TopContext(t)
+	if err != nil {
+		return nil, err
+	}
+	if ctx == "" {
+		return nil, &Error{Code: 0, Message: "no browsing context for navigate"}
+	}
+	cCtx := cstr(ctx)
+	cURL := cstr(url)
+	defer C.free(unsafe.Pointer(cCtx))
+	defer C.free(unsafe.Pointer(cURL))
+	return decodeBidiReply(takeString(C.aether_sel_embed_bidi_navigate(b.h, b.id(), cCtx, cURL, C.int(t))))
 }
 
 // LostEvents reports how many events the bounded queue has dropped since the

@@ -415,6 +415,47 @@ module SeleniumCore
       raise TimeoutError.new("BiDi command timed out: #{method}", 0)
     end
 
+    # ---- typed convenience commands ----
+
+    # browsingContext.getTree — the browsing contexts (each with a "context" id).
+    def get_tree(timeout_ms: 10_000)
+      raw = Native.take_string(Native.call(:bidi_get_tree, @handle, next_id, timeout_ms))
+      raw.empty? ? {} : JSON.parse(raw)
+    end
+
+    # The top-level browsing context id (the anchor for evaluate/navigate), or nil.
+    def top_context(timeout_ms: 10_000)
+      contexts = get_tree(timeout_ms: timeout_ms).dig('result', 'contexts') || []
+      contexts.empty? ? nil : contexts.first['context']
+    end
+
+    # script.evaluate an expression in a context's realm, awaiting a returned
+    # promise. Returns the reply Hash; dig('result', 'result') is the BiDi-typed
+    # value (e.g. {"type" => "number", "value" => 42}). BiDi's richer alternative
+    # to execute_script — real realms, promise-awaiting, structured value types.
+    def evaluate(expr, context: nil, timeout_ms: 30_000)
+      ctx = context || top_context(timeout_ms: timeout_ms)
+      raise WebDriverError.new('no browsing context for script.evaluate', 0) unless ctx
+
+      raw = Native.take_string(Native.call(:bidi_script_evaluate, @handle, next_id, expr, ctx, timeout_ms))
+      raw.empty? ? {} : JSON.parse(raw)
+    end
+
+    # script.evaluate, returning just the unwrapped value (the .value of the
+    # BiDi-typed result), or nil if it wasn't a simple value.
+    def evaluate_value(expr, context: nil, timeout_ms: 30_000)
+      evaluate(expr, context: context, timeout_ms: timeout_ms).dig('result', 'result', 'value')
+    end
+
+    # browsingContext.navigate a context to url (wait: complete). Returns the reply.
+    def navigate(url, context: nil, timeout_ms: 30_000)
+      ctx = context || top_context(timeout_ms: timeout_ms)
+      raise WebDriverError.new('no browsing context for navigate', 0) unless ctx
+
+      raw = Native.take_string(Native.call(:bidi_navigate, @handle, next_id, ctx, url, timeout_ms))
+      raw.empty? ? {} : JSON.parse(raw)
+    end
+
     # How many events the bounded queue dropped since the last call (then resets).
     def lost_events = Native.call(:bidi_lost_events, @handle)
 

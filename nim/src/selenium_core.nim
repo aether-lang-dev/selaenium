@@ -78,6 +78,17 @@ proc selBidiUnsubscribe(h: pointer, id: cint, eventsCsv: cstring, timeoutMs: cin
 proc selBidiWaitEvent(h: pointer, meth: cstring, timeoutMs: cint): cstring
   {.importc: "aether_sel_embed_bidi_wait_event", cdecl.}
 
+# Typed BiDi convenience commands (the engine issues the command and returns its
+# reply JSON; the caller frees via takeString).
+proc selBidiGetTree(h: pointer, id: cint, timeoutMs: cint): cstring
+  {.importc: "aether_sel_embed_bidi_get_tree", cdecl.}
+proc selBidiScriptEvaluate(h: pointer, id: cint, expr, contextId: cstring,
+                           timeoutMs: cint): cstring
+  {.importc: "aether_sel_embed_bidi_script_evaluate", cdecl.}
+proc selBidiNavigate(h: pointer, id: cint, contextId, url: cstring,
+                     timeoutMs: cint): cstring
+  {.importc: "aether_sel_embed_bidi_navigate", cdecl.}
+
 proc takeString(p: cstring): string =
   ## Copy an ABI-returned string into a Nim string and free the original. Every
   ## cstring this module returns goes through here; the pointer is dead after.
@@ -385,6 +396,61 @@ proc command*(b: BiDi, meth: string, params: JsonNode = newJObject(),
       break
     waited += step
   raise classify(21, "BiDi command timed out: " & meth)
+
+# ---- typed convenience commands ----
+
+proc getTree*(b: BiDi, timeoutMs = 10000): JsonNode =
+  ## browsingContext.getTree — the browsing contexts (each with a "context" id).
+  let raw = takeString(selBidiGetTree(b.handle, b.nextBidiId, timeoutMs.cint))
+  if raw.len == 0: newJObject() else: parseJson(raw)
+
+proc topContext*(b: BiDi, timeoutMs = 10000): string =
+  ## The top-level browsing context id (the anchor for evaluate/navigate),
+  ## or "" if there is none.
+  let tree = b.getTree(timeoutMs)
+  if tree.kind == JObject and tree.hasKey("result"):
+    let res = tree["result"]
+    if res.kind == JObject and res.hasKey("contexts"):
+      let contexts = res["contexts"]
+      if contexts.kind == JArray and contexts.len > 0:
+        let first = contexts[0]
+        if first.kind == JObject and first.hasKey("context"):
+          return first["context"].getStr
+  ""
+
+proc evaluate*(b: BiDi, expr: string, timeoutMs = 30000): JsonNode =
+  ## script.evaluate an expression in the top context's realm, awaiting a
+  ## returned promise. Returns the reply; `["result"]["result"]` is the
+  ## BiDi-typed value (e.g. {"type": "number", "value": 42}). BiDi's richer
+  ## alternative to executeScript — real realms, promise-awaiting, structured
+  ## value types.
+  let ctx = b.topContext(timeoutMs)
+  if ctx.len == 0:
+    raise classify(0, "no browsing context for script.evaluate")
+  let raw = takeString(selBidiScriptEvaluate(b.handle, b.nextBidiId,
+    expr.cstring, ctx.cstring, timeoutMs.cint))
+  if raw.len == 0: newJObject() else: parseJson(raw)
+
+proc evaluateValue*(b: BiDi, expr: string, timeoutMs = 30000): JsonNode =
+  ## script.evaluate, returning just the unwrapped value (the `.value` of the
+  ## BiDi-typed result), or JNull if it wasn't a simple value.
+  let reply = b.evaluate(expr, timeoutMs)
+  if reply.kind == JObject and reply.hasKey("result"):
+    let res = reply["result"]
+    if res.kind == JObject and res.hasKey("result"):
+      let inner = res["result"]
+      if inner.kind == JObject and inner.hasKey("value"):
+        return inner["value"]
+  newJNull()
+
+proc navigate*(b: BiDi, url: string, timeoutMs = 30000): JsonNode =
+  ## browsingContext.navigate the top context to url (wait: complete).
+  let ctx = b.topContext(timeoutMs)
+  if ctx.len == 0:
+    raise classify(0, "no browsing context for navigate")
+  let raw = takeString(selBidiNavigate(b.handle, b.nextBidiId,
+    ctx.cstring, url.cstring, timeoutMs.cint))
+  if raw.len == 0: newJObject() else: parseJson(raw)
 
 proc lostEvents*(b: BiDi): int =
   ## How many events the bounded queue has dropped since the last call (then

@@ -420,6 +420,69 @@ class BiDi {
     throw TimeoutError('BiDi command timed out: $method', 0);
   }
 
+  // ---- typed convenience commands ----
+
+  /// browsingContext.getTree — the browsing contexts (each with a "context" id).
+  Map<String, dynamic> getTree({int timeoutMs = 10000}) {
+    final raw = Native.instance
+        .takeString(Native.instance.bidiGetTree(_handle, _id(), timeoutMs));
+    return raw.isEmpty ? {} : jsonDecode(raw) as Map<String, dynamic>;
+  }
+
+  /// The top-level browsing context id (the anchor for evaluate/navigate), or
+  /// null if the session has no context yet.
+  String? topContext({int timeoutMs = 10000}) {
+    final result = getTree(timeoutMs: timeoutMs)['result'];
+    final contexts = (result is Map<String, dynamic> ? result['contexts'] : null);
+    if (contexts is List && contexts.isNotEmpty) {
+      final first = contexts.first;
+      if (first is Map<String, dynamic>) return first['context'] as String?;
+    }
+    return null;
+  }
+
+  /// script.evaluate an expression in the top context's realm, awaiting a
+  /// returned promise. Returns the reply; `["result"]["result"]` is the
+  /// BiDi-typed value (e.g. `{"type": "number", "value": 42}`). BiDi's richer
+  /// alternative to executeScript — real realms, promise-awaiting, structured
+  /// value types.
+  Map<String, dynamic> evaluate(String expr, {int timeoutMs = 30000}) {
+    final ctx = topContext(timeoutMs: timeoutMs);
+    if (ctx == null) {
+      throw WebDriverError('no browsing context for script.evaluate', 0);
+    }
+    final raw = _withCStr(
+        expr,
+        (e) => _withCStr(
+            ctx,
+            (c) => Native.instance.takeString(Native.instance
+                .bidiScriptEvaluate(_handle, _id(), e, c, timeoutMs))));
+    return raw.isEmpty ? {} : jsonDecode(raw) as Map<String, dynamic>;
+  }
+
+  /// script.evaluate, returning just the unwrapped value (the `.value` of the
+  /// BiDi-typed result), or null if it wasn't a simple value.
+  dynamic evaluateValue(String expr, {int timeoutMs = 30000}) {
+    final result = evaluate(expr, timeoutMs: timeoutMs)['result'];
+    final inner = (result is Map<String, dynamic> ? result['result'] : null);
+    return inner is Map<String, dynamic> ? inner['value'] : null;
+  }
+
+  /// browsingContext.navigate the top context to url (wait: complete).
+  Map<String, dynamic> navigate(String url, {int timeoutMs = 30000}) {
+    final ctx = topContext(timeoutMs: timeoutMs);
+    if (ctx == null) {
+      throw WebDriverError('no browsing context for navigate', 0);
+    }
+    final raw = _withCStr(
+        ctx,
+        (c) => _withCStr(
+            url,
+            (u) => Native.instance.takeString(
+                Native.instance.bidiNavigate(_handle, _id(), c, u, timeoutMs))));
+    return raw.isEmpty ? {} : jsonDecode(raw) as Map<String, dynamic>;
+  }
+
   /// How many events the bounded queue has dropped since the last call (then
   /// resets) — so a consumer knows it missed events.
   int lostEvents() => Native.instance.bidiLostEvents(_handle);

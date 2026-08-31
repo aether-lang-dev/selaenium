@@ -165,6 +165,18 @@ class LiveTest {
 
                 Map<String, Object> status = d.bidi().command("session.status", null, 10000);
                 assertEquals("success", status.get("type"), "session.status success");
+
+                // typed convenience commands: getTree / script.evaluate / navigate
+                String topCtx = d.bidi().topContext(10000);
+                assertTrue(topCtx != null, "topContext present");
+
+                Object six7 = d.bidi().evaluateValue("6*7", 30000);
+                assertTrue(six7 instanceof Number, "evaluateValue(6*7) is a Number, was: " + six7);
+                assertEquals(42, ((Number) six7).intValue(), "evaluateValue(6*7) == 42");
+
+                Object promised = d.bidi().evaluateValue("Promise.resolve(41+1)", 30000);
+                assertTrue(promised instanceof Number, "evaluateValue(promise) is a Number, was: " + promised);
+                assertEquals(42, ((Number) promised).intValue(), "evaluateValue(Promise.resolve(41+1)) == 42");
             } finally {
                 d.quit();
             }

@@ -215,6 +215,16 @@ test('live chrome + bidi', async (t) => {
 
       const status = d.bidi.command('session.status')
       assert.strictEqual(status.type, 'success', `session.status: ${JSON.stringify(status)}`)
+
+      // typed convenience commands: topContext / evaluateValue (incl. promise-await)
+      const ctx = d.bidi.topContext()
+      assert.ok(ctx, `topContext() returned falsy: ${JSON.stringify(ctx)}`)
+      assert.strictEqual(d.bidi.evaluateValue('6*7'), 42, 'evaluateValue(6*7) !== 42')
+      assert.strictEqual(
+        d.bidi.evaluateValue('Promise.resolve(41+1)'),
+        42,
+        'evaluateValue(Promise.resolve(41+1)) !== 42 (promise-await)',
+      )
     } finally {
       d.quit()
     }

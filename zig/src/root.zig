@@ -50,6 +50,11 @@ const c = struct {
     extern "c" fn aether_sel_embed_bidi_subscribe(h: ?*anyopaque, id: c_int, events_csv: [*c]const u8, timeout_ms: c_int) [*c]u8;
     extern "c" fn aether_sel_embed_bidi_unsubscribe(h: ?*anyopaque, id: c_int, events_csv: [*c]const u8, timeout_ms: c_int) [*c]u8;
     extern "c" fn aether_sel_embed_bidi_wait_event(h: ?*anyopaque, method: [*c]const u8, timeout_ms: c_int) [*c]u8;
+
+    // ---- typed BiDi convenience commands (send + wait for this id's reply) ----
+    extern "c" fn aether_sel_embed_bidi_get_tree(h: ?*anyopaque, id: c_int, timeout_ms: c_int) [*c]u8;
+    extern "c" fn aether_sel_embed_bidi_script_evaluate(h: ?*anyopaque, id: c_int, expr: [*c]const u8, context_id: [*c]const u8, timeout_ms: c_int) [*c]u8;
+    extern "c" fn aether_sel_embed_bidi_navigate(h: ?*anyopaque, id: c_int, context_id: [*c]const u8, url: [*c]const u8, timeout_ms: c_int) [*c]u8;
 };
 
 pub const w3c_element_key = "element-6066-11e4-a52e-4f735466cecf";
@@ -209,8 +214,7 @@ pub const WebDriver = struct {
             "}";
         const sep: []const u8 = if (std.mem.eql(u8, tail, "}")) "" else ",";
         // {"capabilities":{"alwaysMatch":{"webSocketUrl":true[,<caps>]}}}
-        const caps = try std.fmt.allocPrint(allocator,
-            "{{\"capabilities\":{{\"alwaysMatch\":{{\"webSocketUrl\":true{s}{s}}}}}", .{ sep, tail });
+        const caps = try std.fmt.allocPrint(allocator, "{{\"capabilities\":{{\"alwaysMatch\":{{\"webSocketUrl\":true{s}{s}}}}}", .{ sep, tail });
         defer allocator.free(caps);
         var v = d.execute("newSession", caps) catch |e| {
             c.aether_sel_embed_close(handle);
@@ -656,6 +660,106 @@ pub const BiDi = struct {
             waited += step;
         }
         return Error.WebDriver;
+    }
+
+    // ---- typed convenience commands ----
+
+    /// browsingContext.getTree — the browsing contexts (each with a "context"
+    /// id). Returns the parsed reply (owned; `.deinit()`).
+    pub fn getTree(self: *BiDi, timeout_ms: c_int) Error!std.json.Parsed(std.json.Value) {
+        return (try self.parseOwned(c.aether_sel_embed_bidi_get_tree(self.handle, self.takeId(), timeout_ms))) orelse Error.BadResponse;
+    }
+
+    /// The top-level browsing context id (the anchor for evaluate/navigate), as
+    /// an owned slice the caller frees. `error.BadResponse` if the tree carries
+    /// no context.
+    pub fn topContext(self: *BiDi, timeout_ms: c_int) Error![]u8 {
+        var tree = try self.getTree(timeout_ms);
+        defer tree.deinit();
+        // reply.result.contexts[0].context
+        const result = switch (tree.value) {
+            .object => |o| o.get("result") orelse return Error.BadResponse,
+            else => return Error.BadResponse,
+        };
+        const contexts = switch (result) {
+            .object => |o| o.get("contexts") orelse return Error.BadResponse,
+            else => return Error.BadResponse,
+        };
+        const arr = switch (contexts) {
+            .array => |a| a,
+            else => return Error.BadResponse,
+        };
+        if (arr.items.len == 0) return Error.BadResponse;
+        const ctx = switch (arr.items[0]) {
+            .object => |o| o.get("context") orelse return Error.BadResponse,
+            else => return Error.BadResponse,
+        };
+        return switch (ctx) {
+            .string => |s| self.allocator.dupe(u8, s) catch Error.OutOfMemory,
+            else => Error.BadResponse,
+        };
+    }
+
+    /// script.evaluate an expression in a context's realm, awaiting a returned
+    /// promise. Returns the parsed reply (owned; `.deinit()`);
+    /// `["result"]["result"]` is the BiDi-typed value (e.g.
+    /// `{"type":"number","value":42}`). BiDi's richer alternative to
+    /// executeScript — real realms, promise-awaiting, structured value types.
+    /// `context` empty means "resolve the top-level context first".
+    pub fn evaluate(self: *BiDi, expression: []const u8, context: []const u8, timeout_ms: c_int) Error!std.json.Parsed(std.json.Value) {
+        var owned_ctx: ?[]u8 = null;
+        defer if (owned_ctx) |oc| self.allocator.free(oc);
+        const ctx: []const u8 = if (context.len > 0) context else blk: {
+            owned_ctx = try self.topContext(timeout_ms);
+            break :blk owned_ctx.?;
+        };
+        const ec = try cstr(self.allocator, expression);
+        defer self.allocator.free(ec);
+        const cc = try cstr(self.allocator, ctx);
+        defer self.allocator.free(cc);
+        return (try self.parseOwned(c.aether_sel_embed_bidi_script_evaluate(self.handle, self.takeId(), ec.ptr, cc.ptr, timeout_ms))) orelse Error.BadResponse;
+    }
+
+    /// script.evaluate, returning just the unwrapped numeric value (the `.value`
+    /// of the BiDi-typed result, read as f64). `error.BadResponse` if the result
+    /// is not a simple number.
+    pub fn evaluateValue(self: *BiDi, expression: []const u8, context: []const u8, timeout_ms: c_int) Error!f64 {
+        var reply = try self.evaluate(expression, context, timeout_ms);
+        defer reply.deinit();
+        const result = switch (reply.value) {
+            .object => |o| o.get("result") orelse return Error.BadResponse,
+            else => return Error.BadResponse,
+        };
+        const inner = switch (result) {
+            .object => |o| o.get("result") orelse return Error.BadResponse,
+            else => return Error.BadResponse,
+        };
+        const value = switch (inner) {
+            .object => |o| o.get("value") orelse return Error.BadResponse,
+            else => return Error.BadResponse,
+        };
+        return switch (value) {
+            .integer => |i| @floatFromInt(i),
+            .float => |f| f,
+            else => Error.BadResponse,
+        };
+    }
+
+    /// browsingContext.navigate a context to `url` (wait: complete). `context`
+    /// empty means "resolve the top-level context first". Returns the parsed
+    /// reply (owned; `.deinit()`).
+    pub fn navigate(self: *BiDi, url: []const u8, context: []const u8, timeout_ms: c_int) Error!std.json.Parsed(std.json.Value) {
+        var owned_ctx: ?[]u8 = null;
+        defer if (owned_ctx) |oc| self.allocator.free(oc);
+        const ctx: []const u8 = if (context.len > 0) context else blk: {
+            owned_ctx = try self.topContext(timeout_ms);
+            break :blk owned_ctx.?;
+        };
+        const cc = try cstr(self.allocator, ctx);
+        defer self.allocator.free(cc);
+        const uc = try cstr(self.allocator, url);
+        defer self.allocator.free(uc);
+        return (try self.parseOwned(c.aether_sel_embed_bidi_navigate(self.handle, self.takeId(), cc.ptr, uc.ptr, timeout_ms))) orelse Error.BadResponse;
     }
 
     /// How many events the bounded queue has dropped since the last call (then

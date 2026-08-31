@@ -93,6 +93,10 @@ module SeleniumCore
       [:bidi_subscribe,   'aether_sel_embed_bidi_subscribe',   VOIDP, [VOIDP, INT, VOIDP, INT]],
       [:bidi_unsubscribe, 'aether_sel_embed_bidi_unsubscribe', VOIDP, [VOIDP, INT, VOIDP, INT]],
       [:bidi_wait_event,  'aether_sel_embed_bidi_wait_event',  VOIDP, [VOIDP, VOIDP, INT]],
+      # ---- typed BiDi convenience commands (reply JSON, caller frees via take_string) ----
+      [:bidi_get_tree,        'aether_sel_embed_bidi_get_tree',        VOIDP, [VOIDP, INT, INT]],
+      [:bidi_script_evaluate, 'aether_sel_embed_bidi_script_evaluate', VOIDP, [VOIDP, INT, VOIDP, VOIDP, INT]],
+      [:bidi_navigate,        'aether_sel_embed_bidi_navigate',        VOIDP, [VOIDP, INT, VOIDP, VOIDP, INT]],
       [:free_string,     'aether_sel_embed_free_string',     VOID,  [VOIDP]]
     ].freeze
 

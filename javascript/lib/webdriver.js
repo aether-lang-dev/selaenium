@@ -422,6 +422,57 @@ class BiDi {
     throw new TimeoutError(`BiDi command timed out: ${method}`, 0)
   }
 
+  // ---- typed convenience commands ----
+
+  // browsingContext.getTree — the browsing contexts (each with a "context" id).
+  getTree(timeoutMs = 10000) {
+    const raw = native.takeString(native.bidiGetTree(this._handle, this._id(), timeoutMs))
+    return raw ? JSON.parse(raw) : {}
+  }
+
+  // The top-level browsing context id (the anchor for evaluate/navigate), or
+  // null if there is none.
+  topContext(timeoutMs = 10000) {
+    const contexts = ((this.getTree(timeoutMs).result || {}).contexts) || []
+    return contexts.length ? contexts[0].context : null
+  }
+
+  // script.evaluate an expression in a context's realm, awaiting a returned
+  // promise. Returns the reply; ["result"]["result"] is the BiDi-typed value
+  // (e.g. {"type":"number","value":42}). BiDi's richer alternative to
+  // executeScript — real realms, promise-awaiting, structured value types.
+  evaluate(expression, timeoutMs = 30000) {
+    const ctx = this.topContext(timeoutMs)
+    if (!ctx) {
+      throw new WebDriverError('no browsing context for script.evaluate', 0)
+    }
+    const raw = native.takeString(
+      native.bidiScriptEvaluate(this._handle, this._id(), expression, ctx, timeoutMs),
+    )
+    return raw ? JSON.parse(raw) : {}
+  }
+
+  // script.evaluate, returning just the unwrapped value (the .value of the
+  // BiDi-typed result), or undefined if it wasn't a simple value.
+  evaluateValue(expression, timeoutMs = 30000) {
+    const result = this.evaluate(expression, timeoutMs).result || {}
+    const inner = result.result || {}
+    return inner.value
+  }
+
+  // browsingContext.navigate the top context to url (wait: complete). Returns
+  // the reply payload.
+  navigate(url, timeoutMs = 30000) {
+    const ctx = this.topContext(timeoutMs)
+    if (!ctx) {
+      throw new WebDriverError('no browsing context for navigate', 0)
+    }
+    const raw = native.takeString(
+      native.bidiNavigate(this._handle, this._id(), ctx, url, timeoutMs),
+    )
+    return raw ? JSON.parse(raw) : {}
+  }
+
   // How many events the bounded queue has dropped since the last call (then
   // resets) — so a consumer knows it missed events.
   lostEvents() {

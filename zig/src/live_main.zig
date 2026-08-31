@@ -152,9 +152,7 @@ pub fn main() !void {
         const h = numAsF64(obj.get("height").?);
         const cx: i64 = @intFromFloat(x + w / 2);
         const cy: i64 = @intFromFloat(y + h / 2);
-        const actions = try std.fmt.allocPrint(a,
-            "[{{\"type\":\"pointer\",\"id\":\"mouse\",\"parameters\":{{\"pointerType\":\"mouse\"}},\"actions\":[{{\"type\":\"pointerMove\",\"duration\":0,\"x\":{d},\"y\":{d}}},{{\"type\":\"pointerDown\",\"button\":0}},{{\"type\":\"pointerUp\",\"button\":0}}]}}]",
-            .{ cx, cy });
+        const actions = try std.fmt.allocPrint(a, "[{{\"type\":\"pointer\",\"id\":\"mouse\",\"parameters\":{{\"pointerType\":\"mouse\"}},\"actions\":[{{\"type\":\"pointerMove\",\"duration\":0,\"x\":{d},\"y\":{d}}},{{\"type\":\"pointerDown\",\"button\":0}},{{\"type\":\"pointerUp\",\"button\":0}}]}}]", .{ cx, cy });
         defer a.free(actions);
         try d.performActions(actions);
     }
@@ -266,6 +264,29 @@ pub fn main() !void {
             assert(std.mem.eql(u8, status_type, "success"), "session.status reply type success");
         }
         std.debug.print("  ok: bidi session.status command\n", .{});
+
+        // ---- typed BiDi convenience commands (getTree / evaluate / navigate) ----
+        // topContext: non-empty context id from browsingContext.getTree.
+        {
+            const ctx = try bidi.topContext(10000);
+            defer a.free(ctx);
+            assert(ctx.len > 0, "bidi topContext non-empty");
+        }
+        std.debug.print("  ok: bidi topContext (non-empty)\n", .{});
+
+        // script.evaluate 6*7 -> 42 (a plain expression in the real realm).
+        {
+            const n = try bidi.evaluateValue("6*7", "", 30000);
+            assert(n == 42, "bidi evaluate 6*7 == 42");
+        }
+        std.debug.print("  ok: bidi evaluate (6*7 -> 42)\n", .{});
+
+        // script.evaluate a promise -> awaited to 42 (promise-awaiting realm).
+        {
+            const n = try bidi.evaluateValue("Promise.resolve(41+1)", "", 30000);
+            assert(n == 42, "bidi evaluate Promise.resolve(41+1) == 42");
+        }
+        std.debug.print("  ok: bidi evaluate (Promise.resolve(41+1) -> 42)\n", .{});
     }
 
     // ---- atom-backed commands (isDisplayed / getAttribute / findRelative) ----

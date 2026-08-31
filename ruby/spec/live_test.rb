@@ -90,6 +90,16 @@ class LiveTest < Minitest::Test
 
       status = driver.bidi.command('session.status')
       assert_equal 'success', status['type'], "status=#{status.inspect}"
+
+      # Typed BiDi convenience commands: getTree / script.evaluate / navigate.
+      ctx = driver.bidi.top_context
+      refute_nil ctx, 'top_context should resolve a browsing context id'
+
+      assert_equal 42, driver.bidi.evaluate_value('6*7'),
+                   'script.evaluate should compute 6*7 == 42'
+      # A promise the classic execute_script channel cannot await:
+      assert_equal 42, driver.bidi.evaluate_value('Promise.resolve(41+1)'),
+                   'script.evaluate should await the resolved promise to 42'
     ensure
       driver.quit
     end

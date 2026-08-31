@@ -290,6 +290,32 @@ func TestLiveBidi(t *testing.T) {
 		t.Fatalf("session.status type = %v, want success", status["type"])
 	}
 
+	// Typed convenience commands: getTree -> top context, script.evaluate.
+	ctx, err := bidi.TopContext()
+	if err != nil {
+		t.Fatalf("TopContext: %v", err)
+	}
+	if ctx == "" {
+		t.Fatal("TopContext returned empty context id")
+	}
+
+	// script.evaluate a plain expression (JSON numbers -> float64 in Go).
+	v, err := bidi.EvaluateValue("6*7")
+	if err != nil {
+		t.Fatalf("EvaluateValue(6*7): %v", err)
+	}
+	if f, ok := v.(float64); !ok || f != 42 {
+		t.Fatalf("EvaluateValue(6*7) = %v (%T); want 42", v, v)
+	}
+
+	// script.evaluate awaits a returned promise — BiDi's richer alternative.
+	pv, err := bidi.EvaluateValue("Promise.resolve(41+1)")
+	if err != nil {
+		t.Fatalf("EvaluateValue(Promise.resolve(41+1)): %v", err)
+	}
+	if f, ok := pv.(float64); !ok || f != 42 {
+		t.Fatalf("EvaluateValue(Promise.resolve(41+1)) = %v (%T); want 42", pv, pv)
+	}
+
 	t.Log("live BiDi test green")
 }
-

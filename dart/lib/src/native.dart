@@ -91,6 +91,23 @@ typedef _BidiWaitEventC = ffi.Pointer<pkgffi.Utf8> Function(
 typedef _BidiWaitEvent = ffi.Pointer<pkgffi.Utf8> Function(
     ffi.Pointer<ffi.Void>, ffi.Pointer<pkgffi.Utf8>, int);
 
+// ---- typed BiDi convenience commands (get_tree / script.evaluate / navigate) ----
+// (void* handle, int id, ..., int timeout_ms) -> char* reply JSON.
+typedef _BidiGetTreeC = ffi.Pointer<pkgffi.Utf8> Function(
+    ffi.Pointer<ffi.Void>, ffi.Int32, ffi.Int32);
+typedef _BidiGetTree = ffi.Pointer<pkgffi.Utf8> Function(
+    ffi.Pointer<ffi.Void>, int, int);
+
+typedef _BidiEvaluateC = ffi.Pointer<pkgffi.Utf8> Function(ffi.Pointer<ffi.Void>,
+    ffi.Int32, ffi.Pointer<pkgffi.Utf8>, ffi.Pointer<pkgffi.Utf8>, ffi.Int32);
+typedef _BidiEvaluate = ffi.Pointer<pkgffi.Utf8> Function(ffi.Pointer<ffi.Void>,
+    int, ffi.Pointer<pkgffi.Utf8>, ffi.Pointer<pkgffi.Utf8>, int);
+
+typedef _BidiNavigateC = ffi.Pointer<pkgffi.Utf8> Function(ffi.Pointer<ffi.Void>,
+    ffi.Int32, ffi.Pointer<pkgffi.Utf8>, ffi.Pointer<pkgffi.Utf8>, ffi.Int32);
+typedef _BidiNavigate = ffi.Pointer<pkgffi.Utf8> Function(ffi.Pointer<ffi.Void>,
+    int, ffi.Pointer<pkgffi.Utf8>, ffi.Pointer<pkgffi.Utf8>, int);
+
 /// A loaded engine: the [ffi.DynamicLibrary] plus every symbol bound once.
 class Native {
   final _Open open;
@@ -126,6 +143,9 @@ class Native {
   final _BidiSub bidiSubscribe;
   final _BidiSub bidiUnsubscribe;
   final _BidiWaitEvent bidiWaitEvent;
+  final _BidiGetTree bidiGetTree;
+  final _BidiEvaluate bidiScriptEvaluate;
+  final _BidiNavigate bidiNavigate;
 
   Native._(ffi.DynamicLibrary lib)
       : open = lib.lookupFunction<_OpenC, _Open>('aether_sel_embed_open'),
@@ -184,7 +204,13 @@ class Native {
         bidiUnsubscribe = lib.lookupFunction<_BidiSubC, _BidiSub>(
             'aether_sel_embed_bidi_unsubscribe'),
         bidiWaitEvent = lib.lookupFunction<_BidiWaitEventC, _BidiWaitEvent>(
-            'aether_sel_embed_bidi_wait_event');
+            'aether_sel_embed_bidi_wait_event'),
+        bidiGetTree = lib.lookupFunction<_BidiGetTreeC, _BidiGetTree>(
+            'aether_sel_embed_bidi_get_tree'),
+        bidiScriptEvaluate = lib.lookupFunction<_BidiEvaluateC, _BidiEvaluate>(
+            'aether_sel_embed_bidi_script_evaluate'),
+        bidiNavigate = lib.lookupFunction<_BidiNavigateC, _BidiNavigate>(
+            'aether_sel_embed_bidi_navigate');
 
   static Native? _instance;
   static String? _explicitPath;

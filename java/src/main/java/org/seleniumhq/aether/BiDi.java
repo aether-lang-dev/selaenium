@@ -88,6 +88,77 @@ public final class BiDi {
         throw new WebDriverError.Timeout("BiDi command timed out: " + method, 0);
     }
 
+    // ---- typed convenience commands ----
+
+    /** {@code browsingContext.getTree} — the browsing contexts (each with a "context" id). */
+    @SuppressWarnings("unchecked")
+    public Map<String, Object> getTree(int timeoutMs) {
+        String raw = Native.bidiGetTree(handle, id(), timeoutMs);
+        return raw.isEmpty() ? Map.of() : (Map<String, Object>) Json.decode(raw);
+    }
+
+    /** The top-level browsing context id (the anchor for evaluate/navigate), or null. */
+    @SuppressWarnings("unchecked")
+    public String topContext(int timeoutMs) {
+        Object result = getTree(timeoutMs).get("result");
+        if (!(result instanceof Map<?, ?> r)) {
+            return null;
+        }
+        Object contexts = r.get("contexts");
+        if (!(contexts instanceof java.util.List<?> list) || list.isEmpty()) {
+            return null;
+        }
+        Object first = list.get(0);
+        if (first instanceof Map<?, ?> m) {
+            Object ctx = m.get("context");
+            return ctx == null ? null : ctx.toString();
+        }
+        return null;
+    }
+
+    /**
+     * {@code script.evaluate} an expression in the top context's realm, awaiting a
+     * returned promise. Returns the reply; {@code ["result"]["result"]} is the
+     * BiDi-typed value (e.g. {@code {"type":"number","value":42}}). BiDi's richer
+     * alternative to executeScript — real realms, promise-awaiting, structured types.
+     */
+    @SuppressWarnings("unchecked")
+    public Map<String, Object> evaluate(String expr, int timeoutMs) {
+        String ctx = topContext(timeoutMs);
+        if (ctx == null) {
+            throw new WebDriverError("no browsing context for script.evaluate", 0);
+        }
+        String raw = Native.bidiScriptEvaluate(handle, id(), expr, ctx, timeoutMs);
+        return raw.isEmpty() ? Map.of() : (Map<String, Object>) Json.decode(raw);
+    }
+
+    /**
+     * {@code script.evaluate}, returning just the unwrapped value (the {@code .value}
+     * of the BiDi-typed result), or null if it wasn't a simple value.
+     */
+    public Object evaluateValue(String expr, int timeoutMs) {
+        Object result = evaluate(expr, timeoutMs).get("result");
+        if (!(result instanceof Map<?, ?> outer)) {
+            return null;
+        }
+        Object inner = outer.get("result");
+        if (!(inner instanceof Map<?, ?> m)) {
+            return null;
+        }
+        return m.get("value");
+    }
+
+    /** {@code browsingContext.navigate} the top context to url (wait: complete). */
+    @SuppressWarnings("unchecked")
+    public Map<String, Object> navigate(String url, int timeoutMs) {
+        String ctx = topContext(timeoutMs);
+        if (ctx == null) {
+            throw new WebDriverError("no browsing context for navigate", 0);
+        }
+        String raw = Native.bidiNavigate(handle, id(), ctx, url, timeoutMs);
+        return raw.isEmpty() ? Map.of() : (Map<String, Object>) Json.decode(raw);
+    }
+
     /**
      * How many events the bounded queue has dropped since the last call (then
      * resets) — so a consumer knows it missed events.
