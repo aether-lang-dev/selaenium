@@ -186,7 +186,7 @@ def test_live_bidi():
     emit one via the classic script channel, and receive the event
     asynchronously — the bidirectional half, driven from Python through the
     demux C ABI."""
-    from selenium_core import BidiEvent  # noqa: E402
+    from selenium_core import BidiEvent, BiDi  # noqa: E402
 
     driver_bin = shutil.which("chromedriver")
     if not driver_bin:
@@ -239,6 +239,19 @@ def test_live_bidi():
             # awaitPromise: a resolved promise's value comes back unwrapped.
             assert driver.bidi.evaluate_value("Promise.resolve(41+1)") == 42, "evaluate awaits promise"
             print("  ok: bidi.evaluate (6*7 -> 42, Promise -> 42)")
+
+            # network interception — observe + release a paused request.
+            driver.bidi.subscribe(BidiEvent.BEFORE_REQUEST_SENT)
+            intercept = driver.bidi.add_intercept(phases="beforeRequestSent")  # all URLs
+            assert intercept, "no intercept id"
+            driver.execute_script("fetch('https://example.com/blocked').catch(()=>{});")
+            req = driver.bidi.next_event(BidiEvent.BEFORE_REQUEST_SENT, timeout_ms=8000)
+            assert req is not None, "no beforeRequestSent event"
+            rid = BiDi.event_request_id(req)
+            assert rid, f"no request id in {req!r}"
+            cont = driver.bidi.continue_request(rid)
+            assert cont.get("type") == "success", f"continue={cont!r}"
+            print("  ok: network intercept -> beforeRequestSent -> continueRequest")
 
             print("PASS: live BiDi test green")
         finally:

@@ -589,6 +589,51 @@ class BiDi:
         )
         return json.loads(raw) if raw else {}
 
+    # ---- network interception (observe / release / block requests) ----
+
+    def add_intercept(self, *, phases: str = "beforeRequestSent", url_pattern: str = "",
+                      timeout_ms: int = 10000) -> str | None:
+        """network.addIntercept for a URL pattern (a full parseable URL as a
+        "string" pattern; empty intercepts all) at the given comma-separated
+        phases. Subscribe to the matching network.* event first if you want the
+        paused-request events. Returns the intercept id, or None."""
+        raw = _native.take_string(
+            _native.bidi_network_add_intercept(self._handle, self._id(),
+                                               _native.encode(phases), _native.encode(url_pattern), timeout_ms)
+        )
+        reply = json.loads(raw) if raw else {}
+        return (reply.get("result") or {}).get("intercept")
+
+    def remove_intercept(self, intercept_id: str, timeout_ms: int = 10000) -> dict:
+        raw = _native.take_string(
+            _native.bidi_network_remove_intercept(self._handle, self._id(),
+                                                  _native.encode(intercept_id), timeout_ms)
+        )
+        return json.loads(raw) if raw else {}
+
+    def continue_request(self, request_id: str, timeout_ms: int = 10000) -> dict:
+        """Let a paused (intercepted) request proceed unchanged. request_id comes
+        from a network event's ``params.request.request``."""
+        raw = _native.take_string(
+            _native.bidi_network_continue_request(self._handle, self._id(),
+                                                  _native.encode(request_id), timeout_ms)
+        )
+        return json.loads(raw) if raw else {}
+
+    def fail_request(self, request_id: str, timeout_ms: int = 10000) -> dict:
+        """Block a paused request (the ad/tracker-blocking case)."""
+        raw = _native.take_string(
+            _native.bidi_network_fail_request(self._handle, self._id(),
+                                              _native.encode(request_id), timeout_ms)
+        )
+        return json.loads(raw) if raw else {}
+
+    @staticmethod
+    def event_request_id(event: dict) -> str | None:
+        """The network.request id out of a network.beforeRequestSent (or other
+        network) event: ``params.request.request``."""
+        return ((event.get("params") or {}).get("request") or {}).get("request")
+
     def lost_events(self) -> int:
         """How many events the bounded queue has dropped since the last call
         (then resets) — so a consumer knows it missed events."""
