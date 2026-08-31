@@ -42,6 +42,9 @@
     bidi_subscribe/4,
     bidi_unsubscribe/4,
     bidi_wait_event/3,
+    bidi_get_tree/3,
+    bidi_script_evaluate/5,
+    bidi_navigate/5,
     execute_atom/4,
     is_displayed/2,
     get_attribute/3,
@@ -91,6 +94,9 @@ bidi_cancel(_Handle, _Id) -> erlang:nif_error(not_loaded).
 bidi_subscribe(_Handle, _Id, _EventsCsv, _TimeoutMs) -> erlang:nif_error(not_loaded).
 bidi_unsubscribe(_Handle, _Id, _EventsCsv, _TimeoutMs) -> erlang:nif_error(not_loaded).
 bidi_wait_event(_Handle, _Method, _TimeoutMs) -> erlang:nif_error(not_loaded).
+bidi_get_tree(_Handle, _Id, _TimeoutMs) -> erlang:nif_error(not_loaded).
+bidi_script_evaluate(_Handle, _Id, _Expr, _Ctx, _TimeoutMs) -> erlang:nif_error(not_loaded).
+bidi_navigate(_Handle, _Id, _Ctx, _Url, _TimeoutMs) -> erlang:nif_error(not_loaded).
 
 %% ---- atom-backed commands (isDisplayed / getAttribute / relative locators) ----
 %% The int-returning verbs leave their JSON result in last_value (drained the

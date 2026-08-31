@@ -27,7 +27,8 @@
     session_id/1, quit/1,
     route/1, error_code/1, locator/2,
     bidi_available/1, bidi_subscribe/2, bidi_unsubscribe/2,
-    bidi_next_event/3, bidi_command/4, bidi_lost_events/1
+    bidi_next_event/3, bidi_command/4, bidi_lost_events/1,
+    bidi_get_tree/1, bidi_top_context/1, bidi_evaluate/2, bidi_evaluate_value/2, bidi_navigate/2
 ]).
 
 -define(W3C_KEY, <<"element-6066-11e4-a52e-4f735466cecf">>).
@@ -299,6 +300,55 @@ bidi_await_reply(BH, Id, TimeoutMs, Step, Waited, Method) ->
 %% Returns {ok, Count} | {error, _}.
 bidi_lost_events(H) ->
     with_bidi(H, fun(BH) -> {ok, selenium_nif:bidi_lost_events(BH)} end).
+
+%% ---- typed BiDi convenience commands ----
+
+%% browsingContext.getTree — {ok, TreeMap} (result.contexts[] with context ids).
+bidi_get_tree(H) ->
+    with_bidi(H, fun(BH) ->
+        {ok, decode(selenium_nif:bidi_get_tree(BH, bidi_next_id(H), 10000))}
+    end).
+
+%% The top-level browsing context id, or undefined.
+bidi_top_context(H) ->
+    case bidi_get_tree(H) of
+        {ok, Tree} ->
+            case Tree of
+                #{<<"result">> := #{<<"contexts">> := [#{<<"context">> := Ctx} | _]}} -> Ctx;
+                _ -> undefined
+            end;
+        _ -> undefined
+    end.
+
+%% script.evaluate Expr in the top context's realm (awaitPromise). Returns
+%% {ok, ReplyMap} — result.result is the BiDi-typed value. BiDi's richer
+%% alternative to execute_script.
+bidi_evaluate(H, Expr) ->
+    case bidi_top_context(H) of
+        undefined -> {error, {0, <<"no browsing context for script.evaluate">>}};
+        Ctx ->
+            with_bidi(H, fun(BH) ->
+                {ok, decode(selenium_nif:bidi_script_evaluate(BH, bidi_next_id(H), to_bin(Expr), Ctx, 30000))}
+            end)
+    end.
+
+%% script.evaluate returning just the unwrapped value (result.result.value).
+bidi_evaluate_value(H, Expr) ->
+    case bidi_evaluate(H, Expr) of
+        {ok, #{<<"result">> := #{<<"result">> := #{<<"value">> := V}}}} -> {ok, V};
+        {ok, _} -> {ok, undefined};
+        Err -> Err
+    end.
+
+%% browsingContext.navigate the top context to Url (wait:complete).
+bidi_navigate(H, Url) ->
+    case bidi_top_context(H) of
+        undefined -> {error, {0, <<"no browsing context for navigate">>}};
+        Ctx ->
+            with_bidi(H, fun(BH) ->
+                {ok, decode(selenium_nif:bidi_navigate(BH, bidi_next_id(H), Ctx, to_bin(Url), 30000))}
+            end)
+    end.
 
 %% ---- BiDi internals (ETS-backed per-session state) ----
 

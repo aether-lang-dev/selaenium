@@ -178,6 +178,12 @@ namespace SeleniumCore.Tests
 
                     var status = d.Bidi.Command("session.status");
                     status["type"].ShouldBe("success");
+
+                    // script.evaluate — the richer alternative to ExecuteScript.
+                    d.Bidi.TopContext().ShouldNotBeNull();
+                    Convert.ToInt32(d.Bidi.EvaluateValue("6*7")).ShouldBe(42);
+                    // awaitPromise: a resolved promise's value comes back unwrapped.
+                    Convert.ToInt32(d.Bidi.EvaluateValue("Promise.resolve(41+1)")).ShouldBe(42);
                 }
                 finally { d.Quit(); }
             }

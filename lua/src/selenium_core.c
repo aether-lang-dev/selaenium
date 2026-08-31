@@ -50,6 +50,8 @@ typedef int   (*fn_bidi_lost_events)(void*);
 typedef void  (*fn_bidi_cancel)(void*, int);
 typedef char* (*fn_bidi_sub)(void*, int, const char*, int);   /* -> owned string */
 typedef char* (*fn_bidi_wait)(void*, const char*, int);       /* -> owned string */
+typedef char* (*fn_bidi_tree)(void*, int, int);                          /* get_tree -> owned */
+typedef char* (*fn_bidi_2str)(void*, int, const char*, const char*, int); /* evaluate/navigate -> owned */
 
 /* ---- atom-backed commands ---- */
 typedef int   (*fn_atom4)(void*, const char*, const char*, const char*);  /* execute_atom */
@@ -84,6 +86,9 @@ static struct {
     fn_bidi_sub         bidi_subscribe;
     fn_bidi_sub         bidi_unsubscribe;
     fn_bidi_wait        bidi_wait_event;
+    fn_bidi_tree        bidi_get_tree;
+    fn_bidi_2str        bidi_script_evaluate;
+    fn_bidi_2str        bidi_navigate;
     /* ---- atoms ---- */
     fn_atom4            execute_atom;
     fn_atom1            is_displayed;
@@ -129,6 +134,9 @@ static int load_symbols(lua_State* L, void* lib, const char* path) {
     SYM(bidi_subscribe,   "aether_sel_embed_bidi_subscribe");
     SYM(bidi_unsubscribe, "aether_sel_embed_bidi_unsubscribe");
     SYM(bidi_wait_event,  "aether_sel_embed_bidi_wait_event");
+    SYM(bidi_get_tree,    "aether_sel_embed_bidi_get_tree");
+    SYM(bidi_script_evaluate, "aether_sel_embed_bidi_script_evaluate");
+    SYM(bidi_navigate,    "aether_sel_embed_bidi_navigate");
     SYM(execute_atom,     "aether_sel_embed_execute_atom");
     SYM(is_displayed,     "aether_sel_embed_is_displayed");
     SYM(get_attribute,    "aether_sel_embed_get_attribute");
@@ -346,6 +354,31 @@ static int l_bidi_wait_event(lua_State* L) {
     push_owned(L, ENGINE.bidi_wait_event(h, method, timeout_ms));
     return 1;
 }
+static int l_bidi_get_tree(lua_State* L) {
+    void* h = check_handle(L, 1);
+    int id = (int)luaL_checkinteger(L, 2);
+    int timeout_ms = (int)luaL_checkinteger(L, 3);
+    push_owned(L, ENGINE.bidi_get_tree(h, id, timeout_ms));
+    return 1;
+}
+static int l_bidi_script_evaluate(lua_State* L) {
+    void* h = check_handle(L, 1);
+    int id = (int)luaL_checkinteger(L, 2);
+    const char* expr = luaL_checkstring(L, 3);
+    const char* ctx = luaL_checkstring(L, 4);
+    int timeout_ms = (int)luaL_checkinteger(L, 5);
+    push_owned(L, ENGINE.bidi_script_evaluate(h, id, expr, ctx, timeout_ms));
+    return 1;
+}
+static int l_bidi_navigate(lua_State* L) {
+    void* h = check_handle(L, 1);
+    int id = (int)luaL_checkinteger(L, 2);
+    const char* ctx = luaL_checkstring(L, 3);
+    const char* url = luaL_checkstring(L, 4);
+    int timeout_ms = (int)luaL_checkinteger(L, 5);
+    push_owned(L, ENGINE.bidi_navigate(h, id, ctx, url, timeout_ms));
+    return 1;
+}
 
 /* ---- atom-backed commands (result via last_value, drained the normal way) ---- */
 static int l_execute_atom(lua_State* L) {
@@ -407,6 +440,9 @@ static const luaL_Reg MODULE[] = {
     {"bidi_subscribe",    l_bidi_subscribe},
     {"bidi_unsubscribe",  l_bidi_unsubscribe},
     {"bidi_wait_event",   l_bidi_wait_event},
+    {"bidi_get_tree",     l_bidi_get_tree},
+    {"bidi_script_evaluate", l_bidi_script_evaluate},
+    {"bidi_navigate",     l_bidi_navigate},
     {"execute_atom",      l_execute_atom},
     {"is_displayed",      l_is_displayed},
     {"get_attribute",     l_get_attribute},

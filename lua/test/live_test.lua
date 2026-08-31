@@ -124,6 +124,12 @@ local ok, err = pcall(function()
   local status = d:bidi():command("session.status")
   assert_eq(status.type, "success", "bidi session.status command")
   print("  ok: BiDi (log.entryAdded event + session.status command)")
+
+  -- script.evaluate — the richer alternative to execute_script.
+  assert(d:bidi():top_context(), "bidi top_context non-nil")
+  assert_eq(d:bidi():evaluate_value("6*7"), 42, "bidi evaluate 6*7")
+  assert_eq(d:bidi():evaluate_value("Promise.resolve(41+1)"), 42, "bidi evaluate promise")
+  print("  ok: BiDi evaluate (6*7 -> 42, Promise -> 42)")
 end)
 
 d:quit()

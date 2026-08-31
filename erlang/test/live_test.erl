@@ -121,6 +121,13 @@ run(DriverBin) ->
             <<"success">> = maps:get(<<"type">>, Status),
             io:format("  ok: BiDi (log.entryAdded event + session.status command)~n"),
 
+            %% script.evaluate — the richer alternative to execute_script.
+            TopCtx = selenium:bidi_top_context(D),
+            true = is_binary(TopCtx) andalso byte_size(TopCtx) > 0,
+            {ok, 42} = selenium:bidi_evaluate_value(D, <<"6*7">>),
+            {ok, 42} = selenium:bidi_evaluate_value(D, <<"Promise.resolve(41+1)">>),
+            io:format("  ok: BiDi evaluate (6*7 -> 42, Promise -> 42)~n"),
+
             %% atom-backed commands: isDisplayed / getAttribute / relative
             %% locators — the shared JS atoms run in-page by the engine (the
             %% same atoms every other binding uses), reached through the NIF.

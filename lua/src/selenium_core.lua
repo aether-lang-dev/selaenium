@@ -435,6 +435,49 @@ function BiDi:command(method, params, timeout_ms)
   raise(24, "BiDi command timed out: " .. method)
 end
 
+-- typed convenience commands ----------------------------------------------
+-- browsingContext.getTree — the browsing contexts (each with a "context" id).
+function BiDi:get_tree(timeout_ms)
+  local raw = native.bidi_get_tree(self._handle, self:_id(), timeout_ms or 10000)
+  if raw == "" then return {} end
+  return json.decode(raw)
+end
+
+-- the top-level browsing context id (anchor for evaluate/navigate), or nil.
+function BiDi:top_context(timeout_ms)
+  local tree = self:get_tree(timeout_ms)
+  local ctxs = tree.result and tree.result.contexts
+  if ctxs and ctxs[1] then return ctxs[1].context end
+  return nil
+end
+
+-- script.evaluate an expression in a context's realm (awaits promises). Returns
+-- the reply; reply.result.result is the BiDi-typed value {type=..., value=...}.
+function BiDi:evaluate(expr, context, timeout_ms)
+  local ctx = context or self:top_context(timeout_ms)
+  if not ctx then raise(0, "no browsing context for script.evaluate") end
+  local raw = native.bidi_script_evaluate(self._handle, self:_id(), expr, ctx, timeout_ms or 30000)
+  if raw == "" then return {} end
+  return json.decode(raw)
+end
+
+-- script.evaluate returning just the unwrapped .value.
+function BiDi:evaluate_value(expr, context, timeout_ms)
+  local reply = self:evaluate(expr, context, timeout_ms)
+  local r = reply.result and reply.result.result
+  if r then return r.value end
+  return nil
+end
+
+-- browsingContext.navigate a context to url (wait: complete).
+function BiDi:navigate(url, context, timeout_ms)
+  local ctx = context or self:top_context(timeout_ms)
+  if not ctx then raise(0, "no browsing context for navigate") end
+  local raw = native.bidi_navigate(self._handle, self:_id(), ctx, url, timeout_ms or 30000)
+  if raw == "" then return {} end
+  return json.decode(raw)
+end
+
 -- How many events the bounded queue dropped since the last call (then resets).
 function BiDi:lost_events() return native.bidi_lost_events(self._handle) end
 

@@ -109,6 +109,15 @@ internal static class NativeMethods
     [DllImport(Lib, EntryPoint = "aether_sel_embed_bidi_wait_event", CharSet = CharSet.Ansi)]
     internal static extern IntPtr BidiWaitEvent(IntPtr handle, string method, int timeoutMs);
 
+    [DllImport(Lib, EntryPoint = "aether_sel_embed_bidi_get_tree", CharSet = CharSet.Ansi)]
+    internal static extern IntPtr BidiGetTree(IntPtr handle, int id, int timeoutMs);
+
+    [DllImport(Lib, EntryPoint = "aether_sel_embed_bidi_script_evaluate", CharSet = CharSet.Ansi)]
+    internal static extern IntPtr BidiScriptEvaluate(IntPtr handle, int id, string expression, string contextId, int timeoutMs);
+
+    [DllImport(Lib, EntryPoint = "aether_sel_embed_bidi_navigate", CharSet = CharSet.Ansi)]
+    internal static extern IntPtr BidiNavigate(IntPtr handle, int id, string contextId, string url, int timeoutMs);
+
     // ---- string ownership ----
     [DllImport(Lib, EntryPoint = "aether_sel_embed_free_string")]
     internal static extern void FreeString(IntPtr s);

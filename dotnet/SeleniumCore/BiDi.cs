@@ -111,6 +111,59 @@ public sealed class BiDi
         throw new TimeoutError($"BiDi command timed out: {method}", 0);
     }
 
+    // ---- typed convenience commands ----
+
+    /// <summary>browsingContext.getTree — the browsing contexts (each with a "context" id).</summary>
+    public Dictionary<string, object?> GetTree(int timeoutMs = 10000)
+    {
+        string raw = NativeMethods.TakeString(NativeMethods.BidiGetTree(_handle, NextId(), timeoutMs));
+        return raw.Length == 0 ? new Dictionary<string, object?>() : ParseObject(raw);
+    }
+
+    /// <summary>The top-level browsing context id (the anchor for evaluate/navigate), or null.</summary>
+    public string? TopContext(int timeoutMs = 10000)
+    {
+        Dictionary<string, object?> tree = GetTree(timeoutMs);
+        if (tree.TryGetValue("result", out object? r) && r is Dictionary<string, object?> result &&
+            result.TryGetValue("contexts", out object? c) && c is List<object?> contexts && contexts.Count > 0 &&
+            contexts[0] is Dictionary<string, object?> first && first.TryGetValue("context", out object? id))
+        {
+            return id?.ToString();
+        }
+        return null;
+    }
+
+    /// <summary>script.evaluate an expression in a context's realm, awaiting a returned
+    /// promise. The reply's ["result"]["result"] is the BiDi-typed value (e.g.
+    /// {"type":"number","value":42}). BiDi's richer alternative to ExecuteScript.</summary>
+    public Dictionary<string, object?> Evaluate(string expression, string? context = null, int timeoutMs = 30000)
+    {
+        string ctx = context ?? TopContext(timeoutMs) ?? throw new WebDriverError("no browsing context for script.evaluate", 0);
+        string raw = NativeMethods.TakeString(NativeMethods.BidiScriptEvaluate(_handle, NextId(), expression, ctx, timeoutMs));
+        return raw.Length == 0 ? new Dictionary<string, object?>() : ParseObject(raw);
+    }
+
+    /// <summary>script.evaluate, returning just the unwrapped value (.value of the BiDi-typed result).</summary>
+    public object? EvaluateValue(string expression, string? context = null, int timeoutMs = 30000)
+    {
+        Dictionary<string, object?> reply = Evaluate(expression, context, timeoutMs);
+        if (reply.TryGetValue("result", out object? r) && r is Dictionary<string, object?> outer &&
+            outer.TryGetValue("result", out object? rr) && rr is Dictionary<string, object?> inner &&
+            inner.TryGetValue("value", out object? v))
+        {
+            return v;
+        }
+        return null;
+    }
+
+    /// <summary>browsingContext.navigate a context to url (wait: complete).</summary>
+    public Dictionary<string, object?> Navigate(string url, string? context = null, int timeoutMs = 30000)
+    {
+        string ctx = context ?? TopContext(timeoutMs) ?? throw new WebDriverError("no browsing context for navigate", 0);
+        string raw = NativeMethods.TakeString(NativeMethods.BidiNavigate(_handle, NextId(), ctx, url, timeoutMs));
+        return raw.Length == 0 ? new Dictionary<string, object?>() : ParseObject(raw);
+    }
+
     /// <summary>
     /// How many events the bounded queue has dropped since the last call (then
     /// resets) — so a consumer knows it missed events.

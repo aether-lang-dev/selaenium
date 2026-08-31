@@ -63,6 +63,9 @@ extern void  aether_sel_embed_bidi_cancel(void *h, int id);
 extern char *aether_sel_embed_bidi_subscribe(void *h, int id, const char *events_csv, int timeout_ms);
 extern char *aether_sel_embed_bidi_unsubscribe(void *h, int id, const char *events_csv, int timeout_ms);
 extern char *aether_sel_embed_bidi_wait_event(void *h, const char *method, int timeout_ms);
+extern char *aether_sel_embed_bidi_get_tree(void *h, int id, int timeout_ms);
+extern char *aether_sel_embed_bidi_script_evaluate(void *h, int id, const char *expr, const char *ctx, int timeout_ms);
+extern char *aether_sel_embed_bidi_navigate(void *h, int id, const char *ctx, const char *url, int timeout_ms);
 
 /* ---- helpers ---- */
 
@@ -380,6 +383,59 @@ static ERL_NIF_TERM nif_bidi_wait_event(ErlNifEnv *env, int argc, const ERL_NIF_
     return r;
 }
 
+static ERL_NIF_TERM nif_bidi_get_tree(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
+{
+    UNUSED(argc);
+    void *h;
+    int id, timeout_ms;
+    if (!get_handle(env, argv[0], &h)) return enif_make_badarg(env);
+    if (!enif_get_int(env, argv[1], &id)) return enif_make_badarg(env);
+    if (!enif_get_int(env, argv[2], &timeout_ms)) return enif_make_badarg(env);
+    return take_cstr(env, aether_sel_embed_bidi_get_tree(h, id, timeout_ms));
+}
+
+static ERL_NIF_TERM nif_bidi_script_evaluate(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
+{
+    UNUSED(argc);
+    void *h;
+    int id, timeout_ms;
+    if (!get_handle(env, argv[0], &h)) return enif_make_badarg(env);
+    if (!enif_get_int(env, argv[1], &id)) return enif_make_badarg(env);
+    char *expr = term_to_cstr(env, argv[2]);
+    if (!expr) return enif_make_badarg(env);
+    char *ctx = term_to_cstr(env, argv[3]);
+    if (!ctx) { enif_free(expr); return enif_make_badarg(env); }
+    if (!enif_get_int(env, argv[4], &timeout_ms)) {
+        enif_free(expr); enif_free(ctx);
+        return enif_make_badarg(env);
+    }
+    ERL_NIF_TERM r = take_cstr(env, aether_sel_embed_bidi_script_evaluate(h, id, expr, ctx, timeout_ms));
+    enif_free(expr);
+    enif_free(ctx);
+    return r;
+}
+
+static ERL_NIF_TERM nif_bidi_navigate(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
+{
+    UNUSED(argc);
+    void *h;
+    int id, timeout_ms;
+    if (!get_handle(env, argv[0], &h)) return enif_make_badarg(env);
+    if (!enif_get_int(env, argv[1], &id)) return enif_make_badarg(env);
+    char *ctx = term_to_cstr(env, argv[2]);
+    if (!ctx) return enif_make_badarg(env);
+    char *url = term_to_cstr(env, argv[3]);
+    if (!url) { enif_free(ctx); return enif_make_badarg(env); }
+    if (!enif_get_int(env, argv[4], &timeout_ms)) {
+        enif_free(ctx); enif_free(url);
+        return enif_make_badarg(env);
+    }
+    ERL_NIF_TERM r = take_cstr(env, aether_sel_embed_bidi_navigate(h, id, ctx, url, timeout_ms));
+    enif_free(ctx);
+    enif_free(url);
+    return r;
+}
+
 /* ---- atom-backed commands ----
  * The int-returning verbs leave the result in last_value; the caller reads it
  * with last_value/1 (via selenium.erl's atom_result), just like execute. */
@@ -487,6 +543,9 @@ static ErlNifFunc nif_funcs[] = {
     {"bidi_subscribe",   4, nif_bidi_subscribe,   0},
     {"bidi_unsubscribe", 4, nif_bidi_unsubscribe, 0},
     {"bidi_wait_event",  3, nif_bidi_wait_event,  0},
+    {"bidi_get_tree",    3, nif_bidi_get_tree,    0},
+    {"bidi_script_evaluate", 5, nif_bidi_script_evaluate, 0},
+    {"bidi_navigate",    5, nif_bidi_navigate,    0},
     {"execute_atom",   4, nif_execute_atom,   0},
     {"is_displayed",   2, nif_is_displayed,   0},
     {"get_attribute",  3, nif_get_attribute,  0},
