@@ -125,6 +125,132 @@ def test_live_chrome():
             proc.kill()
 
 
+import base64  # noqa: E402
+import http.server  # noqa: E402
+import threading  # noqa: E402
+
+
+class _BasicAuthHandler(http.server.BaseHTTPRequestHandler):
+    """Serves a landing page at /, and a Basic-Auth-protected /secret that
+    401s (with a WWW-Authenticate challenge) until the right credentials
+    arrive — the challenge Chrome surfaces to BiDi as network.authRequired."""
+
+    USER = "neo"
+    PASS = "trinity"
+    _EXPECTED = "Basic " + base64.b64encode(f"{USER}:{PASS}".encode()).decode()
+
+    def do_GET(self):  # noqa: N802
+        if self.path == "/secret":
+            if self.headers.get("Authorization") == self._EXPECTED:
+                body = b"THE-SECRET"
+                self.send_response(200)
+            else:
+                self.send_response(401)
+                self.send_header("WWW-Authenticate", 'Basic realm="matrix"')
+                body = b"denied"
+            self.send_header("Content-Type", "text/plain")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+        body = b"<!doctype html><title>Auth</title><h1>landing</h1>"
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, *a):  # silence
+        pass
+
+
+def test_live_bidi_auth():
+    """network.continueWithAuth over the engine: intercept the authRequired
+    phase, catch the Basic-Auth challenge Chrome raises for a protected fetch,
+    answer it with credentials, and assert the page reads the protected body —
+    the full authRequired -> provideCredentials round-trip that classic
+    WebDriver can't drive in headless."""
+    from selenium_core import BidiEvent, BiDi  # noqa: E402
+
+    driver_bin = shutil.which("chromedriver")
+    if not driver_bin:
+        pytest.skip("chromedriver not on PATH")
+
+    # In-process Basic-Auth server (the page is served from its origin, so the
+    # protected /secret fetch is same-origin and its 401 reaches the intercept).
+    httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _BasicAuthHandler)
+    srv_port = httpd.server_address[1]
+    srv_thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    srv_thread.start()
+    origin = f"http://127.0.0.1:{srv_port}"
+
+    port = _free_port()
+    proc = subprocess.Popen(
+        [driver_bin, f"--port={port}"],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    )
+    try:
+        if not _wait_up(port):
+            pytest.skip("chromedriver did not come up")
+
+        options = {
+            "goog:chromeOptions": {
+                "args": ["--headless=new", "--no-sandbox", "--disable-gpu",
+                         "--disable-dev-shm-usage"]
+            }
+        }
+        chrome_bin = os.environ.get("SEL_CHROME_BINARY")
+        if chrome_bin:
+            options["goog:chromeOptions"]["binary"] = chrome_bin
+        driver = Chrome(f"http://127.0.0.1:{port}", options=options)
+        try:
+            assert driver.bidi_available, "session negotiated no webSocketUrl"
+
+            driver.get(origin + "/")
+
+            # Pause requests at the authRequired phase and watch for the event.
+            driver.bidi.subscribe(BidiEvent.AUTH_REQUIRED)
+            intercept = driver.bidi.add_intercept(phases="authRequired")
+            assert intercept, "no authRequired intercept id"
+
+            # Fire the protected fetch; stash the eventual body in window.__auth.
+            driver.execute_script(
+                "window.__auth='';fetch('/secret')"
+                ".then(r=>r.text()).then(t=>{window.__auth=t}).catch(e=>{window.__auth='ERR:'+e});")
+
+            ev = driver.bidi.next_event(BidiEvent.AUTH_REQUIRED, timeout_ms=8000)
+            assert ev is not None, "no network.authRequired event received"
+            assert ev.get("method") == BidiEvent.AUTH_REQUIRED, f"event={ev!r}"
+            rid = BiDi.event_request_id(ev)
+            assert rid, f"no request id in auth event: {ev!r}"
+            print("  ok: network.authRequired event received")
+
+            # Answer the challenge with the right credentials.
+            ack = driver.bidi.continue_with_auth(
+                rid, _BasicAuthHandler.USER, _BasicAuthHandler.PASS)
+            assert ack.get("type") == "success", f"continueWithAuth={ack!r}"
+            print("  ok: continueWithAuth accepted")
+
+            # The fetch now resolves with the protected body.
+            got = ""
+            for _ in range(40):
+                got = driver.execute_script("return window.__auth;") or ""
+                if got:
+                    break
+                time.sleep(0.2)
+            assert "THE-SECRET" in got, f"page did not read the protected body: {got!r}"
+            print("PASS: live BiDi continueWithAuth test green (read THE-SECRET)")
+        finally:
+            driver.quit()
+    finally:
+        httpd.shutdown()
+        proc.terminate()
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+
+
 def test_live_atoms():
     """Atom-backed commands (isDisplayed / getAttribute / relative locators) run
     in-page via the shared engine atoms, from Python through the C ABI."""
