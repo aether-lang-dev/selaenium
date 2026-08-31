@@ -51,6 +51,11 @@ typedef void  (*fn_bidi_cancel)(void*, int);
 typedef char* (*fn_bidi_sub)(void*, int, const char*, int);   /* -> owned string */
 typedef char* (*fn_bidi_wait)(void*, const char*, int);       /* -> owned string */
 
+/* ---- atom-backed commands ---- */
+typedef int   (*fn_atom4)(void*, const char*, const char*, const char*);  /* execute_atom */
+typedef int   (*fn_atom1)(void*, const char*);                            /* is_displayed */
+typedef int   (*fn_atom2)(void*, const char*, const char*);               /* get_attribute / find_relative */
+
 static struct {
     void* handle;
     char  path[4096];
@@ -79,6 +84,12 @@ static struct {
     fn_bidi_sub         bidi_subscribe;
     fn_bidi_sub         bidi_unsubscribe;
     fn_bidi_wait        bidi_wait_event;
+    /* ---- atoms ---- */
+    fn_atom4            execute_atom;
+    fn_atom1            is_displayed;
+    fn_atom2            get_attribute;
+    fn_str              atom_str_arg;
+    fn_atom2            find_relative;
 } ENGINE;
 
 static int load_symbols(lua_State* L, void* lib, const char* path) {
@@ -118,6 +129,11 @@ static int load_symbols(lua_State* L, void* lib, const char* path) {
     SYM(bidi_subscribe,   "aether_sel_embed_bidi_subscribe");
     SYM(bidi_unsubscribe, "aether_sel_embed_bidi_unsubscribe");
     SYM(bidi_wait_event,  "aether_sel_embed_bidi_wait_event");
+    SYM(execute_atom,     "aether_sel_embed_execute_atom");
+    SYM(is_displayed,     "aether_sel_embed_is_displayed");
+    SYM(get_attribute,    "aether_sel_embed_get_attribute");
+    SYM(atom_str_arg,     "aether_sel_embed_atom_str_arg");
+    SYM(find_relative,    "aether_sel_embed_find_relative");
 #undef SYM
 
     ENGINE.handle = lib;
@@ -331,6 +347,41 @@ static int l_bidi_wait_event(lua_State* L) {
     return 1;
 }
 
+/* ---- atom-backed commands (result via last_value, drained the normal way) ---- */
+static int l_execute_atom(lua_State* L) {
+    void* h = check_handle(L, 1);
+    const char* atom = luaL_checkstring(L, 2);
+    const char* elem_id = luaL_checkstring(L, 3);
+    const char* extra = luaL_checkstring(L, 4);
+    lua_pushinteger(L, ENGINE.execute_atom(h, atom, elem_id, extra));
+    return 1;
+}
+static int l_is_displayed(lua_State* L) {
+    void* h = check_handle(L, 1);
+    const char* elem_id = luaL_checkstring(L, 2);
+    lua_pushinteger(L, ENGINE.is_displayed(h, elem_id));
+    return 1;
+}
+static int l_get_attribute(lua_State* L) {
+    void* h = check_handle(L, 1);
+    const char* elem_id = luaL_checkstring(L, 2);
+    const char* name = luaL_checkstring(L, 3);
+    lua_pushinteger(L, ENGINE.get_attribute(h, elem_id, name));
+    return 1;
+}
+static int l_atom_str_arg(lua_State* L) {
+    const char* s = luaL_checkstring(L, 1);
+    push_owned(L, ENGINE.atom_str_arg(s));
+    return 1;
+}
+static int l_find_relative(lua_State* L) {
+    void* h = check_handle(L, 1);
+    const char* base_css = luaL_checkstring(L, 2);
+    const char* filters = luaL_checkstring(L, 3);
+    lua_pushinteger(L, ENGINE.find_relative(h, base_css, filters));
+    return 1;
+}
+
 static const luaL_Reg MODULE[] = {
     {"open",            l_open},
     {"close",           l_close},
@@ -356,6 +407,11 @@ static const luaL_Reg MODULE[] = {
     {"bidi_subscribe",    l_bidi_subscribe},
     {"bidi_unsubscribe",  l_bidi_unsubscribe},
     {"bidi_wait_event",   l_bidi_wait_event},
+    {"execute_atom",      l_execute_atom},
+    {"is_displayed",      l_is_displayed},
+    {"get_attribute",     l_get_attribute},
+    {"atom_str_arg",      l_atom_str_arg},
+    {"find_relative",     l_find_relative},
     {NULL, NULL},
 };
 

@@ -92,6 +92,22 @@ local ok, err = pcall(function()
   assert((not nok) and nerr.code == 17, "no such element error")
   print("  ok: no such element error")
 
+  -- atom-backed commands: isDisplayed / getAttribute / relative locators, run
+  -- in-page by the engine (the same atoms every binding uses) via the C extension.
+  d:get("data:text/html,<h1 id='hdr'>H</h1><button id='btn'>b</button>"
+        .. "<p id='gone' style='display:none'>x</p>"
+        .. "<a id='lnk' href='https://example.com/x'>l</a>")
+  local a_hdr = d:find_element(s.By.ID, "hdr")
+  local a_gone = d:find_element(s.By.ID, "gone")
+  local a_lnk = d:find_element(s.By.ID, "lnk")
+  assert(d:is_displayed(a_hdr) == true, "is_displayed #hdr true")
+  assert(d:is_displayed(a_gone) == false, "is_displayed #gone false")
+  local href = d:get_attribute(a_lnk, "href")
+  assert(type(href) == "string" and href:find("example.com/x", 1, true), "get_attribute href")
+  local rel = d:find_relative("button", { { kind = "below", sel = "#hdr" } })
+  assert(#rel >= 1, "find_relative below #hdr")
+  print("  ok: atoms (is_displayed / get_attribute / find_relative)")
+
   -- WebDriver-BiDi: subscribe to console log entries, emit one via the classic
   -- script channel, and receive the event asynchronously over the demux — the
   -- bidirectional half, over this session's negotiated webSocketUrl.

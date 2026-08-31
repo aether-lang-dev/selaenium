@@ -97,6 +97,61 @@ public sealed class WebDriver : IDisposable
         return doc.RootElement.Clone();
     }
 
+    // ---- atom-backed commands (a shared JS atom run in-page via the engine) ----
+
+    // Drain last_value after an atom call, raising a typed error on rc != 0.
+    internal JsonElement? AtomResult(int rc)
+    {
+        if (rc != 0)
+        {
+            int code = NativeMethods.LastErrorCode(_handle);
+            string message = NativeMethods.TakeString(NativeMethods.LastError(_handle));
+            if (rc == -1 && code == 0)
+            {
+                throw new WebDriverError(string.IsNullOrEmpty(message) ? "transport failure" : message, -1);
+            }
+            throw Classify(code, message);
+        }
+        string raw = NativeMethods.TakeString(NativeMethods.LastValue(_handle));
+        if (raw.Length == 0)
+        {
+            return null;
+        }
+        using var doc = JsonDocument.Parse(raw);
+        return doc.RootElement.Clone();
+    }
+
+    internal bool AtomIsDisplayed(string elementId) =>
+        AtomResult(NativeMethods.IsDisplayed(_handle, elementId))?.GetBoolean() ?? false;
+
+    internal string? AtomGetAttribute(string elementId, string name)
+    {
+        JsonElement? v = AtomResult(NativeMethods.GetAttribute(_handle, elementId, name));
+        return v is { ValueKind: JsonValueKind.String } s ? s.GetString() : null;
+    }
+
+    /// <summary>Relative locators: elements matching <paramref name="baseCss"/> filtered by
+    /// spatial relation to anchors, nearest first. Each filter is a dictionary
+    /// { "kind": "above"|"below"|"left"|"right"|"near", "sel": "&lt;css&gt;" } (near also
+    /// accepts "dist").</summary>
+    public IReadOnlyList<WebElement> FindRelative(string baseCss, params IDictionary<string, object?>[] filters)
+    {
+        string filtersJson = JsonSerializer.Serialize(filters);
+        JsonElement? result = AtomResult(NativeMethods.FindRelative(_handle, baseCss, filtersJson));
+        var els = new List<WebElement>();
+        if (result is { ValueKind: JsonValueKind.Array } arr)
+        {
+            foreach (JsonElement r in arr.EnumerateArray())
+            {
+                if (r.TryGetProperty("element-6066-11e4-a52e-4f735466cecf", out JsonElement idEl))
+                {
+                    els.Add(new WebElement(this, idEl.GetString()!));
+                }
+            }
+        }
+        return els;
+    }
+
     internal static WebDriverError Classify(int code, string message) => code switch
     {
         3 => new ElementClickInterceptedError(message, code),

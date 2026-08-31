@@ -287,6 +287,47 @@ function WebDriver:element_property(element_id, name)
   return self:execute("getElementProperty", { id = element_id, name = name })
 end
 
+-- atom-backed commands (a shared JS atom run in-page by the engine) ----------
+-- Drain last_value after an atom native call, raising a typed error on rc ~= 0.
+function WebDriver:_atom_result(rc)
+  if rc ~= 0 then
+    local code = native.last_error_code(self.handle)
+    local message = native.last_error(self.handle)
+    if rc == -1 and code == 0 then raise(-1, message ~= "" and message or "transport failure") end
+    raise(code, message)
+  end
+  local raw = native.last_value(self.handle)
+  if raw == "" then return M.null end
+  return json.decode(raw)
+end
+
+-- is the element displayed? (the isDisplayed atom — the visibility algorithm)
+function WebDriver:is_displayed(element_id)
+  return self:_atom_result(native.is_displayed(self.handle, element_id)) == true
+end
+
+-- the classic getAttribute(name): property-or-attribute (via the atom).
+-- dom_attribute(name) keeps the raw W3C getDomAttribute.
+function WebDriver:get_attribute(element_id, name)
+  local v = self:_atom_result(native.get_attribute(self.handle, element_id, name))
+  if v == M.null then return nil end
+  return v
+end
+function WebDriver:dom_attribute(element_id, name)
+  return self:execute("getDomAttribute", { id = element_id, name = name })
+end
+
+-- relative locators: element ids matching base_css filtered by spatial relation
+-- to anchors, nearest first. filters is a list of tables {kind=..., sel=...}.
+function WebDriver:find_relative(base_css, filters)
+  local r = self:_atom_result(native.find_relative(self.handle, base_css, json.encode(filters or M.array({}))))
+  local out = {}
+  if type(r) == "table" then
+    for i = 1, #r do out[i] = r[i][W3C_ELEMENT_KEY] end
+  end
+  return out
+end
+
 -- script
 function WebDriver:execute_script(script, args)
   return self:execute("executeScript", { script = script, args = args or M.array({}) })

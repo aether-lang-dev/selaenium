@@ -58,6 +58,19 @@ internal static class NativeMethods
     [DllImport(Lib, EntryPoint = "aether_sel_embed_error_code", CharSet = CharSet.Ansi)]
     internal static extern int ErrorCode(string w3cError);
 
+    // ---- atom-backed commands (isDisplayed/getAttribute/relative locators) ----
+    [DllImport(Lib, EntryPoint = "aether_sel_embed_execute_atom", CharSet = CharSet.Ansi)]
+    internal static extern int ExecuteAtom(IntPtr handle, string atom, string elemId, string extraJson);
+
+    [DllImport(Lib, EntryPoint = "aether_sel_embed_is_displayed", CharSet = CharSet.Ansi)]
+    internal static extern int IsDisplayed(IntPtr handle, string elemId);
+
+    [DllImport(Lib, EntryPoint = "aether_sel_embed_get_attribute", CharSet = CharSet.Ansi)]
+    internal static extern int GetAttribute(IntPtr handle, string elemId, string name);
+
+    [DllImport(Lib, EntryPoint = "aether_sel_embed_find_relative", CharSet = CharSet.Ansi)]
+    internal static extern int FindRelative(IntPtr handle, string baseCss, string filtersJson);
+
     // ---- WebDriver-BiDi (over the session's webSocketUrl) ----
     // An opaque BiDi channel handle, independent of the W3C session handle.
     [DllImport(Lib, EntryPoint = "aether_sel_embed_bidi_open", CharSet = CharSet.Ansi)]

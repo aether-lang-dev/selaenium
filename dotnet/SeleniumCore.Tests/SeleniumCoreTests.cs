@@ -187,6 +187,54 @@ namespace SeleniumCore.Tests
             }
         }
 
+        // Atom-backed commands (isDisplayed / getAttribute / relative locators)
+        // run in-page via the shared engine atoms, from C# through the C ABI.
+        [SkippableFact]
+        public void HeadlessChromeAtoms()
+        {
+            string? driver = Which("chromedriver");
+            Skip.If(driver is null, "chromedriver not on PATH");
+
+            int cdPort = FreePort();
+            var cd = Process.Start(new ProcessStartInfo(driver!, $"--port={cdPort}")
+                { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true })!;
+            try
+            {
+                Skip.IfNot(WaitUp(cdPort, 10000), "chromedriver did not come up");
+
+                var chromeArgs = new List<object?> { "--headless=new", "--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage" };
+                var chromeOpts = new Dictionary<string, object?> { ["args"] = chromeArgs };
+                string? chromeBin = Environment.GetEnvironmentVariable("SEL_CHROME_BINARY");
+                if (!string.IsNullOrEmpty(chromeBin)) chromeOpts["binary"] = chromeBin;
+                var d = WebDriver.Chrome($"http://127.0.0.1:{cdPort}",
+                    new Dictionary<string, object?> { ["goog:chromeOptions"] = chromeOpts });
+                try
+                {
+                    d.Get("data:text/html,<!doctype html><title>Atoms</title>"
+                        + "<h1 id='hdr'>H</h1><button id='btn'>b</button>"
+                        + "<p id='gone' style='display:none'>x</p>"
+                        + "<a id='lnk' href='https://example.com/x'>l</a>");
+
+                    d.FindElement(By.Id, "hdr").IsDisplayed().ShouldBeTrue();
+                    d.FindElement(By.Id, "gone").IsDisplayed().ShouldBeFalse();
+
+                    string? href = d.FindElement(By.Id, "lnk").GetAttribute("href");
+                    href.ShouldNotBeNull();
+                    href!.ShouldContain("example.com/x");
+
+                    var rel = d.FindRelative("button",
+                        new Dictionary<string, object?> { ["kind"] = "below", ["sel"] = "#hdr" });
+                    rel.Count.ShouldBeGreaterThanOrEqualTo(1);
+                    rel[0].TagName.ToLowerInvariant().ShouldBe("button");
+                }
+                finally { d.Quit(); }
+            }
+            finally
+            {
+                try { cd.Kill(); } catch { /* already gone */ }
+            }
+        }
+
         // --- in-process content server (two pages: /one links to /two) -------
         private static void StartContentServer(int port, System.Threading.CancellationToken ct)
         {

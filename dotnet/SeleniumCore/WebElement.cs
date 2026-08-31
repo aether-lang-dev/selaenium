@@ -45,7 +45,17 @@ public sealed class WebElement
     public string Text => Exec("getElementText", null)!.Value.GetString()!;
     public string TagName => Exec("getElementTagName", null)!.Value.GetString()!;
 
-    public JsonElement? GetAttribute(string name) =>
+    /// <summary>Whether the element is shown (the isDisplayed atom — the visibility
+    /// algorithm, run in-page by the engine — not a naive style check).</summary>
+    public bool IsDisplayed() => _driver.AtomIsDisplayed(Id);
+
+    /// <summary>The classic getAttribute(name): property-or-attribute (boolean attrs,
+    /// live properties like value/checked), via the shared engine atom. Use
+    /// <see cref="GetDomAttribute"/> for the raw W3C DOM attribute.</summary>
+    public string? GetAttribute(string name) => _driver.AtomGetAttribute(Id, name);
+
+    /// <summary>The literal DOM attribute (W3C getDomAttribute), no property fallback.</summary>
+    public JsonElement? GetDomAttribute(string name) =>
         Exec("getDomAttribute", new Dictionary<string, object?> { ["name"] = name });
 
     public JsonElement? GetProperty(string name) =>
