@@ -272,6 +272,11 @@ def test_live_bidi():
             assert "MOCKED-BODY" in got, f"page did not receive the mock: {got!r}"
             print("  ok: network provideResponse mocked the body")
 
+            # network.setCacheBehavior — disable / restore the session HTTP cache.
+            assert driver.bidi.set_cache_behavior("bypass").get("type") == "success"
+            assert driver.bidi.set_cache_behavior("default").get("type") == "success"
+            print("  ok: network setCacheBehavior (bypass/default)")
+
             print("PASS: live BiDi test green")
         finally:
             driver.quit()

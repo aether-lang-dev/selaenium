@@ -223,6 +223,14 @@ def _ensure_loaded() -> None:
         "aether_sel_embed_bidi_network_provide_response", _CSTR,
         [_HANDLE, ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_char_p, ctypes.c_int],
     )
+    g["bidi_network_continue_with_auth"] = _decl(
+        "aether_sel_embed_bidi_network_continue_with_auth", _CSTR,
+        [_HANDLE, ctypes.c_int, ctypes.c_char_p, ctypes.c_char_p, ctypes.c_char_p, ctypes.c_int],
+    )
+    g["bidi_network_set_cache_behavior"] = _decl(
+        "aether_sel_embed_bidi_network_set_cache_behavior", _CSTR,
+        [_HANDLE, ctypes.c_int, ctypes.c_char_p, ctypes.c_int],
+    )
 
     # ---- string ownership ----
     g["free_string"] = _decl("aether_sel_embed_free_string", None, [ctypes.c_void_p])

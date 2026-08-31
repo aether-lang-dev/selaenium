@@ -640,6 +640,26 @@ class BiDi:
         )
         return json.loads(raw) if raw else {}
 
+    def continue_with_auth(self, request_id: str, username: str, password: str, timeout_ms: int = 10000) -> dict:
+        """Answer an HTTP auth challenge (a paused authRequired request) with
+        credentials — automates basic/digest auth that classic WebDriver can't
+        handle in headless."""
+        raw = _native.take_string(
+            _native.bidi_network_continue_with_auth(
+                self._handle, self._id(), _native.encode(request_id),
+                _native.encode(username), _native.encode(password), timeout_ms)
+        )
+        return json.loads(raw) if raw else {}
+
+    def set_cache_behavior(self, behavior: str = "bypass", timeout_ms: int = 10000) -> dict:
+        """Set the session HTTP cache behavior: "bypass" to disable it (so every
+        request hits the network / an intercept), "default" to restore it."""
+        raw = _native.take_string(
+            _native.bidi_network_set_cache_behavior(
+                self._handle, self._id(), _native.encode(behavior), timeout_ms)
+        )
+        return json.loads(raw) if raw else {}
+
     @staticmethod
     def event_request_id(event: dict) -> str | None:
         """The network.request id out of a network.beforeRequestSent (or other
