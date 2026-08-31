@@ -505,6 +505,41 @@ function BiDi:navigate(url, context, timeout_ms)
   return json.decode(raw)
 end
 
+-- network interception (observe / release / block requests) -------------------
+-- network.addIntercept for a URL pattern (full parseable URL as a "string"
+-- pattern; "" intercepts all) at the given phases. Returns the intercept id or nil.
+function BiDi:add_intercept(phases, url_pattern, timeout_ms)
+  local raw = native.bidi_network_add_intercept(self._handle, self:_id(),
+    phases or "beforeRequestSent", url_pattern or "", timeout_ms or 10000)
+  if raw == "" then return nil end
+  local reply = json.decode(raw)
+  return reply.result and reply.result.intercept or nil
+end
+
+function BiDi:remove_intercept(intercept_id, timeout_ms)
+  local raw = native.bidi_network_remove_intercept(self._handle, self:_id(), intercept_id, timeout_ms or 10000)
+  return raw == "" and {} or json.decode(raw)
+end
+
+-- Let a paused request proceed. request_id comes from a network event's
+-- params.request.request.
+function BiDi:continue_request(request_id, timeout_ms)
+  local raw = native.bidi_network_continue_request(self._handle, self:_id(), request_id, timeout_ms or 10000)
+  return raw == "" and {} or json.decode(raw)
+end
+
+function BiDi:fail_request(request_id, timeout_ms)
+  local raw = native.bidi_network_fail_request(self._handle, self:_id(), request_id, timeout_ms or 10000)
+  return raw == "" and {} or json.decode(raw)
+end
+
+-- The network.request id out of a network event: params.request.request.
+function BiDi.event_request_id(event)
+  local p = event.params
+  local r = p and p.request
+  return r and r.request or nil
+end
+
 -- How many events the bounded queue dropped since the last call (then resets).
 function BiDi:lost_events() return native.bidi_lost_events(self._handle) end
 
@@ -554,5 +589,7 @@ function M.route(command) return native.route(command) end
 function M.error_code(w3c_error) return native.error_code(w3c_error) end
 function M.locator(by, value) return native.by_locator(by, value) end
 function M.configure_native_lib(path) native.configure(path) end
+
+M.BiDi = BiDi
 
 return M

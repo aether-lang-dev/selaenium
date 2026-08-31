@@ -128,6 +128,19 @@ run(DriverBin) ->
             {ok, 42} = selenium:bidi_evaluate_value(D, <<"Promise.resolve(41+1)">>),
             io:format("  ok: BiDi evaluate (6*7 -> 42, Promise -> 42)~n"),
 
+            %% network interception — observe + release a paused request.
+            {ok, _} = selenium:bidi_subscribe(D, [<<"network.beforeRequestSent">>]),
+            {ok, Icept} = selenium:bidi_add_intercept(D, <<>>),  %% all URLs
+            true = is_binary(Icept) andalso byte_size(Icept) > 0,
+            {ok, _} = selenium:execute_script(D, <<"fetch('https://example.com/blocked').catch(function(){});">>),
+            {ok, NetEv} = selenium:bidi_next_event(D, <<"network.beforeRequestSent">>, 8000),
+            true = is_map(NetEv),
+            Rid = selenium:bidi_event_request_id(NetEv),
+            true = is_binary(Rid) andalso byte_size(Rid) > 0,
+            {ok, Cont} = selenium:bidi_continue_request(D, Rid),
+            <<"success">> = maps:get(<<"type">>, Cont),
+            io:format("  ok: BiDi network intercept -> beforeRequestSent -> continueRequest~n"),
+
             %% atom-backed commands: isDisplayed / getAttribute / relative
             %% locators — the shared JS atoms run in-page by the engine (the
             %% same atoms every other binding uses), reached through the NIF.

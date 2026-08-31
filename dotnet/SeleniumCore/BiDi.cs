@@ -164,6 +164,56 @@ public sealed class BiDi
         return raw.Length == 0 ? new Dictionary<string, object?>() : ParseObject(raw);
     }
 
+    // ---- network interception (observe / release / block requests) ----
+
+    /// <summary>network.addIntercept for a URL pattern (a full parseable URL as a
+    /// "string" pattern; empty intercepts all) at the given comma-separated phases.
+    /// Returns the intercept id, or null.</summary>
+    public string? AddIntercept(string phasesCsv = "beforeRequestSent", string urlPattern = "", int timeoutMs = 10000)
+    {
+        string raw = NativeMethods.TakeString(NativeMethods.BidiNetworkAddIntercept(_handle, NextId(), phasesCsv, urlPattern, timeoutMs));
+        Dictionary<string, object?> reply = raw.Length == 0 ? new() : ParseObject(raw);
+        if (reply.TryGetValue("result", out object? r) && r is Dictionary<string, object?> result &&
+            result.TryGetValue("intercept", out object? ic))
+        {
+            return ic?.ToString();
+        }
+        return null;
+    }
+
+    public Dictionary<string, object?> RemoveIntercept(string interceptId, int timeoutMs = 10000)
+    {
+        string raw = NativeMethods.TakeString(NativeMethods.BidiNetworkRemoveIntercept(_handle, NextId(), interceptId, timeoutMs));
+        return raw.Length == 0 ? new Dictionary<string, object?>() : ParseObject(raw);
+    }
+
+    /// <summary>Let a paused (intercepted) request proceed unchanged. requestId comes
+    /// from a network event's params.request.request.</summary>
+    public Dictionary<string, object?> ContinueRequest(string requestId, int timeoutMs = 10000)
+    {
+        string raw = NativeMethods.TakeString(NativeMethods.BidiNetworkContinueRequest(_handle, NextId(), requestId, timeoutMs));
+        return raw.Length == 0 ? new Dictionary<string, object?>() : ParseObject(raw);
+    }
+
+    /// <summary>Block a paused request (the ad/tracker-blocking case).</summary>
+    public Dictionary<string, object?> FailRequest(string requestId, int timeoutMs = 10000)
+    {
+        string raw = NativeMethods.TakeString(NativeMethods.BidiNetworkFailRequest(_handle, NextId(), requestId, timeoutMs));
+        return raw.Length == 0 ? new Dictionary<string, object?>() : ParseObject(raw);
+    }
+
+    /// <summary>The network.request id out of a network event: params.request.request.</summary>
+    public static string? EventRequestId(Dictionary<string, object?> ev)
+    {
+        if (ev.TryGetValue("params", out object? p) && p is Dictionary<string, object?> pp &&
+            pp.TryGetValue("request", out object? r) && r is Dictionary<string, object?> req &&
+            req.TryGetValue("request", out object? id))
+        {
+            return id?.ToString();
+        }
+        return null;
+    }
+
     /// <summary>
     /// How many events the bounded queue has dropped since the last call (then
     /// resets) — so a consumer knows it missed events.

@@ -184,6 +184,17 @@ namespace SeleniumCore.Tests
                     Convert.ToInt32(d.Bidi.EvaluateValue("6*7")).ShouldBe(42);
                     // awaitPromise: a resolved promise's value comes back unwrapped.
                     Convert.ToInt32(d.Bidi.EvaluateValue("Promise.resolve(41+1)")).ShouldBe(42);
+
+                    // network interception — observe + release a paused request.
+                    d.Bidi.Subscribe(BidiEvent.BeforeRequestSent);
+                    string? intercept = d.Bidi.AddIntercept();  // all URLs, beforeRequestSent
+                    intercept.ShouldNotBeNull();
+                    d.ExecuteScript("fetch('https://example.com/blocked').catch(() => {});");
+                    var netEv = d.Bidi.NextEvent(BidiEvent.BeforeRequestSent, 8000);
+                    netEv.ShouldNotBeNull();
+                    string? rid = BiDi.EventRequestId(netEv!);
+                    rid.ShouldNotBeNull();
+                    d.Bidi.ContinueRequest(rid!)["type"].ShouldBe("success");
                 }
                 finally { d.Quit(); }
             }

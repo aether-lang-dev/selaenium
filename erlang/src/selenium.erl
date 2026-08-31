@@ -28,7 +28,9 @@
     route/1, error_code/1, locator/2,
     bidi_available/1, bidi_subscribe/2, bidi_unsubscribe/2,
     bidi_next_event/3, bidi_command/4, bidi_lost_events/1,
-    bidi_get_tree/1, bidi_top_context/1, bidi_evaluate/2, bidi_evaluate_value/2, bidi_navigate/2
+    bidi_get_tree/1, bidi_top_context/1, bidi_evaluate/2, bidi_evaluate_value/2, bidi_navigate/2,
+    bidi_add_intercept/2, bidi_add_intercept/3, bidi_remove_intercept/2,
+    bidi_continue_request/2, bidi_fail_request/2, bidi_event_request_id/1
 ]).
 
 -define(W3C_KEY, <<"element-6066-11e4-a52e-4f735466cecf">>).
@@ -349,6 +351,43 @@ bidi_navigate(H, Url) ->
                 {ok, decode(selenium_nif:bidi_navigate(BH, bidi_next_id(H), Ctx, to_bin(Url), 30000))}
             end)
     end.
+
+%% ---- network interception ----
+
+%% network.addIntercept for a URL pattern (full parseable URL as a "string"
+%% pattern; <<>> intercepts all) at Phases (default "beforeRequestSent"). Returns
+%% {ok, InterceptId} | {error, _}.
+bidi_add_intercept(H, UrlPattern) ->
+    bidi_add_intercept(H, UrlPattern, <<"beforeRequestSent">>).
+bidi_add_intercept(H, UrlPattern, Phases) ->
+    with_bidi(H, fun(BH) ->
+        Reply = decode(selenium_nif:bidi_network_add_intercept(BH, bidi_next_id(H), to_bin(Phases), to_bin(UrlPattern), 10000)),
+        case Reply of
+            #{<<"result">> := #{<<"intercept">> := Ic}} -> {ok, Ic};
+            _ -> {error, {0, <<"no intercept id">>}}
+        end
+    end).
+
+bidi_remove_intercept(H, InterceptId) ->
+    with_bidi(H, fun(BH) ->
+        {ok, decode(selenium_nif:bidi_network_remove_intercept(BH, bidi_next_id(H), to_bin(InterceptId), 10000))}
+    end).
+
+%% Let a paused request proceed. RequestId comes from a network event's
+%% params.request.request.
+bidi_continue_request(H, RequestId) ->
+    with_bidi(H, fun(BH) ->
+        {ok, decode(selenium_nif:bidi_network_continue_request(BH, bidi_next_id(H), to_bin(RequestId), 10000))}
+    end).
+
+bidi_fail_request(H, RequestId) ->
+    with_bidi(H, fun(BH) ->
+        {ok, decode(selenium_nif:bidi_network_fail_request(BH, bidi_next_id(H), to_bin(RequestId), 10000))}
+    end).
+
+%% The network.request id out of a network event: params.request.request.
+bidi_event_request_id(#{<<"params">> := #{<<"request">> := #{<<"request">> := Rid}}}) -> Rid;
+bidi_event_request_id(_) -> undefined.
 
 %% ---- BiDi internals (ETS-backed per-session state) ----
 

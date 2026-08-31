@@ -118,6 +118,18 @@ internal static class NativeMethods
     [DllImport(Lib, EntryPoint = "aether_sel_embed_bidi_navigate", CharSet = CharSet.Ansi)]
     internal static extern IntPtr BidiNavigate(IntPtr handle, int id, string contextId, string url, int timeoutMs);
 
+    [DllImport(Lib, EntryPoint = "aether_sel_embed_bidi_network_add_intercept", CharSet = CharSet.Ansi)]
+    internal static extern IntPtr BidiNetworkAddIntercept(IntPtr handle, int id, string phasesCsv, string urlPattern, int timeoutMs);
+
+    [DllImport(Lib, EntryPoint = "aether_sel_embed_bidi_network_remove_intercept", CharSet = CharSet.Ansi)]
+    internal static extern IntPtr BidiNetworkRemoveIntercept(IntPtr handle, int id, string interceptId, int timeoutMs);
+
+    [DllImport(Lib, EntryPoint = "aether_sel_embed_bidi_network_continue_request", CharSet = CharSet.Ansi)]
+    internal static extern IntPtr BidiNetworkContinueRequest(IntPtr handle, int id, string requestId, int timeoutMs);
+
+    [DllImport(Lib, EntryPoint = "aether_sel_embed_bidi_network_fail_request", CharSet = CharSet.Ansi)]
+    internal static extern IntPtr BidiNetworkFailRequest(IntPtr handle, int id, string requestId, int timeoutMs);
+
     // ---- string ownership ----
     [DllImport(Lib, EntryPoint = "aether_sel_embed_free_string")]
     internal static extern void FreeString(IntPtr s);

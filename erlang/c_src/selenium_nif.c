@@ -66,6 +66,10 @@ extern char *aether_sel_embed_bidi_wait_event(void *h, const char *method, int t
 extern char *aether_sel_embed_bidi_get_tree(void *h, int id, int timeout_ms);
 extern char *aether_sel_embed_bidi_script_evaluate(void *h, int id, const char *expr, const char *ctx, int timeout_ms);
 extern char *aether_sel_embed_bidi_navigate(void *h, int id, const char *ctx, const char *url, int timeout_ms);
+extern char *aether_sel_embed_bidi_network_add_intercept(void *h, int id, const char *phases, const char *pattern, int timeout_ms);
+extern char *aether_sel_embed_bidi_network_remove_intercept(void *h, int id, const char *icid, int timeout_ms);
+extern char *aether_sel_embed_bidi_network_continue_request(void *h, int id, const char *rid, int timeout_ms);
+extern char *aether_sel_embed_bidi_network_fail_request(void *h, int id, const char *rid, int timeout_ms);
 
 /* ---- helpers ---- */
 
@@ -436,6 +440,50 @@ static ERL_NIF_TERM nif_bidi_navigate(ErlNifEnv *env, int argc, const ERL_NIF_TE
     return r;
 }
 
+static ERL_NIF_TERM nif_bidi_network_add_intercept(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
+{
+    UNUSED(argc);
+    void *h;
+    int id, timeout_ms;
+    if (!get_handle(env, argv[0], &h)) return enif_make_badarg(env);
+    if (!enif_get_int(env, argv[1], &id)) return enif_make_badarg(env);
+    char *phases = term_to_cstr(env, argv[2]);
+    if (!phases) return enif_make_badarg(env);
+    char *pattern = term_to_cstr(env, argv[3]);
+    if (!pattern) { enif_free(phases); return enif_make_badarg(env); }
+    if (!enif_get_int(env, argv[4], &timeout_ms)) {
+        enif_free(phases); enif_free(pattern);
+        return enif_make_badarg(env);
+    }
+    ERL_NIF_TERM r = take_cstr(env, aether_sel_embed_bidi_network_add_intercept(h, id, phases, pattern, timeout_ms));
+    enif_free(phases);
+    enif_free(pattern);
+    return r;
+}
+
+/* remove_intercept / continue_request / fail_request all share the
+   (handle, id, string, timeout) shape. */
+static ERL_NIF_TERM nif_bidi_net_str(ErlNifEnv *env, const ERL_NIF_TERM argv[],
+                                     char *(*fn)(void *, int, const char *, int))
+{
+    void *h;
+    int id, timeout_ms;
+    if (!get_handle(env, argv[0], &h)) return enif_make_badarg(env);
+    if (!enif_get_int(env, argv[1], &id)) return enif_make_badarg(env);
+    char *s = term_to_cstr(env, argv[2]);
+    if (!s) return enif_make_badarg(env);
+    if (!enif_get_int(env, argv[3], &timeout_ms)) { enif_free(s); return enif_make_badarg(env); }
+    ERL_NIF_TERM r = take_cstr(env, fn(h, id, s, timeout_ms));
+    enif_free(s);
+    return r;
+}
+static ERL_NIF_TERM nif_bidi_network_remove_intercept(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
+{ UNUSED(argc); return nif_bidi_net_str(env, argv, aether_sel_embed_bidi_network_remove_intercept); }
+static ERL_NIF_TERM nif_bidi_network_continue_request(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
+{ UNUSED(argc); return nif_bidi_net_str(env, argv, aether_sel_embed_bidi_network_continue_request); }
+static ERL_NIF_TERM nif_bidi_network_fail_request(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
+{ UNUSED(argc); return nif_bidi_net_str(env, argv, aether_sel_embed_bidi_network_fail_request); }
+
 /* ---- atom-backed commands ----
  * The int-returning verbs leave the result in last_value; the caller reads it
  * with last_value/1 (via selenium.erl's atom_result), just like execute. */
@@ -546,6 +594,10 @@ static ErlNifFunc nif_funcs[] = {
     {"bidi_get_tree",    3, nif_bidi_get_tree,    0},
     {"bidi_script_evaluate", 5, nif_bidi_script_evaluate, 0},
     {"bidi_navigate",    5, nif_bidi_navigate,    0},
+    {"bidi_network_add_intercept",    5, nif_bidi_network_add_intercept,    0},
+    {"bidi_network_remove_intercept", 4, nif_bidi_network_remove_intercept, 0},
+    {"bidi_network_continue_request", 4, nif_bidi_network_continue_request, 0},
+    {"bidi_network_fail_request",     4, nif_bidi_network_fail_request,     0},
     {"execute_atom",   4, nif_execute_atom,   0},
     {"is_displayed",   2, nif_is_displayed,   0},
     {"get_attribute",  3, nif_get_attribute,  0},

@@ -89,6 +89,10 @@ static struct {
     fn_bidi_tree        bidi_get_tree;
     fn_bidi_2str        bidi_script_evaluate;
     fn_bidi_2str        bidi_navigate;
+    fn_bidi_2str        bidi_network_add_intercept;
+    fn_bidi_sub         bidi_network_remove_intercept;
+    fn_bidi_sub         bidi_network_continue_request;
+    fn_bidi_sub         bidi_network_fail_request;
     /* ---- atoms ---- */
     fn_atom4            execute_atom;
     fn_atom1            is_displayed;
@@ -137,6 +141,10 @@ static int load_symbols(lua_State* L, void* lib, const char* path) {
     SYM(bidi_get_tree,    "aether_sel_embed_bidi_get_tree");
     SYM(bidi_script_evaluate, "aether_sel_embed_bidi_script_evaluate");
     SYM(bidi_navigate,    "aether_sel_embed_bidi_navigate");
+    SYM(bidi_network_add_intercept,    "aether_sel_embed_bidi_network_add_intercept");
+    SYM(bidi_network_remove_intercept, "aether_sel_embed_bidi_network_remove_intercept");
+    SYM(bidi_network_continue_request, "aether_sel_embed_bidi_network_continue_request");
+    SYM(bidi_network_fail_request,     "aether_sel_embed_bidi_network_fail_request");
     SYM(execute_atom,     "aether_sel_embed_execute_atom");
     SYM(is_displayed,     "aether_sel_embed_is_displayed");
     SYM(get_attribute,    "aether_sel_embed_get_attribute");
@@ -379,6 +387,39 @@ static int l_bidi_navigate(lua_State* L) {
     push_owned(L, ENGINE.bidi_navigate(h, id, ctx, url, timeout_ms));
     return 1;
 }
+static int l_bidi_network_add_intercept(lua_State* L) {
+    void* h = check_handle(L, 1);
+    int id = (int)luaL_checkinteger(L, 2);
+    const char* phases = luaL_checkstring(L, 3);
+    const char* pattern = luaL_checkstring(L, 4);
+    int timeout_ms = (int)luaL_checkinteger(L, 5);
+    push_owned(L, ENGINE.bidi_network_add_intercept(h, id, phases, pattern, timeout_ms));
+    return 1;
+}
+static int l_bidi_network_remove_intercept(lua_State* L) {
+    void* h = check_handle(L, 1);
+    int id = (int)luaL_checkinteger(L, 2);
+    const char* icid = luaL_checkstring(L, 3);
+    int timeout_ms = (int)luaL_checkinteger(L, 4);
+    push_owned(L, ENGINE.bidi_network_remove_intercept(h, id, icid, timeout_ms));
+    return 1;
+}
+static int l_bidi_network_continue_request(lua_State* L) {
+    void* h = check_handle(L, 1);
+    int id = (int)luaL_checkinteger(L, 2);
+    const char* rid = luaL_checkstring(L, 3);
+    int timeout_ms = (int)luaL_checkinteger(L, 4);
+    push_owned(L, ENGINE.bidi_network_continue_request(h, id, rid, timeout_ms));
+    return 1;
+}
+static int l_bidi_network_fail_request(lua_State* L) {
+    void* h = check_handle(L, 1);
+    int id = (int)luaL_checkinteger(L, 2);
+    const char* rid = luaL_checkstring(L, 3);
+    int timeout_ms = (int)luaL_checkinteger(L, 4);
+    push_owned(L, ENGINE.bidi_network_fail_request(h, id, rid, timeout_ms));
+    return 1;
+}
 
 /* ---- atom-backed commands (result via last_value, drained the normal way) ---- */
 static int l_execute_atom(lua_State* L) {
@@ -443,6 +484,10 @@ static const luaL_Reg MODULE[] = {
     {"bidi_get_tree",     l_bidi_get_tree},
     {"bidi_script_evaluate", l_bidi_script_evaluate},
     {"bidi_navigate",     l_bidi_navigate},
+    {"bidi_network_add_intercept",    l_bidi_network_add_intercept},
+    {"bidi_network_remove_intercept", l_bidi_network_remove_intercept},
+    {"bidi_network_continue_request", l_bidi_network_continue_request},
+    {"bidi_network_fail_request",     l_bidi_network_fail_request},
     {"execute_atom",      l_execute_atom},
     {"is_displayed",      l_is_displayed},
     {"get_attribute",     l_get_attribute},

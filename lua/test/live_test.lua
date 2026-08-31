@@ -130,6 +130,19 @@ local ok, err = pcall(function()
   assert_eq(d:bidi():evaluate_value("6*7"), 42, "bidi evaluate 6*7")
   assert_eq(d:bidi():evaluate_value("Promise.resolve(41+1)"), 42, "bidi evaluate promise")
   print("  ok: BiDi evaluate (6*7 -> 42, Promise -> 42)")
+
+  -- network interception — observe + release a paused request (one BiDi channel).
+  local bidi = d:bidi()
+  bidi:subscribe(s.BidiEvent.BEFORE_REQUEST_SENT)
+  local ic = bidi:add_intercept("beforeRequestSent", "")  -- all URLs
+  assert(ic, "network.addIntercept -> intercept id")
+  d:execute_script("fetch('https://example.com/blocked').catch(function(){});")
+  local nev = bidi:next_event(s.BidiEvent.BEFORE_REQUEST_SENT, 8000)
+  assert(nev, "network.beforeRequestSent event received")
+  local rid = s.BiDi.event_request_id(nev)
+  assert(rid, "intercepted request has a request id")
+  assert_eq(bidi:continue_request(rid).type, "success", "network.continueRequest")
+  print("  ok: BiDi network intercept -> beforeRequestSent -> continueRequest")
 end)
 
 d:quit()
