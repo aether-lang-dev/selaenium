@@ -150,6 +150,25 @@ def _ensure_loaded() -> None:
     )
     g["error_code"] = _decl("aether_sel_embed_error_code", ctypes.c_int, [ctypes.c_char_p])
 
+    # ---- TLS config (per session handle; set before newSession) ----
+    g["set_ca"] = _decl("aether_sel_embed_set_ca", None, [_HANDLE, ctypes.c_char_p])
+    g["set_insecure"] = _decl("aether_sel_embed_set_insecure", None, [_HANDLE, ctypes.c_int])
+
+    # ---- driver orchestration (spawn/adopt a driver process in-binding) ----
+    # An opaque driver handle, independent of the W3C session handle.
+    g["resolve_driver"] = _decl(
+        "aether_sel_embed_resolve_driver", _CSTR, [ctypes.c_char_p, ctypes.c_char_p]
+    )
+    g["launch_driver"] = _decl(
+        "aether_sel_embed_launch_driver", _HANDLE, [ctypes.c_char_p, ctypes.c_int]
+    )
+    g["ensure_driver"] = _decl(
+        "aether_sel_embed_ensure_driver", _HANDLE, [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_int]
+    )
+    g["driver_url"] = _decl("aether_sel_embed_driver_url", _CSTR, [_HANDLE])
+    g["driver_pid"] = _decl("aether_sel_embed_driver_pid", ctypes.c_int, [_HANDLE])
+    g["stop_driver"] = _decl("aether_sel_embed_stop_driver", None, [_HANDLE])
+
     # ---- atom-backed commands (isDisplayed/getAttribute/getText, run in-page) ----
     g["execute_atom"] = _decl(
         "aether_sel_embed_execute_atom", ctypes.c_int,

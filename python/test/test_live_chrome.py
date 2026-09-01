@@ -54,6 +54,54 @@ _HTML = (
 PAGE = "data:text/html;charset=utf-8," + urllib.parse.quote(_HTML)
 
 
+def test_live_driver_orchestration():
+    """Driver orchestration over the engine: resolve + spawn a chromedriver
+    in-binding (no chromedriver on PATH, no Grid), drive a page through the
+    self-launched driver, and tear the process down — the ensure_driver ->
+    driver_url -> open -> stop_driver flow the C-ABI exposes for FFI bindings."""
+    from selenium_core import (
+        LocalChrome, DriverProcess, ensure_driver, resolve_driver, By,
+    )
+
+    # Resolve only — skip loudly if the engine can't produce a driver here
+    # (offline + empty cache). This is the same self-skip the native client uses.
+    path = resolve_driver("chrome")
+    if not path:
+        pytest.skip("engine cannot resolve a chromedriver (offline, no cache)")
+    assert os.path.isfile(path), f"resolve_driver returned a non-file: {path!r}"
+    print(f"  ok: resolve_driver -> {path}")
+
+    # ensure_driver spawns it; the handle exposes url + pid, independent of any
+    # W3C session.
+    proc = ensure_driver("chrome")
+    assert isinstance(proc, DriverProcess)
+    try:
+        assert proc.url.startswith("http"), f"driver url={proc.url!r}"
+        assert proc.pid > 0, f"driver pid={proc.pid}"
+        print(f"  ok: ensure_driver -> pid {proc.pid} at {proc.url}")
+    finally:
+        proc.stop()
+        assert proc.pid == 0, "stop_driver should clear the handle"
+    print("  ok: stop_driver terminated the process")
+
+    # LocalChrome ties it together: spawn its own driver, run a session, and stop
+    # the driver on quit — the whole point of the orchestration ABI.
+    options = {"goog:chromeOptions": {"args": ["--headless=new", "--no-sandbox",
+               "--disable-gpu", "--disable-dev-shm-usage"]}}
+    chrome_bin = os.environ.get("SEL_CHROME_BINARY")
+    if chrome_bin:
+        options["goog:chromeOptions"]["binary"] = chrome_bin
+    driver = LocalChrome(options=options)
+    try:
+        assert driver.session_id, "no session id from LocalChrome"
+        driver.get(PAGE)
+        assert driver.title == "Aether Selenium", f"title={driver.title!r}"
+        assert driver.find_element(By.ID, "hdr").text == "Hello"
+        print("PASS: live driver-orchestration test green (self-spawned driver)")
+    finally:
+        driver.quit()
+
+
 def test_live_chrome():
     driver_bin = shutil.which("chromedriver")
     if not driver_bin:

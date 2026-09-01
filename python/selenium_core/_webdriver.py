@@ -208,8 +208,16 @@ class WebDriver:
     """A WebDriver session. Construct with a remote-end URL and capabilities,
     or use :func:`Chrome` / :func:`Remote` helpers."""
 
-    def __init__(self, command_executor: str, capabilities: dict | None = None):
+    def __init__(self, command_executor: str, capabilities: dict | None = None,
+                 ca_path: str | None = None, insecure: bool = False):
         self._handle = _native.open(_native.encode(command_executor))
+        # TLS trust config must land on the handle BEFORE newSession (the first
+        # request). ca_path pins a private-CA bundle; insecure skips verification
+        # entirely (self-signed dev/staging Grid — trust the host out-of-band).
+        if ca_path:
+            _native.set_ca(self._handle, _native.encode(ca_path))
+        if insecure:
+            _native.set_insecure(self._handle, 1)
         caps = capabilities or {"browserName": "chrome"}
         # Request a BiDi channel so `.bidi` is available on demand; the channel
         # itself is opened lazily (a classic script never opens the WebSocket).
@@ -692,3 +700,86 @@ def Chrome(command_executor: str = "http://127.0.0.1:9515", options: dict | None
 def Remote(command_executor: str, capabilities: dict) -> WebDriver:
     """A session against an arbitrary remote end / Grid hub with explicit caps."""
     return WebDriver(command_executor, capabilities)
+
+
+# ---- driver orchestration (spawn / adopt a driver process in-binding) --------
+# The engine can resolve, download-or-cache, and launch a browser driver process
+# itself — so a caller needs neither a driver on PATH nor a running Grid. These
+# wrap the driver-handle C ABI (independent of the W3C session handle).
+
+
+def resolve_driver(browser: str = "chrome", hint: str = "") -> str:
+    """Resolve the local driver binary path for ``browser`` without launching it
+    (detect/download/cache as needed). ``hint`` pins a version or path; ""
+    auto-detects. Returns "" if none resolvable (offline, no cache)."""
+    return _native.take_string(
+        _native.resolve_driver(_native.encode(browser), _native.encode(hint)))
+
+
+class DriverProcess:
+    """A driver process launched by the engine. Owns the driver handle; call
+    :meth:`stop` (or use as a context manager) to terminate it."""
+
+    def __init__(self, handle):
+        self._handle = handle
+
+    @property
+    def url(self) -> str:
+        """The base URL the driver is listening on — pass to :class:`WebDriver`."""
+        return _native.take_string(_native.driver_url(self._handle)) if self._handle else ""
+
+    @property
+    def pid(self) -> int:
+        """The driver process id (0 if not running)."""
+        return _native.driver_pid(self._handle) if self._handle else 0
+
+    def stop(self) -> None:
+        if self._handle:
+            _native.stop_driver(self._handle)
+            self._handle = None
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.stop()
+
+
+def launch_driver(driver_path: str, timeout_ms: int = 15000) -> DriverProcess | None:
+    """Launch a driver at an explicit binary path. Returns a :class:`DriverProcess`,
+    or None if it did not come up in ``timeout_ms``."""
+    h = _native.launch_driver(_native.encode(driver_path), timeout_ms)
+    return DriverProcess(h) if h else None
+
+
+def ensure_driver(browser: str = "chrome", hint: str = "", timeout_ms: int = 15000) -> DriverProcess | None:
+    """Resolve (detect/download/cache) AND launch a driver for ``browser`` in one
+    step. Returns a running :class:`DriverProcess`, or None if none could be
+    resolved/launched."""
+    h = _native.ensure_driver(_native.encode(browser), _native.encode(hint), timeout_ms)
+    return DriverProcess(h) if h else None
+
+
+class LocalChrome(WebDriver):
+    """A Chrome session that spawns its own chromedriver via the engine — no
+    driver on PATH, no Grid. The driver process is stopped on :meth:`quit`.
+
+    Returns nothing special if the driver can't be resolved: raises
+    :class:`WebDriverError`."""
+
+    def __init__(self, options: dict | None = None, hint: str = "", timeout_ms: int = 15000,
+                 ca_path: str | None = None, insecure: bool = False):
+        proc = ensure_driver("chrome", hint, timeout_ms)
+        if proc is None:
+            raise WebDriverError("could not resolve/launch chromedriver", -1)
+        self._proc = proc
+        caps = {"browserName": "chrome"}
+        if options:
+            caps.update(options)
+        super().__init__(proc.url, caps, ca_path=ca_path, insecure=insecure)
+
+    def quit(self) -> None:
+        try:
+            super().quit()
+        finally:
+            self._proc.stop()
