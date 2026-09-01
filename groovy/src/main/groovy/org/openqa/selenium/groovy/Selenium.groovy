@@ -1,32 +1,34 @@
-package org.seleniumhq.aether.groovy
+package org.openqa.selenium.groovy
 
-import org.seleniumhq.aether.WebDriver
+import org.openqa.selenium.ChromeDriver
+import org.openqa.selenium.RemoteWebDriver
 
 /**
  * Idiomatic Groovy over the Java binding.
  *
  * There is NO second FFI here. The one JVM binding to the shared Aether engine
- * is the Java FFM binding (org.seleniumhq.aether.*); this is ordinary
+ * is the Java FFM binding (org.openqa.selenium.*); this is ordinary
  * Groovy/Java interop over those classes — exactly as one Java jar backs the
  * whole JVM family (Kotlin/Scala/Clojure/Groovy). A Groovy-specific FFI would be
  * a second copy of the marshalling rules to keep in sync with the engine.
  *
- * What Groovy adds: a `withChrome`/`withHeadlessChrome` closure form that quits
- * the session on exit. Everything else is just calling the Java methods, which
- * Groovy already makes terse (driver.title, driver.findElement(By.ID, "x"),
- * Groovy maps/lists coerce to java.util.Map/List for params).
+ * What Groovy adds: a `withChrome`/`withHeadlessChrome`/`withLocalChrome`
+ * closure form that quits the session on exit. Everything else is just calling
+ * the Java methods, which Groovy already makes terse (driver.getTitle(),
+ * driver.findElement(By.id("x")), Groovy maps/lists coerce to
+ * java.util.Map/List for params).
  *
- *   SeleniumCore.withHeadlessChrome("http://127.0.0.1:9515") { d ->
+ *   Selenium.withHeadlessChrome("http://127.0.0.1:9515") { d ->
  *       d.get("https://example.com")
- *       println d.title
- *       d.findElement(By.CSS_SELECTOR, "a").click()
+ *       println d.getTitle()
+ *       d.findElement(By.cssSelector("a")).click()
  *   }
  */
-class SeleniumCore {
+class Selenium {
 
     /** Start a Chrome session, run the closure with the driver, quit on exit. */
     static <R> R withChrome(String commandExecutor, Map options = [:], Closure<R> body) {
-        def driver = WebDriver.chrome(commandExecutor, options)
+        def driver = RemoteWebDriver.chrome(commandExecutor, options)
         try {
             return body(driver)
         } finally {
@@ -41,5 +43,19 @@ class SeleniumCore {
                 args: ['--headless=new', '--no-sandbox', '--disable-gpu', '--disable-dev-shm-usage']
             ]
         ], body)
+    }
+
+    /**
+     * Start a local Chrome session that spawns its own chromedriver via the
+     * engine (no driver on PATH, no Grid) — the Selenium 4.x `ChromeDriver()`
+     * entry point — run the closure, quit on exit.
+     */
+    static <R> R withLocalChrome(Map options = [:], Closure<R> body) {
+        def driver = new ChromeDriver(options)
+        try {
+            return body(driver)
+        } finally {
+            driver.quit()
+        }
     }
 }

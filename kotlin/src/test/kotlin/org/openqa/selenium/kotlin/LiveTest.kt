@@ -1,8 +1,9 @@
-package org.seleniumhq.aether.kotlin
+package org.openqa.selenium.kotlin
 
 import com.sun.net.httpserver.HttpServer
-import org.seleniumhq.aether.WebDriver
-import org.seleniumhq.aether.WebDriverError
+import org.openqa.selenium.NoSuchElementException
+import org.openqa.selenium.RemoteWebDriver
+import org.openqa.selenium.WebDriverException
 import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.net.Socket
@@ -28,14 +29,14 @@ private const val PAGE_TWO = "<!doctype html><title>Page Two</title><h1 id=\"hdr
 
 fun main() {
     // ---- FFI (no browser) ----
-    check(WebDriver.route("get") == "POST /session/:sessionId/url", "route get")
-    check(WebDriver.errorCode("no such element") == 17, "errorCode no such element")
-    check(WebDriver.locator(By.ID, "main").contains("*[id="), "locator id rewrite")
+    check(RemoteWebDriver.route("get") == "POST /session/:sessionId/url", "route get")
+    check(RemoteWebDriver.errorCode("no such element") == 17, "errorCode no such element")
+    check(RemoteWebDriver.locator("id", "main").contains("*[id="), "locator id rewrite")
     run {
         var threw = false
         try {
-            WebDriver.chrome("http://127.0.0.1:1", null)
-        } catch (e: WebDriverError) {
+            RemoteWebDriver.chrome("http://127.0.0.1:1", null)
+        } catch (e: WebDriverException) {
             threw = e.code() == -1
         }
         check(threw, "transport failure -> code -1")
@@ -83,15 +84,15 @@ private fun liveSurface(driverBin: String) {
             check(d.sessionId().isNotEmpty(), "session started")
 
             d.get("$base/one")
-            check(d.title() == "Page One", "title")
-            check(d.find(By.ID, "hdr").text() == "One", "hdr text")
-            check(d.find(By.CSS_SELECTOR, "#go").tagName().lowercase() == "a", "tag name")
+            check(d.getTitle() == "Page One", "title")
+            check(d.find(By.id("hdr")).getText() == "One", "hdr text")
+            check(d.find(By.cssSelector("#go")).getTagName().lowercase() == "a", "tag name")
 
             // navigation
-            d.find(By.ID, "go").click()
-            check(d.title() == "Page Two", "after click")
-            d.back(); check(d.title() == "Page One", "after back")
-            d.forward(); check(d.title() == "Page Two", "after forward")
+            d.find(By.id("go")).click()
+            check(d.getTitle() == "Page Two", "after click")
+            d.back(); check(d.getTitle() == "Page One", "after back")
+            d.forward(); check(d.getTitle() == "Page Two", "after forward")
             d.back()
 
             // cookies
@@ -115,7 +116,7 @@ private fun liveSurface(driverBin: String) {
 
             // W3C actions: pointer click on the button
             @Suppress("UNCHECKED_CAST")
-            val br = d.find(By.ID, "btn").rect() as Map<String, Any?>
+            val br = d.find(By.id("btn")).rect() as Map<String, Any?>
             val cx = ((br["x"] as Number).toDouble() + (br["width"] as Number).toDouble() / 2).toInt()
             val cy = ((br["y"] as Number).toDouble() + (br["height"] as Number).toDouble() / 2).toInt()
             d.performActions(
@@ -131,7 +132,7 @@ private fun liveSurface(driverBin: String) {
                     ),
                 ),
             )
-            check(d.find(By.ID, "hdr").text() == "clicked", "actions click fired")
+            check(d.find(By.id("hdr")).getText() == "clicked", "actions click fired")
             d.clearActions()
 
             // screenshot -> PNG
@@ -141,8 +142,8 @@ private fun liveSurface(driverBin: String) {
             // negative path
             var nse = false
             try {
-                d.find(By.ID, "does-not-exist")
-            } catch (e: WebDriverError.NoSuchElement) {
+                d.find(By.id("does-not-exist"))
+            } catch (e: NoSuchElementException) {
                 nse = true
             }
             check(nse, "no such element error")

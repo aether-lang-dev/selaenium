@@ -3,9 +3,8 @@
   one Java FFM binding (no second FFI). Run via clojure/.tests.ae. The live test
   needs chromedriver + a content server (started here via com.sun.net.httpserver
   and ProcessBuilder); skips if chromedriver is absent."
-  (:require [selenium-core :as sel])
-  (:import [org.seleniumhq.aether WebDriver WebDriverError]
-           [org.seleniumhq.aether WebDriverError$NoSuchElement]
+  (:require [selenium :as sel])
+  (:import [org.openqa.selenium WebDriverException NoSuchElementException]
            [com.sun.net.httpserver HttpServer HttpHandler]
            [java.net InetSocketAddress ServerSocket Socket InetAddress]
            [java.nio.charset StandardCharsets]
@@ -71,15 +70,15 @@
           (check (pos? (count (sel/session-id d))) "session started")
 
           (sel/navigate d (str base "/one"))
-          (check (= "Page One" (sel/title d)) "title")
+          (check (= "Page One" (sel/get-title d)) "title")
           (check (= "One" (sel/text (sel/find-element d :id "hdr"))) "hdr text")
           (check (= "a" (.toLowerCase (sel/tag-name (sel/find-element d :css "#go")))) "tag name")
 
           ;; navigation
           (sel/click (sel/find-element d :id "go"))
-          (check (= "Page Two" (sel/title d)) "after click")
-          (sel/back d) (check (= "Page One" (sel/title d)) "after back")
-          (sel/forward d) (check (= "Page Two" (sel/title d)) "after forward")
+          (check (= "Page Two" (sel/get-title d)) "after click")
+          (sel/back d) (check (= "Page One" (sel/get-title d)) "after back")
+          (sel/forward d) (check (= "Page Two" (sel/get-title d)) "after forward")
           (sel/back d)
 
           ;; cookies
@@ -116,7 +115,7 @@
 
           ;; negative path
           (let [nse (try (sel/find-element d :id "does-not-exist") false
-                         (catch WebDriverError$NoSuchElement _ true))]
+                         (catch NoSuchElementException _ true))]
             (check nse "no such element error"))))
       (finally
         (.destroy cd)
@@ -127,7 +126,7 @@
   (check (= 17 (sel/error-code "no such element")) "errorCode no such element")
   (check (.contains (sel/locator :id "main") "*[id=") "locator id rewrite")
   (let [threw (try (sel/chrome "http://127.0.0.1:1") false
-                   (catch WebDriverError e (= -1 (.code e))))]
+                   (catch WebDriverException e (= -1 (.code e))))]
     (check threw "transport failure -> code -1"))
 
   (if-let [driver-bin (which "chromedriver")]

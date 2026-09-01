@@ -1,6 +1,6 @@
-package org.seleniumhq.aether.scala
+package org.openqa.selenium.scala
 
-import org.seleniumhq.aether.{By, WebDriver, WebDriverError}
+import org.openqa.selenium.{By, RemoteWebDriver, WebDriverException}
 
 /**
  * No-browser FFI test: proves the Scala binding drives the ONE Java FFM binding
@@ -17,21 +17,24 @@ object FfiTest:
     else { println(s"FAIL: $label"); failures += 1 }
 
   def main(args: Array[String]): Unit =
-    check(WebDriver.route("get") == "POST /session/:sessionId/url", "route get")
-    check(WebDriver.route("nope").isEmpty, "route unknown")
-    check(WebDriver.errorCode("no such element") == 17, "errorCode no such element")
-    check(WebDriver.errorCode("") == 0, "errorCode success")
+    check(RemoteWebDriver.route("get") == "POST /session/:sessionId/url", "route get")
+    check(RemoteWebDriver.route("nope").isEmpty, "route unknown")
+    check(RemoteWebDriver.errorCode("no such element") == 17, "errorCode no such element")
+    check(RemoteWebDriver.errorCode("") == 0, "errorCode success")
     check(
-      WebDriver.locator(By.CSS_SELECTOR, "div.foo") ==
+      RemoteWebDriver.locator("css selector", "div.foo") ==
         "{\"using\":\"css selector\",\"value\":\"div.foo\"}",
       "locator css"
     )
-    check(WebDriver.locator(By.ID, "main").contains("*[id="), "locator id rewrite")
+    check(RemoteWebDriver.locator("id", "main").contains("*[id="), "locator id rewrite")
 
     var threw = false
-    try WebDriver.chrome("http://127.0.0.1:1", null)
-    catch case e: WebDriverError => threw = e.code() == -1
+    try RemoteWebDriver.chrome("http://127.0.0.1:1", null)
+    catch case e: WebDriverException => threw = e.code() == -1
     check(threw, "transport failure -> code -1")
+
+    // By is now a factory: each strategy yields a locator instance.
+    check(By.className("x").toString.contains("class name"), "By.className -> \"class name\"")
 
     if failures == 0 then println("PASS: Scala FFI tests green")
     else { println(s"FAILED: $failures Scala FFI test(s)"); System.exit(1) }

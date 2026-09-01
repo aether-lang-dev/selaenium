@@ -24,7 +24,7 @@ aeb(cap) {
         kotlin.kotlinc_test() {
             source_layout("maven idiomatic")
         }
-        kotlin.kotlin_test("org.seleniumhq.aether.kotlin.LiveTestKt") {
+        kotlin.kotlin_test("org.openqa.selenium.kotlin.LiveTestKt") {
             env("SELENIUM_CORE_LIB", lib)
             skip_below_jdk("22")
             jvm_args("--enable-native-access=ALL-UNNAMED")

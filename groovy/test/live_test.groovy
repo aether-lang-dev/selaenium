@@ -6,10 +6,11 @@
 // NOTE: authored on a box without a JDK-24-capable Groovy (Debian's 2.4 on JVM
 // 17 can't read the Panama-FFM binding). Verified on a box with a modern Groovy
 // + JDK >= 22 (catchyos). The Java binding underneath is fully live-verified.
-import org.seleniumhq.aether.WebDriver
-import org.seleniumhq.aether.By
-import org.seleniumhq.aether.WebDriverError
-import org.seleniumhq.aether.groovy.SeleniumCore
+import org.openqa.selenium.RemoteWebDriver
+import org.openqa.selenium.By
+import org.openqa.selenium.WebDriverException
+import org.openqa.selenium.NoSuchElementException
+import org.openqa.selenium.groovy.Selenium
 import com.sun.net.httpserver.HttpServer
 import com.sun.net.httpserver.HttpHandler
 import java.net.InetSocketAddress
@@ -44,13 +45,13 @@ def waitUp = { int port, long timeoutMs ->
 }
 
 // ---- FFI (no browser) ----
-check(WebDriver.route("get") == "POST /session/:sessionId/url", "route get")
-check(WebDriver.errorCode("no such element") == 17, "errorCode no such element")
-check(WebDriver.locator(By.ID, "main").contains('*[id='), "locator id rewrite")
+check(RemoteWebDriver.route("get") == "POST /session/:sessionId/url", "route get")
+check(RemoteWebDriver.errorCode("no such element") == 17, "errorCode no such element")
+check(RemoteWebDriver.locator("id", "main").contains('*[id='), "locator id rewrite")
 try {
-    WebDriver.chrome("http://127.0.0.1:1", null)
+    RemoteWebDriver.chrome("http://127.0.0.1:1", null)
     check(false, "transport failure")
-} catch (WebDriverError e) {
+} catch (WebDriverException e) {
     check(e.code() == -1, "transport failure -> code -1")
 }
 
@@ -78,19 +79,19 @@ if (driverBin == null) {
         if (!waitUp(cdPort, 10000)) {
             println "  (live) SKIPPED: chromedriver did not come up"
         } else {
-            SeleniumCore.withHeadlessChrome("http://127.0.0.1:${cdPort}") { d ->
+            Selenium.withHeadlessChrome("http://127.0.0.1:${cdPort}") { d ->
                 check(d.sessionId().length() > 0, "session started")
 
                 d.get("${base}/one")
-                check(d.title() == "Page One", "title")
-                check(d.findElement(By.ID, "hdr").text() == "One", "hdr text")
-                check(d.findElement(By.CSS_SELECTOR, "#go").tagName().toLowerCase() == "a", "tag name")
+                check(d.getTitle() == "Page One", "title")
+                check(d.findElement(By.id("hdr")).getText() == "One", "hdr text")
+                check(d.findElement(By.cssSelector("#go")).getTagName().toLowerCase() == "a", "tag name")
 
                 // navigation
-                d.findElement(By.ID, "go").click()
-                check(d.title() == "Page Two", "after click")
-                d.back(); check(d.title() == "Page One", "after back")
-                d.forward(); check(d.title() == "Page Two", "after forward")
+                d.findElement(By.id("go")).click()
+                check(d.getTitle() == "Page Two", "after click")
+                d.back(); check(d.getTitle() == "Page One", "after back")
+                d.forward(); check(d.getTitle() == "Page Two", "after forward")
                 d.back()
 
                 // cookies
@@ -109,7 +110,7 @@ if (driverBin == null) {
                 check((d.executeScript("return arguments[0]+arguments[1];", 40, 2) as Number).intValue() == 42, "script args")
 
                 // W3C actions
-                def r = d.findElement(By.ID, "btn").rect()
+                def r = d.findElement(By.id("btn")).rect()
                 def cx = ((r.get("x") as Number).doubleValue() + (r.get("width") as Number).doubleValue() / 2) as int
                 def cy = ((r.get("y") as Number).doubleValue() + (r.get("height") as Number).doubleValue() / 2) as int
                 d.performActions([[
@@ -121,7 +122,7 @@ if (driverBin == null) {
                         [type: "pointerUp", button: 0]
                     ]
                 ]])
-                check(d.findElement(By.ID, "hdr").text() == "clicked", "actions click fired")
+                check(d.findElement(By.id("hdr")).getText() == "clicked", "actions click fired")
                 d.clearActions()
 
                 // screenshot
@@ -130,8 +131,8 @@ if (driverBin == null) {
 
                 // negative path
                 def nse = false
-                try { d.findElement(By.ID, "does-not-exist") }
-                catch (WebDriverError.NoSuchElement ignored) { nse = true }
+                try { d.findElement(By.id("does-not-exist")) }
+                catch (NoSuchElementException ignored) { nse = true }
                 check(nse, "no such element error")
             }
         }

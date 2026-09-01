@@ -21,7 +21,7 @@ aeb(cap) {
         }
         scala.scalac_test() {
             env("SELENIUM_CORE_LIB", lib)
-            main_class("org.seleniumhq.aether.scala.FfiTest")
+            main_class("org.openqa.selenium.scala.FfiTest")
             skip_below_jdk("22")
             jvm_flag("--enable-native-access=ALL-UNNAMED")
         }
