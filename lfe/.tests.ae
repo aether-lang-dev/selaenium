@@ -22,7 +22,7 @@ aeb(cap) {
         ebin = dep_artifact("erlang/.build.ae", "nif_ebin")
         lfe.test() {
             env("ERL_LIBS", libs)
-            src("src/selenium.lfe")
+            src("src/selenium_lfe.lfe")
             test_src("test/ffi_test.lfe")
             pa(ebin)
             run_main("ffi_test")

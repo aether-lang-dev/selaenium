@@ -9,23 +9,23 @@
 
 (defun main (_args)
   (let ((fails (+ (ck "route get"
-                      (=:= (selenium:route "get") #"POST /session/:sessionId/url"))
+                      (=:= (selenium_lfe:route "get") #"POST /session/:sessionId/url"))
                   (ck "route unknown"
-                      (=:= (selenium:route "nope") #""))
+                      (=:= (selenium_lfe:route "nope") #""))
                   (ck "errorCode no such element"
-                      (=:= (selenium:error-code "no such element") 17))
+                      (=:= (selenium_lfe:error_code "no such element") 17))
                   (ck "errorCode success"
-                      (=:= (selenium:error-code "") 0))
+                      (=:= (selenium_lfe:error_code "") 0))
                   (ck "locator css"
-                      (=:= (selenium:locator "css selector" "div.foo")
+                      (=:= (selenium_lfe:locator "css selector" "div.foo")
                            #"{\"using\":\"css selector\",\"value\":\"div.foo\"}"))
                   (ck "locator id rewrite"
-                      (=/= (binary:match (selenium:locator "id" "main") #"*[id=")
+                      (=/= (binary:match (selenium_lfe:locator "id" "main") #"*[id=")
                            'nomatch))
-                  (ck "by-id factory"
-                      (=:= (selenium:by-id "hdr") #(#"id" #"hdr")))
-                  (ck "by-class-name -> class name"
-                      (=:= (selenium:by-class-name "greet")
+                  (ck "by_id factory"
+                      (=:= (selenium_lfe:by_id "hdr") #(#"id" #"hdr")))
+                  (ck "by_class_name -> class name"
+                      (=:= (selenium_lfe:by_class_name "greet")
                            #(#"class name" #"greet"))))))
     (if (=:= fails 0)
         (progn (io:format "PASS: LFE FFI tests green~n") (halt 0))
