@@ -161,25 +161,39 @@ module SeleniumCore
   class WebDriver
     # Start a Chrome session against a running chromedriver (or Grid).
     #   options: a raw capabilities Hash merged under browserName: chrome.
-    def self.chrome(command_executor = 'http://127.0.0.1:9515', options: nil)
+    #   ca_path:  pin a private-CA bundle for the transport (before newSession).
+    #   insecure: skip TLS verification entirely (self-signed dev/staging Grid).
+    def self.chrome(command_executor = 'http://127.0.0.1:9515', options: nil, ca_path: nil, insecure: false)
       caps = { 'browserName' => 'chrome' }
       caps.merge!(options) if options
-      new(command_executor, caps)
+      new(command_executor, caps, ca_path: ca_path, insecure: insecure)
     end
 
     # Convenience: headless-Chrome launch args baked in.
-    def self.headless_chrome(command_executor = 'http://127.0.0.1:9515')
-      chrome(command_executor, options: {
+    def self.headless_chrome(command_executor = 'http://127.0.0.1:9515', ca_path: nil, insecure: false)
+      chrome(command_executor, ca_path: ca_path, insecure: insecure, options: {
                'goog:chromeOptions' => {
                  'args' => ['--headless=new', '--no-sandbox', '--disable-gpu', '--disable-dev-shm-usage']
                }
              })
     end
 
-    def initialize(command_executor, capabilities)
+    # Chrome session that spawns its OWN chromedriver via the engine — no driver
+    # on PATH, no Grid. See {SeleniumCore.local_chrome}.
+    def self.local_chrome(options: nil, hint: '', timeout_ms: 15_000, ca_path: nil, insecure: false)
+      SeleniumCore.local_chrome(options: options, hint: hint, timeout_ms: timeout_ms,
+                                ca_path: ca_path, insecure: insecure)
+    end
+
+    def initialize(command_executor, capabilities, ca_path: nil, insecure: false)
       @handle = Native.call(:open, command_executor)
       raise WebDriverError.new('failed to open session handle', -1) if @handle.nil? || @handle.null?
 
+      # TLS trust config must land on the handle BEFORE newSession (the first
+      # request). ca_path pins a private-CA bundle; insecure skips verification
+      # entirely (self-signed dev/staging Grid — trust the host out-of-band).
+      Native.call(:set_ca, @handle, ca_path) if ca_path && !ca_path.empty?
+      Native.call(:set_insecure, @handle, 1) if insecure
       # Request a BiDi channel so #bidi is available on demand; the WebSocket
       # itself opens lazily (a classic script never opens it).
       caps = capabilities.merge('webSocketUrl' => true)
@@ -344,6 +358,96 @@ module SeleniumCore
     # The getAttribute atom: (handle, element_id, name) -> JSON string|null.
     def atom_get_attribute(element_id, name)
       atom_result(Native.call(:get_attribute, @handle, element_id, name))
+    end
+  end
+
+  # ---- driver orchestration (spawn / adopt a driver process in-binding) ------
+  # The engine can resolve, download-or-cache, and launch a browser driver
+  # process itself — so a caller needs neither a driver on PATH nor a running
+  # Grid. These wrap the driver-handle C ABI (independent of the W3C session
+  # handle).
+
+  # A driver process launched by the engine. Owns the driver handle; call #stop
+  # to terminate it.
+  class DriverProcess
+    def initialize(handle)
+      @handle = handle
+    end
+
+    # The base URL the driver is listening on — pass to {WebDriver}.
+    def url
+      return '' if @handle.nil? || @handle.null?
+
+      Native.take_string(Native.call(:driver_url, @handle))
+    end
+
+    # The driver process id (0 if not running).
+    def pid
+      return 0 if @handle.nil? || @handle.null?
+
+      Native.call(:driver_pid, @handle)
+    end
+
+    def stop
+      return if @handle.nil? || @handle.null?
+
+      Native.call(:stop_driver, @handle)
+      @handle = nil
+    end
+  end
+
+  module_function
+
+  # Resolve the local driver binary path for +browser+ without launching it
+  # (detect/download/cache as needed). +hint+ pins a version or path; "" auto-
+  # detects. Returns "" if none resolvable (offline, no cache).
+  def resolve_driver(browser = 'chrome', hint = '')
+    Native.take_string(Native.call(:resolve_driver, browser, hint))
+  end
+
+  # Launch a driver at an explicit binary path. Returns a {DriverProcess}, or nil
+  # if it did not come up in +timeout_ms+.
+  def launch_driver(driver_path, timeout_ms: 15_000)
+    handle = Native.call(:launch_driver, driver_path, timeout_ms)
+    return nil if handle.nil? || handle.null?
+
+    DriverProcess.new(handle)
+  end
+
+  # Resolve (detect/download/cache) AND launch a driver for +browser+ in one
+  # step. Returns a running {DriverProcess}, or nil if none could be
+  # resolved/launched.
+  def ensure_driver(browser = 'chrome', hint = '', timeout_ms: 15_000)
+    handle = Native.call(:ensure_driver, browser, hint, timeout_ms)
+    return nil if handle.nil? || handle.null?
+
+    DriverProcess.new(handle)
+  end
+
+  # A Chrome session that spawns its own chromedriver via the engine — no driver
+  # on PATH, no Grid. The driver process is stopped on #quit. Raises a
+  # {WebDriverError} if the driver can't be resolved/launched.
+  def local_chrome(options: nil, hint: '', timeout_ms: 15_000, ca_path: nil, insecure: false)
+    LocalChrome.new(options: options, hint: hint, timeout_ms: timeout_ms,
+                    ca_path: ca_path, insecure: insecure)
+  end
+
+  # A Chrome session that spawns its own chromedriver via the engine — no driver
+  # on PATH, no Grid. The driver process is stopped on #quit.
+  class LocalChrome < WebDriver
+    def initialize(options: nil, hint: '', timeout_ms: 15_000, ca_path: nil, insecure: false)
+      @proc = SeleniumCore.ensure_driver('chrome', hint, timeout_ms: timeout_ms)
+      raise WebDriverError.new('could not resolve/launch chromedriver', -1) if @proc.nil?
+
+      caps = { 'browserName' => 'chrome' }
+      caps.merge!(options) if options
+      super(@proc.url, caps, ca_path: ca_path, insecure: insecure)
+    end
+
+    def quit
+      super
+    ensure
+      @proc&.stop
     end
   end
 

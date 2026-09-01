@@ -20,6 +20,11 @@ class LiveTest < Minitest::Test
          '<input id="box" name="q"/></body></html>'
 
   def setup
+    # The driver-orchestration test spawns its OWN chromedriver via the engine
+    # (the whole point is not relying on one on PATH), so it skips this shared
+    # PATH-based chromedriver harness.
+    return if name == 'test_live_driver_orchestration'
+
     @driver_bin = which('chromedriver')
     skip 'chromedriver not on PATH' unless @driver_bin
     @port = free_port
@@ -62,6 +67,47 @@ class LiveTest < Minitest::Test
       assert_raises(SeleniumCore::NoSuchElementError) do
         driver.find_element(SeleniumCore::By::ID, 'does-not-exist')
       end
+    ensure
+      driver.quit
+    end
+  end
+
+  # Driver orchestration over the engine: resolve + spawn a chromedriver
+  # in-binding (no chromedriver on PATH, no Grid), drive a page through the
+  # self-launched driver, and tear the process down — the ensure_driver ->
+  # driver_url -> open -> stop_driver flow the C-ABI exposes for FFI bindings.
+  def test_live_driver_orchestration
+    # Resolve only — self-skip if the engine can't produce a driver here
+    # (offline + empty cache). Same self-skip the reference bindings use.
+    path = SeleniumCore.resolve_driver('chrome')
+    skip 'engine cannot resolve a chromedriver (offline, no cache)' if path.empty?
+    assert File.file?(path), "resolve_driver returned a non-file: #{path.inspect}"
+
+    # ensure_driver spawns it; the handle exposes url + pid, independent of any
+    # W3C session.
+    proc = SeleniumCore.ensure_driver('chrome')
+    refute_nil proc, 'ensure_driver returned nil'
+    begin
+      assert proc.url.start_with?('http'), "driver url=#{proc.url.inspect}"
+      assert_operator proc.pid, :>, 0, "driver pid=#{proc.pid}"
+    ensure
+      proc.stop
+      assert_equal 0, proc.pid, 'stop_driver should clear the handle'
+    end
+
+    # LocalChrome ties it together: spawn its own driver, run a session, and stop
+    # the driver on quit — the whole point of the orchestration ABI.
+    chrome_opts = { 'args' => ['--headless=new', '--no-sandbox', '--disable-gpu', '--disable-dev-shm-usage'] }
+    chrome_bin = ENV.fetch('SEL_CHROME_BINARY', nil)
+    chrome_opts['binary'] = chrome_bin if chrome_bin && !chrome_bin.empty?
+    driver = SeleniumCore.local_chrome(options: { 'goog:chromeOptions' => chrome_opts })
+    begin
+      refute_empty driver.session_id, 'no session id from LocalChrome'
+
+      page = 'data:text/html;charset=utf-8,' + CGI.escape(HTML).gsub('+', '%20')
+      driver.get(page)
+      assert_equal 'Aether Selenium', driver.title
+      assert_equal 'Hello', driver.find_element(SeleniumCore::By::ID, 'hdr').text
     ensure
       driver.quit
     end

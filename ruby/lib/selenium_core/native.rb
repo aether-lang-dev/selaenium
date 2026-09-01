@@ -80,6 +80,17 @@ module SeleniumCore
       [:get_attribute,   'aether_sel_embed_get_attribute',   INT,   [VOIDP, VOIDP, VOIDP]],
       [:atom_str_arg,    'aether_sel_embed_atom_str_arg',    VOIDP, [VOIDP]],
       [:find_relative,   'aether_sel_embed_find_relative',   INT,   [VOIDP, VOIDP, VOIDP]],
+      # ---- TLS config (per session handle; set before newSession) ----
+      [:set_ca,          'aether_sel_embed_set_ca',          VOID,  [VOIDP, VOIDP]],
+      [:set_insecure,    'aether_sel_embed_set_insecure',    VOID,  [VOIDP, INT]],
+      # ---- driver orchestration (spawn/adopt a driver process in-binding) ----
+      # An opaque driver handle, independent of the W3C session handle.
+      [:resolve_driver,  'aether_sel_embed_resolve_driver',  VOIDP, [VOIDP, VOIDP]],
+      [:launch_driver,   'aether_sel_embed_launch_driver',   VOIDP, [VOIDP, INT]],
+      [:ensure_driver,   'aether_sel_embed_ensure_driver',   VOIDP, [VOIDP, VOIDP, INT]],
+      [:driver_url,      'aether_sel_embed_driver_url',      VOIDP, [VOIDP]],
+      [:driver_pid,      'aether_sel_embed_driver_pid',      INT,   [VOIDP]],
+      [:stop_driver,     'aether_sel_embed_stop_driver',     VOID,  [VOIDP]],
       # ---- WebDriver-BiDi (over the session's webSocketUrl) ----
       [:bidi_open,        'aether_sel_embed_bidi_open',        VOIDP, [VOIDP]],
       [:bidi_close,       'aether_sel_embed_bidi_close',       VOID,  [VOIDP]],

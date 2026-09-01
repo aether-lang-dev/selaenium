@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -410,6 +411,84 @@ func TestLiveBidi(t *testing.T) {
 	// WWW-Authenticate server, so it lives in its own test).
 
 	t.Log("live BiDi test green")
+}
+
+// TestLiveDriverOrchestration exercises the driver-orchestration C ABI: resolve
+// + spawn a chromedriver in-binding (no chromedriver on PATH, no Grid), read the
+// self-launched driver's url/pid, tear it down, then drive a page end to end
+// through NewLocalChrome — the ResolveDriver -> EnsureDriver -> URL/PID -> Stop
+// flow the engine exposes for FFI bindings. Mirrors the Python fixture.
+func TestLiveDriverOrchestration(t *testing.T) {
+	// Resolve only — self-skip if the engine cannot produce a driver here
+	// (offline + empty cache). Crucially, this does NOT depend on chromedriver
+	// being on PATH: the engine resolves/caches/spawns it.
+	path, err := ResolveDriver("chrome", "")
+	if err != nil {
+		t.Fatalf("ResolveDriver: %v", err)
+	}
+	if path == "" {
+		t.Skip("engine cannot resolve a chromedriver (offline, no cache)")
+	}
+	if fi, err := os.Stat(path); err != nil || fi.IsDir() {
+		t.Fatalf("ResolveDriver returned a non-file: %q (err=%v)", path, err)
+	}
+	t.Logf("ok: ResolveDriver -> %s", path)
+
+	// EnsureDriver spawns it; the handle exposes url + pid, independent of any
+	// W3C session.
+	proc, err := EnsureDriver("chrome", "")
+	if err != nil {
+		t.Fatalf("EnsureDriver: %v", err)
+	}
+	if u := proc.URL(); !strings.HasPrefix(u, "http") {
+		proc.Stop()
+		t.Fatalf("driver url = %q; want http prefix", u)
+	}
+	if pid := proc.PID(); pid <= 0 {
+		proc.Stop()
+		t.Fatalf("driver pid = %d; want > 0", pid)
+	}
+	t.Logf("ok: EnsureDriver -> pid %d at %s", proc.PID(), proc.URL())
+	proc.Stop()
+	if pid := proc.PID(); pid != 0 {
+		t.Fatalf("after Stop, driver pid = %d; want 0", pid)
+	}
+	t.Log("ok: Stop terminated the process")
+
+	// NewLocalChrome ties it together: spawn its own driver, run a session, and
+	// stop the driver on Quit — the whole point of the orchestration ABI.
+	opts := []Option{Headless()}
+	if bin := os.Getenv("SEL_CHROME_BINARY"); bin != "" {
+		opts = append(opts, Capability("goog:chromeOptions", map[string]interface{}{
+			"args":   []string{"--headless=new", "--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage"},
+			"binary": bin,
+		}))
+	}
+	drv, err := NewLocalChrome(opts...)
+	if err != nil {
+		t.Fatalf("NewLocalChrome: %v", err)
+	}
+	defer drv.Quit()
+
+	if drv.SessionID() == "" {
+		t.Fatal("no session id from NewLocalChrome")
+	}
+	page := "data:text/html;charset=utf-8," + url.PathEscape(liveHTML)
+	if err := drv.Get(page); err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	title, err := drv.Title()
+	if err != nil || title != "Aether Selenium" {
+		t.Fatalf("Title = %q, err=%v", title, err)
+	}
+	hdr, err := drv.FindElement(ByID, "hdr")
+	if err != nil {
+		t.Fatalf("FindElement(#hdr): %v", err)
+	}
+	if txt, _ := hdr.Text(); txt != "Hello" {
+		t.Fatalf("hdr.Text = %q; want Hello", txt)
+	}
+	t.Log("PASS: live driver-orchestration test green (self-spawned driver)")
 }
 
 // TestLiveBidiAuth drives the full network.continueWithAuth round-trip:

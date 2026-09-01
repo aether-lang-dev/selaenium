@@ -40,6 +40,19 @@ char*  aether_sel_embed_build_request(const char* name, const char* session_id, 
 int    aether_sel_embed_error_code(const char* w3c_error);
 void   aether_sel_embed_free_string(char* s);
 
+// ---- TLS config (per session handle; set BEFORE newSession) ----
+void   aether_sel_embed_set_ca(void* h, const char* ca_path);
+void   aether_sel_embed_set_insecure(void* h, int on);
+
+// ---- driver orchestration (spawn/adopt a driver process in-binding) ----
+// An opaque driver handle, independent of the W3C session handle.
+char*  aether_sel_embed_resolve_driver(const char* browser, const char* hint);
+void*  aether_sel_embed_launch_driver(const char* driver_path, int timeout_ms);
+void*  aether_sel_embed_ensure_driver(const char* browser, const char* hint, int timeout_ms);
+char*  aether_sel_embed_driver_url(void* dh);
+int    aether_sel_embed_driver_pid(void* dh);
+void   aether_sel_embed_stop_driver(void* dh);
+
 // ---- atom-backed commands (a shared JS atom run in-page via the engine) ----
 int    aether_sel_embed_execute_atom(void* h, const char* atom, const char* elem_id, const char* extra_json);
 int    aether_sel_embed_is_displayed(void* h, const char* elem_id);
@@ -166,15 +179,29 @@ type WebDriver struct {
 	// bidi is the BiDi channel, opened lazily on first use so a classic script
 	// never opens the WebSocket.
 	bidi *BiDi
+	// proc is the driver process this session spawned for itself (via
+	// NewLocalChrome). Nil for a session against an externally-managed driver or
+	// Grid; when set, Quit stops it after ending the session.
+	proc *DriverProcess
 }
 
-// Option configures the capabilities used to create a session.
-type Option func(caps map[string]interface{})
+// Option configures a nascent session. Most options set capabilities; a few
+// (TLS trust) configure the session handle itself before newSession is sent.
+type Option func(cfg *sessionConfig)
+
+// sessionConfig accumulates the pre-newSession settings an Option can touch:
+// the capability map and the TLS trust knobs applied to the handle after open()
+// and before the first request (newSession).
+type sessionConfig struct {
+	caps     map[string]interface{}
+	caPath   string
+	insecure bool
+}
 
 // Headless adds the standard headless-Chrome launch args.
 func Headless() Option {
-	return func(caps map[string]interface{}) {
-		caps["goog:chromeOptions"] = map[string]interface{}{
+	return func(cfg *sessionConfig) {
+		cfg.caps["goog:chromeOptions"] = map[string]interface{}{
 			"args": []string{"--headless=new", "--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage"},
 		}
 	}
@@ -182,20 +209,51 @@ func Headless() Option {
 
 // Capability sets an arbitrary top-level capability (e.g. a vendor options map).
 func Capability(key string, value interface{}) Option {
-	return func(caps map[string]interface{}) { caps[key] = value }
+	return func(cfg *sessionConfig) { cfg.caps[key] = value }
+}
+
+// WithCA pins a private-CA bundle (PEM path) as the TLS trust anchor for the
+// session's connection to the remote end. Applied to the handle after open()
+// and before newSession, so a self-signed/private Grid is trusted from the very
+// first request.
+func WithCA(caPath string) Option {
+	return func(cfg *sessionConfig) { cfg.caPath = caPath }
+}
+
+// Insecure disables TLS certificate verification for the session's connection
+// to the remote end — for a self-signed dev/staging Grid whose host you trust
+// out-of-band. Applied to the handle before newSession.
+func Insecure() Option {
+	return func(cfg *sessionConfig) { cfg.insecure = true }
 }
 
 // NewChrome starts a Chrome session against a running chromedriver (or Grid).
 func NewChrome(commandExecutor string, opts ...Option) (*WebDriver, error) {
-	caps := map[string]interface{}{"browserName": "chrome"}
+	cfg := &sessionConfig{caps: map[string]interface{}{"browserName": "chrome"}}
 	for _, o := range opts {
-		o(caps)
+		o(cfg)
 	}
-	return NewRemote(commandExecutor, caps)
+	return openSession(commandExecutor, cfg)
 }
 
 // NewRemote starts a session against an arbitrary remote end with explicit caps.
-func NewRemote(commandExecutor string, capabilities map[string]interface{}) (*WebDriver, error) {
+// Trailing options (e.g. WithCA, Insecure) further configure the session; a
+// capability-setting option here augments the supplied capabilities map.
+func NewRemote(commandExecutor string, capabilities map[string]interface{}, opts ...Option) (*WebDriver, error) {
+	caps := make(map[string]interface{}, len(capabilities))
+	for k, v := range capabilities {
+		caps[k] = v
+	}
+	cfg := &sessionConfig{caps: caps}
+	for _, o := range opts {
+		o(cfg)
+	}
+	return openSession(commandExecutor, cfg)
+}
+
+// openSession opens the handle, applies TLS trust config, then sends newSession.
+// The TLS knobs must land on the handle BEFORE the first request (newSession).
+func openSession(commandExecutor string, cfg *sessionConfig) (*WebDriver, error) {
 	cURL := cstr(commandExecutor)
 	defer C.free(unsafe.Pointer(cURL))
 	h := C.aether_sel_embed_open(cURL)
@@ -203,10 +261,20 @@ func NewRemote(commandExecutor string, capabilities map[string]interface{}) (*We
 		return nil, &Error{Code: -1, Message: "failed to open session handle"}
 	}
 	d := &WebDriver{h: unsafe.Pointer(h)}
+	// TLS trust config must land on the handle BEFORE newSession. caPath pins a
+	// private-CA bundle; insecure skips verification entirely.
+	if cfg.caPath != "" {
+		cCA := cstr(cfg.caPath)
+		C.aether_sel_embed_set_ca(d.h, cCA)
+		C.free(unsafe.Pointer(cCA))
+	}
+	if cfg.insecure {
+		C.aether_sel_embed_set_insecure(d.h, C.int(1))
+	}
 	// Request a BiDi channel so Bidi() is available on demand; the WebSocket
 	// itself opens lazily (a classic script never opens it).
-	caps := make(map[string]interface{}, len(capabilities)+1)
-	for k, v := range capabilities {
+	caps := make(map[string]interface{}, len(cfg.caps)+1)
+	for k, v := range cfg.caps {
 		caps[k] = v
 	}
 	caps["webSocketUrl"] = true
@@ -487,7 +555,8 @@ func (d *WebDriver) Bidi() (*BiDi, error) {
 	return d.bidi, nil
 }
 
-// Quit ends the browser session and releases the handle.
+// Quit ends the browser session and releases the handle. If this session
+// spawned its own driver process (NewLocalChrome), that driver is stopped too.
 func (d *WebDriver) Quit() error {
 	if d.bidi != nil {
 		d.bidi.Close()
@@ -495,6 +564,10 @@ func (d *WebDriver) Quit() error {
 	}
 	_, err := d.execute("quit", nil)
 	d.closeHandle()
+	if d.proc != nil {
+		d.proc.Stop()
+		d.proc = nil
+	}
 	return err
 }
 
@@ -660,6 +733,110 @@ func Locator(by By, value string) string {
 	defer C.free(unsafe.Pointer(cs))
 	defer C.free(unsafe.Pointer(cv))
 	return takeString(C.aether_sel_embed_by_locator(cs, cv))
+}
+
+// ---- driver orchestration (spawn / adopt a driver process in-binding) -------
+// The engine can resolve, download-or-cache, and launch a browser driver process
+// itself — so a caller needs neither a driver on PATH nor a running Grid. These
+// wrap the driver-handle C ABI (independent of the W3C session handle).
+
+// ResolveDriver resolves the local driver binary path for browser without
+// launching it (detect/download/cache as needed). hint pins a version or path;
+// "" auto-detects. Returns "" if none is resolvable (offline, no cache).
+func ResolveDriver(browser, hint string) (string, error) {
+	cBrowser := cstr(browser)
+	cHint := cstr(hint)
+	defer C.free(unsafe.Pointer(cBrowser))
+	defer C.free(unsafe.Pointer(cHint))
+	return takeString(C.aether_sel_embed_resolve_driver(cBrowser, cHint)), nil
+}
+
+// DriverProcess is a driver process launched by the engine. It owns the opaque
+// driver handle; call Stop to terminate it (idempotent).
+type DriverProcess struct {
+	h unsafe.Pointer
+}
+
+// URL is the base URL the driver is listening on — pass it to NewChrome/NewRemote.
+func (p *DriverProcess) URL() string {
+	if p.h == nil {
+		return ""
+	}
+	return takeString(C.aether_sel_embed_driver_url(p.h))
+}
+
+// PID is the driver process id (0 if not running / already stopped).
+func (p *DriverProcess) PID() int {
+	if p.h == nil {
+		return 0
+	}
+	return int(C.aether_sel_embed_driver_pid(p.h))
+}
+
+// Stop terminates the driver process and releases the handle. Idempotent.
+func (p *DriverProcess) Stop() {
+	if p.h != nil {
+		C.aether_sel_embed_stop_driver(p.h)
+		p.h = nil
+	}
+}
+
+// firstTimeoutMs returns the single optional timeout, or defaultDriverTimeout.
+func firstTimeoutMs(timeoutMs []int) int {
+	if len(timeoutMs) > 0 {
+		return timeoutMs[0]
+	}
+	return defaultDriverTimeout
+}
+
+// defaultDriverTimeout is how long ensure/launch wait for a driver to come up
+// when the caller passes no explicit timeout (matches the other bindings).
+const defaultDriverTimeout = 15000
+
+// LaunchDriver launches a driver at an explicit binary path. The optional
+// trailing timeout (ms) overrides the 15s default. Returns a running
+// DriverProcess, or an error if it did not come up in time.
+func LaunchDriver(path string, timeoutMs ...int) (*DriverProcess, error) {
+	cPath := cstr(path)
+	defer C.free(unsafe.Pointer(cPath))
+	h := C.aether_sel_embed_launch_driver(cPath, C.int(firstTimeoutMs(timeoutMs)))
+	if h == nil {
+		return nil, &Error{Code: -1, Message: "could not launch driver at " + path}
+	}
+	return &DriverProcess{h: unsafe.Pointer(h)}, nil
+}
+
+// EnsureDriver resolves (detect/download/cache) AND launches a driver for
+// browser in one step. hint pins a version or path; "" auto-detects. The
+// optional trailing timeout (ms) overrides the 15s default. Returns a running
+// DriverProcess, or an error if none could be resolved/launched.
+func EnsureDriver(browser, hint string, timeoutMs ...int) (*DriverProcess, error) {
+	cBrowser := cstr(browser)
+	cHint := cstr(hint)
+	defer C.free(unsafe.Pointer(cBrowser))
+	defer C.free(unsafe.Pointer(cHint))
+	h := C.aether_sel_embed_ensure_driver(cBrowser, cHint, C.int(firstTimeoutMs(timeoutMs)))
+	if h == nil {
+		return nil, &Error{Code: -1, Message: "could not resolve/launch a driver for " + browser}
+	}
+	return &DriverProcess{h: unsafe.Pointer(h)}, nil
+}
+
+// NewLocalChrome starts a Chrome session that spawns its own chromedriver via
+// the engine — no driver on PATH, no Grid. The driver process is stopped
+// automatically when the returned session's Quit is called.
+func NewLocalChrome(opts ...Option) (*WebDriver, error) {
+	proc, err := EnsureDriver("chrome", "")
+	if err != nil {
+		return nil, err
+	}
+	d, err := NewChrome(proc.URL(), opts...)
+	if err != nil {
+		proc.Stop()
+		return nil, err
+	}
+	d.proc = proc
+	return d, nil
 }
 
 // ---- WebDriver-BiDi ---------------------------------------------------------

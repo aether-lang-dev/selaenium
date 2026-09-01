@@ -40,6 +40,19 @@ extern "C" {
     fn aether_sel_embed_error_code(w3c_error: *const c_char) -> c_int;
     fn aether_sel_embed_free_string(s: *mut c_char);
 
+    // ---- TLS config (per session handle; set before newSession) ----
+    fn aether_sel_embed_set_ca(h: Handle, ca_path: *const c_char);
+    fn aether_sel_embed_set_insecure(h: Handle, on: c_int);
+
+    // ---- driver orchestration (spawn/adopt a driver process in-binding) ----
+    // An opaque driver handle, independent of the W3C session handle.
+    fn aether_sel_embed_resolve_driver(browser: *const c_char, hint: *const c_char) -> *mut c_char;
+    fn aether_sel_embed_launch_driver(driver_path: *const c_char, timeout_ms: c_int) -> Handle;
+    fn aether_sel_embed_ensure_driver(browser: *const c_char, hint: *const c_char, timeout_ms: c_int) -> Handle;
+    fn aether_sel_embed_driver_url(dh: Handle) -> *mut c_char;
+    fn aether_sel_embed_driver_pid(dh: Handle) -> c_int;
+    fn aether_sel_embed_stop_driver(dh: Handle);
+
     // ---- atom-backed commands (run a shared JS atom in-page via the engine) ----
     fn aether_sel_embed_execute_atom(h: Handle, atom: *const c_char, elem_id: *const c_char, extra_json: *const c_char) -> c_int;
     fn aether_sel_embed_is_displayed(h: Handle, elem_id: *const c_char) -> c_int;
@@ -243,6 +256,32 @@ fn decode_by(by: &str, value: &str) -> Json {
 
 const W3C_ELEMENT_KEY: &str = "element-6066-11e4-a52e-4f735466cecf";
 
+// ---- TLS ----
+
+/// TLS trust configuration for a session, applied on the handle before
+/// `newSession`. Defaults to the platform trust store with verification on.
+#[derive(Debug, Clone, Default)]
+pub struct TlsConfig {
+    /// Path to a private-CA bundle to trust (e.g. a self-signed Grid's CA).
+    pub ca_path: Option<String>,
+    /// Skip TLS verification entirely (trust the host out-of-band). Dev/staging
+    /// only.
+    pub insecure: bool,
+}
+
+impl TlsConfig {
+    /// Trust the CA bundle at `path` (chainable).
+    pub fn ca_path(mut self, path: impl Into<String>) -> Self {
+        self.ca_path = Some(path.into());
+        self
+    }
+    /// Skip TLS verification entirely (chainable). Dev/staging only.
+    pub fn insecure(mut self, on: bool) -> Self {
+        self.insecure = on;
+        self
+    }
+}
+
 // ---- WebDriver ----
 
 /// A WebDriver session over the shared engine.
@@ -253,6 +292,10 @@ pub struct WebDriver {
     // the remote end granted none. The channel is opened lazily on first use.
     ws_url: String,
     bidi: Option<BiDi>,
+    // A driver process owned by this session (populated by `local_chrome`): the
+    // engine-spawned chromedriver, stopped when this WebDriver is dropped —
+    // after the session `quit`, since drop order is declaration order.
+    driver: Option<DriverProcess>,
 }
 
 // The handle is a plain pointer into the engine; sessions are used from one
@@ -263,6 +306,14 @@ impl WebDriver {
     /// Start a Chrome session against a running chromedriver (or Grid). `options`
     /// is a JSON object of extra capabilities merged under browserName: chrome.
     pub fn chrome(command_executor: &str, options: Option<Json>) -> Result<WebDriver> {
+        WebDriver::chrome_tls(command_executor, options, TlsConfig::default())
+    }
+
+    /// Like [`WebDriver::chrome`], but with TLS trust configuration applied on
+    /// the session handle before `newSession` (pin a private-CA bundle via
+    /// [`TlsConfig::ca_path`], or skip verification entirely via
+    /// [`TlsConfig::insecure`] for a self-signed dev/staging Grid).
+    pub fn chrome_tls(command_executor: &str, options: Option<Json>, tls: TlsConfig) -> Result<WebDriver> {
         let mut caps = match options {
             Some(Json::Obj(m)) => Json::Obj(m),
             _ => json::obj(vec![]),
@@ -270,7 +321,7 @@ impl WebDriver {
         if let Json::Obj(ref mut m) = caps {
             m.insert("browserName".into(), json::s("chrome"));
         }
-        WebDriver::new(command_executor, caps)
+        WebDriver::new(command_executor, caps, tls)
     }
 
     /// Convenience: headless-Chrome launch args baked in.
@@ -290,18 +341,28 @@ impl WebDriver {
         WebDriver::chrome(command_executor, Some(opts))
     }
 
-    fn new(command_executor: &str, mut capabilities: Json) -> Result<WebDriver> {
+    fn new(command_executor: &str, mut capabilities: Json, tls: TlsConfig) -> Result<WebDriver> {
         let cu = cstr(command_executor);
         let handle = unsafe { aether_sel_embed_open(cu.as_ptr()) };
         if handle.is_null() {
             return Err(WebDriverError::classify(-1, "failed to open session handle".into()));
+        }
+        // TLS trust config must land on the handle BEFORE newSession (the first
+        // request). ca_path pins a private-CA bundle; insecure skips verification
+        // entirely (self-signed dev/staging Grid — trust the host out-of-band).
+        if let Some(ca) = tls.ca_path.as_deref() {
+            let c = cstr(ca);
+            unsafe { aether_sel_embed_set_ca(handle, c.as_ptr()) };
+        }
+        if tls.insecure {
+            unsafe { aether_sel_embed_set_insecure(handle, 1) };
         }
         // Request a BiDi channel so `.bidi()` is available on demand; the channel
         // itself is opened lazily (a classic script never opens the WebSocket).
         if let Json::Obj(ref mut m) = capabilities {
             m.insert("webSocketUrl".into(), Json::Bool(true));
         }
-        let mut d = WebDriver { handle, ws_url: String::new(), bidi: None };
+        let mut d = WebDriver { handle, ws_url: String::new(), bidi: None, driver: None };
         let payload = json::obj(vec![(
             "capabilities",
             json::obj(vec![("alwaysMatch", capabilities)]),
@@ -534,6 +595,110 @@ impl Drop for WebDriver {
             unsafe { aether_sel_embed_close(self.handle) };
             self.handle = std::ptr::null_mut();
         }
+    }
+}
+
+// ---- driver orchestration (spawn / adopt a driver process in-binding) --------
+// The engine can resolve, download-or-cache, and launch a browser driver process
+// itself — so a caller needs neither a driver on PATH nor a running Grid. These
+// wrap the driver-handle C ABI (independent of the W3C session handle).
+
+/// Resolve the local driver binary path for `browser` without launching it
+/// (detect/download/cache as needed). `hint` pins a version or path; `""`
+/// auto-detects. Returns `""` if none resolvable (offline, no cache).
+pub fn resolve_driver(browser: &str, hint: &str) -> Result<String> {
+    let b = cstr(browser);
+    let h = cstr(hint);
+    Ok(take_string(unsafe { aether_sel_embed_resolve_driver(b.as_ptr(), h.as_ptr()) }))
+}
+
+/// A driver process launched by the engine. Owns the opaque driver handle; call
+/// [`DriverProcess::stop`] (or let it drop) to terminate the process.
+#[derive(Debug)]
+pub struct DriverProcess {
+    handle: Handle,
+}
+
+// The handle is a plain pointer into the engine; used from one thread at a time.
+unsafe impl Send for DriverProcess {}
+
+impl DriverProcess {
+    /// The base URL the driver is listening on — pass to [`WebDriver::chrome`].
+    pub fn url(&self) -> Result<String> {
+        if self.handle.is_null() {
+            return Ok(String::new());
+        }
+        Ok(take_string(unsafe { aether_sel_embed_driver_url(self.handle) }))
+    }
+
+    /// The driver process id (0 if not running / stopped).
+    pub fn pid(&self) -> i32 {
+        if self.handle.is_null() {
+            return 0;
+        }
+        unsafe { aether_sel_embed_driver_pid(self.handle) }
+    }
+
+    /// Terminate the driver process and clear the handle (idempotent).
+    pub fn stop(&mut self) {
+        if !self.handle.is_null() {
+            unsafe { aether_sel_embed_stop_driver(self.handle) };
+            self.handle = std::ptr::null_mut();
+        }
+    }
+}
+
+impl Drop for DriverProcess {
+    fn drop(&mut self) {
+        self.stop();
+    }
+}
+
+/// Launch a driver at an explicit binary path. Returns a running
+/// [`DriverProcess`], or `None` if it did not come up within `timeout_ms`.
+pub fn launch_driver(driver_path: &str, timeout_ms: i32) -> Result<Option<DriverProcess>> {
+    let p = cstr(driver_path);
+    let h = unsafe { aether_sel_embed_launch_driver(p.as_ptr(), timeout_ms) };
+    Ok(if h.is_null() { None } else { Some(DriverProcess { handle: h }) })
+}
+
+/// Resolve (detect/download/cache) AND launch a driver for `browser` in one
+/// step. Returns a running [`DriverProcess`], or `None` if none could be
+/// resolved/launched within `timeout_ms`.
+pub fn ensure_driver(browser: &str, hint: &str, timeout_ms: i32) -> Result<Option<DriverProcess>> {
+    let b = cstr(browser);
+    let hn = cstr(hint);
+    let h = unsafe { aether_sel_embed_ensure_driver(b.as_ptr(), hn.as_ptr(), timeout_ms) };
+    Ok(if h.is_null() { None } else { Some(DriverProcess { handle: h }) })
+}
+
+impl WebDriver {
+    /// A Chrome session that spawns its own chromedriver via the engine — no
+    /// driver on PATH, no Grid. The driver process is owned by the returned
+    /// [`WebDriver`] and stopped when it is quit or dropped.
+    ///
+    /// `options` is a JSON object of extra capabilities merged under
+    /// `browserName: chrome`; `hint` pins a driver version/path (`""`
+    /// auto-detects); `tls` configures trust for the (loopback) driver.
+    ///
+    /// ```no_run
+    /// # use selenium_core::WebDriver;
+    /// let d = WebDriver::local_chrome(None, "", 15000, Default::default()).unwrap();
+    /// d.get("https://example.com").unwrap();
+    /// d.quit().unwrap();
+    /// ```
+    pub fn local_chrome(
+        options: Option<Json>,
+        hint: &str,
+        timeout_ms: i32,
+        tls: TlsConfig,
+    ) -> Result<WebDriver> {
+        let proc = ensure_driver("chrome", hint, timeout_ms)?
+            .ok_or_else(|| WebDriverError::classify(-1, "could not resolve/launch chromedriver".into()))?;
+        let url = proc.url()?;
+        let mut d = WebDriver::chrome_tls(&url, options, tls)?;
+        d.driver = Some(proc);
+        Ok(d)
     }
 }
 

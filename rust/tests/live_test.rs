@@ -440,6 +440,72 @@ fn live_atoms() {
     d.quit().unwrap();
 }
 
+/// Driver orchestration over the engine: resolve + spawn a chromedriver
+/// in-binding (NO chromedriver on PATH, no Grid), drive a page through the
+/// self-launched driver, and tear the process down — the ensure_driver ->
+/// driver_url -> open -> stop flow the C ABI exposes for FFI bindings. Mirrors
+/// the Python `test_live_driver_orchestration`.
+#[test]
+fn driver_orchestration() {
+    use selenium_core::{ensure_driver, resolve_driver, DriverProcess};
+
+    // Resolve only — self-skip loudly if the engine can't produce a driver here
+    // (offline + empty cache). Same self-skip the other live tests use.
+    let path = resolve_driver("chrome", "").unwrap();
+    if path.is_empty() {
+        eprintln!("SKIPPED: engine cannot resolve a chromedriver (offline, no cache)");
+        return;
+    }
+    assert!(
+        std::path::Path::new(&path).is_file(),
+        "resolve_driver returned a non-file: {path:?}"
+    );
+    println!("  ok: resolve_driver -> {path}");
+
+    // ensure_driver spawns it; the handle exposes url + pid, independent of any
+    // W3C session.
+    let mut proc: DriverProcess = ensure_driver("chrome", "", 15000)
+        .unwrap()
+        .expect("ensure_driver should spawn a chromedriver");
+    let url = proc.url().unwrap();
+    assert!(url.starts_with("http"), "driver url={url:?}");
+    assert!(proc.pid() > 0, "driver pid={}", proc.pid());
+    println!("  ok: ensure_driver -> pid {} at {url}", proc.pid());
+
+    proc.stop();
+    assert_eq!(proc.pid(), 0, "stop() should clear the handle");
+    println!("  ok: stop terminated the process");
+
+    // local_chrome ties it together: spawn its own driver, run a session, and
+    // stop the driver on quit — the whole point of the orchestration ABI.
+    let mut chrome_args = vec![
+        json::s("--headless=new"),
+        json::s("--no-sandbox"),
+        json::s("--disable-gpu"),
+        json::s("--disable-dev-shm-usage"),
+    ];
+    let mut chrome_opts = vec![("args", Json::Arr(std::mem::take(&mut chrome_args)))];
+    if let Ok(bin) = std::env::var("SEL_CHROME_BINARY") {
+        if !bin.is_empty() {
+            chrome_opts.push(("binary", json::s(&bin)));
+        }
+    }
+    let options = json::obj(vec![("goog:chromeOptions", json::obj(chrome_opts))]);
+
+    let page = concat!(
+        "data:text/html,<!doctype html><title>Aether Selenium</title>",
+        "<h1 id='hdr'>Hello</h1>"
+    );
+    let d = WebDriver::local_chrome(Some(options), "", 15000, Default::default())
+        .expect("local_chrome should spawn its own driver and open a session");
+    assert!(!d.session_id().is_empty(), "no session id from local_chrome");
+    d.get(page).unwrap();
+    assert_eq!(d.title().unwrap(), "Aether Selenium", "title mismatch");
+    assert_eq!(d.find_element(By::ID, "hdr").unwrap().text().unwrap(), "Hello");
+    println!("PASS: live driver-orchestration test green (self-spawned driver)");
+    d.quit().unwrap();
+}
+
 /// Minimal std-only base64 decoder (screenshot PNG check only).
 fn base64_decode(s: &str) -> Vec<u8> {
     const T: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
