@@ -21,12 +21,28 @@ public final class WebDriver {
     // The BiDi endpoint negotiated at newSession; the channel opens lazily.
     private String wsUrl = "";
     private BiDi bidi;
+    // A driver process this session owns (set by localChrome); stopped on quit().
+    private DriverProcess ownedDriver;
+
+    private WebDriver(String commandExecutor, Map<String, Object> capabilities) {
+        this(commandExecutor, capabilities, null, false);
+    }
 
     @SuppressWarnings("unchecked")
-    private WebDriver(String commandExecutor, Map<String, Object> capabilities) {
+    private WebDriver(String commandExecutor, Map<String, Object> capabilities,
+                      String caPath, boolean insecure) {
         this.handle = Native.open(commandExecutor);
         if (Native.isNull(handle)) {
             throw new WebDriverError("failed to open session handle", -1);
+        }
+        // TLS trust config must land on the handle BEFORE newSession (the first
+        // request). caPath pins a private-CA bundle; insecure skips verification
+        // entirely (self-signed dev/staging Grid — trust the host out-of-band).
+        if (caPath != null && !caPath.isEmpty()) {
+            Native.setCa(handle, caPath);
+        }
+        if (insecure) {
+            Native.setInsecure(handle, 1);
         }
         // Request a BiDi channel so bidi() is available on demand; the channel
         // itself is opened lazily (a classic script never opens the WebSocket).
@@ -48,17 +64,89 @@ public final class WebDriver {
     }
 
     public static WebDriver chrome(String commandExecutor, Map<String, Object> options) {
+        return chrome(commandExecutor, options, null, false);
+    }
+
+    public static WebDriver chrome(String commandExecutor, Map<String, Object> options,
+                                   String caPath, boolean insecure) {
         Map<String, Object> caps = new HashMap<>();
         caps.put("browserName", "chrome");
         if (options != null) {
             caps.putAll(options);
         }
-        return new WebDriver(commandExecutor, caps);
+        return new WebDriver(commandExecutor, caps, caPath, insecure);
     }
 
     public static WebDriver headlessChrome(String commandExecutor) {
         return chrome(commandExecutor, Map.of("goog:chromeOptions",
                 Map.of("args", List.of("--headless=new", "--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage"))));
+    }
+
+    // ---- driver orchestration (spawn/adopt a driver process in-binding) ------
+    // The engine can resolve, download-or-cache, and launch a browser driver
+    // itself — so a caller needs neither a driver on PATH nor a running Grid.
+
+    /**
+     * Resolve the local driver binary path for {@code browser} without launching
+     * it (detect/download/cache as needed). {@code hint} pins a version/path; ""
+     * auto-detects. Returns "" if none resolvable (offline, no cache).
+     */
+    public static String resolveDriver(String browser, String hint) {
+        return Native.resolveDriver(browser, hint);
+    }
+
+    public static String resolveDriver(String browser) {
+        return resolveDriver(browser, "");
+    }
+
+    /** Launch a driver at an explicit binary path. Returns null if it did not come up. */
+    public static DriverProcess launchDriver(String driverPath, int timeoutMs) {
+        MemorySegment dh = Native.launchDriver(driverPath, timeoutMs);
+        return Native.isNull(dh) ? null : new DriverProcess(dh);
+    }
+
+    public static DriverProcess launchDriver(String driverPath) {
+        return launchDriver(driverPath, 15000);
+    }
+
+    /** Resolve (detect/download/cache) AND launch a driver in one step. Returns null on failure. */
+    public static DriverProcess ensureDriver(String browser, String hint, int timeoutMs) {
+        MemorySegment dh = Native.ensureDriver(browser, hint, timeoutMs);
+        return Native.isNull(dh) ? null : new DriverProcess(dh);
+    }
+
+    public static DriverProcess ensureDriver(String browser) {
+        return ensureDriver(browser, "", 15000);
+    }
+
+    /**
+     * A Chrome session that spawns its OWN chromedriver via the engine — no driver
+     * on PATH, no Grid. The driver process is stopped on {@link #quit()}. Throws
+     * {@link WebDriverError} if no driver can be resolved/launched.
+     */
+    public static WebDriver localChrome(Map<String, Object> options, String hint, int timeoutMs,
+                                        String caPath, boolean insecure) {
+        DriverProcess proc = ensureDriver("chrome", hint, timeoutMs);
+        if (proc == null) {
+            throw new WebDriverError("could not resolve/launch chromedriver", -1);
+        }
+        try {
+            Map<String, Object> caps = new HashMap<>();
+            caps.put("browserName", "chrome");
+            if (options != null) {
+                caps.putAll(options);
+            }
+            WebDriver driver = new WebDriver(proc.url(), caps, caPath, insecure);
+            driver.ownedDriver = proc;
+            return driver;
+        } catch (RuntimeException e) {
+            proc.stop();
+            throw e;
+        }
+    }
+
+    public static WebDriver localChrome(Map<String, Object> options) {
+        return localChrome(options, "", 15000, null, false);
     }
 
     // ---- the FFI seam ----
@@ -296,6 +384,10 @@ public final class WebDriver {
             execute("quit", null);
         } finally {
             closeHandle();
+            if (ownedDriver != null) {
+                ownedDriver.stop();
+                ownedDriver = null;
+            }
         }
     }
 
@@ -317,5 +409,34 @@ public final class WebDriver {
 
     public static String locator(String by, String value) {
         return Native.byLocator(by, value);
+    }
+
+    /**
+     * A driver process launched by the engine. Owns the opaque driver handle
+     * (independent of any session); call {@link #stop()} to terminate it.
+     */
+    public static final class DriverProcess {
+        private MemorySegment handle;
+
+        DriverProcess(MemorySegment handle) {
+            this.handle = handle;
+        }
+
+        /** The base URL the driver is listening on — pass to {@link #chrome}. */
+        public String url() {
+            return handle == null ? "" : Native.driverUrl(handle);
+        }
+
+        /** The driver process id (0 if not running). */
+        public int pid() {
+            return handle == null ? 0 : Native.driverPid(handle);
+        }
+
+        public void stop() {
+            if (handle != null && !Native.isNull(handle)) {
+                Native.stopDriver(handle);
+                handle = null;
+            }
+        }
     }
 }

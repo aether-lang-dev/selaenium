@@ -9,6 +9,7 @@ import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
@@ -132,6 +133,47 @@ class LiveTest {
         } finally {
             cd.destroy();
             web.stop(0);
+        }
+    }
+
+    // Driver orchestration over the engine: resolve + spawn a chromedriver
+    // in-binding (no chromedriver on PATH, no Grid), drive a page through the
+    // self-launched driver, and tear the process down. Self-skips if the engine
+    // cannot resolve a driver here (offline, empty cache).
+    @Test
+    void driverOrchestration() {
+        String path = WebDriver.resolveDriver("chrome");
+        assumeTrue(path != null && !path.isEmpty(),
+                "engine cannot resolve a chromedriver (offline, no cache)");
+        assertTrue(new java.io.File(path).isFile(), "resolve_driver returned a non-file: " + path);
+
+        // ensureDriver spawns it; the handle exposes url + pid.
+        WebDriver.DriverProcess proc = WebDriver.ensureDriver("chrome");
+        assertTrue(proc != null, "ensureDriver returned null");
+        try {
+            assertTrue(proc.url().startsWith("http"), "driver url: " + proc.url());
+            assertTrue(proc.pid() > 0, "driver pid: " + proc.pid());
+        } finally {
+            proc.stop();
+            assertEquals(0, proc.pid(), "stop clears the handle");
+        }
+
+        // localChrome spawns its own driver, runs a session, stops it on quit.
+        Map<String, Object> chromeOpts = new HashMap<>();
+        chromeOpts.put("args", List.of("--headless=new", "--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage"));
+        String chromeBin = System.getenv("SEL_CHROME_BINARY");
+        if (chromeBin != null && !chromeBin.isEmpty()) {
+            chromeOpts.put("binary", chromeBin);
+        }
+        WebDriver d = WebDriver.localChrome(Map.of("goog:chromeOptions", chromeOpts));
+        try {
+            assertTrue(!d.sessionId().isEmpty(), "localChrome session id present");
+            d.get("data:text/html;charset=utf-8,"
+                    + "%3Ctitle%3EAether%20Selenium%3C/title%3E%3Ch1%20id='hdr'%3EHello%3C/h1%3E");
+            assertEquals("Aether Selenium", d.title(), "localChrome title");
+            assertEquals("Hello", d.findElement(By.ID, "hdr").text(), "localChrome #hdr text");
+        } finally {
+            d.quit();
         }
     }
 

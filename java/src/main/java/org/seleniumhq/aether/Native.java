@@ -141,6 +141,26 @@ final class Native {
         static final MethodHandle ERROR_CODE = down("aether_sel_embed_error_code",
                 FunctionDescriptor.of(C_INT, C_PTR));
 
+        // ---- TLS config (per session handle; set before newSession) ----
+        static final MethodHandle SET_CA = down("aether_sel_embed_set_ca",
+                FunctionDescriptor.ofVoid(C_PTR, C_PTR));
+        static final MethodHandle SET_INSECURE = down("aether_sel_embed_set_insecure",
+                FunctionDescriptor.ofVoid(C_PTR, C_INT));
+
+        // ---- driver orchestration (opaque driver handle, independent of session) ----
+        static final MethodHandle RESOLVE_DRIVER = down("aether_sel_embed_resolve_driver",
+                FunctionDescriptor.of(C_STR, C_PTR, C_PTR));
+        static final MethodHandle LAUNCH_DRIVER = down("aether_sel_embed_launch_driver",
+                FunctionDescriptor.of(C_PTR, C_PTR, C_INT));
+        static final MethodHandle ENSURE_DRIVER = down("aether_sel_embed_ensure_driver",
+                FunctionDescriptor.of(C_PTR, C_PTR, C_PTR, C_INT));
+        static final MethodHandle DRIVER_URL = down("aether_sel_embed_driver_url",
+                FunctionDescriptor.of(C_STR, C_PTR));
+        static final MethodHandle DRIVER_PID = down("aether_sel_embed_driver_pid",
+                FunctionDescriptor.of(C_INT, C_PTR));
+        static final MethodHandle STOP_DRIVER = down("aether_sel_embed_stop_driver",
+                FunctionDescriptor.ofVoid(C_PTR));
+
         // ---- atom-backed commands (a shared JS atom run in-page by the engine) ----
         // Each drains the session's last_value (JSON) on success, like execute.
         static final MethodHandle EXECUTE_ATOM = down("aether_sel_embed_execute_atom",
@@ -306,6 +326,76 @@ final class Native {
             return (int) MH.ERROR_CODE.invokeExact(a.allocateFrom(w3cError));
         } catch (Throwable t) {
             throw wrap(t, "error_code");
+        }
+    }
+
+    // ---- TLS config wrappers (operate on the session handle before newSession) ----
+
+    static void setCa(MemorySegment handle, String caPath) {
+        try (Arena a = Arena.ofConfined()) {
+            MH.SET_CA.invokeExact(handle, a.allocateFrom(caPath));
+        } catch (Throwable t) {
+            throw wrap(t, "set_ca");
+        }
+    }
+
+    static void setInsecure(MemorySegment handle, int on) {
+        try {
+            MH.SET_INSECURE.invokeExact(handle, on);
+        } catch (Throwable t) {
+            throw wrap(t, "set_insecure");
+        }
+    }
+
+    // ---- driver orchestration wrappers (opaque driver handle) ----
+
+    static String resolveDriver(String browser, String hint) {
+        try (Arena a = Arena.ofConfined()) {
+            return takeString((MemorySegment) MH.RESOLVE_DRIVER.invokeExact(
+                    a.allocateFrom(browser), a.allocateFrom(hint)));
+        } catch (Throwable t) {
+            throw wrap(t, "resolve_driver");
+        }
+    }
+
+    static MemorySegment launchDriver(String driverPath, int timeoutMs) {
+        try (Arena a = Arena.ofConfined()) {
+            return (MemorySegment) MH.LAUNCH_DRIVER.invokeExact(a.allocateFrom(driverPath), timeoutMs);
+        } catch (Throwable t) {
+            throw wrap(t, "launch_driver");
+        }
+    }
+
+    static MemorySegment ensureDriver(String browser, String hint, int timeoutMs) {
+        try (Arena a = Arena.ofConfined()) {
+            return (MemorySegment) MH.ENSURE_DRIVER.invokeExact(
+                    a.allocateFrom(browser), a.allocateFrom(hint), timeoutMs);
+        } catch (Throwable t) {
+            throw wrap(t, "ensure_driver");
+        }
+    }
+
+    static String driverUrl(MemorySegment dh) {
+        try {
+            return takeString((MemorySegment) MH.DRIVER_URL.invokeExact(dh));
+        } catch (Throwable t) {
+            throw wrap(t, "driver_url");
+        }
+    }
+
+    static int driverPid(MemorySegment dh) {
+        try {
+            return (int) MH.DRIVER_PID.invokeExact(dh);
+        } catch (Throwable t) {
+            throw wrap(t, "driver_pid");
+        }
+    }
+
+    static void stopDriver(MemorySegment dh) {
+        try {
+            MH.STOP_DRIVER.invokeExact(dh);
+        } catch (Throwable t) {
+            throw wrap(t, "stop_driver");
         }
     }
 
