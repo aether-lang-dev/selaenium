@@ -36,6 +36,18 @@ class LiveTest {
             + "<button id=\"btn\" onclick=\"document.getElementById('hdr').textContent='clicked'\">b</button>";
     static final String PAGE_TWO = "<!doctype html><title>Page Two</title><h1 id=\"hdr\">Two</h1>";
 
+    // Headless Chrome against a running chromedriver, honoring SEL_CHROME_BINARY
+    // when set (a box with no system Chrome but a cached Chrome-for-Testing).
+    private static WebDriver headlessChromeAt(String commandExecutor) {
+        Map<String, Object> chromeOpts = new HashMap<>();
+        chromeOpts.put("args", List.of("--headless=new", "--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage"));
+        String chromeBin = System.getenv("SEL_CHROME_BINARY");
+        if (chromeBin != null && !chromeBin.isEmpty()) {
+            chromeOpts.put("binary", chromeBin);
+        }
+        return WebDriver.chrome(commandExecutor, Map.of("goog:chromeOptions", chromeOpts));
+    }
+
     @Test
     void liveChromeSurface() throws Exception {
         String driverBin = which("chromedriver");
@@ -61,7 +73,7 @@ class LiveTest {
                 .start();
         try {
             assumeTrue(waitUp(cdPort, 10000), "chromedriver did not come up");
-            WebDriver d = WebDriver.headlessChrome("http://127.0.0.1:" + cdPort);
+            WebDriver d = headlessChromeAt("http://127.0.0.1:" + cdPort);
             try {
                 assertTrue(!d.sessionId().isEmpty(), "session id present");
 
@@ -189,7 +201,7 @@ class LiveTest {
                 .start();
         try {
             assumeTrue(waitUp(cdPort, 10000), "chromedriver did not come up");
-            WebDriver d = WebDriver.headlessChrome("http://127.0.0.1:" + cdPort);
+            WebDriver d = headlessChromeAt("http://127.0.0.1:" + cdPort);
             try {
                 assertTrue(d.bidiAvailable(), "BiDi negotiated (webSocketUrl present)");
 
@@ -287,7 +299,7 @@ class LiveTest {
                 .start();
         try {
             assumeTrue(waitUp(cdPort, 10000), "chromedriver did not come up");
-            WebDriver d = WebDriver.headlessChrome("http://127.0.0.1:" + cdPort);
+            WebDriver d = headlessChromeAt("http://127.0.0.1:" + cdPort);
             try {
                 d.get("data:text/html," + ATOM_PAGE);
 
