@@ -68,8 +68,13 @@ for t in $MATRIX; do
   fi
 
   printf 'release:   %-18s -> %s ... ' "$t" "$name"
+  # --with=net,os,fs: the engine's caps (driver orchestration spawns processes
+  #   [os] and reads the driver cache [fs], not just net). --lib drivermgr: the
+  #   Selenium-Manager module tree embed.ae imports by bare name (resolve/
+  #   browser/cft/cache/...) — without it aetherc can't resolve resolve_chrome.
+  #   These mirror selenium_core/.build.ae's caps("net,os,fs") + lib("drivermgr").
   if ( cd "$ROOT/selenium_core" \
-       && ae build --emit=lib --with=net --size --target="$t" \
+       && ae build --emit=lib --with=net,os,fs --lib drivermgr --size --target="$t" \
             embed.ae --extra _embed_strdup.c -o "$out" ) >"$log" 2>&1; then
     ( cd "$DIST" && sha256sum "$name" > "$name.sha256" )
     # Windows emits an import library (<dll>.lib) beside the DLL — needed by a
