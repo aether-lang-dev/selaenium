@@ -9,7 +9,7 @@ publish = false
 # sibling), so build.rs can only link the crate's own bundled .so. The
 # .example.ae harness writes this path dependency to the staged copy.
 [dependencies]
-selenium-core = { path = "../rust-pkg" }
+selenium = { path = "../rust-pkg" }
 
 [[bin]]
 name = "consumer"

@@ -1,5 +1,5 @@
 [package]
-name = "selenium-core"
+name = "selenium"
 version = "0.1.0"
 edition = "2021"
 license = "Apache-2.0"
@@ -15,5 +15,5 @@ links = "selenium_core"
 [dependencies]
 
 [lib]
-name = "selenium_core"
+name = "selenium"
 path = "src/lib.rs"

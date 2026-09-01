@@ -28,7 +28,7 @@ func TestErrorCode(t *testing.T) {
 
 func TestLocatorCSS(t *testing.T) {
 	var m map[string]string
-	if err := json.Unmarshal([]byte(Locator(ByCSS, "div.foo")), &m); err != nil {
+	if err := json.Unmarshal([]byte(Locator(By.CssSelector("div.foo"))), &m); err != nil {
 		t.Fatal(err)
 	}
 	if m["using"] != "css selector" || m["value"] != "div.foo" {
@@ -38,7 +38,7 @@ func TestLocatorCSS(t *testing.T) {
 
 func TestLocatorIDRewrite(t *testing.T) {
 	var m map[string]string
-	if err := json.Unmarshal([]byte(Locator(ByID, "main")), &m); err != nil {
+	if err := json.Unmarshal([]byte(Locator(By.Id("main"))), &m); err != nil {
 		t.Fatal(err)
 	}
 	if m["using"] != "css selector" || m["value"] != `*[id="main"]` {

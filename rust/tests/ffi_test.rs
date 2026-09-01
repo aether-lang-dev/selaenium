@@ -2,7 +2,7 @@
 //! marshals correctly, exercising the pure engine helpers and the transport
 //! error path. The .so is found via the build.rs link search + rpath.
 
-use selenium_core::{error_code, locator, route, By, ErrorKind, WebDriver};
+use selenium::{error_code, locator, route, By, ErrorKind, WebDriver};
 
 #[test]
 fn test_route() {
@@ -18,12 +18,14 @@ fn test_error_code() {
 
 #[test]
 fn test_locator_css() {
-    assert_eq!(locator(By::CSS, "div.foo"), r#"{"using":"css selector","value":"div.foo"}"#);
+    let by = By::css("div.foo");
+    assert_eq!(locator(by.strategy, &by.value), r#"{"using":"css selector","value":"div.foo"}"#);
 }
 
 #[test]
 fn test_locator_id_rewrite() {
-    assert_eq!(locator(By::ID, "main"), r#"{"using":"css selector","value":"*[id=\"main\"]"}"#);
+    let by = By::id("main");
+    assert_eq!(locator(by.strategy, &by.value), r#"{"using":"css selector","value":"*[id=\"main\"]"}"#);
 }
 
 #[test]

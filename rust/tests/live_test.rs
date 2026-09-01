@@ -13,7 +13,7 @@ use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use selenium_core::{json, BidiEvent, By, ErrorKind, Json, WebDriver};
+use selenium::{json, BidiEvent, By, ErrorKind, Json, WebDriver};
 
 const PAGE_ONE: &str = concat!(
     "<!doctype html><title>Page One</title><h1 id=\"hdr\">One</h1>",
@@ -131,11 +131,11 @@ fn live_chrome_surface() {
 
     d.get(&format!("{base}/one")).unwrap();
     assert_eq!(d.title().unwrap(), "Page One");
-    assert_eq!(d.find_element(By::ID, "hdr").unwrap().text().unwrap(), "One");
-    assert_eq!(d.find_element(By::CSS, "#go").unwrap().tag_name().unwrap().to_lowercase(), "a");
+    assert_eq!(d.find_element(By::id("hdr")).unwrap().text().unwrap(), "One");
+    assert_eq!(d.find_element(By::css("#go")).unwrap().tag_name().unwrap().to_lowercase(), "a");
 
     // navigation history
-    d.find_element(By::ID, "go").unwrap().click().unwrap();
+    d.find_element(By::id("go")).unwrap().click().unwrap();
     assert_eq!(d.title().unwrap(), "Page Two");
     d.back().unwrap();
     assert_eq!(d.title().unwrap(), "Page One");
@@ -174,7 +174,7 @@ fn live_chrome_surface() {
     );
 
     // W3C actions: pointer click on the button.
-    let rect = d.find_element(By::ID, "btn").unwrap().rect().unwrap();
+    let rect = d.find_element(By::id("btn")).unwrap().rect().unwrap();
     let x = rect.get("x").and_then(|v| v.as_f64()).unwrap();
     let y = rect.get("y").and_then(|v| v.as_f64()).unwrap();
     let w = rect.get("width").and_then(|v| v.as_f64()).unwrap();
@@ -195,7 +195,7 @@ fn live_chrome_surface() {
         ),
     ])])
     .unwrap();
-    assert_eq!(d.find_element(By::ID, "hdr").unwrap().text().unwrap(), "clicked");
+    assert_eq!(d.find_element(By::id("hdr")).unwrap().text().unwrap(), "clicked");
     d.clear_actions().unwrap();
 
     // screenshot -> PNG
@@ -204,7 +204,7 @@ fn live_chrome_surface() {
     assert!(raw.len() > 8 && &raw[1..4] == b"PNG", "screenshot is not a PNG");
 
     // negative path
-    let err = d.find_element(By::ID, "does-not-exist").unwrap_err();
+    let err = d.find_element(By::id("does-not-exist")).unwrap_err();
     assert_eq!(err.kind, ErrorKind::NoSuchElement);
 
     d.quit().unwrap();
@@ -315,7 +315,7 @@ fn live_bidi() {
         .next_event(BidiEvent::BEFORE_REQUEST_SENT, 8000)
         .unwrap()
         .expect("a network.beforeRequestSent event within the timeout");
-    let rid = selenium_core::BiDi::event_request_id(&ev)
+    let rid = selenium::BiDi::event_request_id(&ev)
         .expect("beforeRequestSent event should carry params.request.request");
 
     // Release the paused request; the reply must be a success.
@@ -342,7 +342,7 @@ fn live_bidi() {
         .next_event(BidiEvent::BEFORE_REQUEST_SENT, 8000)
         .unwrap()
         .expect("a network.beforeRequestSent event for the mocked fetch");
-    let rid2 = selenium_core::BiDi::event_request_id(&ev2)
+    let rid2 = selenium::BiDi::event_request_id(&ev2)
         .expect("beforeRequestSent event should carry params.request.request");
 
     // Fulfill it with a mock body; the reply must be a success.
@@ -388,7 +388,7 @@ fn live_bidi() {
     // continue_with_auth needs a real auth-challenging server to exercise; here we
     // only pin its signature so it stays compiled (never actually called).
     #[allow(unused)]
-    fn _continue_with_auth_compiles(bidi: &mut selenium_core::BiDi) {
+    fn _continue_with_auth_compiles(bidi: &mut selenium::BiDi) {
         let _ = bidi.continue_with_auth("req-1", "user", "pass", 10000);
     }
 
@@ -432,11 +432,11 @@ fn live_atoms() {
     .unwrap();
 
     // isDisplayed atom: a visible header, a display:none paragraph.
-    assert!(d.find_element(By::ID, "hdr").unwrap().is_displayed().unwrap(), "#hdr should be displayed");
-    assert!(!d.find_element(By::ID, "gone").unwrap().is_displayed().unwrap(), "#gone should be hidden");
+    assert!(d.find_element(By::id("hdr")).unwrap().is_displayed().unwrap(), "#hdr should be displayed");
+    assert!(!d.find_element(By::id("gone")).unwrap().is_displayed().unwrap(), "#gone should be hidden");
 
     // getAttribute atom: the href resolves to the absolute URL.
-    let href = d.find_element(By::ID, "lnk").unwrap().get_attribute("href").unwrap();
+    let href = d.find_element(By::id("lnk")).unwrap().get_attribute("href").unwrap();
     assert!(href.as_deref().unwrap_or("").contains("example.com/x"), "href atom: {href:?}");
 
     // relative locators: a <button> positioned below the #hdr anchor.
@@ -456,7 +456,7 @@ fn live_atoms() {
 /// the Python `test_live_driver_orchestration`.
 #[test]
 fn driver_orchestration() {
-    use selenium_core::{ensure_driver, resolve_driver, DriverProcess};
+    use selenium::{ensure_driver, resolve_driver, DriverProcess};
 
     // Resolve only — self-skip loudly if the engine can't produce a driver here
     // (offline + empty cache). Same self-skip the other live tests use.
@@ -510,7 +510,7 @@ fn driver_orchestration() {
     assert!(!d.session_id().is_empty(), "no session id from local_chrome");
     d.get(page).unwrap();
     assert_eq!(d.title().unwrap(), "Aether Selenium", "title mismatch");
-    assert_eq!(d.find_element(By::ID, "hdr").unwrap().text().unwrap(), "Hello");
+    assert_eq!(d.find_element(By::id("hdr")).unwrap().text().unwrap(), "Hello");
     println!("PASS: live driver-orchestration test green (self-spawned driver)");
     d.quit().unwrap();
 }

@@ -7,11 +7,11 @@
 //! time (see build.rs) and marshals strings/JSON across the boundary.
 //!
 //! ```no_run
-//! use selenium_core::{WebDriver, By};
+//! use selenium::{WebDriver, By};
 //! let d = WebDriver::headless_chrome("http://127.0.0.1:9515").unwrap();
 //! d.get("https://example.com").unwrap();
 //! println!("{}", d.title().unwrap());
-//! d.find_element(By::CSS, "a").unwrap().click().unwrap();
+//! d.find_element(By::css("a")).unwrap().click().unwrap();
 //! d.quit().unwrap();
 //! ```
 
@@ -216,18 +216,51 @@ pub type Result<T> = std::result::Result<T, WebDriverError>;
 
 // ---- By ----
 
-/// Locator strategies. Values match the engine's by_locator strategy strings;
-/// ID/NAME/CLASS_NAME are rewritten to CSS in the engine.
-pub struct By;
+/// A locator: a (strategy, value) pair built by a `By::*` constructor and passed
+/// to [`WebDriver::find_element`] / [`WebDriver::find_elements`]. The strategy
+/// strings match the engine's by_locator strings; id/name/"class name" are
+/// rewritten to CSS in the engine.
+///
+/// Mirrors Selenium's Java By-factory shape (`By.id("x")` -> a locator; one-arg
+/// `findElement`) in Rust idiom:
+///
+/// ```no_run
+/// # use selenium::{WebDriver, By};
+/// # let d = WebDriver::headless_chrome("http://127.0.0.1:9515").unwrap();
+/// let el = d.find_element(By::id("hdr")).unwrap();
+/// let nav = d.find_elements(By::class_name("nav")).unwrap();
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct By {
+    pub strategy: &'static str,
+    pub value: String,
+}
+
 impl By {
-    pub const ID: &'static str = "id";
-    pub const NAME: &'static str = "name";
-    pub const CSS: &'static str = "css selector";
-    pub const CLASS_NAME: &'static str = "className";
-    pub const TAG_NAME: &'static str = "tag name";
-    pub const LINK_TEXT: &'static str = "link text";
-    pub const PARTIAL_LINK_TEXT: &'static str = "partial link text";
-    pub const XPATH: &'static str = "xpath";
+    pub fn id(value: impl Into<String>) -> By {
+        By { strategy: "id", value: value.into() }
+    }
+    pub fn name(value: impl Into<String>) -> By {
+        By { strategy: "name", value: value.into() }
+    }
+    pub fn css(value: impl Into<String>) -> By {
+        By { strategy: "css selector", value: value.into() }
+    }
+    pub fn class_name(value: impl Into<String>) -> By {
+        By { strategy: "class name", value: value.into() }
+    }
+    pub fn tag_name(value: impl Into<String>) -> By {
+        By { strategy: "tag name", value: value.into() }
+    }
+    pub fn link_text(value: impl Into<String>) -> By {
+        By { strategy: "link text", value: value.into() }
+    }
+    pub fn partial_link_text(value: impl Into<String>) -> By {
+        By { strategy: "partial link text", value: value.into() }
+    }
+    pub fn xpath(value: impl Into<String>) -> By {
+        By { strategy: "xpath", value: value.into() }
+    }
 }
 
 // ---- pure engine helpers (no session) ----
@@ -251,8 +284,8 @@ pub fn locator(by: &str, value: &str) -> String {
     take_string(unsafe { aether_sel_embed_by_locator(bc.as_ptr(), vc.as_ptr()) })
 }
 
-fn decode_by(by: &str, value: &str) -> Json {
-    json::parse(&locator(by, value)).unwrap_or(Json::Null)
+fn decode_by(by: &By) -> Json {
+    json::parse(&locator(by.strategy, &by.value)).unwrap_or(Json::Null)
 }
 
 const W3C_ELEMENT_KEY: &str = "element-6066-11e4-a52e-4f735466cecf";
@@ -464,12 +497,12 @@ impl WebDriver {
     }
 
     // ---- elements ----
-    pub fn find_element(&self, by: &str, value: &str) -> Result<WebElement> {
-        let result = self.execute("findElement", decode_by(by, value))?;
+    pub fn find_element(&self, by: By) -> Result<WebElement> {
+        let result = self.execute("findElement", decode_by(&by))?;
         self.element_from(&result)
     }
-    pub fn find_elements(&self, by: &str, value: &str) -> Result<Vec<WebElement>> {
-        let result = self.execute("findElements", decode_by(by, value))?;
+    pub fn find_elements(&self, by: By) -> Result<Vec<WebElement>> {
+        let result = self.execute("findElements", decode_by(&by))?;
         let arr = result.as_array().cloned().unwrap_or_default();
         arr.iter().map(|e| self.element_from(e)).collect()
     }
@@ -625,7 +658,7 @@ impl WebDriver {
     /// negotiated webSocketUrl. Errors if the remote end granted no BiDi URL.
     ///
     /// ```no_run
-    /// # use selenium_core::{WebDriver, BidiEvent};
+    /// # use selenium::{WebDriver, BidiEvent};
     /// # let mut d = WebDriver::headless_chrome("http://127.0.0.1:9515").unwrap();
     /// d.bidi().unwrap().subscribe(&[BidiEvent::LOG_ENTRY_ADDED]).unwrap();
     /// d.get("https://example.com").unwrap();
@@ -743,7 +776,7 @@ impl WebDriver {
     /// auto-detects); `tls` configures trust for the (loopback) driver.
     ///
     /// ```no_run
-    /// # use selenium_core::WebDriver;
+    /// # use selenium::WebDriver;
     /// let d = WebDriver::local_chrome(None, "", 15000, Default::default()).unwrap();
     /// d.get("https://example.com").unwrap();
     /// d.quit().unwrap();

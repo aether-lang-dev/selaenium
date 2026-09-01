@@ -56,7 +56,7 @@ func TestLiveSurface(t *testing.T) {
 	}
 
 	// navigation history
-	go2, _ := d.FindElement(ByID, "go")
+	go2, _ := d.FindElement(By.Id("go"))
 	go2.Click()
 	if title, _ := d.Title(); title != "Page Two" {
 		t.Fatalf("after click title = %q", title)
@@ -109,7 +109,7 @@ func TestLiveSurface(t *testing.T) {
 	}
 
 	// W3C actions: pointer click on the button.
-	btn, _ := d.FindElement(ByID, "btn")
+	btn, _ := d.FindElement(By.Id("btn"))
 	rct, _ := btn.Rect()
 	cx := int(rct.X + rct.Width/2)
 	cy := int(rct.Y + rct.Height/2)
@@ -123,7 +123,7 @@ func TestLiveSurface(t *testing.T) {
 	}}); err != nil {
 		t.Fatalf("PerformActions: %v", err)
 	}
-	hdr, _ := d.FindElement(ByID, "hdr")
+	hdr, _ := d.FindElement(By.Id("hdr"))
 	if txt, _ := hdr.Text(); txt != "clicked" {
 		t.Fatalf("actions click did not fire, hdr=%q", txt)
 	}

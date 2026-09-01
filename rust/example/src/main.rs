@@ -9,7 +9,7 @@ use std::net::{TcpListener, TcpStream};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
-use selenium_core::{error_code, route, By, ErrorKind, WebDriver};
+use selenium::{error_code, route, By, ErrorKind, WebDriver};
 
 fn fail(msg: &str) -> ! {
     eprintln!("FAIL: {msg}");
@@ -84,7 +84,7 @@ fn mode_live() {
         if d.title().unwrap() != "Installed" {
             fail("title mismatch");
         }
-        if d.find_element(By::ID, "h").unwrap().text().unwrap() != "Hi" {
+        if d.find_element(By::id("h")).unwrap().text().unwrap() != "Hi" {
             fail("text mismatch");
         }
         d.quit().unwrap();

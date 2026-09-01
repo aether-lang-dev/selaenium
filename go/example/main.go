@@ -89,7 +89,7 @@ func modeLive() {
 	if title, _ := d.Title(); title != "Installed" {
 		fail("title = " + title)
 	}
-	el, err := d.FindElement(selenium.ByID, "h")
+	el, err := d.FindElement(selenium.By.Id("h"))
 	if err != nil {
 		fail("FindElement: " + err.Error())
 	}

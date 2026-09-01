@@ -87,17 +87,17 @@ func TestLiveChrome(t *testing.T) {
 		t.Fatalf("Title = %q, err=%v", title, err)
 	}
 
-	hdr, err := drv.FindElement(ByID, "hdr")
+	hdr, err := drv.FindElement(By.Id("hdr"))
 	if err != nil {
-		t.Fatalf("FindElement(ByID): %v", err)
+		t.Fatalf("FindElement(By.Id): %v", err)
 	}
 	if txt, _ := hdr.Text(); txt != "Hello" {
 		t.Fatalf("hdr.Text = %q", txt)
 	}
 
-	lnk, err := drv.FindElement(ByClassName, "nav")
+	lnk, err := drv.FindElement(By.ClassName("nav"))
 	if err != nil {
-		t.Fatalf("FindElement(ByClassName): %v", err)
+		t.Fatalf("FindElement(By.ClassName): %v", err)
 	}
 	if tag, _ := lnk.TagName(); tag != "a" {
 		t.Fatalf("lnk.TagName = %q", tag)
@@ -106,7 +106,7 @@ func TestLiveChrome(t *testing.T) {
 		t.Fatalf("Click: %v", err)
 	}
 
-	box, err := drv.FindElement(ByCSS, "#box")
+	box, err := drv.FindElement(By.CssSelector("#box"))
 	if err != nil {
 		t.Fatalf("FindElement(#box): %v", err)
 	}
@@ -137,7 +137,7 @@ func TestLiveChrome(t *testing.T) {
 	}
 
 	// Negative path: a missing element yields a typed NoSuchElement error.
-	if _, err := drv.FindElement(ByID, "does-not-exist"); !IsNoSuchElement(err) {
+	if _, err := drv.FindElement(By.Id("does-not-exist")); !IsNoSuchElement(err) {
 		t.Fatalf("want NoSuchElement, got %v", err)
 	}
 
@@ -184,7 +184,7 @@ func TestLiveAtoms(t *testing.T) {
 		t.Fatalf("Get: %v", err)
 	}
 
-	hdr, err := drv.FindElement(ByID, "hdr")
+	hdr, err := drv.FindElement(By.Id("hdr"))
 	if err != nil {
 		t.Fatalf("FindElement(#hdr): %v", err)
 	}
@@ -192,7 +192,7 @@ func TestLiveAtoms(t *testing.T) {
 		t.Fatalf("hdr.IsDisplayed = %v, err=%v; want true", shown, err)
 	}
 
-	gone, err := drv.FindElement(ByID, "gone")
+	gone, err := drv.FindElement(By.Id("gone"))
 	if err != nil {
 		t.Fatalf("FindElement(#gone): %v", err)
 	}
@@ -200,7 +200,7 @@ func TestLiveAtoms(t *testing.T) {
 		t.Fatalf("gone.IsDisplayed = %v, err=%v; want false", shown, err)
 	}
 
-	lnk, err := drv.FindElement(ByID, "lnk")
+	lnk, err := drv.FindElement(By.Id("lnk"))
 	if err != nil {
 		t.Fatalf("FindElement(#lnk): %v", err)
 	}
@@ -495,7 +495,7 @@ func TestLiveDriverOrchestration(t *testing.T) {
 	if err != nil || title != "Aether Selenium" {
 		t.Fatalf("Title = %q, err=%v", title, err)
 	}
-	hdr, err := drv.FindElement(ByID, "hdr")
+	hdr, err := drv.FindElement(By.Id("hdr"))
 	if err != nil {
 		t.Fatalf("FindElement(#hdr): %v", err)
 	}

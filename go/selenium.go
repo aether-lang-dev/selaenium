@@ -13,7 +13,7 @@
 //	defer drv.Quit()
 //	drv.Get("https://example.com")
 //	title, _ := drv.Title()
-//	el, _ := drv.FindElement(selenium.ByCSS, "a")
+//	el, _ := drv.FindElement(selenium.By.CssSelector("a"))
 //	el.Click()
 package selenium
 
@@ -102,20 +102,36 @@ import (
 // {"element-6066-11e4-a52e-4f735466cecf": "<id>"}.
 const w3cElementKey = "element-6066-11e4-a52e-4f735466cecf"
 
-// By strategies. Values match the engine's by_locator strategy strings;
-// ByID/ByName/ByClassName are rewritten to CSS in the engine.
-type By string
+// Selector is a locator: a (strategy, value) pair produced by the By factory and
+// passed to FindElement/FindElements. The strategy strings match the engine's
+// by_locator strings; id/name/"class name" are rewritten to CSS in the engine.
+//
+// Mirrors Selenium's Java By-factory shape (By.id("x") -> a locator; one-arg
+// findElement) in Go idiom: selenium.By.Id("x").
+type Selector struct {
+	Strategy string
+	Value    string
+}
 
-const (
-	ByID              By = "id"
-	ByName            By = "name"
-	ByCSS             By = "css selector"
-	ByClassName       By = "className"
-	ByTagName         By = "tag name"
-	ByLinkText        By = "link text"
-	ByPartialLinkText By = "partial link text"
-	ByXPath           By = "xpath"
-)
+// byFactory is the type of the package-level By value. Its methods are the
+// Selenium By-factory constructors; each returns a Selector for one-arg finds.
+type byFactory struct{}
+
+// By is the locator factory. Each method mirrors a Selenium By.* strategy and
+// returns a Selector to hand to FindElement/FindElements:
+//
+//	el, _ := drv.FindElement(selenium.By.Id("hdr"))
+//	els, _ := drv.FindElements(selenium.By.ClassName("nav"))
+var By byFactory
+
+func (byFactory) Id(value string) Selector              { return Selector{"id", value} }
+func (byFactory) Name(value string) Selector            { return Selector{"name", value} }
+func (byFactory) CssSelector(value string) Selector     { return Selector{"css selector", value} }
+func (byFactory) ClassName(value string) Selector       { return Selector{"class name", value} }
+func (byFactory) TagName(value string) Selector         { return Selector{"tag name", value} }
+func (byFactory) LinkText(value string) Selector        { return Selector{"link text", value} }
+func (byFactory) PartialLinkText(value string) Selector { return Selector{"partial link text", value} }
+func (byFactory) Xpath(value string) Selector           { return Selector{"xpath", value} }
 
 // ---- string ownership ------------------------------------------------------
 
@@ -399,9 +415,9 @@ func nonEmpty(s, fallback string) string {
 
 // decodeBy asks the engine for the {"using","value"} locator (sharing the ONE
 // By-normalization + CSS-escape path with every other binding).
-func decodeBy(by By, value string) map[string]interface{} {
-	cs := cstr(string(by))
-	cv := cstr(value)
+func decodeBy(sel Selector) map[string]interface{} {
+	cs := cstr(sel.Strategy)
+	cv := cstr(sel.Value)
 	raw := takeString(C.aether_sel_embed_by_locator(cs, cv))
 	C.free(unsafe.Pointer(cs))
 	C.free(unsafe.Pointer(cv))
@@ -427,8 +443,8 @@ func (d *WebDriver) Refresh() error { _, err := d.execute("refresh", nil); retur
 
 // ---- elements ----
 
-func (d *WebDriver) FindElement(by By, value string) (*WebElement, error) {
-	v, err := d.execute("findElement", decodeBy(by, value))
+func (d *WebDriver) FindElement(sel Selector) (*WebElement, error) {
+	v, err := d.execute("findElement", decodeBy(sel))
 	if err != nil {
 		return nil, err
 	}
@@ -439,8 +455,8 @@ func (d *WebDriver) FindElement(by By, value string) (*WebElement, error) {
 	return &WebElement{driver: d, id: id}, nil
 }
 
-func (d *WebDriver) FindElements(by By, value string) ([]*WebElement, error) {
-	v, err := d.execute("findElements", decodeBy(by, value))
+func (d *WebDriver) FindElements(sel Selector) ([]*WebElement, error) {
+	v, err := d.execute("findElements", decodeBy(sel))
 	if err != nil {
 		return nil, err
 	}
@@ -839,11 +855,11 @@ func ErrorCode(w3cError string) int {
 	return int(C.aether_sel_embed_error_code(c))
 }
 
-// Locator returns the W3C {"using","value"} JSON for a (by, value) pair, with
-// id/name/className rewritten to CSS exactly as every binding shares.
-func Locator(by By, value string) string {
-	cs := cstr(string(by))
-	cv := cstr(value)
+// Locator returns the W3C {"using","value"} JSON for a Selector, with
+// id/name/"class name" rewritten to CSS exactly as every binding shares.
+func Locator(sel Selector) string {
+	cs := cstr(sel.Strategy)
+	cv := cstr(sel.Value)
 	defer C.free(unsafe.Pointer(cs))
 	defer C.free(unsafe.Pointer(cv))
 	return takeString(C.aether_sel_embed_by_locator(cs, cv))
