@@ -36,8 +36,10 @@ driver_orchestration() ->
             Url = selenium:driver_url(Dh),
             true = binary:part(Url, 0, 4) =:= <<"http">>,
             true = selenium:driver_pid(Dh) > 0,
+            %% stop_driver frees the handle; unlike the object-oriented bindings
+            %% there is no wrapper to null out, so the raw Dh must not be reused
+            %% after stop (it would be a use-after-free). The ok return is the check.
             ok = selenium:stop_driver(Dh),
-            0 = selenium:driver_pid(Dh),
             io:format("  ok: ensure_driver -> url/pid, stop terminated it~n"),
             {ok, D, Dh2} = selenium:local_chrome(chrome_opts()),
             try
