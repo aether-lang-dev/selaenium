@@ -1,10 +1,10 @@
 # frozen_string_literal: true
 
-require_relative 'lib/selenium_core'
+require_relative 'lib/selenium-webdriver'
 
 Gem::Specification.new do |spec|
-  spec.name        = 'selenium_core'
-  spec.version     = SeleniumCore::VERSION
+  spec.name        = 'selenium-webdriver'
+  spec.version     = Selenium::WebDriver::VERSION
   spec.summary     = 'Selenium WebDriver for Ruby — a thin Fiddle wrapper over the shared pure-Aether WebDriver core'
   spec.description  = 'Re-glues the Ruby WebDriver surface to the one shared ' \
                       'pure-Aether engine (libselenium_core.so). Carries no ' \
@@ -18,7 +18,7 @@ Gem::Specification.new do |spec|
   spec.required_ruby_version = '>= 3.0'
 
   # Sweep in the whole lib tree — including the bundled engine .so under
-  # lib/selenium_core/native/ that .package.ae stages before `gem build`.
+  # lib/selenium/native/ that .package.ae stages before `gem build`.
   spec.files = Dir['lib/**/*'] + ['README.md'].select { |f| File.exist?(f) }
   spec.require_paths = ['lib']
 

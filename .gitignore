@@ -202,7 +202,7 @@ entities.json
 # Bindings' bundled engine copies (staged by .package.ae)
 /python/selenium/native/
 /go/native/
-/ruby/lib/selenium_core/native/
+/ruby/lib/selenium/native/
 
 # Ruby packaging
 /ruby/pkg/

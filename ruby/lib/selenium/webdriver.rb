@@ -3,54 +3,127 @@
 require 'json'
 require_relative 'native'
 
-module SeleniumCore
-  # Locator strategies. Values match the engine's by_locator strategy strings;
-  # ID/NAME/CLASS_NAME are rewritten to CSS in the engine.
-  module By
-    ID                = 'id'
-    NAME              = 'name'
-    CSS_SELECTOR      = 'css selector'
-    CLASS_NAME        = 'className'
-    TAG_NAME          = 'tag name'
-    LINK_TEXT         = 'link text'
-    PARTIAL_LINK_TEXT = 'partial link text'
-    XPATH             = 'xpath'
-  end
+module Selenium
+  module WebDriver
+    # Locator strategies. Values match the engine's by_locator strategy strings;
+    # ID/NAME/CLASS_NAME are rewritten to CSS in the engine. className is sent as
+    # the W3C "class name" strategy string.
+    module By
+      ID                = 'id'
+      NAME              = 'name'
+      CSS_SELECTOR      = 'css selector'
+      CLASS_NAME        = 'class name'
+      TAG_NAME          = 'tag name'
+      LINK_TEXT         = 'link text'
+      PARTIAL_LINK_TEXT = 'partial link text'
+      XPATH             = 'xpath'
 
-  # Base for all remote-end errors, carrying the engine's stable W3C error code
-  # (0 = success, -1 = transport failure).
-  class WebDriverError < StandardError
-    attr_reader :code
+      # Map the Ruby keyword/symbol finder forms (:id, :class, :css, :link, ...)
+      # onto the engine strategy strings. Accepts the authentic Ruby short names
+      # (:class -> "class name", :css -> "css selector", :link -> "link text",
+      # :partial_link_text, :tag_name) as well as the canonical strings.
+      SYMBOLS = {
+        id: ID,
+        name: NAME,
+        class: CLASS_NAME,
+        class_name: CLASS_NAME,
+        css: CSS_SELECTOR,
+        css_selector: CSS_SELECTOR,
+        tag_name: TAG_NAME,
+        link: LINK_TEXT,
+        link_text: LINK_TEXT,
+        partial_link_text: PARTIAL_LINK_TEXT,
+        xpath: XPATH
+      }.freeze
 
-    def initialize(message = '', code = 0)
-      super(message)
-      @code = code
+      # Normalize a finder call to (strategy, value). Supports the authentic
+      # Ruby forms:
+      #   find_element(id: 'x')      -> keyword/hash: one {strategy => value}
+      #   find_element(:id, 'x')     -> symbol + value
+      #   find_element(By::ID, 'x')  -> canonical strategy string + value
+      def self.normalize(how, what = nil)
+        if what.nil? && how.is_a?(Hash)
+          raise ArgumentError, "expected exactly one locator, got #{how.inspect}" unless how.size == 1
+
+          sym, value = how.first
+          [strategy_for(sym), value]
+        else
+          [strategy_for(how), what]
+        end
+      end
+
+      # Resolve a strategy token to the engine strategy string. A symbol short
+      # name (:id, :class, :css, ...) maps through SYMBOLS; a canonical strategy
+      # string ("css selector", "class name", "xpath", ...) passes through
+      # unchanged.
+      def self.strategy_for(token)
+        if token.is_a?(Symbol)
+          SYMBOLS.fetch(token) { raise ArgumentError, "unknown locator strategy: #{token.inspect}" }
+        else
+          token.to_s
+        end
+      end
     end
-  end
 
-  class NoSuchElementError < WebDriverError; end
-  class StaleElementReferenceError < WebDriverError; end
-  class ElementClickInterceptedError < WebDriverError; end
-  class ElementNotInteractableError < WebDriverError; end
-  class InvalidSelectorError < WebDriverError; end
-  class TimeoutError < WebDriverError; end
-  class JavascriptError < WebDriverError; end
-  class UnknownCommandError < WebDriverError; end
+    # Base for all remote-end errors, carrying the engine's stable W3C error code
+    # (0 = success, -1 = transport failure). Authentic Selenium spells this
+    # WebDriverError under Selenium::WebDriver::Error; we keep the flatter
+    # Selenium::WebDriver::WebDriverError plus the Error:: aliases below.
+    class WebDriverError < StandardError
+      attr_reader :code
 
-  # Engine integer error codes -> exception class (see core error_code()).
-  CODE_TO_EXC = {
-    3  => ElementClickInterceptedError,
-    4  => ElementNotInteractableError,
-    11 => InvalidSelectorError,
-    13 => JavascriptError,
-    17 => NoSuchElementError,
-    21 => TimeoutError,
-    23 => StaleElementReferenceError,
-    24 => TimeoutError,
-    28 => UnknownCommandError
-  }.freeze
+      def initialize(message = '', code = 0)
+        super(message)
+        @code = code
+      end
+    end
 
-  W3C_ELEMENT_KEY = 'element-6066-11e4-a52e-4f735466cecf'
+    class NoSuchElementError < WebDriverError; end
+    class StaleElementReferenceError < WebDriverError; end
+    class ElementClickInterceptedError < WebDriverError; end
+    class ElementNotInteractableError < WebDriverError; end
+    class InvalidSelectorError < WebDriverError; end
+    class NoSuchWindowError < WebDriverError; end
+    class NoSuchFrameError < WebDriverError; end
+    class TimeoutError < WebDriverError; end
+    class JavascriptError < WebDriverError; end
+    class UnknownCommandError < WebDriverError; end
+    class SessionNotCreatedError < WebDriverError; end
+
+    # Authentic Selenium nests exceptions under Selenium::WebDriver::Error with
+    # the *Exception suffix (WebDriverException, NoSuchElementException, ...).
+    # We expose that shape as aliases so code written to the real gem's
+    # Error::NoSuchElementError / Error::WebDriverError names resolves. The flat
+    # names above stay the primary (thrown) classes.
+    module Error
+      WebDriverError               = ::Selenium::WebDriver::WebDriverError
+      NoSuchElementError           = ::Selenium::WebDriver::NoSuchElementError
+      StaleElementReferenceError   = ::Selenium::WebDriver::StaleElementReferenceError
+      ElementClickInterceptedError = ::Selenium::WebDriver::ElementClickInterceptedError
+      ElementNotInteractableError  = ::Selenium::WebDriver::ElementNotInteractableError
+      InvalidSelectorError         = ::Selenium::WebDriver::InvalidSelectorError
+      NoSuchWindowError            = ::Selenium::WebDriver::NoSuchWindowError
+      NoSuchFrameError             = ::Selenium::WebDriver::NoSuchFrameError
+      TimeoutError                 = ::Selenium::WebDriver::TimeoutError
+      JavascriptError              = ::Selenium::WebDriver::JavascriptError
+      UnknownCommandError          = ::Selenium::WebDriver::UnknownCommandError
+      SessionNotCreatedError       = ::Selenium::WebDriver::SessionNotCreatedError
+    end
+
+    # Engine integer error codes -> exception class (see core error_code()).
+    CODE_TO_EXC = {
+      3  => ElementClickInterceptedError,
+      4  => ElementNotInteractableError,
+      11 => InvalidSelectorError,
+      13 => JavascriptError,
+      17 => NoSuchElementError,
+      21 => TimeoutError,
+      23 => StaleElementReferenceError,
+      24 => TimeoutError,
+      28 => UnknownCommandError
+    }.freeze
+
+    W3C_ELEMENT_KEY = 'element-6066-11e4-a52e-4f735466cecf'
 
   # ---- pure engine helpers (no session needed) ----
   module_function
@@ -70,8 +143,12 @@ module SeleniumCore
     Native.take_string(Native.call(:by_locator, by, value))
   end
 
-  def decode_by(by, value)
-    JSON.parse(locator(by, value))
+  # Decode a finder call into the W3C {"using","value"} params Hash. Accepts the
+  # authentic Ruby forms: find_element(id: 'x') (keyword hash), find_element(:id,
+  # 'x') (symbol), or find_element(By::ID, 'x') (canonical strategy string).
+  def decode_by(how, what = nil)
+    strategy, value = By.normalize(how, what)
+    JSON.parse(locator(strategy, value))
   end
 
   # A remote element handle. Methods issue element-scoped commands, passing this
@@ -138,8 +215,8 @@ module SeleniumCore
       !!exec('isElementSelected')
     end
 
-    def find_element(by, value)
-      params = SeleniumCore.decode_by(by, value)
+    def find_element(how, what = nil)
+      params = WebDriver.decode_by(how, what)
       params['id'] = @id
       result = @driver.send(:execute, 'findChildElement', params)
       WebElement.new(@driver, result.fetch(W3C_ELEMENT_KEY))
@@ -157,8 +234,11 @@ module SeleniumCore
     end
   end
 
-  # A WebDriver session over the shared engine.
-  class WebDriver
+  # A WebDriver session over the shared engine. Authentic Selenium names the
+  # session class Selenium::WebDriver::Driver; the module-level entry points
+  # (Selenium::WebDriver.for / .chrome / .headless_chrome / .local_chrome)
+  # construct it.
+  class Driver
     # Start a Chrome session against a running chromedriver (or Grid).
     #   options: a raw capabilities Hash merged under browserName: chrome.
     #   ca_path:  pin a private-CA bundle for the transport (before newSession).
@@ -179,10 +259,10 @@ module SeleniumCore
     end
 
     # Chrome session that spawns its OWN chromedriver via the engine — no driver
-    # on PATH, no Grid. See {SeleniumCore.local_chrome}.
+    # on PATH, no Grid. See {Selenium::WebDriver.local_chrome}.
     def self.local_chrome(options: nil, hint: '', timeout_ms: 15_000, ca_path: nil, insecure: false)
-      SeleniumCore.local_chrome(options: options, hint: hint, timeout_ms: timeout_ms,
-                                ca_path: ca_path, insecure: insecure)
+      WebDriver.local_chrome(options: options, hint: hint, timeout_ms: timeout_ms,
+                             ca_path: ca_path, insecure: insecure)
     end
 
     def initialize(command_executor, capabilities, ca_path: nil, insecure: false)
@@ -216,13 +296,15 @@ module SeleniumCore
     def refresh = (execute('refresh'); nil)
 
     # ---- elements ----
-    def find_element(by, value)
-      result = execute('findElement', SeleniumCore.decode_by(by, value))
+    # Authentic Ruby finder grammar: find_element(id: 'x') (keyword hash),
+    # find_element(:id, 'x') (symbol), or find_element(By::ID, 'x').
+    def find_element(how, what = nil)
+      result = execute('findElement', WebDriver.decode_by(how, what))
       WebElement.new(self, result.fetch(W3C_ELEMENT_KEY))
     end
 
-    def find_elements(by, value)
-      result = execute('findElements', SeleniumCore.decode_by(by, value))
+    def find_elements(how, what = nil)
+      result = execute('findElements', WebDriver.decode_by(how, what))
       result.map { |e| WebElement.new(self, e.fetch(W3C_ELEMENT_KEY)) }
     end
 
@@ -451,11 +533,22 @@ module SeleniumCore
                     ca_path: ca_path, insecure: insecure)
   end
 
+  # Module-level session entry points (authentic Selenium::WebDriver.chrome /
+  # .headless_chrome). They delegate to the Driver class constructors so the
+  # existing surface keeps working alongside Selenium::WebDriver.for(:chrome).
+  def chrome(command_executor = 'http://127.0.0.1:9515', options: nil, ca_path: nil, insecure: false)
+    Driver.chrome(command_executor, options: options, ca_path: ca_path, insecure: insecure)
+  end
+
+  def headless_chrome(command_executor = 'http://127.0.0.1:9515', ca_path: nil, insecure: false)
+    Driver.headless_chrome(command_executor, ca_path: ca_path, insecure: insecure)
+  end
+
   # A Chrome session that spawns its own chromedriver via the engine — no driver
   # on PATH, no Grid. The driver process is stopped on #quit.
-  class LocalChrome < WebDriver
+  class LocalChrome < Driver
     def initialize(options: nil, hint: '', timeout_ms: 15_000, ca_path: nil, insecure: false)
-      @proc = SeleniumCore.ensure_driver('chrome', hint, timeout_ms: timeout_ms)
+      @proc = WebDriver.ensure_driver('chrome', hint, timeout_ms: timeout_ms)
       raise WebDriverError.new('could not resolve/launch chromedriver', -1) if @proc.nil?
 
       caps = { 'browserName' => 'chrome' }
@@ -673,5 +766,6 @@ module SeleniumCore
       @next_id += 1
       id
     end
+  end
   end
 end

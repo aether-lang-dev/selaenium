@@ -11,7 +11,7 @@ require 'cgi'
 require 'json'
 
 $LOAD_PATH.unshift File.expand_path('../lib', __dir__)
-require 'selenium_core'
+require 'selenium-webdriver'
 
 class LiveTest < Minitest::Test
   HTML = '<html><head><title>Aether Selenium</title></head>' \
@@ -42,7 +42,15 @@ class LiveTest < Minitest::Test
   end
 
   def test_live_chrome
-    driver = SeleniumCore::WebDriver.headless_chrome("http://127.0.0.1:#{@port}")
+    # Selenium::WebDriver.for(:chrome, command_executor:) dispatches to a Chrome
+    # session against the running chromedriver (headless options passed through).
+    driver = Selenium::WebDriver.for(:chrome, command_executor: "http://127.0.0.1:#{@port}",
+                                              options: {
+                                                'goog:chromeOptions' => {
+                                                  'args' => ['--headless=new', '--no-sandbox',
+                                                             '--disable-gpu', '--disable-dev-shm-usage']
+                                                }
+                                              })
     begin
       refute_empty driver.session_id, 'no session id after newSession'
 
@@ -51,24 +59,28 @@ class LiveTest < Minitest::Test
       driver.get(page)
       assert_equal 'Aether Selenium', driver.title
 
-      hdr = driver.find_element(SeleniumCore::By::ID, 'hdr')
+      # Authentic Ruby keyword-hash finder form.
+      hdr = driver.find_element(id: 'hdr')
       assert_equal 'Hello', hdr.text
 
-      lnk = driver.find_element(SeleniumCore::By::CLASS_NAME, 'nav')
+      # Authentic Ruby symbol finder form (:class -> "class name").
+      lnk = driver.find_element(:class, 'nav')
       assert_equal 'a', lnk.tag_name.downcase
       lnk.click
 
-      box = driver.find_element(SeleniumCore::By::CSS_SELECTOR, '#box')
+      # By:: constant form (kept as an extra) + symbol :css form.
+      box = driver.find_element(Selenium::WebDriver::By::CSS_SELECTOR, '#box')
       box.send_keys('hello world')
       assert_equal 'hello world', box.property('value')
+      assert_equal box, driver.find_element(css: '#box')
 
       assert_equal 42, driver.execute_script('return 40 + 2;')
 
       driver.set_script_timeout(10_000)
       assert_equal 7, driver.execute_async_script('arguments[arguments.length - 1](3 + 4);')
 
-      assert_raises(SeleniumCore::NoSuchElementError) do
-        driver.find_element(SeleniumCore::By::ID, 'does-not-exist')
+      assert_raises(Selenium::WebDriver::NoSuchElementError) do
+        driver.find_element(Selenium::WebDriver::By::ID, 'does-not-exist')
       end
     ensure
       driver.quit
@@ -82,13 +94,13 @@ class LiveTest < Minitest::Test
   def test_live_driver_orchestration
     # Resolve only — self-skip if the engine can't produce a driver here
     # (offline + empty cache). Same self-skip the reference bindings use.
-    path = SeleniumCore.resolve_driver('chrome')
+    path = Selenium::WebDriver.resolve_driver('chrome')
     skip 'engine cannot resolve a chromedriver (offline, no cache)' if path.empty?
     assert File.file?(path), "resolve_driver returned a non-file: #{path.inspect}"
 
     # ensure_driver spawns it; the handle exposes url + pid, independent of any
     # W3C session.
-    proc = SeleniumCore.ensure_driver('chrome')
+    proc = Selenium::WebDriver.ensure_driver('chrome')
     refute_nil proc, 'ensure_driver returned nil'
     begin
       assert proc.url.start_with?('http'), "driver url=#{proc.url.inspect}"
@@ -103,14 +115,14 @@ class LiveTest < Minitest::Test
     chrome_opts = { 'args' => ['--headless=new', '--no-sandbox', '--disable-gpu', '--disable-dev-shm-usage'] }
     chrome_bin = ENV.fetch('SEL_CHROME_BINARY', nil)
     chrome_opts['binary'] = chrome_bin if chrome_bin && !chrome_bin.empty?
-    driver = SeleniumCore.local_chrome(options: { 'goog:chromeOptions' => chrome_opts })
+    driver = Selenium::WebDriver.local_chrome(options: { 'goog:chromeOptions' => chrome_opts })
     begin
       refute_empty driver.session_id, 'no session id from LocalChrome'
 
       page = 'data:text/html;charset=utf-8,' + CGI.escape(HTML).gsub('+', '%20')
       driver.get(page)
       assert_equal 'Aether Selenium', driver.title
-      assert_equal 'Hello', driver.find_element(SeleniumCore::By::ID, 'hdr').text
+      assert_equal 'Hello', driver.find_element(Selenium::WebDriver::By::ID, 'hdr').text
     ensure
       driver.quit
     end
@@ -120,21 +132,21 @@ class LiveTest < Minitest::Test
   # one via the classic script channel, and receive the event asynchronously —
   # the bidirectional half, driven from Ruby through the demux C ABI.
   def test_live_bidi
-    driver = SeleniumCore::WebDriver.headless_chrome("http://127.0.0.1:#{@port}")
+    driver = Selenium::WebDriver.headless_chrome("http://127.0.0.1:#{@port}")
     begin
       assert driver.bidi_available?, 'session negotiated no webSocketUrl'
 
       page = 'data:text/html;charset=utf-8,' + CGI.escape(HTML).gsub('+', '%20')
       driver.get(page)
 
-      ack = driver.bidi.subscribe(SeleniumCore::BidiEvent::LOG_ENTRY_ADDED)
+      ack = driver.bidi.subscribe(Selenium::WebDriver::BidiEvent::LOG_ENTRY_ADDED)
       assert_equal 'success', ack['type'], "subscribe ack=#{ack.inspect}"
 
       driver.execute_script("console.log('bidi-hello');")
 
-      ev = driver.bidi.next_event(SeleniumCore::BidiEvent::LOG_ENTRY_ADDED, timeout_ms: 8000)
+      ev = driver.bidi.next_event(Selenium::WebDriver::BidiEvent::LOG_ENTRY_ADDED, timeout_ms: 8000)
       refute_nil ev, 'no log.entryAdded event received'
-      assert_equal SeleniumCore::BidiEvent::LOG_ENTRY_ADDED, ev['method']
+      assert_equal Selenium::WebDriver::BidiEvent::LOG_ENTRY_ADDED, ev['method']
       assert_includes ev.to_json, 'bidi-hello'
 
       status = driver.bidi.command('session.status')
@@ -152,16 +164,16 @@ class LiveTest < Minitest::Test
 
       # BiDi network interception: intercept all requests at beforeRequestSent,
       # trigger a fetch, receive the paused-request event, then release it.
-      driver.bidi.subscribe(SeleniumCore::BidiEvent::BEFORE_REQUEST_SENT)
+      driver.bidi.subscribe(Selenium::WebDriver::BidiEvent::BEFORE_REQUEST_SENT)
       ic = driver.bidi.add_intercept(url_pattern: '')
       refute_nil ic, 'add_intercept should return an intercept id'
 
       driver.execute_script("fetch('https://example.com/blocked').catch(function(){});")
 
-      ev = driver.bidi.next_event(SeleniumCore::BidiEvent::BEFORE_REQUEST_SENT, timeout_ms: 8000)
+      ev = driver.bidi.next_event(Selenium::WebDriver::BidiEvent::BEFORE_REQUEST_SENT, timeout_ms: 8000)
       refute_nil ev, 'no network.beforeRequestSent event received'
 
-      rid = SeleniumCore::BiDi.event_request_id(ev)
+      rid = Selenium::WebDriver::BiDi.event_request_id(ev)
       refute_nil rid, 'event should carry a request id'
 
       assert_equal 'success', driver.bidi.continue_request(rid)['type'],
@@ -170,8 +182,8 @@ class LiveTest < Minitest::Test
       # BiDi request mocking: fulfill a paused request with a mock response
       # (never hits the network) and prove the page reads the mocked body.
       driver.execute_script("window.__mock='';fetch('https://example.com/api').then(function(r){return r.text()}).then(function(t){window.__mock=t}).catch(function(){});")
-      ev2 = driver.bidi.next_event(SeleniumCore::BidiEvent::BEFORE_REQUEST_SENT, timeout_ms: 8000)
-      rid2 = SeleniumCore::BiDi.event_request_id(ev2)
+      ev2 = driver.bidi.next_event(Selenium::WebDriver::BidiEvent::BEFORE_REQUEST_SENT, timeout_ms: 8000)
+      rid2 = Selenium::WebDriver::BiDi.event_request_id(ev2)
       resp = driver.bidi.provide_response(rid2, status: 200, content_type: 'text/plain', body: 'MOCKED-BODY')
       assert_equal 'success', resp['type']
       got = ''
@@ -194,14 +206,14 @@ class LiveTest < Minitest::Test
   # authRequired -> provideCredentials round-trip.
   def test_live_bidi_auth
     server, srv_port = basic_auth_server
-    driver = SeleniumCore::WebDriver.headless_chrome("http://127.0.0.1:#{@port}")
+    driver = Selenium::WebDriver.headless_chrome("http://127.0.0.1:#{@port}")
     begin
       assert driver.bidi_available?, 'session negotiated no webSocketUrl'
 
       origin = "http://127.0.0.1:#{srv_port}"
       driver.get("#{origin}/")
 
-      driver.bidi.subscribe(SeleniumCore::BidiEvent::AUTH_REQUIRED)
+      driver.bidi.subscribe(Selenium::WebDriver::BidiEvent::AUTH_REQUIRED)
       ic = driver.bidi.add_intercept(phases: 'authRequired')
       refute_nil ic, 'add_intercept(authRequired) should return an intercept id'
 
@@ -213,10 +225,10 @@ class LiveTest < Minitest::Test
         ".catch(function(e){window.__auth='ERR:'+e});"
       )
 
-      ev = driver.bidi.next_event(SeleniumCore::BidiEvent::AUTH_REQUIRED, timeout_ms: 8000)
+      ev = driver.bidi.next_event(Selenium::WebDriver::BidiEvent::AUTH_REQUIRED, timeout_ms: 8000)
       refute_nil ev, 'no network.authRequired event received'
-      assert_equal SeleniumCore::BidiEvent::AUTH_REQUIRED, ev['method']
-      rid = SeleniumCore::BiDi.event_request_id(ev)
+      assert_equal Selenium::WebDriver::BidiEvent::AUTH_REQUIRED, ev['method']
+      rid = Selenium::WebDriver::BiDi.event_request_id(ev)
       refute_nil rid, "event should carry a request id: #{ev.inspect}"
 
       ack = driver.bidi.continue_with_auth(rid, BASIC_AUTH_USER, BASIC_AUTH_PASS)
@@ -241,17 +253,17 @@ class LiveTest < Minitest::Test
                '</body></html>'
 
   def test_live_atoms
-    driver = SeleniumCore::WebDriver.headless_chrome("http://127.0.0.1:#{@port}")
+    driver = Selenium::WebDriver.headless_chrome("http://127.0.0.1:#{@port}")
     begin
       page = 'data:text/html;charset=utf-8,' + CGI.escape(ATOMS_HTML).gsub('+', '%20')
       driver.get(page)
 
-      assert driver.find_element(SeleniumCore::By::ID, 'hdr').displayed?,
+      assert driver.find_element(Selenium::WebDriver::By::ID, 'hdr').displayed?,
              '#hdr should be displayed'
-      refute driver.find_element(SeleniumCore::By::ID, 'gone').displayed?,
+      refute driver.find_element(Selenium::WebDriver::By::ID, 'gone').displayed?,
              '#gone (display:none) should not be displayed'
 
-      href = driver.find_element(SeleniumCore::By::ID, 'lnk').attribute('href')
+      href = driver.find_element(Selenium::WebDriver::By::ID, 'lnk').attribute('href')
       assert_includes href, 'example.com/x', "unexpected href: #{href.inspect}"
 
       below = driver.find_relative('button', { kind: 'below', sel: '#hdr' })

@@ -3,11 +3,12 @@
 require 'fiddle'
 require 'rbconfig'
 
-module SeleniumCore
-  # Raw Fiddle binding over the native Selenium core library (the
-  # +aether_sel_embed_*+ C ABI exported by +core/embed.ae+, built on the pure
-  # -Aether +core/selenium_core.ae+ engine). 1:1 with the C symbols; everything
-  # idiomatic lives a layer up in {SeleniumCore::WebDriver}.
+module Selenium
+  module WebDriver
+    # Raw Fiddle binding over the native Selenium core library (the
+    # +aether_sel_embed_*+ C ABI exported by +core/embed.ae+, built on the pure
+    # -Aether +core/selenium_core.ae+ engine). 1:1 with the C symbols; everything
+    # idiomatic lives a layer up in {Selenium::WebDriver}.
   #
   # Handle-based contract (matching the Aether side): N independent WebDriver
   # sessions can run concurrently in one process, each keyed by its own handle;
@@ -142,5 +143,6 @@ module SeleniumCore
       call(:free_string, ptr)
       str
     end
+  end
   end
 end

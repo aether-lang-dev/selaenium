@@ -11,7 +11,7 @@ require 'base64'
 require 'webrick'
 
 $LOAD_PATH.unshift File.expand_path('../lib', __dir__)
-require 'selenium_core'
+require 'selenium-webdriver'
 
 class SurfaceTest < Minitest::Test
   PAGE_ONE = '<!doctype html><title>Page One</title>' \
@@ -51,13 +51,13 @@ class SurfaceTest < Minitest::Test
 
   def test_surface
     base = "http://127.0.0.1:#{@web_port}"
-    d = SeleniumCore::WebDriver.headless_chrome("http://127.0.0.1:#{@port}")
+    d = Selenium::WebDriver.headless_chrome("http://127.0.0.1:#{@port}")
     begin
       d.get("#{base}/one")
       assert_equal 'Page One', d.title
 
       # navigation history
-      d.find_element(SeleniumCore::By::ID, 'go').click
+      d.find_element(Selenium::WebDriver::By::ID, 'go').click
       assert_equal 'Page Two', d.title
       d.back
       assert_equal 'Page One', d.title
@@ -88,7 +88,7 @@ class SurfaceTest < Minitest::Test
       assert_equal 42, d.execute_script('return arguments[0]+arguments[1];', 40, 2)
 
       # W3C actions: pointer click on the button.
-      btn = d.find_element(SeleniumCore::By::ID, 'btn')
+      btn = d.find_element(Selenium::WebDriver::By::ID, 'btn')
       rect = btn.rect
       cx = (rect['x'] + rect['width'] / 2).to_i
       cy = (rect['y'] + rect['height'] / 2).to_i
@@ -101,7 +101,7 @@ class SurfaceTest < Minitest::Test
                             { 'type' => 'pointerUp', 'button' => 0 }
                           ]
                         }])
-      assert_equal 'clicked', d.find_element(SeleniumCore::By::ID, 'hdr').text
+      assert_equal 'clicked', d.find_element(Selenium::WebDriver::By::ID, 'hdr').text
       d.clear_actions
 
       # screenshot -> PNG
