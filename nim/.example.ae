@@ -14,8 +14,8 @@ aeb(cap) {
         prereq("nim")
         dep("nim/.package.ae")
         nim.consumer_example() {
-            stage("src/selenium_core.nim", "nim-pkg/src/selenium_core.nim")
-            stage("selenium_core.nimble", "nim-pkg/selenium_core.nimble")
+            stage("src/selenium.nim", "nim-pkg/src/selenium.nim")
+            stage("selenium.nimble", "nim-pkg/selenium.nimble")
             stage("native/libselenium_core.so", "nim-pkg/native/libselenium_core.so")
             stage("example/consumer.nim", "nim-consumer/consumer.nim")
             assert_file("nim-pkg/native/libselenium_core.so")

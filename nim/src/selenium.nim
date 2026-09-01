@@ -1,4 +1,4 @@
-## selenium_core — the Nim binding over the shared pure-Aether WebDriver core.
+## selenium — the Nim binding over the shared pure-Aether WebDriver core.
 ##
 ## There is NO protocol logic in this file, and there must never be any. The W3C
 ## command map, routing, By normalization, error decode and the HTTP round-trip
@@ -172,15 +172,32 @@ proc classify(code: int, message: string): ref WebDriverError =
 # ---- By ----
 
 type By* = object
-const
-  ById* = "id"
-  ByName* = "name"
-  ByCss* = "css selector"
-  ByClassName* = "className"
-  ByTagName* = "tag name"
-  ByLinkText* = "link text"
-  ByPartialLinkText* = "partial link text"
-  ByXpath* = "xpath"
+  ## A locator: a Selenium-style mechanism/value pair, built through the
+  ## `By.id`/`By.cssSelector`/... factory procs and passed to `findElement`/
+  ## `findElements`. Mirrors Java's `By`.
+  ##
+  ##   d.findElement(By.id("hdr"))
+  ##   d.findElements(By.cssSelector("a"))
+  ##
+  ## `strategy` matches the engine's by_locator inputs; the engine rewrites
+  ## id/name/"class name" to CSS.
+  strategy*: string
+  value*: string
+
+proc id*(_: typedesc[By], value: string): By = By(strategy: "id", value: value)
+proc name*(_: typedesc[By], value: string): By = By(strategy: "name", value: value)
+proc className*(_: typedesc[By], value: string): By =
+  By(strategy: "class name", value: value)
+proc cssSelector*(_: typedesc[By], value: string): By =
+  By(strategy: "css selector", value: value)
+proc tagName*(_: typedesc[By], value: string): By =
+  By(strategy: "tag name", value: value)
+proc linkText*(_: typedesc[By], value: string): By =
+  By(strategy: "link text", value: value)
+proc partialLinkText*(_: typedesc[By], value: string): By =
+  By(strategy: "partial link text", value: value)
+proc xpath*(_: typedesc[By], value: string): By =
+  By(strategy: "xpath", value: value)
 
 const w3cElementKey = "element-6066-11e4-a52e-4f735466cecf"
 
@@ -198,8 +215,8 @@ proc locator*(by, value: string): string =
   ## The W3C {"using","value"} locator JSON for a (by, value) pair.
   takeString(selByLocator(by.cstring, value.cstring))
 
-proc decodeBy(by, value: string): JsonNode =
-  parseJson(locator(by, value))
+proc decodeBy(by: By): JsonNode =
+  parseJson(locator(by.strategy, by.value))
 
 # ---- WebDriver ----
 
@@ -307,11 +324,11 @@ proc elementFrom(d: WebDriver, v: JsonNode): WebElement =
     raise classify(17, "element reference key missing")
   WebElement(driver: d, id: v[w3cElementKey].getStr)
 
-proc findElement*(d: WebDriver, by, value: string): WebElement =
-  d.elementFrom(d.execute("findElement", decodeBy(by, value)))
+proc findElement*(d: WebDriver, by: By): WebElement =
+  d.elementFrom(d.execute("findElement", decodeBy(by)))
 
-proc findElements*(d: WebDriver, by, value: string): seq[WebElement] =
-  for e in d.execute("findElements", decodeBy(by, value)):
+proc findElements*(d: WebDriver, by: By): seq[WebElement] =
+  for e in d.execute("findElements", decodeBy(by)):
     result.add d.elementFrom(e)
 
 proc findRelative*(d: WebDriver, baseCss: string,
@@ -741,8 +758,8 @@ proc localChrome*(options: JsonNode = newJObject(), hint = "", timeoutMs = 15000
 proc sessionId*(lc: LocalChrome): string = lc.driver.sessionId
 proc get*(lc: LocalChrome, url: string) = lc.driver.get(url)
 proc title*(lc: LocalChrome): string = lc.driver.title
-proc findElement*(lc: LocalChrome, by, value: string): WebElement =
-  lc.driver.findElement(by, value)
+proc findElement*(lc: LocalChrome, by: By): WebElement =
+  lc.driver.findElement(by)
 
 proc quit*(lc: LocalChrome) =
   ## Quit the session, then stop the self-spawned driver.

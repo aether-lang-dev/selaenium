@@ -1,4 +1,4 @@
-name: selenium_core
+name: selenium
 description: >-
   Selenium WebDriver for Dart — a thin dart:ffi binding over the shared
   pure-Aether WebDriver core (libselenium_core.so). No protocol logic in Dart.

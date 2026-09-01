@@ -1,5 +1,5 @@
 name: selenium_consumer
-description: A clean-install consumer of the packaged selenium_core Dart package.
+description: A clean-install consumer of the packaged selenium Dart package.
 version: 0.0.0
 publish_to: none
 
@@ -11,5 +11,5 @@ dependencies:
   # resolves cleanly). The .example.ae harness REWRITES this to ../dart-pkg — the
   # PACKAGED copy staged with the bundled native/ .so but NO core/ sibling — for
   # the actual clean-consumer run.
-  selenium_core:
+  selenium:
     path: ..

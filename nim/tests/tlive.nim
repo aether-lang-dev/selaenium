@@ -4,7 +4,7 @@
 ## call on the main thread doesn't stall the server) for a real cookie/nav
 ## origin. Skips if chromedriver is absent.
 import std/[json, os, osproc, net, strutils, base64, times]
-import selenium_core
+import selenium
 
 const
   pageOne = "<!doctype html><title>Page One</title><h1 id=\"hdr\">One</h1>" &
@@ -86,8 +86,8 @@ proc main() =
 
       d.get(base & "/one")
       doAssert d.title == "Page One"
-      doAssert d.findElement(ById, "hdr").text == "One"
-      doAssert d.findElement(ByCss, "#go").tagName.toLowerAscii == "a"
+      doAssert d.findElement(By.id("hdr")).text == "One"
+      doAssert d.findElement(By.cssSelector("#go")).tagName.toLowerAscii == "a"
       echo "  ok: navigate + find + text/tag"
 
       # atom-backed commands: isDisplayed / getAttribute / relative locators,
@@ -99,9 +99,9 @@ proc main() =
         "<p id='gone' style='display:none'>hidden</p>" &
         "<a id='lnk' href='https://example.com/x'>lnk</a>"
       d.get(atomsUrl)
-      doAssert d.findElement(ById, "hdr").isDisplayed
-      doAssert not d.findElement(ById, "gone").isDisplayed
-      doAssert d.findElement(ById, "lnk").getAttribute("href").getStr.contains("example.com/x")
+      doAssert d.findElement(By.id("hdr")).isDisplayed
+      doAssert not d.findElement(By.id("gone")).isDisplayed
+      doAssert d.findElement(By.id("lnk")).getAttribute("href").getStr.contains("example.com/x")
       let below = d.findRelative("button", %*{"kind": "below", "sel": "#hdr"})
       doAssert below.len >= 1
       echo "  ok: atoms (isDisplayed / getAttribute / findRelative)"
@@ -110,7 +110,7 @@ proc main() =
       doAssert d.title == "Page One"
 
       # navigation history
-      d.findElement(ById, "go").click()
+      d.findElement(By.id("go")).click()
       doAssert d.title == "Page Two"
       d.back()
       doAssert d.title == "Page One"
@@ -146,7 +146,7 @@ proc main() =
       echo "  ok: execute_async_script + set_script_timeout"
 
       # W3C actions: pointer click on the button
-      let r = d.findElement(ById, "btn").rect
+      let r = d.findElement(By.id("btn")).rect
       let cx = (r["x"].getFloat + r["width"].getFloat / 2).int
       let cy = (r["y"].getFloat + r["height"].getFloat / 2).int
       d.performActions(%*[{
@@ -158,7 +158,7 @@ proc main() =
           {"type": "pointerUp", "button": 0}
         ]
       }])
-      doAssert d.findElement(ById, "hdr").text == "clicked"
+      doAssert d.findElement(By.id("hdr")).text == "clicked"
       d.clearActions()
       echo "  ok: W3C actions"
 
@@ -170,7 +170,7 @@ proc main() =
       # negative path
       var nse = false
       try:
-        discard d.findElement(ById, "does-not-exist")
+        discard d.findElement(By.id("does-not-exist"))
       except WebDriverError as e:
         nse = e.kind == ekNoSuchElement
       doAssert nse
@@ -311,7 +311,7 @@ proc driverOrchestration() =
     lc.get("data:text/html," &
       "<!doctype html><title>Aether Selenium</title><h1 id='hdr'>Hello</h1>")
     doAssert lc.title == "Aether Selenium", "title=" & lc.title
-    doAssert lc.findElement(ById, "hdr").text == "Hello"
+    doAssert lc.findElement(By.id("hdr")).text == "Hello"
     echo "PASS: Nim live driver-orchestration test green (self-spawned driver)"
   finally:
     lc.quit()

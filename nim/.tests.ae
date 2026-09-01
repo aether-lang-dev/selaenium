@@ -1,5 +1,5 @@
 // Nim binding tests (importc + link-time). The engine .so is LINKED at build
-// time via src/selenium_core.nim's {.passL.}, which searches ../../selenium_core
+// time via src/selenium.nim's {.passL.}, which searches ../../selenium_core
 // /native (+ rpath) — exactly where the engine node's copy.file() stages the
 // .so — so no per-binding staging is needed, just a dep on the engine. nim.test
 // compiles-and-runs each test file with `nim c -r`; tffi is the no-browser FFI

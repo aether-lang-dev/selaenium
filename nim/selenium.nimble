@@ -1,7 +1,7 @@
 # Package manifest for the Nim binding.
 #
-# This package LINKS the native engine (see src/selenium_core.nim's {.passL.}),
-# so libselenium_core.so must be present at COMPILE time, not just at run time.
+# This package LINKS the native engine (see src/selenium.nim's {.passL.}), so
+# libselenium_core.so must be present at COMPILE time, not just at run time.
 # nim/.tests.ae stages it into nim/native/; an in-tree checkout also has
 # core/native/libselenium_core.so, and both dirs are on the link path and baked
 # in as rpath.

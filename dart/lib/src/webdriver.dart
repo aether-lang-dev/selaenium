@@ -12,50 +12,75 @@ import 'native.dart';
 
 const String w3cElementKey = 'element-6066-11e4-a52e-4f735466cecf';
 
-/// Locator strategies. Values match the engine's by_locator strategy strings;
-/// id/name/className are rewritten to CSS in the engine.
+/// A locator: a Selenium-style mechanism/value pair (`{strategy, value}`),
+/// built through the static factory methods and passed to
+/// [WebDriver.findElement]/[WebDriver.findElements]. Mirrors Java's `By`.
+///
+/// ```dart
+/// driver.findElement(By.id('hdr'));
+/// driver.findElements(By.cssSelector('a'));
+/// ```
+///
+/// The [strategy] strings match the engine's by_locator inputs; the engine
+/// rewrites id/name/"class name" to CSS.
 class By {
-  static const String id = 'id';
-  static const String name = 'name';
-  static const String css = 'css selector';
-  static const String className = 'className';
-  static const String tagName = 'tag name';
-  static const String linkText = 'link text';
-  static const String partialLinkText = 'partial link text';
-  static const String xpath = 'xpath';
+  /// The locator strategy string handed to the engine's by_locator.
+  final String strategy;
+
+  /// The selector value for this strategy.
+  final String value;
+
+  const By(this.strategy, this.value);
+
+  static By id(String value) => By('id', value);
+  static By name(String value) => By('name', value);
+  static By className(String value) => By('class name', value);
+  static By cssSelector(String value) => By('css selector', value);
+  static By tagName(String value) => By('tag name', value);
+  static By linkText(String value) => By('link text', value);
+  static By partialLinkText(String value) => By('partial link text', value);
+  static By xpath(String value) => By('xpath', value);
+
+  @override
+  String toString() => 'By.$strategy: $value';
 }
 
-class WebDriverError implements Exception {
+/// Base of the WebDriver exception hierarchy (Selenium's `WebDriverException`).
+class WebDriverException implements Exception {
   final String message;
   final int code;
-  WebDriverError(this.message, this.code);
+  WebDriverException(this.message, this.code);
   @override
-  String toString() => 'WebDriverError($code): $message';
+  String toString() => 'WebDriverException($code): $message';
 }
 
-class NoSuchElementError extends WebDriverError {
-  NoSuchElementError(super.m, super.c);
+/// Deprecated alias for [WebDriverException]; kept for source compatibility.
+@Deprecated('Use WebDriverException instead')
+typedef WebDriverError = WebDriverException;
+
+class NoSuchElementException extends WebDriverException {
+  NoSuchElementException(super.m, super.c);
 }
 
-class StaleElementReferenceError extends WebDriverError {
-  StaleElementReferenceError(super.m, super.c);
+class StaleElementReferenceException extends WebDriverException {
+  StaleElementReferenceException(super.m, super.c);
 }
 
-class TimeoutError extends WebDriverError {
-  TimeoutError(super.m, super.c);
+class TimeoutException extends WebDriverException {
+  TimeoutException(super.m, super.c);
 }
 
-WebDriverError _classify(int code, String message) {
+WebDriverException _classify(int code, String message) {
   switch (code) {
     case 17:
-      return NoSuchElementError(message, code);
+      return NoSuchElementException(message, code);
     case 23:
-      return StaleElementReferenceError(message, code);
+      return StaleElementReferenceException(message, code);
     case 21:
     case 24:
-      return TimeoutError(message, code);
+      return TimeoutException(message, code);
     default:
-      return WebDriverError(message, code);
+      return WebDriverException(message, code);
   }
 }
 
@@ -79,8 +104,8 @@ int errorCode(String w3cError) =>
 String locator(String by, String value) => _withCStr(
     by, (b) => _withCStr(value, (v) => Native.instance.takeString(Native.instance.byLocator(b, v))));
 
-Map<String, dynamic> _decodeBy(String by, String value) =>
-    jsonDecode(locator(by, value)) as Map<String, dynamic>;
+Map<String, dynamic> _decodeBy(By by) =>
+    jsonDecode(locator(by.strategy, by.value)) as Map<String, dynamic>;
 
 class WebElement {
   final WebDriver _driver;
@@ -154,7 +179,7 @@ class WebDriver {
       String commandExecutor, String? caPath, bool insecure) {
     final handle = _withCStr(commandExecutor, (c) => Native.instance.open(c));
     if (handle == ffi.nullptr) {
-      throw WebDriverError('failed to open session handle', -1);
+      throw WebDriverException('failed to open session handle', -1);
     }
     if (caPath != null && caPath.isNotEmpty) {
       _withCStr(caPath, (c) => Native.instance.setCa(handle, c));
@@ -205,7 +230,7 @@ class WebDriver {
       final code = Native.instance.lastErrorCode(_handle);
       final message = Native.instance.takeString(Native.instance.lastError(_handle));
       if (rc == -1 && code == 0) {
-        throw WebDriverError(message.isEmpty ? 'transport failure' : message, -1);
+        throw WebDriverException(message.isEmpty ? 'transport failure' : message, -1);
       }
       throw _classify(code, message);
     }
@@ -223,7 +248,7 @@ class WebDriver {
       final code = Native.instance.lastErrorCode(_handle);
       final message = Native.instance.takeString(Native.instance.lastError(_handle));
       if (rc == -1 && code == 0) {
-        throw WebDriverError(message.isEmpty ? 'transport failure' : message, -1);
+        throw WebDriverException(message.isEmpty ? 'transport failure' : message, -1);
       }
       throw _classify(code, message);
     }
@@ -266,13 +291,13 @@ class WebDriver {
   void refresh() => execute('refresh');
 
   // ---- elements ----
-  WebElement findElement(String by, String value) {
-    final r = execute('findElement', _decodeBy(by, value)) as Map<String, dynamic>;
+  WebElement findElement(By by) {
+    final r = execute('findElement', _decodeBy(by)) as Map<String, dynamic>;
     return WebElement(this, r[w3cElementKey] as String);
   }
 
-  List<WebElement> findElements(String by, String value) {
-    final r = execute('findElements', _decodeBy(by, value)) as List<dynamic>;
+  List<WebElement> findElements(By by) {
+    final r = execute('findElements', _decodeBy(by)) as List<dynamic>;
     return r
         .map((e) => WebElement(this, (e as Map<String, dynamic>)[w3cElementKey] as String))
         .toList();
@@ -336,12 +361,12 @@ class WebDriver {
     var channel = _bidi;
     if (channel == null) {
       if (_wsUrl.isEmpty) {
-        throw WebDriverError(
+        throw WebDriverException(
             'BiDi not available: the session negotiated no webSocketUrl', 0);
       }
       final handle = _withCStr(_wsUrl, (c) => Native.instance.bidiOpen(c));
       if (handle == ffi.nullptr) {
-        throw WebDriverError('BiDi channel failed to open', -1);
+        throw WebDriverException('BiDi channel failed to open', -1);
       }
       channel = BiDi._(handle);
       _bidi = channel;
@@ -453,7 +478,7 @@ class BiDi {
         (m) => _withCStr(
             paramsJson, (p) => Native.instance.bidiSend(_handle, cid, m, p)));
     if (rc != 0) {
-      throw WebDriverError('BiDi send failed: $method', -1);
+      throw WebDriverException('BiDi send failed: $method', -1);
     }
     var waited = 0;
     const step = 50;
@@ -464,7 +489,7 @@ class BiDi {
       if (Native.instance.bidiPump(_handle, step) < 0) break;
       waited += step;
     }
-    throw TimeoutError('BiDi command timed out: $method', 0);
+    throw TimeoutException('BiDi command timed out: $method', 0);
   }
 
   // ---- typed convenience commands ----
@@ -496,7 +521,7 @@ class BiDi {
   Map<String, dynamic> evaluate(String expr, {int timeoutMs = 30000}) {
     final ctx = topContext(timeoutMs: timeoutMs);
     if (ctx == null) {
-      throw WebDriverError('no browsing context for script.evaluate', 0);
+      throw WebDriverException('no browsing context for script.evaluate', 0);
     }
     final raw = _withCStr(
         expr,
@@ -519,7 +544,7 @@ class BiDi {
   Map<String, dynamic> navigate(String url, {int timeoutMs = 30000}) {
     final ctx = topContext(timeoutMs: timeoutMs);
     if (ctx == null) {
-      throw WebDriverError('no browsing context for navigate', 0);
+      throw WebDriverException('no browsing context for navigate', 0);
     }
     final raw = _withCStr(
         ctx,
@@ -715,7 +740,7 @@ DriverProcess? ensureDriver(
 /// A Chrome session that spawns its own chromedriver via the engine — no driver
 /// on PATH, no Grid. The driver process is stopped on [quit].
 ///
-/// Throws [WebDriverError] if the driver cannot be resolved/launched.
+/// Throws [WebDriverException] if the driver cannot be resolved/launched.
 class LocalChrome extends WebDriver {
   final DriverProcess _proc;
 
@@ -731,7 +756,7 @@ class LocalChrome extends WebDriver {
       bool insecure = false}) {
     final proc = ensureDriver(hint: hint, timeoutMs: timeoutMs);
     if (proc == null) {
-      throw WebDriverError('could not resolve/launch chromedriver', -1);
+      throw WebDriverException('could not resolve/launch chromedriver', -1);
     }
     final caps = <String, dynamic>{'browserName': 'chrome', ...?options};
     return LocalChrome._(proc, caps, caPath: caPath, insecure: insecure);

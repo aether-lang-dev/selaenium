@@ -1,4 +1,4 @@
-// Third-party consumer example. Depends on the INSTALLED selenium_core package
+// Third-party consumer example. Depends on the INSTALLED selenium package
 // (via a pub path dep to the staged copy — NOT the repo source) and proves the
 // bundled engine .so loads and drives the protocol, with SELENIUM_CORE_LIB unset
 // so only the package's own bundled native/ can satisfy the load.
@@ -11,13 +11,13 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:isolate';
 
-import 'package:selenium_core/selenium_core.dart';
+import 'package:selenium/selenium.dart';
 
 Future<String?> bundledSoPath() async {
   final uri = await Isolate.resolvePackageUri(
-      Uri.parse('package:selenium_core/selenium_core.dart'));
+      Uri.parse('package:selenium/selenium.dart'));
   if (uri == null) return null;
-  // <pkg>/lib/selenium_core.dart -> <pkg>/native/libselenium_core.so
+  // <pkg>/lib/selenium.dart -> <pkg>/native/libselenium_core.so
   final libDir = File.fromUri(uri).parent; // .../lib
   final pkgRoot = libDir.parent; // pkg root
   final so = File('${pkgRoot.path}/native/libselenium_core.so');
@@ -39,12 +39,13 @@ Future<void> modeFfi() async {
   await configureBundled();
   if (route('get') != 'POST /session/:sessionId/url') fail('route mismatch');
   if (errorCode('no such element') != 17) fail('errorCode mismatch');
-  final loc = jsonDecode(locator(By.id, 'main')) as Map;
+  final byId = By.id('main');
+  final loc = jsonDecode(locator(byId.strategy, byId.value)) as Map;
   if (loc['value'] != '*[id="main"]') fail('locator mismatch: $loc');
   try {
     WebDriver.chrome('http://127.0.0.1:1');
     fail('expected transport failure');
-  } on WebDriverError catch (e) {
+  } on WebDriverException catch (e) {
     if (e.code != -1) fail('wrong transport code ${e.code}');
   }
   print('consumer(ffi): OK — installed package loaded its bundled .so and marshalled');
@@ -111,7 +112,7 @@ Future<void> modeLive() async {
       const html = '<!doctype html><title>Installed</title><h1 id="h">Hi</h1>';
       d.get('data:text/html;charset=utf-8,${Uri.encodeComponent(html)}');
       if (d.title != 'Installed') fail('title=${d.title}');
-      if (d.findElement(By.id, 'h').text != 'Hi') fail('text mismatch');
+      if (d.findElement(By.id('h')).text != 'Hi') fail('text mismatch');
       print('consumer(live): OK — installed package drove real headless Chrome');
     } finally {
       d.quit();

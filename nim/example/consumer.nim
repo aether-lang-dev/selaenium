@@ -1,10 +1,10 @@
-## Third-party consumer example: imports the PACKAGED selenium_core Nim module
+## Third-party consumer example: imports the PACKAGED selenium Nim module
 ## (staged under target/nim-pkg, which carries the bundled native/ .so but has NO
 ## core/ sibling — so {.passL.}'s ../selenium_core/native can't resolve and only the
 ## package's own bundled native/ .so satisfies the link/rpath). Run with
 ## SELENIUM_CORE_LIB unset. Modes: ffi | live.
 import std/[os, osproc, net, strutils, times]
-import selenium_core
+import selenium
 
 proc fail(msg: string) =
   stderr.writeLine("FAIL: " & msg)
@@ -15,7 +15,8 @@ proc modeFfi() =
     fail("SELENIUM_CORE_LIB is set; consumer must run without it")
   if route("get") != "POST /session/:sessionId/url": fail("route mismatch")
   if errorCode("no such element") != 17: fail("errorCode mismatch")
-  if not locator(ById, "main").contains("*[id="): fail("locator mismatch")
+  let byId = By.id("main")
+  if not locator(byId.strategy, byId.value).contains("*[id="): fail("locator mismatch")
   try:
     discard chrome("http://127.0.0.1:1")
     fail("expected transport failure")
@@ -71,7 +72,7 @@ proc modeLive() =
       let html = "<!doctype html><title>Installed</title><h1 id=\"h\">Hi</h1>"
       d.get("data:text/html;charset=utf-8," & urlencode(html))
       if d.title != "Installed": fail("title mismatch")
-      if d.findElement(ById, "h").text != "Hi": fail("text mismatch")
+      if d.findElement(By.id("h")).text != "Hi": fail("text mismatch")
       echo "consumer(live): OK — bundled package drove real headless Chrome"
     finally:
       d.quit()

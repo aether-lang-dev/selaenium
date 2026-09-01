@@ -5,7 +5,7 @@
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:selenium_core/selenium_core.dart';
+import 'package:selenium/selenium.dart';
 import 'package:test/test.dart';
 
 String? which(String cmd) {
@@ -71,11 +71,11 @@ void main() {
 
         d.get('$base/one');
         expect(d.title, 'Page One');
-        expect(d.findElement(By.id, 'hdr').text, 'One');
-        expect(d.findElement(By.css, '#go').tagName.toLowerCase(), 'a');
+        expect(d.findElement(By.id('hdr')).text, 'One');
+        expect(d.findElement(By.cssSelector('#go')).tagName.toLowerCase(), 'a');
 
         // navigation history
-        d.findElement(By.id, 'go').click();
+        d.findElement(By.id('go')).click();
         expect(d.title, 'Page Two');
         d.back();
         expect(d.title, 'Page One');
@@ -108,7 +108,7 @@ void main() {
             d.executeAsyncScript('arguments[arguments.length-1](42);'), 42);
 
         // W3C actions: pointer click on the button.
-        final rect = d.findElement(By.id, 'btn').rect;
+        final rect = d.findElement(By.id('btn')).rect;
         final cx = ((rect['x'] as num) + (rect['width'] as num) / 2).round();
         final cy = ((rect['y'] as num) + (rect['height'] as num) / 2).round();
         d.performActions([
@@ -123,7 +123,7 @@ void main() {
             ],
           }
         ]);
-        expect(d.findElement(By.id, 'hdr').text, 'clicked');
+        expect(d.findElement(By.id('hdr')).text, 'clicked');
         d.clearActions();
 
         // screenshot -> PNG
@@ -131,8 +131,8 @@ void main() {
         expect(String.fromCharCodes(raw.sublist(1, 4)), 'PNG');
 
         // negative path
-        expect(() => d.findElement(By.id, 'does-not-exist'),
-            throwsA(isA<NoSuchElementError>()));
+        expect(() => d.findElement(By.id('does-not-exist')),
+            throwsA(isA<NoSuchElementException>()));
       } finally {
         d.quit();
       }
@@ -168,11 +168,11 @@ void main() {
         d.get('data:text/html,${Uri.encodeComponent(html)}');
 
         // isDisplayed: the atom's real visibility algorithm.
-        expect(d.findElement(By.id, 'hdr').isDisplayed(), isTrue);
-        expect(d.findElement(By.id, 'gone').isDisplayed(), isFalse);
+        expect(d.findElement(By.id('hdr')).isDisplayed(), isTrue);
+        expect(d.findElement(By.id('gone')).isDisplayed(), isFalse);
 
         // getAttribute via the atom (property-or-attribute).
-        final href = d.findElement(By.id, 'lnk').getAttribute('href');
+        final href = d.findElement(By.id('lnk')).getAttribute('href');
         expect(href, isA<String>());
         expect(href as String, contains('example.com/x'));
 
@@ -228,7 +228,7 @@ void main() {
           '<h1 id="hdr">Hello</h1>';
       d.get('data:text/html,${Uri.encodeComponent(html)}');
       expect(d.title, 'Aether Selenium');
-      expect(d.findElement(By.id, 'hdr').text, 'Hello');
+      expect(d.findElement(By.id('hdr')).text, 'Hello');
     } finally {
       d.quit();
     }

@@ -3,7 +3,7 @@
 // helpers and the transport error path.
 import 'dart:convert';
 
-import 'package:selenium_core/selenium_core.dart';
+import 'package:selenium/selenium.dart';
 import 'package:test/test.dart';
 
 void main() {
@@ -17,20 +17,29 @@ void main() {
     expect(errorCode(''), 0);
   });
 
+  test('By factory carries strategy + value', () {
+    final css = By.cssSelector('div.foo');
+    expect(css.strategy, 'css selector');
+    expect(css.value, 'div.foo');
+    expect(By.className('x').strategy, 'class name');
+  });
+
   test('locator css', () {
-    expect(jsonDecode(locator(By.css, 'div.foo')),
+    final by = By.cssSelector('div.foo');
+    expect(jsonDecode(locator(by.strategy, by.value)),
         {'using': 'css selector', 'value': 'div.foo'});
   });
 
   test('locator id rewrite', () {
-    expect(jsonDecode(locator(By.id, 'main')),
+    final by = By.id('main');
+    expect(jsonDecode(locator(by.strategy, by.value)),
         {'using': 'css selector', 'value': '*[id="main"]'});
   });
 
   test('transport failure', () {
     expect(
       () => WebDriver.chrome('http://127.0.0.1:1'),
-      throwsA(isA<WebDriverError>().having((e) => e.code, 'code', -1)),
+      throwsA(isA<WebDriverException>().having((e) => e.code, 'code', -1)),
     );
   });
 }
