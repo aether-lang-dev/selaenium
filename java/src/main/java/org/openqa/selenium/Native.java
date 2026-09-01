@@ -1,4 +1,4 @@
-package org.seleniumhq.aether;
+package org.openqa.selenium;
 
 import java.lang.foreign.Arena;
 import java.lang.foreign.FunctionDescriptor;
@@ -60,7 +60,7 @@ final class Native {
             if (Files.exists(p)) {
                 return p;
             }
-            throw new WebDriverError("nativeLib() points at a missing file: " + explicitPath, -1);
+            throw new WebDriverException("nativeLib() points at a missing file: " + explicitPath, -1);
         }
         String override = System.getenv("SELENIUM_CORE_LIB");
         if (override != null && !override.isEmpty()) {
@@ -68,7 +68,7 @@ final class Native {
             if (Files.exists(p)) {
                 return p;
             }
-            throw new WebDriverError("SELENIUM_CORE_LIB points at a missing file: " + override, -1);
+            throw new WebDriverException("SELENIUM_CORE_LIB points at a missing file: " + override, -1);
         }
         String lib = fileName();
         // Bundled as a classpath resource inside the jar: /native/<libname>.
@@ -81,7 +81,7 @@ final class Native {
                 return tmp;
             }
         } catch (java.io.IOException e) {
-            throw new WebDriverError("failed to extract bundled native library: " + e.getMessage(), -1);
+            throw new WebDriverException("failed to extract bundled native library: " + e.getMessage(), -1);
         }
         // Bundled next to the classes: java/native/<libname> (dev-tree layout).
         Path bundled = Path.of("native", lib);
@@ -110,7 +110,7 @@ final class Native {
 
     private static MethodHandle down(String symbol, FunctionDescriptor descriptor) {
         MemorySegment addr = lookup().find(symbol)
-                .orElseThrow(() -> new WebDriverError("native symbol not found: " + symbol, -1));
+                .orElseThrow(() -> new WebDriverException("native symbol not found: " + symbol, -1));
         return LINKER.downcallHandle(addr, descriptor);
     }
 
@@ -655,15 +655,15 @@ final class Native {
             try {
                 MH.FREE_STRING.invokeExact(MemorySegment.ofAddress(ptr.address()));
             } catch (Throwable t) {
-                throw new WebDriverError("free_string failed: " + t.getMessage(), -1);
+                throw new WebDriverException("free_string failed: " + t.getMessage(), -1);
             }
         }
     }
 
-    private static WebDriverError wrap(Throwable t, String op) {
-        if (t instanceof WebDriverError e) {
+    private static WebDriverException wrap(Throwable t, String op) {
+        if (t instanceof WebDriverException e) {
             return e;
         }
-        return new WebDriverError("native call '" + op + "' failed: " + t.getMessage(), -1);
+        return new WebDriverException("native call '" + op + "' failed: " + t.getMessage(), -1);
     }
 }

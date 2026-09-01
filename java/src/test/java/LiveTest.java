@@ -13,11 +13,13 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
-import org.seleniumhq.aether.BidiEvent;
-import org.seleniumhq.aether.By;
-import org.seleniumhq.aether.WebDriver;
-import org.seleniumhq.aether.WebDriverError;
-import org.seleniumhq.aether.WebElement;
+import org.openqa.selenium.BidiEvent;
+import org.openqa.selenium.By;
+import org.openqa.selenium.ChromeDriver;
+import org.openqa.selenium.NoSuchElementException;
+import org.openqa.selenium.RemoteWebDriver;
+import org.openqa.selenium.WebDriver;
+import org.openqa.selenium.WebElement;
 
 /**
  * Live end-to-end + surface test (Java): a real headless Chrome session driven
@@ -45,7 +47,7 @@ class LiveTest {
         if (chromeBin != null && !chromeBin.isEmpty()) {
             chromeOpts.put("binary", chromeBin);
         }
-        return WebDriver.chrome(commandExecutor, Map.of("goog:chromeOptions", chromeOpts));
+        return RemoteWebDriver.chrome(commandExecutor, Map.of("goog:chromeOptions", chromeOpts));
     }
 
     @Test
@@ -78,17 +80,17 @@ class LiveTest {
                 assertTrue(!d.sessionId().isEmpty(), "session id present");
 
                 d.get(base + "/one");
-                assertEquals("Page One", d.title(), "title");
-                assertEquals("One", d.findElement(By.ID, "hdr").text(), "hdr text");
-                assertEquals("a", d.findElement(By.CSS_SELECTOR, "#go").tagName().toLowerCase(), "tag name");
+                assertEquals("Page One", d.getTitle(), "title");
+                assertEquals("One", d.findElement(By.id("hdr")).getText(), "hdr text");
+                assertEquals("a", d.findElement(By.cssSelector("#go")).getTagName().toLowerCase(), "tag name");
 
                 // navigation history
-                d.findElement(By.ID, "go").click();
-                assertEquals("Page Two", d.title(), "after click");
+                d.findElement(By.id("go")).click();
+                assertEquals("Page Two", d.getTitle(), "after click");
                 d.back();
-                assertEquals("Page One", d.title(), "after back");
+                assertEquals("Page One", d.getTitle(), "after back");
                 d.forward();
-                assertEquals("Page Two", d.title(), "after forward");
+                assertEquals("Page Two", d.getTitle(), "after forward");
                 d.back();
 
                 // cookies
@@ -113,7 +115,7 @@ class LiveTest {
                 assertEquals(42.0, d.executeScript("return arguments[0]+arguments[1];", 40, 2), "script args");
 
                 // W3C actions: pointer click on the button.
-                WebElement btn = d.findElement(By.ID, "btn");
+                WebElement btn = d.findElement(By.id("btn"));
                 Map<String, Object> rect = btn.rect();
                 int cx = (int) ((double) rect.get("x") + (double) rect.get("width") / 2);
                 int cy = (int) ((double) rect.get("y") + (double) rect.get("height") / 2);
@@ -124,7 +126,7 @@ class LiveTest {
                                 Map.of("type", "pointerMove", "duration", 0, "x", cx, "y", cy),
                                 Map.of("type", "pointerDown", "button", 0),
                                 Map.of("type", "pointerUp", "button", 0)))));
-                assertEquals("clicked", d.findElement(By.ID, "hdr").text(), "actions click fired");
+                assertEquals("clicked", d.findElement(By.id("hdr")).getText(), "actions click fired");
                 d.clearActions();
 
                 // screenshot -> PNG
@@ -134,8 +136,8 @@ class LiveTest {
                 // negative path: typed error
                 boolean threw = false;
                 try {
-                    d.findElement(By.ID, "does-not-exist");
-                } catch (WebDriverError.NoSuchElement e) {
+                    d.findElement(By.id("does-not-exist"));
+                } catch (NoSuchElementException e) {
                     threw = true;
                 }
                 assertTrue(threw, "NoSuchElement raised");
@@ -154,13 +156,13 @@ class LiveTest {
     // cannot resolve a driver here (offline, empty cache).
     @Test
     void driverOrchestration() {
-        String path = WebDriver.resolveDriver("chrome");
+        String path = RemoteWebDriver.resolveDriver("chrome");
         assumeTrue(path != null && !path.isEmpty(),
                 "engine cannot resolve a chromedriver (offline, no cache)");
         assertTrue(new java.io.File(path).isFile(), "resolve_driver returned a non-file: " + path);
 
         // ensureDriver spawns it; the handle exposes url + pid.
-        WebDriver.DriverProcess proc = WebDriver.ensureDriver("chrome");
+        RemoteWebDriver.DriverProcess proc = RemoteWebDriver.ensureDriver("chrome");
         assertTrue(proc != null, "ensureDriver returned null");
         try {
             assertTrue(proc.url().startsWith("http"), "driver url: " + proc.url());
@@ -170,20 +172,20 @@ class LiveTest {
             assertEquals(0, proc.pid(), "stop clears the handle");
         }
 
-        // localChrome spawns its own driver, runs a session, stops it on quit.
+        // ChromeDriver spawns its own driver, runs a session, stops it on quit.
         Map<String, Object> chromeOpts = new HashMap<>();
         chromeOpts.put("args", List.of("--headless=new", "--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage"));
         String chromeBin = System.getenv("SEL_CHROME_BINARY");
         if (chromeBin != null && !chromeBin.isEmpty()) {
             chromeOpts.put("binary", chromeBin);
         }
-        WebDriver d = WebDriver.localChrome(Map.of("goog:chromeOptions", chromeOpts));
+        WebDriver d = new ChromeDriver(Map.of("goog:chromeOptions", chromeOpts));
         try {
-            assertTrue(!d.sessionId().isEmpty(), "localChrome session id present");
+            assertTrue(!d.sessionId().isEmpty(), "ChromeDriver session id present");
             d.get("data:text/html;charset=utf-8,"
                     + "%3Ctitle%3EAether%20Selenium%3C/title%3E%3Ch1%20id='hdr'%3EHello%3C/h1%3E");
-            assertEquals("Aether Selenium", d.title(), "localChrome title");
-            assertEquals("Hello", d.findElement(By.ID, "hdr").text(), "localChrome #hdr text");
+            assertEquals("Aether Selenium", d.getTitle(), "localChrome title");
+            assertEquals("Hello", d.findElement(By.id("hdr")).getText(), "localChrome #hdr text");
         } finally {
             d.quit();
         }
@@ -239,7 +241,7 @@ class LiveTest {
                 d.executeScript("fetch('https://example.com/blocked').catch(function(){});");
                 Map<String, Object> netEv = d.bidi().nextEvent(BidiEvent.BEFORE_REQUEST_SENT, 8000);
                 assertTrue(netEv != null, "network.beforeRequestSent event arrived");
-                String rid = org.seleniumhq.aether.BiDi.eventRequestId(netEv);
+                String rid = org.openqa.selenium.BiDi.eventRequestId(netEv);
                 assertTrue(rid != null, "event carried a request id");
                 assertEquals("success", d.bidi().continueRequest(rid, 10000).get("type"),
                         "continueRequest succeeded");
@@ -250,7 +252,7 @@ class LiveTest {
                         + ".then(function(t){window.__mock=t}).catch(function(){});");
                 Map<String, Object> ev2 = d.bidi().nextEvent(BidiEvent.BEFORE_REQUEST_SENT, 8000);
                 assertTrue(ev2 != null, "network.beforeRequestSent for mocked request arrived");
-                String rid2 = org.seleniumhq.aether.BiDi.eventRequestId(ev2);
+                String rid2 = org.openqa.selenium.BiDi.eventRequestId(ev2);
                 assertTrue(rid2 != null, "mocked event carried a request id");
                 Map<String, Object> resp =
                         d.bidi().provideResponse(rid2, 200, "text/plain", "MOCKED-BODY", 10000);
@@ -304,11 +306,11 @@ class LiveTest {
                 d.get("data:text/html," + ATOM_PAGE);
 
                 // isDisplayed atom: visible header vs display:none paragraph.
-                assertTrue(d.findElement(By.ID, "hdr").isDisplayed(), "#hdr is displayed");
-                assertTrue(!d.findElement(By.ID, "gone").isDisplayed(), "#gone is not displayed");
+                assertTrue(d.findElement(By.id("hdr")).isDisplayed(), "#hdr is displayed");
+                assertTrue(!d.findElement(By.id("gone")).isDisplayed(), "#gone is not displayed");
 
                 // getAttribute atom: resolves href to the property (absolute URL).
-                Object href = d.findElement(By.ID, "lnk").getAttribute("href");
+                Object href = d.findElement(By.id("lnk")).getAttribute("href");
                 assertTrue(href instanceof String s && s.contains("example.com/x"),
                         "getAttribute(href) contains example.com/x, was: " + href);
 

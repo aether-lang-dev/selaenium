@@ -1,4 +1,4 @@
-package org.seleniumhq.aether;
+package org.openqa.selenium;
 
 import java.lang.foreign.MemorySegment;
 import java.util.Map;
@@ -71,7 +71,7 @@ public final class BiDi {
     public Map<String, Object> command(String method, Map<String, Object> params, int timeoutMs) {
         int cid = id();
         if (Native.bidiSend(handle, cid, method, Json.encode(params == null ? Map.of() : params)) != 0) {
-            throw new WebDriverError("BiDi send failed: " + method, -1);
+            throw new WebDriverException("BiDi send failed: " + method, -1);
         }
         int waited = 0;
         int step = 50;
@@ -85,7 +85,7 @@ public final class BiDi {
             }
             waited += step;
         }
-        throw new WebDriverError.Timeout("BiDi command timed out: " + method, 0);
+        throw new TimeoutException("BiDi command timed out: " + method, 0);
     }
 
     // ---- typed convenience commands ----
@@ -126,7 +126,7 @@ public final class BiDi {
     public Map<String, Object> evaluate(String expr, int timeoutMs) {
         String ctx = topContext(timeoutMs);
         if (ctx == null) {
-            throw new WebDriverError("no browsing context for script.evaluate", 0);
+            throw new WebDriverException("no browsing context for script.evaluate", 0);
         }
         String raw = Native.bidiScriptEvaluate(handle, id(), expr, ctx, timeoutMs);
         return raw.isEmpty() ? Map.of() : (Map<String, Object>) Json.decode(raw);
@@ -153,7 +153,7 @@ public final class BiDi {
     public Map<String, Object> navigate(String url, int timeoutMs) {
         String ctx = topContext(timeoutMs);
         if (ctx == null) {
-            throw new WebDriverError("no browsing context for navigate", 0);
+            throw new WebDriverException("no browsing context for navigate", 0);
         }
         String raw = Native.bidiNavigate(handle, id(), ctx, url, timeoutMs);
         return raw.isEmpty() ? Map.of() : (Map<String, Object>) Json.decode(raw);

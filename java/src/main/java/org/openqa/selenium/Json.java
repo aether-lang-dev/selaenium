@@ -1,4 +1,4 @@
-package org.seleniumhq.aether;
+package org.openqa.selenium;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -101,7 +101,7 @@ final class Json {
         Object v = p.parseValue();
         p.skipWs();
         if (!p.atEnd()) {
-            throw new WebDriverError("trailing JSON after value", 1);
+            throw new WebDriverException("trailing JSON after value", 1);
         }
         return v;
     }
@@ -157,7 +157,7 @@ final class Json {
                     return m;
                 }
                 if (c != ',') {
-                    throw new WebDriverError("expected , or } in object", 1);
+                    throw new WebDriverException("expected , or } in object", 1);
                 }
             }
         }
@@ -178,7 +178,7 @@ final class Json {
                     return list;
                 }
                 if (c != ',') {
-                    throw new WebDriverError("expected , or ] in array", 1);
+                    throw new WebDriverException("expected , or ] in array", 1);
                 }
             }
         }
@@ -206,7 +206,7 @@ final class Json {
                             sb.append((char) Integer.parseInt(s.substring(i, i + 4), 16));
                             i += 4;
                         }
-                        default -> throw new WebDriverError("bad escape \\" + e, 1);
+                        default -> throw new WebDriverException("bad escape \\" + e, 1);
                     }
                 } else {
                     sb.append(c);
@@ -223,7 +223,7 @@ final class Json {
                 i += 5;
                 return Boolean.FALSE;
             }
-            throw new WebDriverError("bad literal", 1);
+            throw new WebDriverException("bad literal", 1);
         }
 
         Object parseNull() {
@@ -231,7 +231,7 @@ final class Json {
                 i += 4;
                 return null;
             }
-            throw new WebDriverError("bad literal", 1);
+            throw new WebDriverException("bad literal", 1);
         }
 
         Double parseNumber() {
@@ -244,7 +244,7 @@ final class Json {
 
         void expect(char c) {
             if (s.charAt(i++) != c) {
-                throw new WebDriverError("expected '" + c + "'", 1);
+                throw new WebDriverException("expected '" + c + "'", 1);
             }
         }
     }

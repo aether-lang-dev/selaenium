@@ -1,4 +1,4 @@
-package org.seleniumhq.aether;
+package org.openqa.selenium;
 
 /**
  * The common WebDriver-BiDi event names (W3C spec). Pass to
