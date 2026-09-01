@@ -21,7 +21,12 @@
                            #"{\"using\":\"css selector\",\"value\":\"div.foo\"}"))
                   (ck "locator id rewrite"
                       (=/= (binary:match (selenium:locator "id" "main") #"*[id=")
-                           'nomatch)))))
+                           'nomatch))
+                  (ck "by-id factory"
+                      (=:= (selenium:by-id "hdr") #(#"id" #"hdr")))
+                  (ck "by-class-name -> class name"
+                      (=:= (selenium:by-class-name "greet")
+                           #(#"class name" #"greet"))))))
     (if (=:= fails 0)
         (progn (io:format "PASS: LFE FFI tests green~n") (halt 0))
         (progn (io:format "FAILED: ~p LFE FFI test(s)~n" (list fails)) (halt 1)))))

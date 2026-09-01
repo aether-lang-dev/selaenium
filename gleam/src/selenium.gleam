@@ -65,22 +65,47 @@ pub type WebDriverError {
   WebDriverError(code: Int, message: String)
 }
 
-/// Locator strategies (engine strategy strings; id/name/class rewrite to CSS).
-pub const by_id = "id"
+/// A Selenium-style locator: a (strategy, value) pair produced by the `by_*`
+/// factory functions and consumed by [`find_element`](#find_element). The
+/// strategy strings are the ones the engine's `by_locator` understands;
+/// class_name is the W3C "class name" (matching every Selenium binding).
+pub type Locator {
+  Locator(strategy: String, value: String)
+}
 
-pub const by_name = "name"
+/// By factory — mirrors Selenium's `By.id(...)` / `By.className(...)`.
+pub fn by_id(value: String) -> Locator {
+  Locator("id", value)
+}
 
-pub const by_css = "css selector"
+pub fn by_name(value: String) -> Locator {
+  Locator("name", value)
+}
 
-pub const by_class_name = "className"
+/// class_name maps to the W3C "class name" strategy.
+pub fn by_class_name(value: String) -> Locator {
+  Locator("class name", value)
+}
 
-pub const by_tag_name = "tag name"
+pub fn by_css(value: String) -> Locator {
+  Locator("css selector", value)
+}
 
-pub const by_link_text = "link text"
+pub fn by_tag_name(value: String) -> Locator {
+  Locator("tag name", value)
+}
 
-pub const by_partial_link_text = "partial link text"
+pub fn by_link_text(value: String) -> Locator {
+  Locator("link text", value)
+}
 
-pub const by_xpath = "xpath"
+pub fn by_partial_link_text(value: String) -> Locator {
+  Locator("partial link text", value)
+}
+
+pub fn by_xpath(value: String) -> Locator {
+  Locator("xpath", value)
+}
 
 const w3c_element_key = "element-6066-11e4-a52e-4f735466cecf"
 
@@ -176,14 +201,13 @@ pub fn forward(driver: WebDriver) -> Result(String, WebDriverError) {
 
 // ---- elements ----
 
-/// Find one element. The returned value is the element JSON; use
-/// [`element_id`](#element_id) to extract the reference, then the element_*
-/// functions below.
+/// Find one element by a `Locator` from the `by_*` factory (Selenium-style
+/// one-arg find), e.g. `find_element(driver, by_id("hdr"))`.
 pub fn find_element(
   driver: WebDriver,
-  by: String,
-  value: String,
+  locator: Locator,
 ) -> Result(WebElement, WebDriverError) {
+  let Locator(by, value) = locator
   case execute(driver, "findElement", nif_by_locator(by, value)) {
     Ok(json_value) ->
       case extract_element_id(json_value) {

@@ -1,4 +1,4 @@
-name = "selenium_core"
+name = "selenium"
 version = "0.1.0"
 target = "erlang"
 

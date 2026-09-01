@@ -1,4 +1,4 @@
-defmodule SeleniumCore.Native do
+defmodule Selenium.Native do
   @moduledoc """
   Raw NIF surface over the Aether Selenium core's C ABI (the `aether_sel_embed_*`
   symbols from `core/embed.ae`, linked from `libselenium_core.so`).

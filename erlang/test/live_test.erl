@@ -47,7 +47,7 @@ driver_orchestration() ->
                 {ok, _} = selenium:get(D, <<"data:text/html,",
                     (uri_pct(<<"<title>Aether Selenium</title><h1 id='hdr'>Hello</h1>">>))/binary>>),
                 {ok, <<"Aether Selenium">>} = selenium:title(D),
-                {ok, Hdr} = selenium:find_element(D, <<"id">>, <<"hdr">>),
+                {ok, Hdr} = selenium:find_element(D, by:id(<<"hdr">>)),
                 {ok, <<"Hello">>} = selenium:element_text(D, Hdr),
                 io:format("  ok: local_chrome (self-spawned driver) drove a page~n")
             after
@@ -76,12 +76,13 @@ run(DriverBin) ->
 
             {ok, _} = selenium:get(D, Base ++ "/one"),
             {ok, <<"Page One">>} = selenium:title(D),
-            {ok, Hdr} = selenium:find_element(D, <<"id">>, <<"hdr">>),
+            %% one-arg find via the By factory (Selenium-style)
+            {ok, Hdr} = selenium:find_element(D, by:id(<<"hdr">>)),
             {ok, <<"One">>} = selenium:element_text(D, Hdr),
             io:format("  ok: navigate + find + text~n"),
 
-            %% navigation history
-            {ok, Go} = selenium:find_element(D, <<"id">>, <<"go">>),
+            %% navigation history — one-arg find via a literal locator tuple
+            {ok, Go} = selenium:find_element(D, {id, <<"go">>}),
             {ok, _} = selenium:click(D, Go),
             {ok, <<"Page Two">>} = selenium:title(D),
             {ok, _} = selenium:back(D),

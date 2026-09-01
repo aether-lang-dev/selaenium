@@ -4,7 +4,7 @@
 // that the shared engine helpers marshal correctly. Needs only the .so
 // (SELENIUM_CORE_LIB / linked). Real XCTest cases.
 import XCTest
-@testable import SeleniumCore
+@testable import Selenium
 
 final class FfiTests: XCTestCase {
 
@@ -20,13 +20,20 @@ final class FfiTests: XCTestCase {
 
     func testLocatorCss() {
         XCTAssertEqual(
-            locator(.css, "div.foo"),
+            locator(By.css("div.foo")),
             "{\"using\":\"css selector\",\"value\":\"div.foo\"}"
         )
     }
 
     func testLocatorIdRewrite() {
-        XCTAssertTrue(locator(.id, "main").contains("*[id="))
+        XCTAssertTrue(locator(By.id("main")).contains("*[id="))
+    }
+
+    // By factory produces the Selenium-style locators; className is "class name".
+    func testByFactory() {
+        XCTAssertEqual(By.id("hdr").strategy, "id")
+        XCTAssertEqual(By.id("hdr").value, "hdr")
+        XCTAssertEqual(By.className("greet").strategy, "class name")
     }
 
     func testTransportFailure() {

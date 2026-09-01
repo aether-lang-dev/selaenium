@@ -19,7 +19,7 @@
     driver_url/1, driver_pid/1, stop_driver/1,
     local_chrome/0, local_chrome/1,
     get/2, current_url/1, title/1, page_source/1, back/1, forward/1, refresh/1,
-    find_element/3, find_elements/3,
+    find_element/2, find_elements/2, find_element/3, find_elements/3,
     click/2, send_keys/3, element_text/2, tag_name/2, element_property/3, element_rect/2,
     is_displayed/2, get_attribute/3, dom_attribute/3, find_relative/3,
     execute/3,
@@ -188,6 +188,28 @@ forward(H) -> execute(H, <<"goForward">>, #{}).
 refresh(H) -> execute(H, <<"refresh">>, #{}).
 
 %% ---- elements ---- (return {ok, ElementId} | {error, _})
+
+%% Selenium-style one-locator find: pass a {Strategy, Value} tuple, either from
+%% the `by` factory (by:id("x")) or written literally ({id, "x"}). The atom
+%% `class_name` normalizes to the W3C "class name". The 3-arg find_element/3
+%% stays as-is (additive) so existing callers keep working.
+find_element(H, {Strategy, Value}) ->
+    find_element(H, normalize_strategy(Strategy), Value).
+
+find_elements(H, {Strategy, Value}) ->
+    find_elements(H, normalize_strategy(Strategy), Value).
+
+%% Accept convenience atom strategies (id, class_name, ...) alongside the
+%% engine's binary strategy strings.
+normalize_strategy(class_name) -> <<"class name">>;
+normalize_strategy(css) -> <<"css selector">>;
+normalize_strategy(css_selector) -> <<"css selector">>;
+normalize_strategy(tag_name) -> <<"tag name">>;
+normalize_strategy(link_text) -> <<"link text">>;
+normalize_strategy(partial_link_text) -> <<"partial link text">>;
+normalize_strategy(S) when is_atom(S) -> atom_to_binary(S, utf8);
+normalize_strategy(S) -> S.
+
 find_element(H, By, Value) ->
     case execute(H, <<"findElement">>, decode_by(By, Value)) of
         {ok, M} -> {ok, maps:get(?W3C_KEY, M)};

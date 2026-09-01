@@ -1,4 +1,4 @@
-defmodule SeleniumCore do
+defmodule Selenium do
   @moduledoc """
   Selenium WebDriver for Elixir, re-glued to the shared pure-Aether WebDriver
   core. Carries NO protocol logic — the W3C command map, routing, By
@@ -16,7 +16,7 @@ defmodule SeleniumCore do
   the JSON codec here is exercised by the Elixir test suite there.
   """
 
-  alias SeleniumCore.Native
+  alias Selenium.Native
 
   @w3c_key "element-6066-11e4-a52e-4f735466cecf"
 
@@ -84,12 +84,22 @@ defmodule SeleniumCore do
   def refresh(h), do: execute(h, "refresh")
 
   # ---- elements ----
+
+  @doc """
+  Find one element. Selenium-style: pass a `Selenium.By` locator (a `{strategy,
+  value}` tuple), e.g. `find_element(d, Selenium.By.id("hdr"))` or the literal
+  `find_element(d, {:id, "hdr"})`. The 3-arg `find_element/3` stays (additive).
+  """
+  def find_element(h, {strategy, value}), do: find_element(h, strategy, value)
+
   def find_element(h, by, value) do
     case execute(h, "findElement", decode_by(by, value)) do
       {:ok, m} -> {:ok, Map.fetch!(m, @w3c_key)}
       err -> err
     end
   end
+
+  def find_elements(h, {strategy, value}), do: find_elements(h, strategy, value)
 
   def find_elements(h, by, value) do
     case execute(h, "findElements", decode_by(by, value)) do
@@ -154,7 +164,18 @@ defmodule SeleniumCore do
   def error_code(w3c_error), do: Native.error_code(to_string(w3c_error))
   def locator(by, value), do: Native.by_locator(to_string(by), to_string(value))
 
-  defp decode_by(by, value), do: decode(Native.by_locator(to_string(by), to_string(value)))
+  defp decode_by(by, value),
+    do: decode(Native.by_locator(strategy_string(by), to_string(value)))
+
+  # Normalize convenience atom strategies to the engine's strategy strings.
+  # :class_name maps to the W3C "class name" (matching every Selenium binding).
+  defp strategy_string(:class_name), do: "class name"
+  defp strategy_string(:css), do: "css selector"
+  defp strategy_string(:css_selector), do: "css selector"
+  defp strategy_string(:tag_name), do: "tag name"
+  defp strategy_string(:link_text), do: "link text"
+  defp strategy_string(:partial_link_text), do: "partial link text"
+  defp strategy_string(by), do: to_string(by)
 
   # ==== minimal JSON (maps with string keys <-> JSON), dependency-free ====
 

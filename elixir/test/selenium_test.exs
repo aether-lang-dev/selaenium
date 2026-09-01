@@ -1,4 +1,4 @@
-defmodule SeleniumCoreTest do
+defmodule SeleniumTest do
   @moduledoc """
   Elixir tests over the shared Selenium NIF (the SAME compiled :selenium_nif the
   Erlang binding owns, on the code path via ERL_LIBS / SELENIUM_NIF_EBIN). FFI
@@ -11,21 +11,21 @@ defmodule SeleniumCoreTest do
   use ExUnit.Case
 
   test "route" do
-    assert SeleniumCore.route("get") == "POST /session/:sessionId/url"
-    assert SeleniumCore.route("nope") == ""
+    assert Selenium.route("get") == "POST /session/:sessionId/url"
+    assert Selenium.route("nope") == ""
   end
 
   test "error_code" do
-    assert SeleniumCore.error_code("no such element") == 17
-    assert SeleniumCore.error_code("") == 0
+    assert Selenium.error_code("no such element") == 17
+    assert Selenium.error_code("") == 0
   end
 
   test "locator id rewrite" do
-    assert SeleniumCore.locator("id", "main") =~ ~s(*[id=)
+    assert Selenium.locator("id", "main") =~ ~s(*[id=)
   end
 
   test "transport failure" do
-    assert {:error, {-1, _}} = SeleniumCore.chrome("http://127.0.0.1:1")
+    assert {:error, {-1, _}} = Selenium.chrome("http://127.0.0.1:1")
   end
 
   @tag :live
@@ -43,49 +43,50 @@ defmodule SeleniumCoreTest do
 
         try do
           assert wait_up(cd_port, 10_000)
-          {:ok, d} = SeleniumCore.headless_chrome("http://127.0.0.1:#{cd_port}")
+          {:ok, d} = Selenium.headless_chrome("http://127.0.0.1:#{cd_port}")
 
           try do
-            assert byte_size(SeleniumCore.session_id(d)) > 0
+            assert byte_size(Selenium.session_id(d)) > 0
 
-            {:ok, _} = SeleniumCore.get(d, base <> "/one")
-            assert {:ok, "Page One"} = SeleniumCore.title(d)
-            {:ok, hdr} = SeleniumCore.find_element(d, "id", "hdr")
-            assert {:ok, "One"} = SeleniumCore.element_text(d, hdr)
+            {:ok, _} = Selenium.get(d, base <> "/one")
+            assert {:ok, "Page One"} = Selenium.title(d)
+            # one-arg find via the By factory (Selenium-style)
+            {:ok, hdr} = Selenium.find_element(d, Selenium.By.id("hdr"))
+            assert {:ok, "One"} = Selenium.element_text(d, hdr)
 
-            # navigation
-            {:ok, go} = SeleniumCore.find_element(d, "id", "go")
-            {:ok, _} = SeleniumCore.click(d, go)
-            assert {:ok, "Page Two"} = SeleniumCore.title(d)
-            {:ok, _} = SeleniumCore.back(d)
-            assert {:ok, "Page One"} = SeleniumCore.title(d)
+            # navigation — one-arg find via a literal locator tuple
+            {:ok, go} = Selenium.find_element(d, {:id, "go"})
+            {:ok, _} = Selenium.click(d, go)
+            assert {:ok, "Page Two"} = Selenium.title(d)
+            {:ok, _} = Selenium.back(d)
+            assert {:ok, "Page One"} = Selenium.title(d)
 
             # cookies
-            {:ok, _} = SeleniumCore.delete_all_cookies(d)
-            {:ok, _} = SeleniumCore.add_cookie(d, %{"name" => "flavor", "value" => "mint"})
-            {:ok, c} = SeleniumCore.cookie(d, "flavor")
+            {:ok, _} = Selenium.delete_all_cookies(d)
+            {:ok, _} = Selenium.add_cookie(d, %{"name" => "flavor", "value" => "mint"})
+            {:ok, c} = Selenium.cookie(d, "flavor")
             assert Map.get(c, "value") == "mint"
 
             # windows
-            {:ok, handles} = SeleniumCore.window_handles(d)
+            {:ok, handles} = Selenium.window_handles(d)
             assert length(handles) >= 1
-            {:ok, _} = SeleniumCore.set_window_rect(d, %{"width" => 900, "height" => 650})
-            {:ok, rect} = SeleniumCore.get_window_rect(d)
+            {:ok, _} = Selenium.set_window_rect(d, %{"width" => 900, "height" => 650})
+            {:ok, rect} = Selenium.get_window_rect(d)
             assert Map.get(rect, "width") == 900
 
             # script shapes
-            assert {:ok, 42} = SeleniumCore.execute_script(d, "return 6*7;")
-            assert {:ok, "hi"} = SeleniumCore.execute_script(d, "return 'hi';")
-            assert {:ok, 42} = SeleniumCore.execute_script(d, "return arguments[0]+arguments[1];", [40, 2])
+            assert {:ok, 42} = Selenium.execute_script(d, "return 6*7;")
+            assert {:ok, "hi"} = Selenium.execute_script(d, "return 'hi';")
+            assert {:ok, 42} = Selenium.execute_script(d, "return arguments[0]+arguments[1];", [40, 2])
 
             # W3C actions
-            {:ok, btn} = SeleniumCore.find_element(d, "id", "btn")
-            {:ok, br} = SeleniumCore.element_rect(d, btn)
+            {:ok, btn} = Selenium.find_element(d, "id", "btn")
+            {:ok, br} = Selenium.element_rect(d, btn)
             cx = trunc(Map.get(br, "x") + Map.get(br, "width") / 2)
             cy = trunc(Map.get(br, "y") + Map.get(br, "height") / 2)
 
             {:ok, _} =
-              SeleniumCore.perform_actions(d, [
+              Selenium.perform_actions(d, [
                 %{
                   "type" => "pointer",
                   "id" => "mouse",
@@ -98,19 +99,19 @@ defmodule SeleniumCoreTest do
                 }
               ])
 
-            {:ok, hdr2} = SeleniumCore.find_element(d, "id", "hdr")
-            assert {:ok, "clicked"} = SeleniumCore.element_text(d, hdr2)
-            {:ok, _} = SeleniumCore.clear_actions(d)
+            {:ok, hdr2} = Selenium.find_element(d, "id", "hdr")
+            assert {:ok, "clicked"} = Selenium.element_text(d, hdr2)
+            {:ok, _} = Selenium.clear_actions(d)
 
             # screenshot
-            {:ok, shot} = SeleniumCore.screenshot(d)
+            {:ok, shot} = Selenium.screenshot(d)
             raw = Base.decode64!(shot)
             assert binary_part(raw, 1, 3) == "PNG"
 
             # negative path
-            assert {:error, {17, _}} = SeleniumCore.find_element(d, "id", "does-not-exist")
+            assert {:error, {17, _}} = Selenium.find_element(d, "id", "does-not-exist")
           after
-            SeleniumCore.quit(d)
+            Selenium.quit(d)
           end
         after
           Port.close(cd)

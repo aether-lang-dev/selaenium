@@ -1,9 +1,9 @@
-defmodule SeleniumCore.MixProject do
+defmodule Selenium.MixProject do
   use Mix.Project
 
   def project do
     [
-      app: :selenium_core,
+      app: :selenium,
       version: "0.1.0",
       elixir: "~> 1.15",
       start_permanent: Mix.env() == :prod,

@@ -1,7 +1,7 @@
 // Swift binding tests. Swift calls the engine's flat C ABI (aether_sel_embed_*)
 // DIRECTLY via the CSeleniumCore module map — no glue .c, no second copy of the
 // marshalling rules. The idiomatic Swift surface (typed By, caller-owned-string
-// handling, typed errors, WebDriver) is in Sources/SeleniumCore. The engine .so
+// handling, typed errors, WebDriver) is in Sources/Selenium. The engine .so
 // is staged into native/ (copy.file) so Package.swift's -L native -lselenium_core
 // + rpath resolve it. swift.build_pkg compiles the SwiftPM package; swift.test
 // runs the no-browser XCTest FFI facts.

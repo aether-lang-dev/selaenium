@@ -13,13 +13,25 @@
    (route 1)
    (error-code 1)
    (locator 2)
+   ;; Selenium-style By factory (returns {Strategy, Value} locator tuples)
+   (by-id 1)
+   (by-name 1)
+   (by-class-name 1)
+   (by-css 1)
+   (by-tag-name 1)
+   (by-link-text 1)
+   (by-partial-link-text 1)
+   (by-xpath 1)
    ;; session lifecycle
    (open 1)
    (execute 3)
+   (find-element 2)
    (last-value 1)
    (last-error-code 1)
    (session-id 1)
    (close 1)))
+
+(defun w3c-element-key () #"element-6066-11e4-a52e-4f735466cecf")
 
 ;; ---- pure helpers (delegate straight to the NIF) ----
 
@@ -32,6 +44,20 @@
 (defun locator (by value)
   (selenium_nif:by_locator (to-bin by) (to-bin value)))
 
+;; ---- By factory (Selenium-style) ----
+;; Each returns a #(Strategy Value) locator tuple that find-element/2 accepts,
+;; mirroring Selenium's By.id(...)/By.className(...). class-name maps to the
+;; W3C "class name" (matching every other Selenium binding).
+
+(defun by-id (value) (tuple #"id" (to-bin value)))
+(defun by-name (value) (tuple #"name" (to-bin value)))
+(defun by-class-name (value) (tuple #"class name" (to-bin value)))
+(defun by-css (value) (tuple #"css selector" (to-bin value)))
+(defun by-tag-name (value) (tuple #"tag name" (to-bin value)))
+(defun by-link-text (value) (tuple #"link text" (to-bin value)))
+(defun by-partial-link-text (value) (tuple #"partial link text" (to-bin value)))
+(defun by-xpath (value) (tuple #"xpath" (to-bin value)))
+
 ;; ---- session ----
 
 (defun open (base-url)
@@ -39,6 +65,32 @@
 
 (defun execute (handle command params-json)
   (selenium_nif:execute handle (to-bin command) (to-bin params-json)))
+
+;; Selenium-style one-arg find: pass a #(Strategy Value) locator from the by-*
+;; factory. Returns #(ok ElementId) | #(error #(Code Msg)). The locator NIF
+;; yields the W3C {"using","value"} JSON, which is exactly the findElement
+;; params; the element reference is extracted from the response value.
+(defun find-element (handle locator)
+  (let* ((`#(,strategy ,value) locator)
+         (params (selenium_nif:by_locator (to-bin strategy) (to-bin value)))
+         (rc (selenium_nif:execute handle #"findElement" params)))
+    (if (=:= rc 0)
+        (extract-element-id (selenium_nif:last_value handle))
+        (tuple 'error (tuple (selenium_nif:last_error_code handle)
+                             (selenium_nif:last_error handle))))))
+
+;; Pull the element-reference id out of a findElement value JSON binary. The
+;; value looks like {"element-6066-...":"<id>"}; a small textual extraction
+;; keeps this dependency-free (mirrors the Gleam binding).
+(defun extract-element-id (json)
+  (let ((needle (erlang:iolist_to_binary
+                  (list #"\"" (w3c-element-key) #"\":\""))))
+    (case (binary:split json needle)
+      (`(,_ ,rest)
+       (case (binary:split rest #"\"")
+         (`(,id ,_) (tuple 'ok id))
+         (_ (tuple 'error (tuple 17 #"element reference key missing")))))
+      (_ (tuple 'error (tuple 17 #"element reference key missing"))))))
 
 (defun last-value (handle)
   (selenium_nif:last_value handle))
