@@ -35,6 +35,7 @@ typedef char* (*fn_hstr)(void*);       /* handle -> owned string */
 typedef int   (*fn_hint)(void*);       /* handle -> int */
 typedef char* (*fn_by)(const char*, const char*);
 typedef char* (*fn_str)(const char*);  /* cstr -> owned string */
+typedef char* (*fn_str3)(const char*, const char*, const char*); /* build_request -> owned */
 typedef int   (*fn_strint)(const char*);
 typedef void  (*fn_free)(char*);
 
@@ -83,6 +84,7 @@ static struct {
     fn_hstr    session_id;
     fn_by      by_locator;
     fn_str     route;
+    fn_str3    build_request;
     fn_strint  error_code;
     fn_free    free_string;
     /* ---- WebDriver-BiDi ---- */
@@ -147,6 +149,7 @@ static int load_symbols(lua_State* L, void* lib, const char* path) {
     SYM(session_id,      "aether_sel_embed_session_id");
     SYM(by_locator,      "aether_sel_embed_by_locator");
     SYM(route,           "aether_sel_embed_route");
+    SYM(build_request,   "aether_sel_embed_build_request");
     SYM(error_code,      "aether_sel_embed_error_code");
     SYM(free_string,     "aether_sel_embed_free_string");
 
@@ -294,6 +297,15 @@ static int l_by_locator(lua_State* L) {
 static int l_route(lua_State* L) {
     engine_load(L, NULL);
     push_owned(L, ENGINE.route(luaL_checkstring(L, 1)));
+    return 1;
+}
+
+static int l_build_request(lua_State* L) {
+    engine_load(L, NULL);
+    const char* name = luaL_checkstring(L, 1);
+    const char* session_id = luaL_checkstring(L, 2);
+    const char* params_json = luaL_checkstring(L, 3);
+    push_owned(L, ENGINE.build_request(name, session_id, params_json));
     return 1;
 }
 
@@ -584,6 +596,7 @@ static const luaL_Reg MODULE[] = {
     {"session_id",      l_session_id},
     {"by_locator",      l_by_locator},
     {"route",           l_route},
+    {"build_request",   l_build_request},
     {"error_code",      l_error_code},
     {"configure",       l_configure},
     {"bidi_open",         l_bidi_open},

@@ -25,6 +25,7 @@ const c = struct {
     extern "c" fn aether_sel_embed_session_id(h: ?*anyopaque) [*c]u8;
     extern "c" fn aether_sel_embed_by_locator(strategy: [*c]const u8, value: [*c]const u8) [*c]u8;
     extern "c" fn aether_sel_embed_route(name: [*c]const u8) [*c]u8;
+    extern "c" fn aether_sel_embed_build_request(name: [*c]const u8, session_id: [*c]const u8, params_json: [*c]const u8) [*c]u8;
     extern "c" fn aether_sel_embed_error_code(w3c_error: [*c]const u8) c_int;
     extern "c" fn aether_sel_embed_free_string(s: [*c]u8) void;
 

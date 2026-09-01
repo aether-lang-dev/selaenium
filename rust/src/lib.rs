@@ -37,6 +37,7 @@ extern "C" {
     fn aether_sel_embed_session_id(h: Handle) -> *mut c_char;
     fn aether_sel_embed_by_locator(strategy: *const c_char, value: *const c_char) -> *mut c_char;
     fn aether_sel_embed_route(name: *const c_char) -> *mut c_char;
+    fn aether_sel_embed_build_request(name: *const c_char, session_id: *const c_char, params_json: *const c_char) -> *mut c_char;
     fn aether_sel_embed_error_code(w3c_error: *const c_char) -> c_int;
     fn aether_sel_embed_free_string(s: *mut c_char);
 

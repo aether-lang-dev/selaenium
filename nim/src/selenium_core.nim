@@ -43,6 +43,8 @@ proc selSessionId(h: pointer): cstring {.importc: "aether_sel_embed_session_id",
 proc selByLocator(strategy, value: cstring): cstring
   {.importc: "aether_sel_embed_by_locator", cdecl.}
 proc selRoute(name: cstring): cstring {.importc: "aether_sel_embed_route", cdecl.}
+proc selBuildRequest(name, sessionId, paramsJson: cstring): cstring
+  {.importc: "aether_sel_embed_build_request", cdecl.}
 proc selErrorCode(w3cError: cstring): cint {.importc: "aether_sel_embed_error_code", cdecl.}
 proc selFreeString(s: cstring) {.importc: "aether_sel_embed_free_string", cdecl.}
 
@@ -57,6 +59,22 @@ proc selAtomStrArg(s: cstring): cstring
   {.importc: "aether_sel_embed_atom_str_arg", cdecl.}
 proc selFindRelative(h: pointer, baseCss, filtersJson: cstring): cint
   {.importc: "aether_sel_embed_find_relative", cdecl.}
+
+# ---- TLS config (per session handle; set on the `open` handle before newSession) ----
+proc selSetCa(h: pointer, caPath: cstring) {.importc: "aether_sel_embed_set_ca", cdecl.}
+proc selSetInsecure(h: pointer, on: cint) {.importc: "aether_sel_embed_set_insecure", cdecl.}
+
+# ---- driver orchestration (spawn/adopt a driver process in-binding) ----
+# An opaque driver handle, independent of the W3C session handle.
+proc selResolveDriver(browser, hint: cstring): cstring
+  {.importc: "aether_sel_embed_resolve_driver", cdecl.}
+proc selLaunchDriver(driverPath: cstring, timeoutMs: cint): pointer
+  {.importc: "aether_sel_embed_launch_driver", cdecl.}
+proc selEnsureDriver(browser, hint: cstring, timeoutMs: cint): pointer
+  {.importc: "aether_sel_embed_ensure_driver", cdecl.}
+proc selDriverUrl(dh: pointer): cstring {.importc: "aether_sel_embed_driver_url", cdecl.}
+proc selDriverPid(dh: pointer): cint {.importc: "aether_sel_embed_driver_pid", cdecl.}
+proc selStopDriver(dh: pointer) {.importc: "aether_sel_embed_stop_driver", cdecl.}
 
 # ---- WebDriver-BiDi (over the session's webSocketUrl) ----
 # An opaque BiDi channel handle, independent of the W3C session handle.
@@ -237,8 +255,14 @@ proc atomResult(d: WebDriver, rc: cint): JsonNode =
     return newJNull()
   parseJson(raw)
 
-proc chrome*(commandExecutor: string, options: JsonNode = newJObject()): WebDriver =
+proc chrome*(commandExecutor: string, options: JsonNode = newJObject(),
+             caPath = "", insecure = false): WebDriver =
   ## Start a Chrome session against a running chromedriver (or Grid).
+  ##
+  ## `caPath` pins a private-CA bundle and `insecure` skips TLS verification
+  ## entirely (a self-signed dev/staging Grid — trust the host out-of-band). Both
+  ## land on the handle BEFORE newSession (the first request), which is the only
+  ## point they can take effect.
   var caps = newJObject()
   for k, v in options: caps[k] = v
   caps["browserName"] = %"chrome"
@@ -248,6 +272,10 @@ proc chrome*(commandExecutor: string, options: JsonNode = newJObject()): WebDriv
   let handle = selOpen(commandExecutor.cstring)
   if handle == nil:
     raise classify(-1, "failed to open session handle")
+  if caPath.len != 0:
+    selSetCa(handle, caPath.cstring)
+  if insecure:
+    selSetInsecure(handle, 1)
   result = WebDriver(handle: handle)
   let session = result.execute("newSession", %*{"capabilities": {"alwaysMatch": caps}})
   # value.capabilities.webSocketUrl — the BiDi endpoint for this session.
@@ -256,13 +284,13 @@ proc chrome*(commandExecutor: string, options: JsonNode = newJObject()): WebDriv
     if negotiated.kind == JObject and negotiated.hasKey("webSocketUrl"):
       result.wsUrl = negotiated["webSocketUrl"].getStr
 
-proc headlessChrome*(commandExecutor: string): WebDriver =
+proc headlessChrome*(commandExecutor: string, caPath = "", insecure = false): WebDriver =
   ## Convenience: a headless Chrome session with the standard launch args.
   chrome(commandExecutor, %*{
     "goog:chromeOptions": {
       "args": ["--headless=new", "--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage"]
     }
-  })
+  }, caPath = caPath, insecure = insecure)
 
 # ---- navigation ----
 proc get*(d: WebDriver, url: string) = discard d.execute("get", %*{"url": url})
@@ -599,6 +627,89 @@ proc quit*(d: WebDriver) =
     if d.handle != nil:
       selClose(d.handle)
       d.handle = nil
+
+# ---- driver orchestration (spawn / adopt a driver process in-binding) --------
+# The engine can resolve, download-or-cache, and launch a browser driver process
+# itself — so a caller needs neither a driver on PATH nor a running Grid. These
+# wrap the driver-handle C ABI (independent of the W3C session handle).
+
+type
+  DriverProcess* = ref object
+    ## A driver process launched by the engine. Owns the driver handle; call
+    ## `stop` (or let it fall out of scope — `=destroy` stops it) to terminate.
+    handle: pointer
+
+proc resolveDriver*(browser = "chrome", hint = ""): string =
+  ## Resolve the local driver binary path for `browser` without launching it
+  ## (detect/download/cache as needed). `hint` pins a version or path; ""
+  ## auto-detects. Returns "" if none resolvable (offline, no cache).
+  takeString(selResolveDriver(browser.cstring, hint.cstring))
+
+proc url*(p: DriverProcess): string =
+  ## The base URL the driver is listening on — pass to `chrome`/`headlessChrome`.
+  if p.handle == nil: "" else: takeString(selDriverUrl(p.handle))
+
+proc pid*(p: DriverProcess): int =
+  ## The driver process id (0 if not running).
+  if p.handle == nil: 0 else: selDriverPid(p.handle).int
+
+proc stop*(p: DriverProcess) =
+  ## Terminate the driver process. Idempotent.
+  if p.handle != nil:
+    selStopDriver(p.handle)
+    p.handle = nil
+
+proc `=destroy`(p: typeof(DriverProcess()[])) =
+  if p.handle != nil:
+    selStopDriver(p.handle)
+
+proc launchDriver*(path: string, timeoutMs = 15000): DriverProcess =
+  ## Launch a driver at an explicit binary path. Returns a running
+  ## `DriverProcess`, or nil if it did not come up in `timeoutMs`.
+  let h = selLaunchDriver(path.cstring, timeoutMs.cint)
+  if h == nil: nil else: DriverProcess(handle: h)
+
+proc ensureDriver*(browser = "chrome", hint = "", timeoutMs = 15000): DriverProcess =
+  ## Resolve (detect/download/cache) AND launch a driver for `browser` in one
+  ## step. Returns a running `DriverProcess`, or nil if none could be
+  ## resolved/launched.
+  let h = selEnsureDriver(browser.cstring, hint.cstring, timeoutMs.cint)
+  if h == nil: nil else: DriverProcess(handle: h)
+
+type
+  LocalChrome* = ref object
+    ## A Chrome session that spawns its own chromedriver via the engine — no
+    ## driver on PATH, no Grid. The driver process is stopped on `quit`.
+    driver*: WebDriver
+    proc0: DriverProcess
+
+proc localChrome*(options: JsonNode = newJObject(), hint = "", timeoutMs = 15000,
+                  caPath = "", insecure = false): LocalChrome =
+  ## Open a Chrome session against a chromedriver the engine spawns for us. Raises
+  ## a WebDriverError if the driver can't be resolved/launched. Call `quit` to end
+  ## the session and stop the driver.
+  let p = ensureDriver("chrome", hint, timeoutMs)
+  if p == nil:
+    raise classify(-1, "could not resolve/launch chromedriver")
+  result = LocalChrome(proc0: p)
+  try:
+    result.driver = chrome(p.url, options, caPath = caPath, insecure = insecure)
+  except CatchableError:
+    p.stop()
+    raise
+
+proc sessionId*(lc: LocalChrome): string = lc.driver.sessionId
+proc get*(lc: LocalChrome, url: string) = lc.driver.get(url)
+proc title*(lc: LocalChrome): string = lc.driver.title
+proc findElement*(lc: LocalChrome, by, value: string): WebElement =
+  lc.driver.findElement(by, value)
+
+proc quit*(lc: LocalChrome) =
+  ## Quit the session, then stop the self-spawned driver.
+  try:
+    lc.driver.quit()
+  finally:
+    lc.proc0.stop()
 
 # Re-export for tests that want strutils.contains etc.
 export strutils, json

@@ -40,6 +40,11 @@ typedef _Str2ToStrC = ffi.Pointer<pkgffi.Utf8> Function(
 typedef _Str2ToStr = ffi.Pointer<pkgffi.Utf8> Function(
     ffi.Pointer<pkgffi.Utf8>, ffi.Pointer<pkgffi.Utf8>);
 
+typedef _Str3ToStrC = ffi.Pointer<pkgffi.Utf8> Function(
+    ffi.Pointer<pkgffi.Utf8>, ffi.Pointer<pkgffi.Utf8>, ffi.Pointer<pkgffi.Utf8>);
+typedef _Str3ToStr = ffi.Pointer<pkgffi.Utf8> Function(
+    ffi.Pointer<pkgffi.Utf8>, ffi.Pointer<pkgffi.Utf8>, ffi.Pointer<pkgffi.Utf8>);
+
 typedef _StrToIntC = ffi.Int Function(ffi.Pointer<pkgffi.Utf8>);
 typedef _StrToInt = int Function(ffi.Pointer<pkgffi.Utf8>);
 
@@ -62,6 +67,30 @@ typedef _HandleStr3ToIntC = ffi.Int Function(ffi.Pointer<ffi.Void>,
     ffi.Pointer<pkgffi.Utf8>, ffi.Pointer<pkgffi.Utf8>, ffi.Pointer<pkgffi.Utf8>);
 typedef _HandleStr3ToInt = int Function(ffi.Pointer<ffi.Void>,
     ffi.Pointer<pkgffi.Utf8>, ffi.Pointer<pkgffi.Utf8>, ffi.Pointer<pkgffi.Utf8>);
+
+// ---- TLS config (per session handle; set before newSession) ----
+// set_ca(void* handle, char* ca_path) / set_insecure(void* handle, int on).
+typedef _HandleStrToVoidC = ffi.Void Function(
+    ffi.Pointer<ffi.Void>, ffi.Pointer<pkgffi.Utf8>);
+typedef _HandleStrToVoid = void Function(
+    ffi.Pointer<ffi.Void>, ffi.Pointer<pkgffi.Utf8>);
+
+typedef _HandleIntToVoidC = ffi.Void Function(ffi.Pointer<ffi.Void>, ffi.Int32);
+typedef _HandleIntToVoid = void Function(ffi.Pointer<ffi.Void>, int);
+
+// ---- driver orchestration (spawn/adopt a driver process in-binding) ----
+// The driver handle (void*) is opaque and independent of the W3C session handle.
+// launch_driver(char* driver_path, int timeout_ms) -> void* driver handle.
+typedef _StrIntToHandleC = ffi.Pointer<ffi.Void> Function(
+    ffi.Pointer<pkgffi.Utf8>, ffi.Int32);
+typedef _StrIntToHandle = ffi.Pointer<ffi.Void> Function(
+    ffi.Pointer<pkgffi.Utf8>, int);
+
+// ensure_driver(char* browser, char* hint, int timeout_ms) -> void* driver handle.
+typedef _Str2IntToHandleC = ffi.Pointer<ffi.Void> Function(
+    ffi.Pointer<pkgffi.Utf8>, ffi.Pointer<pkgffi.Utf8>, ffi.Int32);
+typedef _Str2IntToHandle = ffi.Pointer<ffi.Void> Function(
+    ffi.Pointer<pkgffi.Utf8>, ffi.Pointer<pkgffi.Utf8>, int);
 
 // ---- WebDriver-BiDi (over the session's webSocketUrl) ----
 // The BiDi channel handle (void*) is opaque and independent of the W3C handle.
@@ -176,6 +205,7 @@ class Native {
   final _HandleToStr sessionId;
   final _Str2ToStr byLocator;
   final _StrToStr route;
+  final _Str3ToStr buildRequest;
   final _StrToInt errorCode;
   final _FreeString freeString;
 
@@ -185,6 +215,18 @@ class Native {
   final _HandleStr2ToInt getAttributeAtom;
   final _StrToStr atomStrArg;
   final _HandleStr2ToInt findRelative;
+
+  // ---- TLS config (per session handle; set before newSession) ----
+  final _HandleStrToVoid setCa;
+  final _HandleIntToVoid setInsecure;
+
+  // ---- driver orchestration (spawn/adopt a driver process in-binding) ----
+  final _Str2ToStr resolveDriver;
+  final _StrIntToHandle launchDriver;
+  final _Str2IntToHandle ensureDriver;
+  final _HandleToStr driverUrl;
+  final _HandleToInt driverPid;
+  final _Close stopDriver;
 
   // ---- WebDriver-BiDi ----
   final _Open bidiOpen;
@@ -229,6 +271,8 @@ class Native {
             'aether_sel_embed_by_locator'),
         route =
             lib.lookupFunction<_StrToStrC, _StrToStr>('aether_sel_embed_route'),
+        buildRequest = lib.lookupFunction<_Str3ToStrC, _Str3ToStr>(
+            'aether_sel_embed_build_request'),
         errorCode = lib.lookupFunction<_StrToIntC, _StrToInt>(
             'aether_sel_embed_error_code'),
         freeString = lib.lookupFunction<_FreeStringC, _FreeString>(
@@ -244,6 +288,22 @@ class Native {
             'aether_sel_embed_atom_str_arg'),
         findRelative = lib.lookupFunction<_HandleStr2ToIntC, _HandleStr2ToInt>(
             'aether_sel_embed_find_relative'),
+        setCa = lib.lookupFunction<_HandleStrToVoidC, _HandleStrToVoid>(
+            'aether_sel_embed_set_ca'),
+        setInsecure = lib.lookupFunction<_HandleIntToVoidC, _HandleIntToVoid>(
+            'aether_sel_embed_set_insecure'),
+        resolveDriver = lib.lookupFunction<_Str2ToStrC, _Str2ToStr>(
+            'aether_sel_embed_resolve_driver'),
+        launchDriver = lib.lookupFunction<_StrIntToHandleC, _StrIntToHandle>(
+            'aether_sel_embed_launch_driver'),
+        ensureDriver = lib.lookupFunction<_Str2IntToHandleC, _Str2IntToHandle>(
+            'aether_sel_embed_ensure_driver'),
+        driverUrl = lib.lookupFunction<_HandleToStrC, _HandleToStr>(
+            'aether_sel_embed_driver_url'),
+        driverPid = lib.lookupFunction<_HandleToIntC, _HandleToInt>(
+            'aether_sel_embed_driver_pid'),
+        stopDriver = lib.lookupFunction<_CloseC, _Close>(
+            'aether_sel_embed_stop_driver'),
         bidiOpen =
             lib.lookupFunction<_OpenC, _Open>('aether_sel_embed_bidi_open'),
         bidiClose =

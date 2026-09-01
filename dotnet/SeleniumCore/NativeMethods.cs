@@ -71,6 +71,10 @@ internal static class NativeMethods
     [DllImport(Lib, EntryPoint = "aether_sel_embed_find_relative", CharSet = CharSet.Ansi)]
     internal static extern int FindRelative(IntPtr handle, string baseCss, string filtersJson);
 
+    // JSON-quote a string as an atom argument (pure helper; caller frees).
+    [DllImport(Lib, EntryPoint = "aether_sel_embed_atom_str_arg", CharSet = CharSet.Ansi)]
+    internal static extern IntPtr AtomStrArg(string s);
+
     // ---- WebDriver-BiDi (over the session's webSocketUrl) ----
     // An opaque BiDi channel handle, independent of the W3C session handle.
     [DllImport(Lib, EntryPoint = "aether_sel_embed_bidi_open", CharSet = CharSet.Ansi)]
