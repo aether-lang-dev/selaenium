@@ -12,6 +12,15 @@ import std.file
 // chrome_path() — the installed Chrome/Chromium binary, or "". Scans the known
 // dirs × names (name-major, per first_existing_path), then falls back to PATH.
 chrome_path() -> string {
+    // (0) OS-specific fixed locations first (macOS .app bundles, Windows
+    // Program Files). Selenium-Manager's chrome.rs has the same per-OS tables.
+    if string.equals(os.getenv("OS"), "Windows_NT") == 1 {
+        w = _scan_windows()
+        if string.length(w) > 0 { return w }
+    } else {
+        m = _scan_macos()
+        if string.length(m) > 0 { return m }
+    }
     // (a) fixed known locations — Linux (CHROME_KNOWN_DIRS × CHROME_KNOWN_NAMES).
     p = _scan_known()
     if string.length(p) > 0 { return p }
@@ -19,6 +28,55 @@ chrome_path() -> string {
     if file.exists("/usr/bin/google-chrome") == 1 { return "/usr/bin/google-chrome" }
     // (c) PATH fallback via `command -v`.
     return _which_first()
+}
+
+// macOS: the .app bundle exec paths (Chrome, Chrome for Testing, Chromium).
+// Harmless on Linux (none exist) but only invoked off-Windows.
+_scan_macos() -> string {
+    cands = list.new()
+    list.add(cands, "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
+    list.add(cands, "/Applications/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing")
+    list.add(cands, "/Applications/Chromium.app/Contents/MacOS/Chromium")
+    home = os.getenv("HOME")
+    if string.length(home) > 0 {
+        list.add(cands, string.concat(home, "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"))
+    }
+    found = _first_existing(cands)
+    list.free(cands)
+    return found
+}
+
+// Windows: Program Files + LOCALAPPDATA install locations (forward slashes work
+// in the Windows file APIs the engine uses).
+_scan_windows() -> string {
+    cands = list.new()
+    pf = os.getenv("ProgramFiles")
+    pf86 = os.getenv("ProgramFiles(x86)")
+    lad = os.getenv("LOCALAPPDATA")
+    if string.length(pf) > 0 {
+        list.add(cands, string.concat(pf, "/Google/Chrome/Application/chrome.exe"))
+        list.add(cands, string.concat(pf, "/Google/Chrome for Testing/chrome.exe"))
+    }
+    if string.length(pf86) > 0 {
+        list.add(cands, string.concat(pf86, "/Google/Chrome/Application/chrome.exe"))
+    }
+    if string.length(lad) > 0 {
+        list.add(cands, string.concat(lad, "/Google/Chrome/Application/chrome.exe"))
+    }
+    found = _first_existing(cands)
+    list.free(cands)
+    return found
+}
+
+_first_existing(cands: ptr) -> string {
+    n = list.size(cands)
+    i = 0
+    while i < n {
+        c, _ = list.get(cands, i)
+        if file.exists(c) == 1 { return c }
+        i = i + 1
+    }
+    return ""
 }
 
 // chrome_version(path) — run `<path> --version` and extract MAJOR.MINOR.BUILD

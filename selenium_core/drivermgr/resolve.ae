@@ -55,11 +55,17 @@ resolve_chrome(hint: string) -> string {
         return _which_driver()
     }
 
-    // 3. cache-or-download.
+    // 3. cache-or-download. The driver binary is chromedriver(.exe on Windows).
     root = drivercache.default_cache_root()
-    got = drivercache.ensure(root, "chromedriver", label, dver, durl)
+    got = drivercache.ensure(root, _driver_name(), label, dver, durl)
     if string.length(got) > 0 { return got }
     return _which_driver()
+}
+
+// The chromedriver binary filename for the host OS (Windows appends .exe).
+_driver_name() -> string {
+    if string.equals(_os(), "windows") == 1 { return "chromedriver.exe" }
+    return "chromedriver"
 }
 
 // ---- internals ----
@@ -88,11 +94,28 @@ _which_driver() -> string {
     return string.trim(p)
 }
 
+// Host OS as a CfT platform token input: "windows" | "macos" | "linux".
+// Windows sets the OS env var to "Windows_NT" (the stdlib itself keys off this,
+// cf. std/path); elsewhere `uname -s` gives Darwin (macOS) or Linux.
 _os() -> string {
-    // Aether targets Linux here; a later pass reads the real OS/arch.
+    if string.equals(os.getenv("OS"), "Windows_NT") == 1 { return "windows" }
+    sysname, _err = os.exec("uname -s")
+    sn = string.trim(sysname)
+    if string.contains(sn, "Darwin") == 1 { return "macos" }
     return "linux"
 }
 
+// Host arch: "arm64" | "x86_64". Windows exposes PROCESSOR_ARCHITECTURE
+// (AMD64 / ARM64); elsewhere `uname -m` gives x86_64 / arm64 / aarch64.
 _arch() -> string {
+    if string.equals(os.getenv("OS"), "Windows_NT") == 1 {
+        pa = os.getenv("PROCESSOR_ARCHITECTURE")
+        if string.contains(pa, "ARM64") == 1 { return "arm64" }
+        return "x86_64"
+    }
+    machine, _err = os.exec("uname -m")
+    m = string.trim(machine)
+    if string.contains(m, "arm64") == 1 { return "arm64" }
+    if string.contains(m, "aarch64") == 1 { return "arm64" }
     return "x86_64"
 }
