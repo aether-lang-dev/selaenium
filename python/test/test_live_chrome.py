@@ -19,7 +19,8 @@ import time
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from selenium_core import By, Chrome, NoSuchElementError  # noqa: E402
+from selenium.webdriver import By, Chrome
+from selenium import NoSuchElementException  # noqa: E402
 
 
 def _free_port() -> int:
@@ -59,7 +60,7 @@ def test_live_driver_orchestration():
     in-binding (no chromedriver on PATH, no Grid), drive a page through the
     self-launched driver, and tear the process down — the ensure_driver ->
     driver_url -> open -> stop_driver flow the C-ABI exposes for FFI bindings."""
-    from selenium_core import (
+    from selenium.webdriver import (
         LocalChrome, DriverProcess, ensure_driver, resolve_driver, By,
     )
 
@@ -156,9 +157,9 @@ def test_live_chrome():
             # Negative path: a missing element raises the typed exception.
             try:
                 driver.find_element(By.ID, "does-not-exist")
-                assert False, "expected NoSuchElementError"
-            except NoSuchElementError:
-                print("  ok: NoSuchElementError raised for missing element")
+                assert False, "expected NoSuchElementException"
+            except NoSuchElementException:
+                print("  ok: NoSuchElementException raised for missing element")
 
             print("PASS: live Chrome smoke test green")
             return
@@ -218,7 +219,7 @@ def test_live_bidi_auth():
     answer it with credentials, and assert the page reads the protected body —
     the full authRequired -> provideCredentials round-trip that classic
     WebDriver can't drive in headless."""
-    from selenium_core import BidiEvent, BiDi  # noqa: E402
+    from selenium.webdriver import BidiEvent, BiDi  # noqa: E402
 
     driver_bin = shutil.which("chromedriver")
     if not driver_bin:
@@ -320,7 +321,7 @@ def test_live_atoms():
         chrome_bin = os.environ.get("SEL_CHROME_BINARY")
         if chrome_bin:
             options["goog:chromeOptions"]["binary"] = chrome_bin
-        from selenium_core import By  # noqa: E402
+        from selenium.webdriver import By  # noqa: E402
         driver = Chrome(f"http://127.0.0.1:{port}", options=options)
         try:
             page = ("data:text/html;charset=utf-8," + urllib.parse.quote(
@@ -360,7 +361,7 @@ def test_live_bidi():
     emit one via the classic script channel, and receive the event
     asynchronously — the bidirectional half, driven from Python through the
     demux C ABI."""
-    from selenium_core import BidiEvent, BiDi  # noqa: E402
+    from selenium.webdriver import BidiEvent, BiDi  # noqa: E402
 
     driver_bin = shutil.which("chromedriver")
     if not driver_bin:

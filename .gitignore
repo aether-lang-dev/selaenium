@@ -200,7 +200,7 @@ entities.json
 /selenium_core/native/*.dll
 
 # Bindings' bundled engine copies (staged by .package.ae)
-/python/selenium_core/native/
+/python/selenium/native/
 /go/native/
 /ruby/lib/selenium_core/native/
 

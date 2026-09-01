@@ -22,7 +22,7 @@ import time
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from selenium_core import By, Chrome  # noqa: E402
+from selenium.webdriver import By, Chrome  # noqa: E402
 
 
 PAGE_ONE = b"""<!doctype html><html><head><title>Page One</title></head>

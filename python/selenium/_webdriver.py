@@ -26,85 +26,85 @@ class By:
     ID = "id"
     NAME = "name"
     CSS_SELECTOR = "css selector"
-    CLASS_NAME = "className"
+    CLASS_NAME = "class name"
     TAG_NAME = "tag name"
     LINK_TEXT = "link text"
     PARTIAL_LINK_TEXT = "partial link text"
     XPATH = "xpath"
 
 
-class WebDriverError(Exception):
-    """Base for all remote-end errors, matching the W3C error taxonomy."""
+class WebDriverException(Exception):
+    """Base for all remote-end errors, matching the Selenium/W3C error taxonomy."""
 
     def __init__(self, msg: str = "", code: int = 0):
         super().__init__(msg)
         self.w3c_code = code
 
 
-class NoSuchElementError(WebDriverError):
+class NoSuchElementException(WebDriverException):
     pass
 
 
-class StaleElementReferenceError(WebDriverError):
+class StaleElementReferenceException(WebDriverException):
     pass
 
 
-class ElementClickInterceptedError(WebDriverError):
+class ElementClickInterceptedException(WebDriverException):
     pass
 
 
-class ElementNotInteractableError(WebDriverError):
+class ElementNotInteractableException(WebDriverException):
     pass
 
 
-class InvalidSelectorError(WebDriverError):
+class InvalidSelectorException(WebDriverException):
     pass
 
 
-class NoSuchWindowError(WebDriverError):
+class NoSuchWindowException(WebDriverException):
     pass
 
 
-class NoSuchFrameError(WebDriverError):
+class NoSuchFrameException(WebDriverException):
     pass
 
 
-class TimeoutError_(WebDriverError):
+class TimeoutException(WebDriverException):
     pass
 
 
-class JavascriptError(WebDriverError):
+class JavascriptException(WebDriverException):
     pass
 
 
-class SessionNotCreatedError(WebDriverError):
+class SessionNotCreatedException(WebDriverException):
     pass
 
 
-class UnknownCommandError(WebDriverError):
+class UnknownCommandException(WebDriverException):
     pass
 
 
-# The engine's integer error codes (selenium_core.error_code) -> exception type.
-# Codes not listed map to the base WebDriverError.
+# The engine's integer error codes (selenium.error_code) -> exception type.
+# Codes not listed map to the base WebDriverException.
 _CODE_TO_EXC = {
-    3: ElementClickInterceptedError,
-    4: ElementNotInteractableError,
-    11: InvalidSelectorError,
-    13: JavascriptError,
-    17: NoSuchElementError,
-    18: NoSuchFrameError,
-    20: NoSuchWindowError,
-    21: TimeoutError_,
-    22: SessionNotCreatedError,
-    23: StaleElementReferenceError,
-    24: TimeoutError_,
-    28: UnknownCommandError,
+    3: ElementClickInterceptedException,
+    4: ElementNotInteractableException,
+    11: InvalidSelectorException,
+    13: JavascriptException,
+    17: NoSuchElementException,
+    18: NoSuchFrameException,
+    20: NoSuchWindowException,
+    21: TimeoutException,
+    22: SessionNotCreatedException,
+    23: StaleElementReferenceException,
+    24: TimeoutException,
+    28: UnknownCommandException,
 }
 
 
 def _raise_for(code: int, message: str) -> None:
-    exc = _CODE_TO_EXC.get(code, WebDriverError)
+    exc = _CODE_TO_EXC.get(code, WebDriverException)
     raise exc(message, code)
 
 
@@ -243,7 +243,7 @@ class WebDriver:
             message = _native.take_string(_native.last_error(self._handle))
             if rc == -1 and code == 0:
                 # transport-level failure
-                raise WebDriverError(message or "transport failure", -1)
+                raise WebDriverException(message or "transport failure", -1)
             _raise_for(code, message)
         raw = _native.take_string(_native.last_value(self._handle))
         if raw == "":
@@ -258,7 +258,7 @@ class WebDriver:
             code = _native.last_error_code(self._handle)
             message = _native.take_string(_native.last_error(self._handle))
             if rc == -1 and code == 0:
-                raise WebDriverError(message or "transport failure", -1)
+                raise WebDriverException(message or "transport failure", -1)
             _raise_for(code, message)
         raw = _native.take_string(_native.last_value(self._handle))
         return None if raw == "" else json.loads(raw)
@@ -433,12 +433,12 @@ class WebDriver:
         """
         if self._bidi is None:
             if not self._ws_url:
-                raise WebDriverError(
+                raise WebDriverException(
                     "BiDi not available: the session negotiated no webSocketUrl", 0
                 )
             handle = _native.bidi_open(_native.encode(self._ws_url))
             if not handle:
-                raise WebDriverError("BiDi channel failed to open", -1)
+                raise WebDriverException("BiDi channel failed to open", -1)
             self._bidi = BiDi(handle)
         return self._bidi
 
@@ -543,7 +543,7 @@ class BiDi:
         # send + pump until this id's reply arrives (the engine's convenience).
         cid = self._id()
         if _native.bidi_send(self._handle, cid, _native.encode(method), _native.encode(params_json)) != 0:
-            raise WebDriverError(f"BiDi send failed: {method}", -1)
+            raise WebDriverException(f"BiDi send failed: {method}", -1)
         waited, step = 0, 50
         while waited < timeout_ms:
             reply = _native.take_string(_native.bidi_poll_reply(self._handle, cid))
@@ -552,7 +552,7 @@ class BiDi:
             if _native.bidi_pump(self._handle, step) < 0:
                 break
             waited += step
-        raise TimeoutError_(f"BiDi command timed out: {method}", 0)
+        raise TimeoutException(f"BiDi command timed out: {method}", 0)
 
     # ---- typed convenience commands ----
 
@@ -573,7 +573,7 @@ class BiDi:
         execute_script — real realms, promise-awaiting, structured value types."""
         ctx = context or self.top_context(timeout_ms)
         if not ctx:
-            raise WebDriverError("no browsing context for script.evaluate", 0)
+            raise WebDriverException("no browsing context for script.evaluate", 0)
         raw = _native.take_string(
             _native.bidi_script_evaluate(self._handle, self._id(),
                                          _native.encode(expression), _native.encode(ctx), timeout_ms)
@@ -591,7 +591,7 @@ class BiDi:
         """browsingContext.navigate a context to url (wait: complete)."""
         ctx = context or self.top_context(timeout_ms)
         if not ctx:
-            raise WebDriverError("no browsing context for navigate", 0)
+            raise WebDriverException("no browsing context for navigate", 0)
         raw = _native.take_string(
             _native.bidi_navigate(self._handle, self._id(),
                                   _native.encode(ctx), _native.encode(url), timeout_ms)
@@ -686,15 +686,20 @@ class BiDi:
             self._handle = None
 
 
-def Chrome(command_executor: str = "http://127.0.0.1:9515", options: dict | None = None) -> WebDriver:
-    """Convenience: a Chrome session against a running chromedriver.
+def Chrome(command_executor: str | None = None, options: dict | None = None,
+           ca_path: str | None = None, insecure: bool = False) -> WebDriver:
+    """A Chrome session, matching ``webdriver.Chrome()`` in Selenium 4.x.
 
-    ``options`` is a raw capabilities dict merged under ``browserName: chrome``
-    (e.g. ``{"goog:chromeOptions": {"args": ["--headless=new"]}}``)."""
+    With no ``command_executor`` the engine resolves and launches its own
+    chromedriver (no driver on PATH, no Grid) — a :class:`LocalChrome`. Pass a
+    URL to drive an already-running chromedriver instead. ``options`` is a raw
+    capabilities dict merged under ``browserName: chrome``."""
+    if command_executor is None:
+        return LocalChrome(options=options, ca_path=ca_path, insecure=insecure)
     caps = {"browserName": "chrome"}
     if options:
         caps.update(options)
-    return WebDriver(command_executor, caps)
+    return WebDriver(command_executor, caps, ca_path=ca_path, insecure=insecure)
 
 
 def Remote(command_executor: str, capabilities: dict) -> WebDriver:
@@ -765,13 +770,13 @@ class LocalChrome(WebDriver):
     driver on PATH, no Grid. The driver process is stopped on :meth:`quit`.
 
     Returns nothing special if the driver can't be resolved: raises
-    :class:`WebDriverError`."""
+    :class:`WebDriverException`."""
 
     def __init__(self, options: dict | None = None, hint: str = "", timeout_ms: int = 15000,
                  ca_path: str | None = None, insecure: bool = False):
         proc = ensure_driver("chrome", hint, timeout_ms)
         if proc is None:
-            raise WebDriverError("could not resolve/launch chromedriver", -1)
+            raise WebDriverException("could not resolve/launch chromedriver", -1)
         self._proc = proc
         caps = {"browserName": "chrome"}
         if options:

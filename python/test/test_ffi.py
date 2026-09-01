@@ -9,7 +9,7 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from selenium_core import _native  # noqa: E402
+from selenium import _native  # noqa: E402
 
 
 def test_by_locator_css():
