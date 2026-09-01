@@ -41,7 +41,7 @@ do
       assert(#ld:session_id() > 0, "local_chrome session id present")
       ld:get("data:text/html;charset=utf-8,%3Ctitle%3EAether%20Selenium%3C/title%3E%3Ch1%20id='hdr'%3EHello%3C/h1%3E")
       assert_eq(ld:title(), "Aether Selenium", "local_chrome title")
-      assert_eq(ld:find_element(s.By.ID, "hdr"):text(), "Hello", "local_chrome #hdr text")
+      assert_eq(ld:element_text(ld:find_element(s.By.ID, "hdr")), "Hello", "local_chrome #hdr text")
     end)
     ld:quit()
     if not lok then print("FAIL: local_chrome — " .. tostring(lerr and lerr.message or lerr)); os.exit(1) end
