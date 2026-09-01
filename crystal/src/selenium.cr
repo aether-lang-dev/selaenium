@@ -10,7 +10,10 @@
 
 require "json"
 
-@[Link(ldflags: "-lselenium_core")]
+# -L/-rpath are made self-locating from this source file's dir (../native holds
+# the staged libselenium_core.so) so the link works regardless of the linker's
+# cwd; %-interpolation expands __DIR__ at compile time.
+@[Link(ldflags: "-L#{__DIR__}/../native -Wl,-rpath,#{__DIR__}/../native -lselenium_core")]
 lib LibSel
   fun open = aether_sel_embed_open(base_url : LibC::Char*) : Void*
   fun close = aether_sel_embed_close(h : Void*) : Void
@@ -94,8 +97,9 @@ module Selenium
   end
 
   # Take ownership of an engine-returned C string: copy to a Crystal String, then
-  # free it via the engine's allocator (never LibC.free).
-  private def self.take(ptr : LibC::Char*) : String
+  # free it via the engine's allocator (never LibC.free). Not private: instance
+  # methods call it qualified as Selenium.take across the module.
+  def self.take(ptr : LibC::Char*) : String
     return "" if ptr.null?
     s = String.new(ptr)
     LibSel.free_string(ptr)

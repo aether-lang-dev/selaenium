@@ -6,6 +6,7 @@
 // a `By` factory, automatic caller-owned-string handling, typed errors, and a
 // `WebDriver` with the W3C operations. The engine .so is resolved via
 // SELENIUM_CORE_LIB (linked at build; see Package.swift linker settings).
+import Foundation
 import CSeleniumCore
 
 /// A Selenium-style locator carrying a (strategy, value) pair. Built with the
