@@ -96,22 +96,22 @@ namespace SeleniumCore.Tests
 
                     d.DeleteAllCookies();
                     d.AddCookie(new Dictionary<string, object?> { ["name"] = "flavor", ["value"] = "mint" });
-                    d.GetCookie("flavor")!.Value.GetProperty("value").GetString().ShouldBe("mint");
+                    d.GetCookie("flavor").Value.ShouldBe("mint");
                     d.DeleteCookie("flavor");
 
                     var handles = d.WindowHandles;
                     handles.Count.ShouldBeGreaterThanOrEqualTo(1);
                     handles.ShouldContain(d.CurrentWindowHandle);
                     d.SetWindowRect(new Dictionary<string, object?> { ["width"] = 900, ["height"] = 650 });
-                    d.GetWindowRect()!.Value.GetProperty("width").GetInt32().ShouldBe(900);
+                    d.GetWindowRect().Width.ShouldBe(900);
 
                     d.ExecuteScript("return 6*7;")!.Value.GetInt32().ShouldBe(42);
                     d.ExecuteScript("return 'hi';")!.Value.GetString().ShouldBe("hi");
                     d.ExecuteScript("return arguments[0]+arguments[1];", 40, 2)!.Value.GetInt32().ShouldBe(42);
 
-                    JsonElement rect = d.FindElement(By.Id, "btn").Rect;
-                    int cx = (int)(rect.GetProperty("x").GetDouble() + rect.GetProperty("width").GetDouble() / 2);
-                    int cy = (int)(rect.GetProperty("y").GetDouble() + rect.GetProperty("height").GetDouble() / 2);
+                    Rect rect = d.FindElement(By.Id, "btn").Rect;
+                    int cx = (int)(rect.X + rect.Width / 2);
+                    int cy = (int)(rect.Y + rect.Height / 2);
                     d.PerformActions(new List<object?>
                     {
                         new Dictionary<string, object?>

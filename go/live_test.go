@@ -204,9 +204,12 @@ func TestLiveAtoms(t *testing.T) {
 	if err != nil {
 		t.Fatalf("FindElement(#lnk): %v", err)
 	}
-	href, err := lnk.GetAttribute("href")
+	href, present, err := lnk.GetAttribute("href")
 	if err != nil {
 		t.Fatalf("GetAttribute(href): %v", err)
+	}
+	if !present {
+		t.Fatalf("GetAttribute(href): attribute reported absent")
 	}
 	if !strings.Contains(href, "example.com/x") {
 		t.Fatalf("GetAttribute(href) = %q; want to contain example.com/x", href)

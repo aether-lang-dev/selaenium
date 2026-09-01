@@ -80,8 +80,8 @@ func TestLiveSurface(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Cookie: %v", err)
 	}
-	if cm, _ := c.(map[string]interface{}); cm["value"] != "mint" {
-		t.Fatalf("cookie value = %v", cm["value"])
+	if c.Value != "mint" {
+		t.Fatalf("cookie value = %v", c.Value)
 	}
 	if err := d.DeleteCookie("flavor"); err != nil {
 		t.Fatalf("DeleteCookie: %v", err)
@@ -96,7 +96,7 @@ func TestLiveSurface(t *testing.T) {
 		t.Fatalf("SetWindowRect: %v", err)
 	}
 	rect, _ := d.WindowRect()
-	if rm, _ := rect.(map[string]interface{}); rm["width"].(float64) != 900 {
+	if rect.Width != 900 {
 		t.Fatalf("window rect = %v", rect)
 	}
 
@@ -111,8 +111,8 @@ func TestLiveSurface(t *testing.T) {
 	// W3C actions: pointer click on the button.
 	btn, _ := d.FindElement(ByID, "btn")
 	rct, _ := btn.Rect()
-	cx := int(rct["x"].(float64) + rct["width"].(float64)/2)
-	cy := int(rct["y"].(float64) + rct["height"].(float64)/2)
+	cx := int(rct.X + rct.Width/2)
+	cy := int(rct.Y + rct.Height/2)
 	if err := d.PerformActions([]interface{}{map[string]interface{}{
 		"type": "pointer", "id": "mouse", "parameters": map[string]interface{}{"pointerType": "mouse"},
 		"actions": []interface{}{

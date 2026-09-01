@@ -64,5 +64,5 @@ public sealed class WebElement
     public bool IsEnabled() => Exec("isElementEnabled", null)!.Value.GetBoolean();
     public bool IsSelected() => Exec("isElementSelected", null)!.Value.GetBoolean();
 
-    public JsonElement Rect => Exec("getElementRect", null)!.Value;
+    public Rect Rect => Exec("getElementRect", null)?.Deserialize<Rect>() ?? new Rect();
 }

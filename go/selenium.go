@@ -171,6 +171,40 @@ func codeIs(err error, code int) bool {
 // ---- WebDriver -------------------------------------------------------------
 
 // WebDriver is a live (or nascent) WebDriver session over the shared engine.
+// Cookie is a browser cookie as returned by Cookies/Cookie. Fields absent from
+// the wire payload keep their zero value (Expiry 0 = session cookie).
+type Cookie struct {
+	Name     string  `json:"name"`
+	Value    string  `json:"value"`
+	Domain   string  `json:"domain,omitempty"`
+	Path     string  `json:"path,omitempty"`
+	Expiry   int64   `json:"expiry,omitempty"`
+	Secure   bool    `json:"secure,omitempty"`
+	HTTPOnly bool    `json:"httpOnly,omitempty"`
+	SameSite string  `json:"sameSite,omitempty"`
+}
+
+// Rect is a window or element bounding rectangle ({x,y,width,height}).
+type Rect struct {
+	X      float64 `json:"x"`
+	Y      float64 `json:"y"`
+	Width  float64 `json:"width"`
+	Height float64 `json:"height"`
+}
+
+// decodeInto re-marshals a decoded JSON value (from execute) into a typed
+// destination. A nil value leaves dst at its zero state.
+func decodeInto(v interface{}, dst interface{}) error {
+	if v == nil {
+		return nil
+	}
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	return json.Unmarshal(b, dst)
+}
+
 type WebDriver struct {
 	h unsafe.Pointer
 	// wsURL is the session's negotiated BiDi endpoint (value.capabilities.webSocketUrl),
@@ -487,10 +521,24 @@ func (d *WebDriver) AddCookie(cookie map[string]interface{}) error {
 	return err
 }
 
-func (d *WebDriver) Cookies() (interface{}, error) { return d.execute("getCookies", nil) }
+// Cookies returns all cookies visible to the current page.
+func (d *WebDriver) Cookies() ([]Cookie, error) {
+	v, err := d.execute("getCookies", nil)
+	if err != nil {
+		return nil, err
+	}
+	var out []Cookie
+	return out, decodeInto(v, &out)
+}
 
-func (d *WebDriver) Cookie(name string) (interface{}, error) {
-	return d.execute("getCookie", map[string]interface{}{"name": name})
+// Cookie returns the named cookie.
+func (d *WebDriver) Cookie(name string) (Cookie, error) {
+	v, err := d.execute("getCookie", map[string]interface{}{"name": name})
+	if err != nil {
+		return Cookie{}, err
+	}
+	var out Cookie
+	return out, decodeInto(v, &out)
 }
 
 func (d *WebDriver) DeleteCookie(name string) error {
@@ -508,14 +556,25 @@ func (d *WebDriver) CurrentWindowHandle() (string, error) {
 	return d.strCmd("getCurrentWindowHandle", nil)
 }
 
-// SetWindowRect sets the window position/size (nil fields are omitted).
-func (d *WebDriver) SetWindowRect(rect map[string]interface{}) (interface{}, error) {
-	return d.execute("setWindowRect", rect)
+// SetWindowRect sets the window position/size (nil fields are omitted) and
+// returns the resulting rect.
+func (d *WebDriver) SetWindowRect(rect map[string]interface{}) (Rect, error) {
+	v, err := d.execute("setWindowRect", rect)
+	if err != nil {
+		return Rect{}, err
+	}
+	var out Rect
+	return out, decodeInto(v, &out)
 }
 
 // WindowRect returns the current window position/size.
-func (d *WebDriver) WindowRect() (interface{}, error) {
-	return d.execute("getWindowRect", nil)
+func (d *WebDriver) WindowRect() (Rect, error) {
+	v, err := d.execute("getWindowRect", nil)
+	if err != nil {
+		return Rect{}, err
+	}
+	var out Rect
+	return out, decodeInto(v, &out)
 }
 
 // PerformActions issues a raw W3C actions sequence (the {"actions":[...]} body).
@@ -708,7 +767,10 @@ func (e *WebElement) IsDisplayed() (bool, error) {
 // GetAttribute is the classic getAttribute(name): property-or-attribute
 // (boolean attrs, live properties like value/checked), via the shared engine
 // atom. Use GetDomAttribute for the raw W3C DOM attribute.
-func (e *WebElement) GetAttribute(name string) (string, error) {
+// GetAttribute returns the attribute's value and whether it is present. A
+// present-but-empty attribute (value "", present true) is distinct from an
+// absent one (value "", present false) — the atom yields a JSON string or null.
+func (e *WebElement) GetAttribute(name string) (value string, present bool, err error) {
 	cid := cstr(e.id)
 	cname := cstr(name)
 	rc := int(C.aether_sel_embed_get_attribute(e.driver.h, cid, cname))
@@ -716,11 +778,10 @@ func (e *WebElement) GetAttribute(name string) (string, error) {
 	C.free(unsafe.Pointer(cname))
 	v, err := e.driver.atomResult(rc)
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
-	// The atom yields a JSON string or null; null (absent attribute) -> "".
-	s, _ := v.(string)
-	return s, nil
+	s, ok := v.(string)
+	return s, ok, nil
 }
 
 // GetDomAttribute returns the literal DOM attribute (W3C getDomAttribute), with
@@ -734,13 +795,13 @@ func (e *WebElement) GetProperty(name string) (interface{}, error) {
 }
 
 // Rect returns the element's bounding rectangle ({x,y,width,height}).
-func (e *WebElement) Rect() (map[string]interface{}, error) {
+func (e *WebElement) Rect() (Rect, error) {
 	v, err := e.exec("getElementRect", nil)
 	if err != nil {
-		return nil, err
+		return Rect{}, err
 	}
-	m, _ := v.(map[string]interface{})
-	return m, nil
+	var out Rect
+	return out, decodeInto(v, &out)
 }
 
 func (e *WebElement) IsEnabled() (bool, error) {

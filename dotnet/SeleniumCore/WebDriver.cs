@@ -248,8 +248,10 @@ public sealed class WebDriver : IDisposable
     public JsonElement? MaximizeWindow() => Execute("maximizeWindow", null);
     public JsonElement? MinimizeWindow() => Execute("minimizeWindow", null);
     public JsonElement? FullscreenWindow() => Execute("fullscreenWindow", null);
-    public JsonElement? SetWindowRect(IDictionary<string, object?> rect) => Execute("setWindowRect", rect);
-    public JsonElement? GetWindowRect() => Execute("getWindowRect", null);
+    public Rect SetWindowRect(IDictionary<string, object?> rect) =>
+        Execute("setWindowRect", rect)?.Deserialize<Rect>() ?? new Rect();
+    public Rect GetWindowRect() =>
+        Execute("getWindowRect", null)?.Deserialize<Rect>() ?? new Rect();
 
     // ---- alerts ----
     public void AcceptAlert() => Execute("acceptAlert", null);
@@ -262,8 +264,10 @@ public sealed class WebDriver : IDisposable
     public void AddCookie(IDictionary<string, object?> cookie) =>
         Execute("addCookie", new Dictionary<string, object?> { ["cookie"] = cookie });
 
-    public JsonElement? GetCookies() => Execute("getCookies", null);
-    public JsonElement? GetCookie(string name) => Execute("getCookie", new Dictionary<string, object?> { ["name"] = name });
+    public IReadOnlyList<Cookie> GetCookies() =>
+        Execute("getCookies", null)?.Deserialize<List<Cookie>>() ?? new List<Cookie>();
+    public Cookie GetCookie(string name) =>
+        Execute("getCookie", new Dictionary<string, object?> { ["name"] = name })?.Deserialize<Cookie>() ?? new Cookie();
     public void DeleteCookie(string name) => Execute("deleteCookie", new Dictionary<string, object?> { ["name"] = name });
     public void DeleteAllCookies() => Execute("deleteAllCookies", null);
 
