@@ -35,6 +35,11 @@ pub fn main() !void {
     var dbg = std.heap.DebugAllocator(.{}){};
     const a = dbg.allocator();
 
+    // ---- driver orchestration (self-spawned driver; no chromedriver on PATH) ----
+    // Runs whenever the engine can resolve a driver here — independent of the
+    // SEL_CHROMEDRIVER_URL harness below.
+    try driverOrchestration(a);
+
     const cd_url = getenv("SEL_CHROMEDRIVER_URL") orelse {
         std.debug.print("SKIPPED: SEL_CHROMEDRIVER_URL not set (no chromedriver)\n", .{});
         return;
@@ -453,4 +458,60 @@ pub fn main() !void {
 
     try d.quit();
     std.debug.print("PASS: Zig live surface test green\n", .{});
+}
+
+/// Driver orchestration: resolve + spawn a chromedriver in-binding (no driver on
+/// PATH, no Grid), drive a page through the self-launched driver, and tear the
+/// process down — the ensureDriver -> url -> open -> stop flow. Self-skips if the
+/// engine cannot resolve a driver here (offline, empty cache).
+fn driverOrchestration(a: std.mem.Allocator) !void {
+    const path = try sel.resolveDriver(a, "chrome", "");
+    defer a.free(path);
+    if (path.len == 0) {
+        std.debug.print("SKIPPED: engine cannot resolve a chromedriver (offline, no cache)\n", .{});
+        return;
+    }
+    std.debug.print("  ok: resolveDriver -> {s}\n", .{path});
+
+    // ensureDriver spawns it; the handle exposes url + pid, independent of any
+    // W3C session.
+    {
+        var proc = try sel.ensureDriver(a, "chrome", "", 15000);
+        const url = try proc.url();
+        defer a.free(url);
+        assert(std.mem.startsWith(u8, url, "http"), "driver url starts with http");
+        assert(proc.pid() > 0, "driver pid > 0");
+        proc.stop();
+        assert(proc.pid() == 0, "stop_driver clears the handle");
+    }
+    std.debug.print("  ok: ensureDriver -> url/pid, stop terminated it\n", .{});
+
+    // localChrome ties it together: spawn its own driver, run a session, and stop
+    // the driver on quit. Honor SEL_CHROME_BINARY (cache-only Chrome-for-Testing).
+    const opts = if (getenv("SEL_CHROME_BINARY")) |bin|
+        try std.fmt.allocPrint(a, "{{\"goog:chromeOptions\":{{\"binary\":\"{s}\",\"args\":[\"--headless=new\",\"--no-sandbox\",\"--disable-gpu\",\"--disable-dev-shm-usage\"]}}}}", .{bin})
+    else
+        try a.dupe(u8, "{\"goog:chromeOptions\":{\"args\":[\"--headless=new\",\"--no-sandbox\",\"--disable-gpu\",\"--disable-dev-shm-usage\"]}}");
+    defer a.free(opts);
+
+    var d = try sel.WebDriver.localChrome(a, opts, "", 15000, .{});
+    defer d.deinit();
+    const sid = try d.sessionId();
+    defer a.free(sid);
+    assert(sid.len > 0, "localChrome session id present");
+    try d.get("data:text/html;charset=utf-8,%3Ctitle%3EAether%20Selenium%3C/title%3E%3Ch1%20id='hdr'%3EHello%3C/h1%3E");
+    {
+        const t = try d.title();
+        defer a.free(t);
+        assert(std.mem.eql(u8, t, "Aether Selenium"), "localChrome title");
+    }
+    {
+        var hdr = try d.findElement(sel.By.id, "hdr");
+        defer hdr.deinit();
+        const txt = try d.elementText(&hdr);
+        defer a.free(txt);
+        assert(std.mem.eql(u8, txt, "Hello"), "localChrome #hdr text");
+    }
+    try d.quit();
+    std.debug.print("  ok: localChrome (self-spawned driver) drove a page\n", .{});
 }

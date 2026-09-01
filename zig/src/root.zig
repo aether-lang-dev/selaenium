@@ -28,6 +28,19 @@ const c = struct {
     extern "c" fn aether_sel_embed_error_code(w3c_error: [*c]const u8) c_int;
     extern "c" fn aether_sel_embed_free_string(s: [*c]u8) void;
 
+    // ---- TLS config (per session handle; set before newSession) ----
+    extern "c" fn aether_sel_embed_set_ca(h: ?*anyopaque, ca_path: [*c]const u8) void;
+    extern "c" fn aether_sel_embed_set_insecure(h: ?*anyopaque, on: c_int) void;
+
+    // ---- driver orchestration (spawn/adopt a driver process in-binding) ----
+    // An opaque driver handle, independent of the W3C session handle.
+    extern "c" fn aether_sel_embed_resolve_driver(browser: [*c]const u8, hint: [*c]const u8) [*c]u8;
+    extern "c" fn aether_sel_embed_launch_driver(driver_path: [*c]const u8, timeout_ms: c_int) ?*anyopaque;
+    extern "c" fn aether_sel_embed_ensure_driver(browser: [*c]const u8, hint: [*c]const u8, timeout_ms: c_int) ?*anyopaque;
+    extern "c" fn aether_sel_embed_driver_url(dh: ?*anyopaque) [*c]u8;
+    extern "c" fn aether_sel_embed_driver_pid(dh: ?*anyopaque) c_int;
+    extern "c" fn aether_sel_embed_stop_driver(dh: ?*anyopaque) void;
+
     // ---- atom-backed commands (run a shared JS atom in-page via the engine) ----
     // Each returns an rc (0 ok, !=0 error like execute); drain via last_value.
     extern "c" fn aether_sel_embed_execute_atom(h: ?*anyopaque, atom: [*c]const u8, elem_id: [*c]const u8, extra_json: [*c]const u8) c_int;
@@ -179,6 +192,71 @@ pub fn locator(allocator: std.mem.Allocator, by: []const u8, value: []const u8) 
     return takeString(allocator, c.aether_sel_embed_by_locator(bc.ptr, vc.ptr));
 }
 
+// ---- driver orchestration (spawn/adopt a driver process in-binding) ---------
+// The engine can resolve, download-or-cache, and launch a browser driver itself,
+// so a caller needs neither a driver on PATH nor a running Grid.
+
+/// Resolve the local driver binary path for `browser` without launching it
+/// (detect/download/cache as needed). `hint` pins a version/path; "" auto-
+/// detects. Returns "" (owned, empty) if none resolvable (offline, no cache).
+pub fn resolveDriver(allocator: std.mem.Allocator, browser: []const u8, hint: []const u8) Error![]u8 {
+    const bc = try cstr(allocator, browser);
+    defer allocator.free(bc);
+    const hc = try cstr(allocator, hint);
+    defer allocator.free(hc);
+    return takeString(allocator, c.aether_sel_embed_resolve_driver(bc.ptr, hc.ptr));
+}
+
+/// A driver process launched by the engine. Owns the opaque driver handle; call
+/// `stop` (idempotent) to terminate it. The handle is independent of any session.
+pub const DriverProcess = struct {
+    allocator: std.mem.Allocator,
+    handle: ?*anyopaque,
+
+    /// The base URL the driver is listening on (owned; "" if none). Pass to
+    /// `WebDriver.chrome` as the command_executor.
+    pub fn url(self: *DriverProcess) Error![]u8 {
+        if (self.handle == null) return self.allocator.dupe(u8, "") catch Error.OutOfMemory;
+        return takeString(self.allocator, c.aether_sel_embed_driver_url(self.handle));
+    }
+
+    /// The driver process id (0 if not running).
+    pub fn pid(self: *DriverProcess) i32 {
+        if (self.handle == null) return 0;
+        return @intCast(c.aether_sel_embed_driver_pid(self.handle));
+    }
+
+    pub fn stop(self: *DriverProcess) void {
+        if (self.handle) |h| {
+            c.aether_sel_embed_stop_driver(h);
+            self.handle = null;
+        }
+    }
+};
+
+/// Launch a driver at an explicit binary path. Returns a `DriverProcess`, or
+/// `error.WebDriver` if it did not come up in `timeout_ms`.
+pub fn launchDriver(allocator: std.mem.Allocator, driver_path: []const u8, timeout_ms: c_int) Error!DriverProcess {
+    const pc = try cstr(allocator, driver_path);
+    defer allocator.free(pc);
+    const h = c.aether_sel_embed_launch_driver(pc.ptr, timeout_ms);
+    if (h == null) return Error.WebDriver;
+    return DriverProcess{ .allocator = allocator, .handle = h };
+}
+
+/// Resolve (detect/download/cache) AND launch a driver for `browser` in one
+/// step. Returns a running `DriverProcess`, or `error.WebDriver` if none could
+/// be resolved/launched.
+pub fn ensureDriver(allocator: std.mem.Allocator, browser: []const u8, hint: []const u8, timeout_ms: c_int) Error!DriverProcess {
+    const bc = try cstr(allocator, browser);
+    defer allocator.free(bc);
+    const hc = try cstr(allocator, hint);
+    defer allocator.free(hc);
+    const h = c.aether_sel_embed_ensure_driver(bc.ptr, hc.ptr, timeout_ms);
+    if (h == null) return Error.WebDriver;
+    return DriverProcess{ .allocator = allocator, .handle = h };
+}
+
 // ---- WebDriver ----
 
 pub const WebElement = struct {
@@ -201,13 +279,35 @@ pub const WebDriver = struct {
     ws_url: []u8 = &.{},
     /// The lazily-opened BiDi channel for this session (opened on first `bidi`).
     bidi_channel: ?BiDi = null,
+    /// A driver process this session owns (set by `localChrome`); stopped on
+    /// `quit`/`deinit`. Null for sessions against a caller-supplied URL.
+    owned_driver: ?DriverProcess = null,
+
+    /// Per-session TLS trust config, applied on the handle BEFORE newSession.
+    /// `ca_path` pins a private-CA bundle; `insecure` skips verification entirely
+    /// (self-signed dev/staging Grid — trust the host out-of-band).
+    pub const TlsConfig = struct {
+        ca_path: ?[]const u8 = null,
+        insecure: bool = false,
+    };
 
     pub fn chrome(allocator: std.mem.Allocator, command_executor: []const u8, options_json: []const u8) Error!WebDriver {
+        return chromeTls(allocator, command_executor, options_json, .{});
+    }
+
+    pub fn chromeTls(allocator: std.mem.Allocator, command_executor: []const u8, options_json: []const u8, tls: TlsConfig) Error!WebDriver {
         const cu = try cstr(allocator, command_executor);
         defer allocator.free(cu);
         const handle = c.aether_sel_embed_open(cu.ptr);
         if (handle == null) return Error.WebDriver;
         var d = WebDriver{ .allocator = allocator, .handle = handle };
+        // TLS trust config must land on the handle before newSession.
+        if (tls.ca_path) |ca| {
+            const cac = try cstr(allocator, ca);
+            defer allocator.free(cac);
+            c.aether_sel_embed_set_ca(handle, cac.ptr);
+        }
+        if (tls.insecure) c.aether_sel_embed_set_insecure(handle, 1);
         // Request a BiDi channel so `bidi` is available on demand; the WebSocket
         // itself opens lazily (a classic script never opens it). options_json is
         // a JSON object, so merge `"webSocketUrl":true` by stripping the leading
@@ -242,6 +342,26 @@ pub const WebDriver = struct {
         return chrome(allocator, command_executor, caps);
     }
 
+    /// A Chrome session that spawns its OWN chromedriver via the engine — no
+    /// driver on PATH, no Grid. The driver process is owned by the session and
+    /// stopped on `quit`/`deinit`. `options_json` is the caps object (as for
+    /// `chrome`); pass `"{}"` for defaults. Returns `error.WebDriver` if no
+    /// driver could be resolved/launched.
+    pub fn localChrome(allocator: std.mem.Allocator, options_json: []const u8, hint: []const u8, timeout_ms: c_int, tls: TlsConfig) Error!WebDriver {
+        var proc = try ensureDriver(allocator, "chrome", hint, timeout_ms);
+        const url = proc.url() catch |e| {
+            proc.stop();
+            return e;
+        };
+        defer allocator.free(url);
+        var d = chromeTls(allocator, url, options_json, tls) catch |e| {
+            proc.stop();
+            return e;
+        };
+        d.owned_driver = proc;
+        return d;
+    }
+
     pub fn deinit(self: *WebDriver) void {
         if (self.bidi_channel) |*b| {
             b.close();
@@ -250,6 +370,10 @@ pub const WebDriver = struct {
         if (self.handle) |h| {
             c.aether_sel_embed_close(h);
             self.handle = null;
+        }
+        if (self.owned_driver) |*p| {
+            p.stop();
+            self.owned_driver = null;
         }
         if (self.last) |*l| l.deinit(self.allocator);
         self.allocator.free(self.ws_url);
