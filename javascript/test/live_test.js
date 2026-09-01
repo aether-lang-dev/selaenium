@@ -16,6 +16,7 @@ const assert = require('node:assert')
 const net = require('node:net')
 const path = require('node:path')
 const { spawn, execFileSync } = require('node:child_process')
+const fs = require('node:fs')
 
 const s = require('..')
 
@@ -78,6 +79,52 @@ function startContentServer() {
   })
 }
 
+// Driver orchestration over the engine: resolve + spawn a chromedriver
+// in-binding (no chromedriver on PATH, no Grid), drive a page through the
+// self-launched driver, and tear the process down — the ensureDriver ->
+// url/pid -> WebDriver -> stop() flow the C ABI exposes for FFI bindings.
+// Self-skips (does NOT fail) if the engine can't resolve a driver here.
+test('driver orchestration', async (t) => {
+  // Resolve only — skip loudly if the engine can't produce a driver here
+  // (offline + empty cache). This is the same self-skip the native client uses.
+  const path = s.resolveDriver('chrome')
+  if (!path) {
+    t.skip('engine cannot resolve a chromedriver (offline, no cache)')
+    return
+  }
+  assert.ok(fs.existsSync(path), `resolveDriver returned a non-file: ${path}`)
+
+  // ensureDriver spawns it; the handle exposes url + pid, independent of any
+  // W3C session.
+  const proc = s.ensureDriver('chrome')
+  assert.ok(proc instanceof s.DriverProcess, 'ensureDriver did not return a DriverProcess')
+  try {
+    assert.ok(proc.url.startsWith('http'), `driver url=${proc.url}`)
+    assert.ok(proc.pid > 0, `driver pid=${proc.pid}`)
+  } finally {
+    proc.stop()
+    assert.strictEqual(proc.pid, 0, 'stop() should clear the handle')
+  }
+
+  // LocalChrome ties it together: spawn its own driver, run a session, and stop
+  // the driver on quit — the whole point of the orchestration ABI. Honors
+  // SEL_CHROME_BINARY if set. This must NOT need chromedriver on PATH.
+  const chromeArgs = ['--headless=new', '--no-sandbox', '--disable-gpu', '--disable-dev-shm-usage']
+  const chromeOptions = { args: chromeArgs }
+  const chromeBin = process.env.SEL_CHROME_BINARY
+  if (chromeBin) chromeOptions.binary = chromeBin
+  const d = new s.LocalChrome({ 'goog:chromeOptions': chromeOptions })
+  try {
+    assert.ok(d.sessionId, 'no session id from LocalChrome')
+    const html = '<html><head><title>Aether Selenium</title></head><body><h1 id="hdr">Hello</h1></body></html>'
+    d.get(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`)
+    assert.strictEqual(d.title, 'Aether Selenium', `title=${d.title}`)
+    assert.strictEqual(d.findElement(s.By.ID, 'hdr').text, 'Hello')
+  } finally {
+    d.quit()
+  }
+})
+
 test('live chrome + surface', async (t) => {
   const driverBin = which('chromedriver')
   if (!driverBin) {
@@ -137,6 +184,10 @@ test('live chrome + surface', async (t) => {
       assert.deepStrictEqual(d.executeScript('return [1,2,3];'), [1, 2, 3])
       assert.deepStrictEqual(d.executeScript('return {a:1};'), { a: 1 })
       assert.strictEqual(d.executeScript('return arguments[0]+arguments[1];', 40, 2), 42)
+
+      // timeout setter + async script: the async callback is arguments[last].
+      d.setScriptTimeout(10000)
+      assert.strictEqual(d.executeAsyncScript('arguments[arguments.length-1](42);'), 42)
 
       // W3C actions: pointer click on the button.
       const rect = d.findElement(s.By.ID, 'btn').rect

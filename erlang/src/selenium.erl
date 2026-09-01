@@ -23,8 +23,12 @@
     click/2, send_keys/3, element_text/2, tag_name/2, element_property/3, element_rect/2,
     is_displayed/2, get_attribute/3, dom_attribute/3, find_relative/3,
     execute/3,
-    execute_script/2, execute_script/3,
-    window_handles/1, current_window_handle/1, set_window_rect/2, get_window_rect/1,
+    execute_script/2, execute_script/3, execute_async_script/2, execute_async_script/3,
+    window_handles/1, current_window_handle/1, switch_to_window/2,
+    maximize_window/1, minimize_window/1, fullscreen_window/1,
+    set_window_rect/2, get_window_rect/1,
+    accept_alert/1, dismiss_alert/1, alert_text/1, send_alert_text/2,
+    set_page_load_timeout/2, set_script_timeout/2, implicitly_wait/2,
     add_cookie/2, cookies/1, cookie/2, delete_cookie/2, delete_all_cookies/1,
     perform_actions/2, clear_actions/1,
     set_timeouts/2, screenshot/1,
@@ -268,11 +272,27 @@ execute_script(H, Script) -> execute_script(H, Script, []).
 execute_script(H, Script, Args) ->
     execute(H, <<"executeScript">>, #{<<"script">> => to_bin(Script), <<"args">> => Args}).
 
+%% The async script executor: the page calls the injected callback (last arg) to
+%% complete. Use for anything that must turn the event loop.
+execute_async_script(H, Script) -> execute_async_script(H, Script, []).
+execute_async_script(H, Script, Args) ->
+    execute(H, <<"executeAsyncScript">>, #{<<"script">> => to_bin(Script), <<"args">> => Args}).
+
 %% ---- windows ----
 window_handles(H) -> execute(H, <<"getWindowHandles">>, #{}).
 current_window_handle(H) -> execute(H, <<"getCurrentWindowHandle">>, #{}).
+switch_to_window(H, Handle) -> execute(H, <<"switchToWindow">>, #{<<"handle">> => to_bin(Handle)}).
+maximize_window(H) -> execute(H, <<"maximizeWindow">>, #{}).
+minimize_window(H) -> execute(H, <<"minimizeWindow">>, #{}).
+fullscreen_window(H) -> execute(H, <<"fullscreenWindow">>, #{}).
 set_window_rect(H, Rect) -> execute(H, <<"setWindowRect">>, Rect).
 get_window_rect(H) -> execute(H, <<"getWindowRect">>, #{}).
+
+%% ---- alerts ----
+accept_alert(H) -> execute(H, <<"acceptAlert">>, #{}).
+dismiss_alert(H) -> execute(H, <<"dismissAlert">>, #{}).
+alert_text(H) -> execute(H, <<"getAlertText">>, #{}).
+send_alert_text(H, Text) -> execute(H, <<"setAlertValue">>, #{<<"text">> => to_bin(Text)}).
 
 %% ---- cookies ----
 add_cookie(H, Cookie) -> execute(H, <<"addCookie">>, #{<<"cookie">> => Cookie}).
@@ -287,6 +307,9 @@ clear_actions(H) -> execute(H, <<"clearActions">>, #{}).
 
 %% ---- timeouts / screenshots ----
 set_timeouts(H, Timeouts) -> execute(H, <<"setTimeout">>, Timeouts).
+set_page_load_timeout(H, Ms) -> execute(H, <<"setTimeout">>, #{<<"pageLoad">> => Ms}).
+set_script_timeout(H, Ms) -> execute(H, <<"setTimeout">>, #{<<"script">> => Ms}).
+implicitly_wait(H, Ms) -> execute(H, <<"setTimeout">>, #{<<"implicit">> => Ms}).
 screenshot(H) -> execute(H, <<"screenshot">>, #{}).
 
 %% ---- lifecycle ----

@@ -605,6 +605,24 @@ pub const WebDriver = struct {
         var v = try self.execute("setWindowRect", rect_json);
         v.deinit();
     }
+    pub fn switchToWindow(self: *WebDriver, handle: []const u8) Error!void {
+        const p = try std.fmt.allocPrint(self.allocator, "{{\"handle\":\"{s}\"}}", .{handle});
+        defer self.allocator.free(p);
+        var v = try self.execute("switchToWindow", p);
+        v.deinit();
+    }
+    pub fn maximizeWindow(self: *WebDriver) Error!void {
+        var v = try self.execute("maximizeWindow", "{}");
+        v.deinit();
+    }
+    pub fn minimizeWindow(self: *WebDriver) Error!void {
+        var v = try self.execute("minimizeWindow", "{}");
+        v.deinit();
+    }
+    pub fn fullscreenWindow(self: *WebDriver) Error!void {
+        var v = try self.execute("fullscreenWindow", "{}");
+        v.deinit();
+    }
 
     // ---- script ----
     pub fn executeScript(self: *WebDriver, script: []const u8, args_json: []const u8) Error!std.json.Parsed(std.json.Value) {
@@ -630,6 +648,46 @@ pub const WebDriver = struct {
     }
     pub fn clearActions(self: *WebDriver) Error!void {
         var v = try self.execute("clearActions", "{}");
+        v.deinit();
+    }
+
+    // ---- alerts ----
+    pub fn acceptAlert(self: *WebDriver) Error!void {
+        var v = try self.execute("acceptAlert", "{}");
+        v.deinit();
+    }
+    pub fn dismissAlert(self: *WebDriver) Error!void {
+        var v = try self.execute("dismissAlert", "{}");
+        v.deinit();
+    }
+    /// The current alert's text as an owned slice.
+    pub fn alertText(self: *WebDriver) Error![]u8 {
+        return self.stringCmd("getAlertText", "{}");
+    }
+    pub fn sendAlertText(self: *WebDriver, text: []const u8) Error!void {
+        const p = try std.fmt.allocPrint(self.allocator, "{{\"text\":\"{s}\"}}", .{text});
+        defer self.allocator.free(p);
+        var v = try self.execute("setAlertValue", p);
+        v.deinit();
+    }
+
+    // ---- timeouts ----
+    pub fn setPageLoadTimeout(self: *WebDriver, ms: i64) Error!void {
+        const p = try std.fmt.allocPrint(self.allocator, "{{\"pageLoad\":{d}}}", .{ms});
+        defer self.allocator.free(p);
+        var v = try self.execute("setTimeout", p);
+        v.deinit();
+    }
+    pub fn setScriptTimeout(self: *WebDriver, ms: i64) Error!void {
+        const p = try std.fmt.allocPrint(self.allocator, "{{\"script\":{d}}}", .{ms});
+        defer self.allocator.free(p);
+        var v = try self.execute("setTimeout", p);
+        v.deinit();
+    }
+    pub fn implicitlyWait(self: *WebDriver, ms: i64) Error!void {
+        const p = try std.fmt.allocPrint(self.allocator, "{{\"implicit\":{d}}}", .{ms});
+        defer self.allocator.free(p);
+        var v = try self.execute("setTimeout", p);
         v.deinit();
     }
 

@@ -450,6 +450,16 @@ func (d *WebDriver) ExecuteScript(script string, args ...interface{}) (interface
 	return d.execute("executeScript", map[string]interface{}{"script": script, "args": args})
 }
 
+// ExecuteAsyncScript runs an async script: the page calls the injected callback
+// (the last argument) to yield its value; args precede it exactly like
+// ExecuteScript.
+func (d *WebDriver) ExecuteAsyncScript(script string, args ...interface{}) (interface{}, error) {
+	if args == nil {
+		args = []interface{}{}
+	}
+	return d.execute("executeAsyncScript", map[string]interface{}{"script": script, "args": args})
+}
+
 // ---- windows ----
 
 func (d *WebDriver) WindowHandles() ([]string, error) {
@@ -458,6 +468,12 @@ func (d *WebDriver) WindowHandles() ([]string, error) {
 		return nil, err
 	}
 	return toStringSlice(v), nil
+}
+
+// SwitchToWindow focuses the window/tab with the given handle.
+func (d *WebDriver) SwitchToWindow(handle string) error {
+	_, err := d.execute("switchToWindow", map[string]interface{}{"handle": handle})
+	return err
 }
 
 func (d *WebDriver) MaximizeWindow() error   { _, err := d.execute("maximizeWindow", nil); return err }
@@ -511,6 +527,43 @@ func (d *WebDriver) PerformActions(actions []interface{}) error {
 // ClearActions releases all input state.
 func (d *WebDriver) ClearActions() error {
 	_, err := d.execute("clearActions", nil)
+	return err
+}
+
+// ---- alerts ----
+
+// AcceptAlert accepts (OK) the current user-prompt dialog.
+func (d *WebDriver) AcceptAlert() error { _, err := d.execute("acceptAlert", nil); return err }
+
+// DismissAlert dismisses (Cancel) the current user-prompt dialog.
+func (d *WebDriver) DismissAlert() error { _, err := d.execute("dismissAlert", nil); return err }
+
+// AlertText returns the message text of the current user-prompt dialog.
+func (d *WebDriver) AlertText() (string, error) { return d.strCmd("getAlertText", nil) }
+
+// SendAlertText types text into the current prompt() dialog's input field.
+func (d *WebDriver) SendAlertText(text string) error {
+	_, err := d.execute("setAlertValue", map[string]interface{}{"text": text})
+	return err
+}
+
+// ---- timeouts (milliseconds) ----
+
+// SetPageLoadTimeout sets the page-load timeout for the session.
+func (d *WebDriver) SetPageLoadTimeout(ms int) error {
+	_, err := d.execute("setTimeout", map[string]interface{}{"pageLoad": ms})
+	return err
+}
+
+// SetScriptTimeout sets the script (execute-async) timeout for the session.
+func (d *WebDriver) SetScriptTimeout(ms int) error {
+	_, err := d.execute("setTimeout", map[string]interface{}{"script": ms})
+	return err
+}
+
+// ImplicitlyWait sets the implicit element-location wait for the session.
+func (d *WebDriver) ImplicitlyWait(ms int) error {
+	_, err := d.execute("setTimeout", map[string]interface{}{"implicit": ms})
 	return err
 }
 

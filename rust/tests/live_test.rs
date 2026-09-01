@@ -164,6 +164,15 @@ fn live_chrome_surface() {
         Some(42.0)
     );
 
+    // execute_async_script + script timeout setter.
+    d.set_script_timeout(5000).unwrap();
+    assert_eq!(
+        d.execute_async_script(
+            "const cb = arguments[arguments.length - 1]; cb(6*7);", vec![]
+        ).unwrap().as_f64(),
+        Some(42.0)
+    );
+
     // W3C actions: pointer click on the button.
     let rect = d.find_element(By::ID, "btn").unwrap().rect().unwrap();
     let x = rect.get("x").and_then(|v| v.as_f64()).unwrap();

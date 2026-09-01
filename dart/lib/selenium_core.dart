@@ -25,6 +25,11 @@ export 'src/webdriver.dart'
         NoSuchElementError,
         StaleElementReferenceError,
         TimeoutError,
+        DriverProcess,
+        LocalChrome,
+        resolveDriver,
+        launchDriver,
+        ensureDriver,
         route,
         errorCode,
         locator;

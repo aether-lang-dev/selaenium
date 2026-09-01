@@ -125,31 +125,16 @@ class WebDriver {
   String _wsUrl = '';
   BiDi? _bidi;
 
-  WebDriver._(this._handle);
-
-  factory WebDriver.chrome(String commandExecutor,
-      {Map<String, dynamic>? options}) {
-    final caps = <String, dynamic>{'browserName': 'chrome', ...?options};
-    return WebDriver._create(commandExecutor, caps);
-  }
-
-  factory WebDriver.headlessChrome(String commandExecutor) =>
-      WebDriver.chrome(commandExecutor, options: {
-        'goog:chromeOptions': {
-          'args': ['--headless=new', '--no-sandbox', '--disable-gpu', '--disable-dev-shm-usage'],
-        },
-      });
-
-  factory WebDriver._create(String commandExecutor, Map<String, dynamic> caps) {
-    final handle = _withCStr(commandExecutor, (c) => Native.instance.open(c));
-    if (handle == ffi.nullptr) {
-      throw WebDriverError('failed to open session handle', -1);
-    }
-    final d = WebDriver._(handle);
+  /// Generative session constructor: open a handle against [commandExecutor],
+  /// apply TLS trust config, then newSession with [caps]. Subclasses (e.g.
+  /// [LocalChrome]) call this via `super`.
+  WebDriver._session(String commandExecutor, Map<String, dynamic> caps,
+      {String? caPath, bool insecure = false})
+      : _handle = _openSession(commandExecutor, caPath, insecure) {
     // Request a BiDi channel so `.bidi` is available on demand; the channel
     // itself is opened lazily.
     final matched = <String, dynamic>{...caps, 'webSocketUrl': true};
-    final result = d.execute('newSession', {
+    final result = execute('newSession', {
       'capabilities': {'alwaysMatch': matched}
     });
     // value.capabilities.webSocketUrl — the BiDi endpoint for this session.
@@ -157,11 +142,56 @@ class WebDriver {
       final sessionCaps = result['capabilities'];
       if (sessionCaps is Map<String, dynamic>) {
         final url = sessionCaps['webSocketUrl'];
-        if (url is String) d._wsUrl = url;
+        if (url is String) _wsUrl = url;
       }
     }
-    return d;
   }
+
+  // Open a session handle and apply TLS trust config BEFORE newSession (the
+  // first request). caPath pins a private-CA bundle; insecure skips
+  // verification entirely (self-signed dev/staging Grid — trust out-of-band).
+  static ffi.Pointer<ffi.Void> _openSession(
+      String commandExecutor, String? caPath, bool insecure) {
+    final handle = _withCStr(commandExecutor, (c) => Native.instance.open(c));
+    if (handle == ffi.nullptr) {
+      throw WebDriverError('failed to open session handle', -1);
+    }
+    if (caPath != null && caPath.isNotEmpty) {
+      _withCStr(caPath, (c) => Native.instance.setCa(handle, c));
+    }
+    if (insecure) {
+      Native.instance.setInsecure(handle, 1);
+    }
+    return handle;
+  }
+
+  factory WebDriver.chrome(String commandExecutor,
+      {Map<String, dynamic>? options, String? caPath, bool insecure = false}) {
+    final caps = <String, dynamic>{'browserName': 'chrome', ...?options};
+    return WebDriver._create(commandExecutor, caps,
+        caPath: caPath, insecure: insecure);
+  }
+
+  factory WebDriver.headlessChrome(String commandExecutor,
+          {String? caPath, bool insecure = false}) =>
+      WebDriver.chrome(commandExecutor,
+          caPath: caPath,
+          insecure: insecure,
+          options: {
+            'goog:chromeOptions': {
+              'args': [
+                '--headless=new',
+                '--no-sandbox',
+                '--disable-gpu',
+                '--disable-dev-shm-usage'
+              ],
+            },
+          });
+
+  factory WebDriver._create(String commandExecutor, Map<String, dynamic> caps,
+          {String? caPath, bool insecure = false}) =>
+      WebDriver._session(commandExecutor, caps,
+          caPath: caPath, insecure: insecure);
 
   /// Pin an explicit native library path (wins over env/bundled).
   static void configureNativeLib(String path) => Native.configure(path);
@@ -252,12 +282,19 @@ class WebDriver {
   dynamic executeScript(String script, [List<dynamic> args = const []]) =>
       execute('executeScript', {'script': script, 'args': args});
 
+  dynamic executeAsyncScript(String script, [List<dynamic> args = const []]) =>
+      execute('executeAsyncScript', {'script': script, 'args': args});
+
   // ---- windows ----
   List<String> get windowHandles =>
       (execute('getWindowHandles') as List<dynamic>).cast<String>();
   String get currentWindowHandle => execute('getCurrentWindowHandle') as String;
+  void switchToWindow(String handle) => execute('switchToWindow', {'handle': handle});
   dynamic setWindowRect(Map<String, dynamic> rect) => execute('setWindowRect', rect);
   dynamic getWindowRect() => execute('getWindowRect');
+  dynamic maximizeWindow() => execute('maximizeWindow');
+  dynamic minimizeWindow() => execute('minimizeWindow');
+  dynamic fullscreenWindow() => execute('fullscreenWindow');
 
   // ---- cookies ----
   void addCookie(Map<String, dynamic> cookie) => execute('addCookie', {'cookie': cookie});
@@ -270,8 +307,17 @@ class WebDriver {
   void performActions(List<dynamic> actions) => execute('actions', {'actions': actions});
   void clearActions() => execute('clearActions');
 
+  // ---- alerts ----
+  void acceptAlert() => execute('acceptAlert');
+  void dismissAlert() => execute('dismissAlert');
+  String get alertText => execute('getAlertText') as String;
+  void sendAlertText(String text) => execute('setAlertValue', {'text': text});
+
   // ---- timeouts ----
   void setTimeouts(Map<String, dynamic> timeouts) => execute('setTimeout', timeouts);
+  void setPageLoadTimeout(int ms) => execute('setTimeout', {'pageLoad': ms});
+  void setScriptTimeout(int ms) => execute('setTimeout', {'script': ms});
+  void implicitlyWait(int ms) => execute('setTimeout', {'implicit': ms});
 
   // ---- screenshots ----
   String screenshotBase64() => execute('screenshot') as String;
@@ -602,6 +648,119 @@ class BiDi {
     if (_handle != ffi.nullptr) {
       Native.instance.bidiClose(_handle);
       _handle = ffi.nullptr;
+    }
+  }
+}
+
+// ---- driver orchestration (spawn / adopt a driver process in-binding) --------
+// The engine can resolve, download-or-cache, and launch a browser driver process
+// itself — so a caller needs neither a driver on PATH nor a running Grid. These
+// wrap the driver-handle C ABI (independent of the W3C session handle).
+
+/// Resolve the local driver binary path for [browser] without launching it
+/// (detect/download/cache as needed). [hint] pins a version or path; ''
+/// auto-detects. Returns '' if none resolvable (offline, no cache).
+String resolveDriver({String browser = 'chrome', String hint = ''}) =>
+    _withCStr(
+        browser,
+        (b) => _withCStr(
+            hint,
+            (h) => Native.instance
+                .takeString(Native.instance.resolveDriver(b, h))));
+
+/// A driver process launched by the engine. Owns the driver handle; call [stop]
+/// to terminate it (the handle is one-shot — [pid] reads 0 once stopped).
+class DriverProcess {
+  ffi.Pointer<ffi.Void> _handle;
+  DriverProcess._(this._handle);
+
+  /// The base URL the driver is listening on — pass to a [WebDriver] ctor.
+  String get url => _handle == ffi.nullptr
+      ? ''
+      : Native.instance.takeString(Native.instance.driverUrl(_handle));
+
+  /// The driver process id (0 if not running / stopped).
+  int get pid =>
+      _handle == ffi.nullptr ? 0 : Native.instance.driverPid(_handle);
+
+  /// Terminate the driver process and clear the handle.
+  void stop() {
+    if (_handle != ffi.nullptr) {
+      Native.instance.stopDriver(_handle);
+      _handle = ffi.nullptr;
+    }
+  }
+}
+
+/// Launch a driver at an explicit binary path. Returns a [DriverProcess], or
+/// null if it did not come up within [timeoutMs].
+DriverProcess? launchDriver(String driverPath, {int timeoutMs = 15000}) {
+  final h =
+      _withCStr(driverPath, (p) => Native.instance.launchDriver(p, timeoutMs));
+  return h == ffi.nullptr ? null : DriverProcess._(h);
+}
+
+/// Resolve (detect/download/cache) AND launch a driver for [browser] in one
+/// step. Returns a running [DriverProcess], or null if none could be
+/// resolved/launched.
+DriverProcess? ensureDriver(
+    {String browser = 'chrome', String hint = '', int timeoutMs = 15000}) {
+  final h = _withCStr(
+      browser,
+      (b) => _withCStr(
+          hint, (h) => Native.instance.ensureDriver(b, h, timeoutMs)));
+  return h == ffi.nullptr ? null : DriverProcess._(h);
+}
+
+/// A Chrome session that spawns its own chromedriver via the engine — no driver
+/// on PATH, no Grid. The driver process is stopped on [quit].
+///
+/// Throws [WebDriverError] if the driver cannot be resolved/launched.
+class LocalChrome extends WebDriver {
+  final DriverProcess _proc;
+
+  LocalChrome._(this._proc, Map<String, dynamic> caps,
+      {String? caPath, bool insecure = false})
+      : super._session(_proc.url, caps, caPath: caPath, insecure: insecure);
+
+  factory LocalChrome(
+      {Map<String, dynamic>? options,
+      String hint = '',
+      int timeoutMs = 15000,
+      String? caPath,
+      bool insecure = false}) {
+    final proc = ensureDriver(hint: hint, timeoutMs: timeoutMs);
+    if (proc == null) {
+      throw WebDriverError('could not resolve/launch chromedriver', -1);
+    }
+    final caps = <String, dynamic>{'browserName': 'chrome', ...?options};
+    return LocalChrome._(proc, caps, caPath: caPath, insecure: insecure);
+  }
+
+  /// Convenience: a headless LocalChrome with the usual CI-safe flags. Pass
+  /// [chromeBinary] to point at a specific Chrome (honoured as
+  /// `goog:chromeOptions.binary`).
+  factory LocalChrome.headless({String? chromeBinary}) {
+    final chromeOptions = <String, dynamic>{
+      'args': [
+        '--headless=new',
+        '--no-sandbox',
+        '--disable-gpu',
+        '--disable-dev-shm-usage'
+      ],
+    };
+    if (chromeBinary != null && chromeBinary.isNotEmpty) {
+      chromeOptions['binary'] = chromeBinary;
+    }
+    return LocalChrome(options: {'goog:chromeOptions': chromeOptions});
+  }
+
+  @override
+  void quit() {
+    try {
+      super.quit();
+    } finally {
+      _proc.stop();
     }
   }
 }

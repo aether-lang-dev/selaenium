@@ -211,6 +211,37 @@ local function raise(code, message)
   error({ code = code, message = message, kind = CODE_NAME[code] or "webdriver" }, 0)
 end
 
+-- ==== WebElement ====
+-- A remote element handle wrapping the driver + its W3C element id. Methods
+-- issue element-scoped commands, so a user writes `el:text()` / `el:click()`
+-- rather than threading the id back through driver methods. The driver-level
+-- methods (driver:element_text(id) etc.) remain for backward compatibility.
+
+local WebElement = {}
+WebElement.__index = WebElement
+
+local function wrap_element(driver, id)
+  return setmetatable({ driver = driver, id = id }, WebElement)
+end
+
+function WebElement:click() self.driver:click(self.id) end
+function WebElement:clear() self.driver:execute("clearElement", { id = self.id }) end
+function WebElement:send_keys(text) self.driver:send_keys(self.id, text) end
+function WebElement:text() return self.driver:element_text(self.id) end
+function WebElement:tag_name() return self.driver:tag_name(self.id) end
+function WebElement:rect() return self.driver:element_rect(self.id) end
+function WebElement:property(name) return self.driver:element_property(self.id, name) end
+function WebElement:enabled() return self.driver:execute("isElementEnabled", { id = self.id }) == true end
+function WebElement:selected() return self.driver:execute("isElementSelected", { id = self.id }) == true end
+-- the isDisplayed atom (the visibility algorithm, not a naive style check).
+function WebElement:is_displayed() return self.driver:is_displayed(self.id) end
+-- the classic getAttribute(name): property-or-attribute, via the shared atom.
+function WebElement:get_attribute(name) return self.driver:get_attribute(self.id, name) end
+-- the raw W3C DOM attribute (no property fallback).
+function WebElement:dom_attribute(name) return self.driver:dom_attribute(self.id, name) end
+
+M.WebElement = WebElement
+
 -- ==== WebDriver ====
 
 local WebDriver = {}
@@ -357,18 +388,27 @@ end
 
 function WebDriver:find_element(by, value)
   local r = self:execute("findElement", decode_by(by, value))
-  return r[W3C_ELEMENT_KEY]
+  return wrap_element(self, r[W3C_ELEMENT_KEY])
 end
 
 function WebDriver:find_elements(by, value)
   local r = self:execute("findElements", decode_by(by, value))
   local out = {}
-  for i = 1, #r do out[i] = r[i][W3C_ELEMENT_KEY] end
+  for i = 1, #r do out[i] = wrap_element(self, r[i][W3C_ELEMENT_KEY]) end
   return out
 end
 
-function WebDriver:click(element_id) self:execute("clickElement", { id = element_id }) end
+-- Element-scoped driver methods accept either a raw W3C id string or a
+-- WebElement (from find_element). `_eid` normalizes to the id string, so both
+-- the object API (el:click()) and the legacy id API (driver:click(id)) work.
+local function _eid(element)
+  if type(element) == "table" and element.id ~= nil then return element.id end
+  return element
+end
+
+function WebDriver:click(element_id) self:execute("clickElement", { id = _eid(element_id) }) end
 function WebDriver:send_keys(element_id, text)
+  element_id = _eid(element_id)
   -- Split the UTF-8 `text` into one entry per character (W3C wants a `value`
   -- array of single-code-point strings). Pure-5.1: walk UTF-8 lead bytes (no
   -- `utf8` library on LuaJIT/5.1). Continuation bytes are 0x80..0xBF.
@@ -383,11 +423,11 @@ function WebDriver:send_keys(element_id, text)
   end
   self:execute("sendKeysToElement", { id = element_id, text = text, value = value })
 end
-function WebDriver:element_text(element_id) return self:execute("getElementText", { id = element_id }) end
-function WebDriver:tag_name(element_id) return self:execute("getElementTagName", { id = element_id }) end
-function WebDriver:element_rect(element_id) return self:execute("getElementRect", { id = element_id }) end
+function WebDriver:element_text(element_id) return self:execute("getElementText", { id = _eid(element_id) }) end
+function WebDriver:tag_name(element_id) return self:execute("getElementTagName", { id = _eid(element_id) }) end
+function WebDriver:element_rect(element_id) return self:execute("getElementRect", { id = _eid(element_id) }) end
 function WebDriver:element_property(element_id, name)
-  return self:execute("getElementProperty", { id = element_id, name = name })
+  return self:execute("getElementProperty", { id = _eid(element_id), name = name })
 end
 
 -- atom-backed commands (a shared JS atom run in-page by the engine) ----------
@@ -406,18 +446,18 @@ end
 
 -- is the element displayed? (the isDisplayed atom — the visibility algorithm)
 function WebDriver:is_displayed(element_id)
-  return self:_atom_result(native.is_displayed(self.handle, element_id)) == true
+  return self:_atom_result(native.is_displayed(self.handle, _eid(element_id))) == true
 end
 
 -- the classic getAttribute(name): property-or-attribute (via the atom).
 -- dom_attribute(name) keeps the raw W3C getDomAttribute.
 function WebDriver:get_attribute(element_id, name)
-  local v = self:_atom_result(native.get_attribute(self.handle, element_id, name))
+  local v = self:_atom_result(native.get_attribute(self.handle, _eid(element_id), name))
   if v == M.null then return nil end
   return v
 end
 function WebDriver:dom_attribute(element_id, name)
-  return self:execute("getDomAttribute", { id = element_id, name = name })
+  return self:execute("getDomAttribute", { id = _eid(element_id), name = name })
 end
 
 -- relative locators: element ids matching base_css filtered by spatial relation
@@ -435,12 +475,25 @@ end
 function WebDriver:execute_script(script, args)
   return self:execute("executeScript", { script = script, args = args or M.array({}) })
 end
+function WebDriver:execute_async_script(script, args)
+  return self:execute("executeAsyncScript", { script = script, args = args or M.array({}) })
+end
 
 -- windows
 function WebDriver:window_handles() return self:execute("getWindowHandles", {}) end
 function WebDriver:current_window_handle() return self:execute("getCurrentWindowHandle", {}) end
+function WebDriver:switch_to_window(handle) self:execute("switchToWindow", { handle = handle }) end
+function WebDriver:maximize_window() return self:execute("maximizeWindow", {}) end
+function WebDriver:minimize_window() return self:execute("minimizeWindow", {}) end
+function WebDriver:fullscreen_window() return self:execute("fullscreenWindow", {}) end
 function WebDriver:set_window_rect(rect) return self:execute("setWindowRect", rect) end
 function WebDriver:get_window_rect() return self:execute("getWindowRect", {}) end
+
+-- alerts
+function WebDriver:accept_alert() self:execute("acceptAlert", {}) end
+function WebDriver:dismiss_alert() self:execute("dismissAlert", {}) end
+function WebDriver:alert_text() return self:execute("getAlertText", {}) end
+function WebDriver:send_alert_text(text) self:execute("setAlertValue", { text = text }) end
 
 -- cookies
 function WebDriver:add_cookie(cookie) self:execute("addCookie", { cookie = cookie }) end
@@ -455,6 +508,9 @@ function WebDriver:clear_actions() self:execute("clearActions", {}) end
 
 -- timeouts / screenshots
 function WebDriver:set_timeouts(timeouts) self:execute("setTimeout", timeouts) end
+function WebDriver:set_page_load_timeout(ms) self:execute("setTimeout", { pageLoad = ms }) end
+function WebDriver:set_script_timeout(ms) self:execute("setTimeout", { script = ms }) end
+function WebDriver:implicitly_wait(ms) self:execute("setTimeout", { implicit = ms }) end
 function WebDriver:screenshot_base64() return self:execute("screenshot", {}) end
 
 -- ==== WebDriver-BiDi ====

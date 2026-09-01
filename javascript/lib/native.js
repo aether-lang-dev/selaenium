@@ -97,6 +97,21 @@ const getAttribute = lazy('int aether_sel_embed_get_attribute(void* h, const cha
 const atomStrArg = lazy('void* aether_sel_embed_atom_str_arg(const char* s)')
 const findRelative = lazy('int aether_sel_embed_find_relative(void* h, const char* base_css, const char* filters_json)')
 
+// ---- TLS config (per session handle; set before newSession) ----
+const setCa = lazy('void aether_sel_embed_set_ca(void* h, const char* ca_path)')
+const setInsecure = lazy('void aether_sel_embed_set_insecure(void* h, int on)')
+
+// ---- driver orchestration (spawn/adopt a driver process in-binding) ----
+// An opaque driver handle, independent of the W3C session handle. launch_driver
+// and ensure_driver return that handle (void*); driver_url returns a caller-owned
+// char* (as void*, taken via takeString); driver_pid returns int.
+const resolveDriver = lazy('void* aether_sel_embed_resolve_driver(const char* browser, const char* hint)')
+const launchDriver = lazy('void* aether_sel_embed_launch_driver(const char* driver_path, int timeout_ms)')
+const ensureDriver = lazy('void* aether_sel_embed_ensure_driver(const char* browser, const char* hint, int timeout_ms)')
+const driverUrl = lazy('void* aether_sel_embed_driver_url(void* dh)')
+const driverPid = lazy('int aether_sel_embed_driver_pid(void* dh)')
+const stopDriver = lazy('void aether_sel_embed_stop_driver(void* dh)')
+
 // ---- WebDriver-BiDi (over the session's webSocketUrl) ----
 // An opaque BiDi channel handle, independent of the W3C session handle.
 const bidiOpen = lazy('void* aether_sel_embed_bidi_open(const char* ws_url)')
@@ -180,6 +195,14 @@ module.exports = {
   route,
   buildRequest,
   errorCode,
+  setCa,
+  setInsecure,
+  resolveDriver,
+  launchDriver,
+  ensureDriver,
+  driverUrl,
+  driverPid,
+  stopDriver,
   bidiOpen,
   bidiClose,
   bidiSend,

@@ -485,6 +485,11 @@ impl WebDriver {
     pub fn execute_script(&self, script: &str, args: Vec<Json>) -> Result<Json> {
         self.execute("executeScript", json::obj(vec![("script", json::s(script)), ("args", Json::Arr(args))]))
     }
+    /// Run an async script: the page signals completion via the injected
+    /// callback (`arguments[arguments.length - 1]`). Returns the callback value.
+    pub fn execute_async_script(&self, script: &str, args: Vec<Json>) -> Result<Json> {
+        self.execute("executeAsyncScript", json::obj(vec![("script", json::s(script)), ("args", Json::Arr(args))]))
+    }
 
     // ---- windows ----
     pub fn window_handles(&self) -> Result<Vec<String>> {
@@ -494,11 +499,49 @@ impl WebDriver {
     pub fn current_window_handle(&self) -> Result<String> {
         Ok(self.execute("getCurrentWindowHandle", json::obj(vec![]))?.as_str().unwrap_or("").to_string())
     }
+    /// Switch the session's top-level browsing context to the window `handle`.
+    pub fn switch_to_window(&self, handle: &str) -> Result<()> {
+        self.execute("switchToWindow", json::obj(vec![("handle", json::s(handle))]))?;
+        Ok(())
+    }
     pub fn set_window_rect(&self, rect: Json) -> Result<Json> {
         self.execute("setWindowRect", rect)
     }
     pub fn get_window_rect(&self) -> Result<Json> {
         self.execute("getWindowRect", json::obj(vec![]))
+    }
+    /// Maximize the current window. Returns the resulting window rect.
+    pub fn maximize_window(&self) -> Result<Json> {
+        self.execute("maximizeWindow", json::obj(vec![]))
+    }
+    /// Minimize (hide) the current window. Returns the resulting window rect.
+    pub fn minimize_window(&self) -> Result<Json> {
+        self.execute("minimizeWindow", json::obj(vec![]))
+    }
+    /// Put the current window into fullscreen. Returns the resulting window rect.
+    pub fn fullscreen_window(&self) -> Result<Json> {
+        self.execute("fullscreenWindow", json::obj(vec![]))
+    }
+
+    // ---- alerts ----
+    /// Accept (OK) the current user-prompt / alert dialog.
+    pub fn accept_alert(&self) -> Result<()> {
+        self.execute("acceptAlert", json::obj(vec![]))?;
+        Ok(())
+    }
+    /// Dismiss (Cancel) the current user-prompt / alert dialog.
+    pub fn dismiss_alert(&self) -> Result<()> {
+        self.execute("dismissAlert", json::obj(vec![]))?;
+        Ok(())
+    }
+    /// The message text of the current dialog.
+    pub fn alert_text(&self) -> Result<String> {
+        Ok(self.execute("getAlertText", json::obj(vec![]))?.as_str().unwrap_or("").to_string())
+    }
+    /// Type `text` into the current prompt dialog's input field.
+    pub fn send_alert_text(&self, text: &str) -> Result<()> {
+        self.execute("setAlertValue", json::obj(vec![("text", json::s(text))]))?;
+        Ok(())
     }
 
     // ---- cookies ----
@@ -534,6 +577,23 @@ impl WebDriver {
     // ---- timeouts ----
     pub fn set_timeouts(&self, timeouts: Json) -> Result<()> {
         self.execute("setTimeout", timeouts)?;
+        Ok(())
+    }
+    /// Set the page-load timeout (ms): how long navigation may take before
+    /// timing out.
+    pub fn set_page_load_timeout(&self, ms: i64) -> Result<()> {
+        self.execute("setTimeout", json::obj(vec![("pageLoad", json::n(ms as f64))]))?;
+        Ok(())
+    }
+    /// Set the script timeout (ms): how long `execute_async_script` may run
+    /// before timing out.
+    pub fn set_script_timeout(&self, ms: i64) -> Result<()> {
+        self.execute("setTimeout", json::obj(vec![("script", json::n(ms as f64))]))?;
+        Ok(())
+    }
+    /// Set the implicit wait (ms): how long `find_element` retries before failing.
+    pub fn implicitly_wait(&self, ms: i64) -> Result<()> {
+        self.execute("setTimeout", json::obj(vec![("implicit", json::n(ms as f64))]))?;
         Ok(())
     }
 

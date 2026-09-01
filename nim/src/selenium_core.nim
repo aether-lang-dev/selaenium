@@ -365,13 +365,44 @@ proc getDomAttribute*(e: WebElement, name: string): string =
 proc executeScript*(d: WebDriver, script: string, args: JsonNode = newJArray()): JsonNode =
   d.execute("executeScript", %*{"script": script, "args": args})
 
+proc executeAsyncScript*(d: WebDriver, script: string, args: JsonNode = newJArray()): JsonNode =
+  ## Run an async script: the page signals completion via the injected callback
+  ## (`arguments[arguments.length - 1]`). Returns the callback value.
+  d.execute("executeAsyncScript", %*{"script": script, "args": args})
+
 # ---- windows ----
 proc windowHandles*(d: WebDriver): seq[string] =
   for h in d.execute("getWindowHandles", newJObject()): result.add h.getStr
 proc currentWindowHandle*(d: WebDriver): string =
   d.execute("getCurrentWindowHandle", newJObject()).getStr
+proc switchToWindow*(d: WebDriver, handle: string) =
+  ## Switch the session's top-level browsing context to the window `handle`.
+  discard d.execute("switchToWindow", %*{"handle": handle})
 proc setWindowRect*(d: WebDriver, rect: JsonNode): JsonNode = d.execute("setWindowRect", rect)
 proc getWindowRect*(d: WebDriver): JsonNode = d.execute("getWindowRect", newJObject())
+proc maximizeWindow*(d: WebDriver): JsonNode =
+  ## Maximize the current window. Returns the resulting window rect.
+  d.execute("maximizeWindow", newJObject())
+proc minimizeWindow*(d: WebDriver): JsonNode =
+  ## Minimize (hide) the current window. Returns the resulting window rect.
+  d.execute("minimizeWindow", newJObject())
+proc fullscreenWindow*(d: WebDriver): JsonNode =
+  ## Put the current window into fullscreen. Returns the resulting window rect.
+  d.execute("fullscreenWindow", newJObject())
+
+# ---- alerts ----
+proc acceptAlert*(d: WebDriver) =
+  ## Accept (OK) the current user-prompt / alert dialog.
+  discard d.execute("acceptAlert", newJObject())
+proc dismissAlert*(d: WebDriver) =
+  ## Dismiss (Cancel) the current user-prompt / alert dialog.
+  discard d.execute("dismissAlert", newJObject())
+proc alertText*(d: WebDriver): string =
+  ## The message text of the current dialog.
+  d.execute("getAlertText", newJObject()).getStr
+proc sendAlertText*(d: WebDriver, text: string) =
+  ## Type `text` into the current prompt dialog's input field.
+  discard d.execute("setAlertValue", %*{"text": text})
 
 # ---- cookies ----
 proc addCookie*(d: WebDriver, cookie: JsonNode) = discard d.execute("addCookie", %*{"cookie": cookie})
@@ -386,6 +417,15 @@ proc clearActions*(d: WebDriver) = discard d.execute("clearActions", newJObject(
 
 # ---- timeouts / screenshots ----
 proc setTimeouts*(d: WebDriver, timeouts: JsonNode) = discard d.execute("setTimeout", timeouts)
+proc setPageLoadTimeout*(d: WebDriver, ms: int) =
+  ## Set the page-load timeout (ms): how long navigation may take before timing out.
+  discard d.execute("setTimeout", %*{"pageLoad": ms})
+proc setScriptTimeout*(d: WebDriver, ms: int) =
+  ## Set the script timeout (ms): how long `executeAsyncScript` may run before timing out.
+  discard d.execute("setTimeout", %*{"script": ms})
+proc implicitlyWait*(d: WebDriver, ms: int) =
+  ## Set the implicit wait (ms): how long `findElement` retries before failing.
+  discard d.execute("setTimeout", %*{"implicit": ms})
 proc screenshotBase64*(d: WebDriver): string = d.execute("screenshot", newJObject()).getStr
 
 # ---- WebDriver-BiDi ----

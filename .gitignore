@@ -192,6 +192,7 @@ entities.json
 # ===== Aether port (aeb build outputs + bindings) =====
 # aeb build outputs
 /target/
+/.aeb/
 
 # Engine artifact (built by selenium_core/.build.ae; also staged into bindings)
 /selenium_core/native/*.so

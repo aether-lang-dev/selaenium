@@ -64,6 +64,9 @@ class LiveTest < Minitest::Test
 
       assert_equal 42, driver.execute_script('return 40 + 2;')
 
+      driver.set_script_timeout(10_000)
+      assert_equal 7, driver.execute_async_script('arguments[arguments.length - 1](3 + 4);')
+
       assert_raises(SeleniumCore::NoSuchElementError) do
         driver.find_element(SeleniumCore::By::ID, 'does-not-exist')
       end

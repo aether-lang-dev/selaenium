@@ -102,6 +102,11 @@ void main() {
         expect(d.executeScript('return [1,2,3];'), [1, 2, 3]);
         expect(d.executeScript('return arguments[0]+arguments[1];', [40, 2]), 42);
 
+        // timeout setter + async script: the async callback is arguments[last].
+        d.setScriptTimeout(10000);
+        expect(
+            d.executeAsyncScript('arguments[arguments.length-1](42);'), 42);
+
         // W3C actions: pointer click on the button.
         final rect = d.findElement(By.id, 'btn').rect;
         final cx = ((rect['x'] as num) + (rect['width'] as num) / 2).round();
@@ -184,6 +189,50 @@ void main() {
       cd.kill();
     }
   }, timeout: const Timeout(Duration(seconds: 90)));
+
+  test('live driver orchestration', () async {
+    // Driver orchestration over the engine: resolve + spawn a chromedriver
+    // in-binding (no chromedriver on PATH, no Grid), drive a page through the
+    // self-launched driver, and tear the process down — the ensureDriver ->
+    // url -> open -> stop flow the C-ABI exposes for FFI bindings.
+
+    // Resolve only — self-skip if the engine can't produce a driver here
+    // (offline + empty cache). Deliberately does NOT consult PATH.
+    final path = resolveDriver(browser: 'chrome');
+    if (path.isEmpty) {
+      markTestSkipped('engine cannot resolve a chromedriver (offline, no cache)');
+      return;
+    }
+    expect(File(path).existsSync(), isTrue,
+        reason: 'resolveDriver returned a non-file: $path');
+
+    // ensureDriver spawns it; the handle exposes url + pid, independent of any
+    // W3C session.
+    final proc = ensureDriver(browser: 'chrome');
+    expect(proc, isNotNull);
+    try {
+      expect(proc!.url, startsWith('http'), reason: 'driver url=${proc.url}');
+      expect(proc.pid, greaterThan(0), reason: 'driver pid=${proc.pid}');
+    } finally {
+      proc!.stop();
+      expect(proc.pid, 0, reason: 'stop() should clear the handle');
+    }
+
+    // LocalChrome ties it together: spawn its own driver, run a session, and
+    // stop the driver on quit — the whole point of the orchestration ABI.
+    final chromeBinary = Platform.environment['SEL_CHROME_BINARY'];
+    final d = LocalChrome.headless(chromeBinary: chromeBinary);
+    try {
+      expect(d.sessionId, isNotEmpty);
+      const html = '<!doctype html><title>Aether Selenium</title>'
+          '<h1 id="hdr">Hello</h1>';
+      d.get('data:text/html,${Uri.encodeComponent(html)}');
+      expect(d.title, 'Aether Selenium');
+      expect(d.findElement(By.id, 'hdr').text, 'Hello');
+    } finally {
+      d.quit();
+    }
+  }, timeout: const Timeout(Duration(seconds: 120)));
 
   test('live chrome + bidi', () async {
     final driverBin = which('chromedriver');

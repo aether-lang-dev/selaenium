@@ -231,6 +231,12 @@ module SeleniumCore
       execute('executeScript', 'script' => script, 'args' => args)
     end
 
+    # Run an async script: the page calls the injected callback (last argument)
+    # to yield its value; +args+ precede the callback exactly like execute_script.
+    def execute_async_script(script, *args)
+      execute('executeAsyncScript', 'script' => script, 'args' => args)
+    end
+
     # ---- atom-backed commands (run a shared JS atom in-page via the engine) ----
 
     # Relative locators: elements matching +base_css+ filtered by spatial
@@ -246,8 +252,10 @@ module SeleniumCore
     # ---- windows ----
     def window_handles = execute('getWindowHandles')
     def current_window_handle = execute('getCurrentWindowHandle')
+    def switch_to_window(handle) = (execute('switchToWindow', 'handle' => handle); nil)
     def maximize_window = (execute('maximizeWindow'); nil)
     def minimize_window = (execute('minimizeWindow'); nil)
+    def fullscreen_window = (execute('fullscreenWindow'); nil)
 
     # ---- cookies ----
     def add_cookie(cookie) = (execute('addCookie', 'cookie' => cookie); nil)
@@ -263,6 +271,17 @@ module SeleniumCore
     # ---- W3C actions ----
     def perform_actions(actions) = (execute('actions', 'actions' => actions); nil)
     def clear_actions = (execute('clearActions'); nil)
+
+    # ---- alerts ----
+    def accept_alert = (execute('acceptAlert'); nil)
+    def dismiss_alert = (execute('dismissAlert'); nil)
+    def alert_text = execute('getAlertText')
+    def send_alert_text(text) = (execute('setAlertValue', 'text' => text); nil)
+
+    # ---- timeouts (milliseconds) ----
+    def set_page_load_timeout(ms) = (execute('setTimeout', 'pageLoad' => ms); nil)
+    def set_script_timeout(ms) = (execute('setTimeout', 'script' => ms); nil)
+    def implicitly_wait(ms) = (execute('setTimeout', 'implicit' => ms); nil)
 
     # ---- screenshots ----
     def screenshot_base64 = execute('screenshot')

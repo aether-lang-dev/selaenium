@@ -126,11 +126,17 @@ class WebElement {
 }
 
 class WebDriver {
-  constructor(commandExecutor, capabilities) {
+  // `options` may carry TLS trust config: { caPath, insecure }. caPath pins a
+  // private-CA bundle; insecure skips verification entirely (self-signed
+  // dev/staging Grid — trust the host out-of-band). Both land on the handle
+  // BEFORE newSession (the first request).
+  constructor(commandExecutor, capabilities, { caPath = null, insecure = false } = {}) {
     this._handle = native.open(commandExecutor)
     if (native.isNull(this._handle)) {
       throw new WebDriverError('failed to open session handle', -1)
     }
+    if (caPath) native.setCa(this._handle, caPath)
+    if (insecure) native.setInsecure(this._handle, 1)
     // Request a BiDi channel so `.bidi` is available on demand; the channel
     // itself is opened lazily (a classic script never opens the WebSocket).
     const caps = { ...capabilities, webSocketUrl: true }
@@ -140,10 +146,10 @@ class WebDriver {
     this._bidi = null
   }
 
-  static chrome(commandExecutor = 'http://127.0.0.1:9515', options = null) {
+  static chrome(commandExecutor = 'http://127.0.0.1:9515', options = null, tls = {}) {
     const caps = { browserName: 'chrome' }
     if (options) Object.assign(caps, options)
-    return new WebDriver(commandExecutor, caps)
+    return new WebDriver(commandExecutor, caps, tls)
   }
 
   static headlessChrome(commandExecutor = 'http://127.0.0.1:9515') {
@@ -242,6 +248,9 @@ class WebDriver {
   executeScript(script, ...args) {
     return this._execute('executeScript', { script, args })
   }
+  executeAsyncScript(script, ...args) {
+    return this._execute('executeAsyncScript', { script, args })
+  }
 
   // ---- windows ----
   get windowHandles() {
@@ -249,6 +258,9 @@ class WebDriver {
   }
   get currentWindowHandle() {
     return this._execute('getCurrentWindowHandle')
+  }
+  switchToWindow(handle) {
+    this._execute('switchToWindow', { handle })
   }
   setWindowRect(rect) {
     return this._execute('setWindowRect', rect)
@@ -258,6 +270,12 @@ class WebDriver {
   }
   maximizeWindow() {
     this._execute('maximizeWindow')
+  }
+  minimizeWindow() {
+    this._execute('minimizeWindow')
+  }
+  fullscreenWindow() {
+    this._execute('fullscreenWindow')
   }
 
   // ---- cookies ----
@@ -285,9 +303,32 @@ class WebDriver {
     this._execute('clearActions')
   }
 
+  // ---- alerts ----
+  acceptAlert() {
+    this._execute('acceptAlert')
+  }
+  dismissAlert() {
+    this._execute('dismissAlert')
+  }
+  get alertText() {
+    return this._execute('getAlertText')
+  }
+  sendAlertText(text) {
+    this._execute('setAlertValue', { text })
+  }
+
   // ---- timeouts ----
   setTimeouts(timeouts) {
     this._execute('setTimeout', timeouts)
+  }
+  setPageLoadTimeout(ms) {
+    this._execute('setTimeout', { pageLoad: ms })
+  }
+  setScriptTimeout(ms) {
+    this._execute('setTimeout', { script: ms })
+  }
+  implicitlyWait(ms) {
+    this._execute('setTimeout', { implicit: ms })
   }
 
   // ---- screenshots ----
@@ -577,6 +618,83 @@ class BiDi {
   }
 }
 
+// ---- driver orchestration (spawn / adopt a driver process in-binding) --------
+// The engine can resolve, download-or-cache, and launch a browser driver process
+// itself — so a caller needs neither a driver on PATH nor a running Grid. These
+// wrap the driver-handle C ABI (independent of the W3C session handle).
+
+// Resolve the local driver binary path for `browser` without launching it
+// (detect/download/cache as needed). `hint` pins a version or path; '' auto-
+// detects. Returns '' if none resolvable (offline, no cache).
+function resolveDriver(browser = 'chrome', hint = '') {
+  return native.takeString(native.resolveDriver(browser, hint))
+}
+
+// A driver process launched by the engine. Owns the driver handle; call stop()
+// to terminate it. The handle is opaque and independent of any W3C session.
+class DriverProcess {
+  constructor(handle) {
+    this._handle = handle
+  }
+
+  // The base URL the driver is listening on — pass to WebDriver/LocalChrome.
+  get url() {
+    return this._handle && !native.isNull(this._handle)
+      ? native.takeString(native.driverUrl(this._handle))
+      : ''
+  }
+
+  // The driver process id (0 if not running).
+  get pid() {
+    return this._handle && !native.isNull(this._handle) ? native.driverPid(this._handle) : 0
+  }
+
+  stop() {
+    if (this._handle && !native.isNull(this._handle)) {
+      native.stopDriver(this._handle)
+      this._handle = null
+    }
+  }
+}
+
+// Launch a driver at an explicit binary path. Returns a DriverProcess, or null
+// if it did not come up in timeoutMs.
+function launchDriver(driverPath, timeoutMs = 15000) {
+  const h = native.launchDriver(driverPath, timeoutMs)
+  return native.isNull(h) ? null : new DriverProcess(h)
+}
+
+// Resolve (detect/download/cache) AND launch a driver for `browser` in one step.
+// Returns a running DriverProcess, or null if none could be resolved/launched.
+function ensureDriver(browser = 'chrome', hint = '', timeoutMs = 15000) {
+  const h = native.ensureDriver(browser, hint, timeoutMs)
+  return native.isNull(h) ? null : new DriverProcess(h)
+}
+
+// A Chrome session that spawns its own chromedriver via the engine — no driver
+// on PATH, no Grid. The driver process is stopped on quit(). Throws
+// WebDriverError if the driver can't be resolved/launched.
+class LocalChrome extends WebDriver {
+  constructor(options = null, { hint = '', timeoutMs = 15000, caPath = null, insecure = false } = {}) {
+    const proc = ensureDriver('chrome', hint, timeoutMs)
+    if (proc === null) {
+      throw new WebDriverError('could not resolve/launch chromedriver', -1)
+    }
+    const caps = { browserName: 'chrome' }
+    if (options) Object.assign(caps, options)
+    super(proc.url, caps, { caPath, insecure })
+    this._proc = proc
+  }
+
+  quit() {
+    try {
+      super.quit()
+    } finally {
+      this._proc.stop()
+    }
+  }
+}
+
 // ---- pure engine helpers ----
 function route(command) {
   return native.takeString(native.route(command))
@@ -603,6 +721,11 @@ module.exports = {
   TimeoutError,
   JavascriptError,
   UnknownCommandError,
+  DriverProcess,
+  LocalChrome,
+  resolveDriver,
+  launchDriver,
+  ensureDriver,
   route,
   errorCode,
   locator,

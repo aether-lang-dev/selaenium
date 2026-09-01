@@ -139,6 +139,12 @@ proc main() =
       doAssert d.executeScript("return arguments[0]+arguments[1];", %*[40, 2]).getInt == 42
       echo "  ok: execute_script"
 
+      # execute_async_script + script timeout setter
+      d.setScriptTimeout(5000)
+      doAssert d.executeAsyncScript(
+        "const cb = arguments[arguments.length - 1]; cb(6*7);").getInt == 42
+      echo "  ok: execute_async_script + set_script_timeout"
+
       # W3C actions: pointer click on the button
       let r = d.findElement(ById, "btn").rect
       let cx = (r["x"].getFloat + r["width"].getFloat / 2).int
@@ -262,4 +268,53 @@ proc main() =
       discard
     joinThread(srvThread)
 
+proc driverOrchestration() =
+  ## Driver orchestration over the engine: resolve + spawn a chromedriver
+  ## in-binding (no chromedriver on PATH, no Grid), drive a data: page through
+  ## the self-launched driver, and tear the process down — the ensureDriver ->
+  ## url -> chrome() -> stop flow the C-ABI exposes for FFI bindings.
+
+  # Resolve only — self-skip if the engine can't produce a driver here (offline +
+  # empty cache). NOT a failure; same self-skip the reference client uses.
+  let path = resolveDriver("chrome")
+  if path.len == 0:
+    echo "SKIPPED: engine cannot resolve a chromedriver (offline, no cache)"
+    return
+  doAssert fileExists(path), "resolveDriver returned a non-file: " & path
+  echo "  ok: resolveDriver -> " & path
+
+  # ensureDriver spawns it; the handle exposes url + pid, independent of any
+  # W3C session.
+  let p = ensureDriver("chrome")
+  doAssert p != nil, "ensureDriver returned nil"
+  doAssert p.url.startsWith("http"), "driver url=" & p.url
+  doAssert p.pid > 0, "driver pid=" & $p.pid
+  echo "  ok: ensureDriver -> pid " & $p.pid & " at " & p.url
+  p.stop()
+  doAssert p.pid == 0, "stop should clear the handle"
+  echo "  ok: stop terminated the process"
+
+  # localChrome ties it together: spawn its own driver, run a session against a
+  # data: page, and stop the driver on quit — the whole point of the ABI. The
+  # driver is spawned by the engine, so this needs NO chromedriver on PATH.
+  var options = %*{
+    "goog:chromeOptions": {
+      "args": ["--headless=new", "--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage"]
+    }
+  }
+  let chromeBin = getEnv("SEL_CHROME_BINARY")
+  if chromeBin.len != 0:
+    options["goog:chromeOptions"]["binary"] = %chromeBin
+  let lc = localChrome(options = options)
+  try:
+    doAssert lc.sessionId.len > 0, "no session id from localChrome"
+    lc.get("data:text/html," &
+      "<!doctype html><title>Aether Selenium</title><h1 id='hdr'>Hello</h1>")
+    doAssert lc.title == "Aether Selenium", "title=" & lc.title
+    doAssert lc.findElement(ById, "hdr").text == "Hello"
+    echo "PASS: Nim live driver-orchestration test green (self-spawned driver)"
+  finally:
+    lc.quit()
+
 main()
+driverOrchestration()

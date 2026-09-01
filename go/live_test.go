@@ -125,6 +125,17 @@ func TestLiveChrome(t *testing.T) {
 		t.Fatalf("script returned %v", n)
 	}
 
+	if err := drv.SetScriptTimeout(10000); err != nil {
+		t.Fatalf("SetScriptTimeout: %v", err)
+	}
+	a, err := drv.ExecuteAsyncScript("arguments[arguments.length - 1](3 + 4);")
+	if err != nil {
+		t.Fatalf("ExecuteAsyncScript: %v", err)
+	}
+	if f, ok := a.(float64); !ok || f != 7 {
+		t.Fatalf("async script returned %v", a)
+	}
+
 	// Negative path: a missing element yields a typed NoSuchElement error.
 	if _, err := drv.FindElement(ByID, "does-not-exist"); !IsNoSuchElement(err) {
 		t.Fatalf("want NoSuchElement, got %v", err)

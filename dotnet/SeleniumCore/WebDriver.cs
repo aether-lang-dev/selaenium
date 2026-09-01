@@ -90,7 +90,11 @@ public sealed class WebDriver : IDisposable
         });
 
     // ---- the FFI seam ----
-    internal JsonElement? Execute(string command, IDictionary<string, object?>? parameters)
+    /// <summary>Issue any W3C command by name with a params dictionary, returning
+    /// the decoded <c>value</c> payload (or null). The generic escape hatch for
+    /// commands with no dedicated wrapper (alerts, <c>switchToWindow</c>, …) —
+    /// e.g. <c>Execute("acceptAlert", null)</c>.</summary>
+    public JsonElement? Execute(string command, IDictionary<string, object?>? parameters)
     {
         string paramsJson = JsonSerializer.Serialize(parameters ?? new Dictionary<string, object?>());
         int rc = NativeMethods.Execute(_handle, command, paramsJson);
@@ -224,14 +228,35 @@ public sealed class WebDriver : IDisposable
             ["args"] = new List<object?>(args),
         });
 
+    /// <summary>The async script executor: the page calls the injected callback
+    /// (last argument) to complete. Use for anything that must turn the event loop.</summary>
+    public JsonElement? ExecuteAsyncScript(string script, params object?[] args) =>
+        Execute("executeAsyncScript", new Dictionary<string, object?>
+        {
+            ["script"] = script,
+            ["args"] = new List<object?>(args),
+        });
+
     // ---- windows ----
     public IReadOnlyList<string> WindowHandles =>
         Execute("getWindowHandles", null)!.Value.EnumerateArray().Select(e => e.GetString()!).ToList();
 
     public string CurrentWindowHandle => Execute("getCurrentWindowHandle", null)!.Value.GetString()!;
 
+    public void SwitchToWindow(string handle) =>
+        Execute("switchToWindow", new Dictionary<string, object?> { ["handle"] = handle });
+    public JsonElement? MaximizeWindow() => Execute("maximizeWindow", null);
+    public JsonElement? MinimizeWindow() => Execute("minimizeWindow", null);
+    public JsonElement? FullscreenWindow() => Execute("fullscreenWindow", null);
     public JsonElement? SetWindowRect(IDictionary<string, object?> rect) => Execute("setWindowRect", rect);
     public JsonElement? GetWindowRect() => Execute("getWindowRect", null);
+
+    // ---- alerts ----
+    public void AcceptAlert() => Execute("acceptAlert", null);
+    public void DismissAlert() => Execute("dismissAlert", null);
+    public string AlertText => Execute("getAlertText", null)!.Value.GetString()!;
+    public void SendAlertText(string text) =>
+        Execute("setAlertValue", new Dictionary<string, object?> { ["text"] = text });
 
     // ---- cookies ----
     public void AddCookie(IDictionary<string, object?> cookie) =>
@@ -249,6 +274,9 @@ public sealed class WebDriver : IDisposable
 
     // ---- timeouts ----
     public void SetTimeouts(IDictionary<string, object?> timeouts) => Execute("setTimeout", timeouts);
+    public void SetPageLoadTimeout(int ms) => Execute("setTimeout", new Dictionary<string, object?> { ["pageLoad"] = ms });
+    public void SetScriptTimeout(int ms) => Execute("setTimeout", new Dictionary<string, object?> { ["script"] = ms });
+    public void ImplicitlyWait(int ms) => Execute("setTimeout", new Dictionary<string, object?> { ["implicit"] = ms });
 
     // ---- screenshots ----
     public string ScreenshotBase64() => Execute("screenshot", null)!.Value.GetString()!;

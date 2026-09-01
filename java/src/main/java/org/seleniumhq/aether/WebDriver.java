@@ -151,8 +151,14 @@ public final class WebDriver {
 
     // ---- the FFI seam ----
 
+    /**
+     * Issue any W3C command by name with a params map, returning the decoded
+     * {@code value} payload (or null). The generic escape hatch for commands
+     * this binding has no dedicated wrapper for (alerts, {@code switchToWindow},
+     * etc.) — e.g. {@code execute("acceptAlert", Map.of())}.
+     */
     @SuppressWarnings("unchecked")
-    Object execute(String command, Map<String, Object> params) {
+    public Object execute(String command, Map<String, Object> params) {
         int rc = Native.execute(handle, command, Json.encode(params == null ? Map.of() : params));
         if (rc != 0) {
             int code = Native.lastErrorCode(handle);
@@ -276,6 +282,10 @@ public final class WebDriver {
         return execute("executeScript", Map.of("script", script, "args", List.of(args)));
     }
 
+    public Object executeAsyncScript(String script, Object... args) {
+        return execute("executeAsyncScript", Map.of("script", script, "args", List.of(args)));
+    }
+
     // ---- windows ----
     @SuppressWarnings("unchecked")
     public List<String> windowHandles() {
@@ -284,6 +294,25 @@ public final class WebDriver {
 
     public String currentWindowHandle() {
         return (String) execute("getCurrentWindowHandle", null);
+    }
+
+    public void switchToWindow(String handle) {
+        execute("switchToWindow", Map.of("handle", handle));
+    }
+
+    @SuppressWarnings("unchecked")
+    public Map<String, Object> maximizeWindow() {
+        return (Map<String, Object>) execute("maximizeWindow", null);
+    }
+
+    @SuppressWarnings("unchecked")
+    public Map<String, Object> minimizeWindow() {
+        return (Map<String, Object>) execute("minimizeWindow", null);
+    }
+
+    @SuppressWarnings("unchecked")
+    public Map<String, Object> fullscreenWindow() {
+        return (Map<String, Object>) execute("fullscreenWindow", null);
     }
 
     @SuppressWarnings("unchecked")
@@ -329,9 +358,38 @@ public final class WebDriver {
         execute("clearActions", null);
     }
 
+    // ---- alerts ----
+    public void acceptAlert() {
+        execute("acceptAlert", null);
+    }
+
+    public void dismissAlert() {
+        execute("dismissAlert", null);
+    }
+
+    public String alertText() {
+        return (String) execute("getAlertText", null);
+    }
+
+    public void sendAlertText(String text) {
+        execute("setAlertValue", Map.of("text", text));
+    }
+
     // ---- timeouts ----
     public void setTimeouts(Map<String, Object> timeouts) {
         execute("setTimeout", timeouts);
+    }
+
+    public void setPageLoadTimeout(long ms) {
+        execute("setTimeout", Map.of("pageLoad", ms));
+    }
+
+    public void setScriptTimeout(long ms) {
+        execute("setTimeout", Map.of("script", ms));
+    }
+
+    public void implicitlyWait(long ms) {
+        execute("setTimeout", Map.of("implicit", ms));
     }
 
     // ---- screenshots ----
