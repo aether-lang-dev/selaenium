@@ -47,6 +47,13 @@ fn nif_route(name: String) -> String
 @external(erlang, "selenium_nif", "error_code")
 fn nif_error_code(w3c_error: String) -> Int
 
+// Read an environment variable as a String (empty when unset), via a tiny
+// Erlang FFI shim (selenium_ffi:getenv/1) that returns an Erlang binary —
+// os:getenv yields a char list, which is not a Gleam String. Lets
+// headless_chrome honor SEL_CHROME_BINARY without a gleam_erlang dependency.
+@external(erlang, "selenium_ffi", "getenv")
+fn getenv(name: String) -> String
+
 // ---- public types ----
 
 /// A live WebDriver session. Treat it as an opaque token.
@@ -149,9 +156,18 @@ pub fn chrome(command_executor: String, caps_json: String) -> Result(WebDriver, 
 }
 
 /// Convenience: a headless Chrome session with the standard launch args.
+///
+/// Honors `SEL_CHROME_BINARY` when set (a box with no system Chrome but a
+/// cached Chrome-for-Testing), adding `goog:chromeOptions.binary`.
 pub fn headless_chrome(command_executor: String) -> Result(WebDriver, WebDriverError) {
+  let args =
+    "\"args\":[\"--headless=new\",\"--no-sandbox\",\"--disable-gpu\",\"--disable-dev-shm-usage\"]"
+  let chrome_opts = case getenv("SEL_CHROME_BINARY") {
+    bin if bin != "" -> args <> ",\"binary\":\"" <> bin <> "\""
+    _ -> args
+  }
   let caps =
-    "{\"browserName\":\"chrome\",\"goog:chromeOptions\":{\"args\":[\"--headless=new\",\"--no-sandbox\",\"--disable-gpu\",\"--disable-dev-shm-usage\"]}}"
+    "{\"browserName\":\"chrome\",\"goog:chromeOptions\":{" <> chrome_opts <> "}}"
   chrome(command_executor, caps)
 }
 

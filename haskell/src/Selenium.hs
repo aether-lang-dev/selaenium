@@ -44,6 +44,7 @@ module Selenium
 import Control.Exception (Exception, throwIO)
 import Data.List (isInfixOf)
 import Foreign.Ptr (Ptr, nullPtr)
+import System.Environment (lookupEnv)
 
 import qualified Selenium.Native as N
 
@@ -122,11 +123,18 @@ chrome commandExecutor capsJson = do
       _ <- execute d "newSession" ("{\"capabilities\":{\"alwaysMatch\":" ++ capsJson ++ "}}")
       pure d
 
--- | A headless Chrome session with the standard launch args.
+-- | A headless Chrome session with the standard launch args. Honors
+-- @SEL_CHROME_BINARY@ when set (a box with no system Chrome but a cached
+-- Chrome-for-Testing), adding @goog:chromeOptions.binary@.
 headlessChrome :: String -> IO WebDriver
-headlessChrome commandExecutor =
+headlessChrome commandExecutor = do
+  mbin <- lookupEnv "SEL_CHROME_BINARY"
+  let binField = case mbin of
+        Just bin | not (null bin) -> ",\"binary\":\"" ++ bin ++ "\""
+        _ -> ""
+      args = "\"args\":[\"--headless=new\",\"--no-sandbox\",\"--disable-gpu\",\"--disable-dev-shm-usage\"]"
   chrome commandExecutor
-    "{\"browserName\":\"chrome\",\"goog:chromeOptions\":{\"args\":[\"--headless=new\",\"--no-sandbox\",\"--disable-gpu\",\"--disable-dev-shm-usage\"]}}"
+    ("{\"browserName\":\"chrome\",\"goog:chromeOptions\":{" ++ args ++ binField ++ "}}")
 
 -- | Execute a command by name with a JSON params object string. Returns the
 -- response @value@ as a JSON string, or throws 'WebDriverError'.

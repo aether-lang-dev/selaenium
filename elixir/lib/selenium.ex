@@ -28,13 +28,24 @@ defmodule Selenium do
     new(command_executor, caps)
   end
 
-  @doc "Convenience: a headless Chrome session with the standard launch args."
+  @doc """
+  Convenience: a headless Chrome session with the standard launch args.
+
+  Honors `SEL_CHROME_BINARY` when set (a box with no system Chrome but a cached
+  Chrome-for-Testing), pointing `goog:chromeOptions.binary` at it.
+  """
   def headless_chrome(command_executor) do
-    chrome(command_executor, %{
-      "goog:chromeOptions" => %{
-        "args" => ["--headless=new", "--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage"]
-      }
-    })
+    chrome_opts = %{
+      "args" => ["--headless=new", "--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage"]
+    }
+
+    chrome_opts =
+      case System.get_env("SEL_CHROME_BINARY") do
+        bin when is_binary(bin) and bin != "" -> Map.put(chrome_opts, "binary", bin)
+        _ -> chrome_opts
+      end
+
+    chrome(command_executor, %{"goog:chromeOptions" => chrome_opts})
   end
 
   defp new(command_executor, caps) do

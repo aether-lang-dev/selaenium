@@ -74,17 +74,18 @@ inline fun <R> chrome(
     }
 }
 
-/** As [chrome], with the standard headless launch args baked in. */
-inline fun <R> headlessChrome(commandExecutor: String, block: (WebDriver) -> R): R =
-    chrome(
-        commandExecutor,
-        mapOf(
-            "goog:chromeOptions" to mapOf(
-                "args" to listOf("--headless=new", "--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage"),
-            ),
-        ),
-        block,
+/**
+ * As [chrome], with the standard headless launch args baked in. Honors
+ * `SEL_CHROME_BINARY` when set (a box with no system Chrome but a cached
+ * Chrome-for-Testing), pointing `goog:chromeOptions.binary` at it.
+ */
+inline fun <R> headlessChrome(commandExecutor: String, block: (WebDriver) -> R): R {
+    val chromeOpts = linkedMapOf<String, Any?>(
+        "args" to listOf("--headless=new", "--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage"),
     )
+    System.getenv("SEL_CHROME_BINARY")?.takeIf { it.isNotEmpty() }?.let { chromeOpts["binary"] = it }
+    return chrome(commandExecutor, mapOf("goog:chromeOptions" to chromeOpts), block)
+}
 
 /**
  * Start a *local* Chrome session that spawns its own chromedriver via the

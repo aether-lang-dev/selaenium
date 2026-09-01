@@ -36,13 +36,20 @@ class Selenium {
         }
     }
 
-    /** As withChrome, with the standard headless launch args. */
+    /**
+     * As withChrome, with the standard headless launch args. Honors
+     * SEL_CHROME_BINARY when set (a box with no system Chrome but a cached
+     * Chrome-for-Testing), pointing goog:chromeOptions.binary at it.
+     */
     static <R> R withHeadlessChrome(String commandExecutor, Closure<R> body) {
-        withChrome(commandExecutor, [
-            'goog:chromeOptions': [
-                args: ['--headless=new', '--no-sandbox', '--disable-gpu', '--disable-dev-shm-usage']
-            ]
-        ], body)
+        def chromeOpts = [
+            args: ['--headless=new', '--no-sandbox', '--disable-gpu', '--disable-dev-shm-usage']
+        ]
+        def chromeBin = System.getenv('SEL_CHROME_BINARY')
+        if (chromeBin) {
+            chromeOpts.binary = chromeBin
+        }
+        withChrome(commandExecutor, ['goog:chromeOptions': chromeOpts], body)
     }
 
     /**
