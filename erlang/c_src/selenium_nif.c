@@ -35,6 +35,18 @@ extern char *aether_sel_embed_build_request(const char *name, const char *sessio
 extern int   aether_sel_embed_error_code(const char *w3c_error);
 extern void  aether_sel_embed_free_string(char *s);
 
+/* ---- TLS config (per session handle; set before newSession) ---- */
+extern void  aether_sel_embed_set_ca(void *h, const char *ca_path);
+extern void  aether_sel_embed_set_insecure(void *h, int on);
+
+/* ---- driver orchestration (opaque driver handle, independent of session) ---- */
+extern char *aether_sel_embed_resolve_driver(const char *browser, const char *hint);
+extern void *aether_sel_embed_launch_driver(const char *driver_path, int timeout_ms);
+extern void *aether_sel_embed_ensure_driver(const char *browser, const char *hint, int timeout_ms);
+extern char *aether_sel_embed_driver_url(void *dh);
+extern int   aether_sel_embed_driver_pid(void *dh);
+extern void  aether_sel_embed_stop_driver(void *dh);
+
 /* ---- atom-backed commands (isDisplayed / getAttribute / relative locators) ----
  * Shared JS atoms run in-page by the engine. The int-returning verbs leave their
  * result in last_value (drained the normal way, exactly like execute); 0 ok, a
@@ -217,6 +229,105 @@ static ERL_NIF_TERM nif_by_locator(ErlNifEnv *env, int argc, const ERL_NIF_TERM 
     enif_free(strategy);
     enif_free(value);
     return r;
+}
+
+/* ---- TLS config + driver orchestration ---- */
+
+static ERL_NIF_TERM nif_set_ca(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
+{
+    UNUSED(argc);
+    void *h;
+    if (!get_handle(env, argv[0], &h)) return enif_make_badarg(env);
+    char *ca = term_to_cstr(env, argv[1]);
+    if (!ca) return enif_make_badarg(env);
+    aether_sel_embed_set_ca(h, ca);
+    enif_free(ca);
+    return enif_make_atom(env, "ok");
+}
+
+static ERL_NIF_TERM nif_set_insecure(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
+{
+    UNUSED(argc);
+    void *h;
+    int on;
+    if (!get_handle(env, argv[0], &h)) return enif_make_badarg(env);
+    if (!enif_get_int(env, argv[1], &on)) return enif_make_badarg(env);
+    aether_sel_embed_set_insecure(h, on);
+    return enif_make_atom(env, "ok");
+}
+
+static ERL_NIF_TERM nif_resolve_driver(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
+{
+    UNUSED(argc);
+    char *browser = term_to_cstr(env, argv[0]);
+    char *hint = term_to_cstr(env, argv[1]);
+    if (!browser || !hint) {
+        if (browser) enif_free(browser);
+        if (hint) enif_free(hint);
+        return enif_make_badarg(env);
+    }
+    ERL_NIF_TERM r = take_cstr(env, aether_sel_embed_resolve_driver(browser, hint));
+    enif_free(browser);
+    enif_free(hint);
+    return r;
+}
+
+static ERL_NIF_TERM nif_launch_driver(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
+{
+    UNUSED(argc);
+    char *path = term_to_cstr(env, argv[0]);
+    int timeout_ms;
+    if (!path) return enif_make_badarg(env);
+    if (!enif_get_int(env, argv[1], &timeout_ms)) { enif_free(path); return enif_make_badarg(env); }
+    void *dh = aether_sel_embed_launch_driver(path, timeout_ms);
+    enif_free(path);
+    return make_handle(env, dh);
+}
+
+static ERL_NIF_TERM nif_ensure_driver(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
+{
+    UNUSED(argc);
+    char *browser = term_to_cstr(env, argv[0]);
+    char *hint = term_to_cstr(env, argv[1]);
+    int timeout_ms;
+    if (!browser || !hint) {
+        if (browser) enif_free(browser);
+        if (hint) enif_free(hint);
+        return enif_make_badarg(env);
+    }
+    if (!enif_get_int(env, argv[2], &timeout_ms)) {
+        enif_free(browser); enif_free(hint);
+        return enif_make_badarg(env);
+    }
+    void *dh = aether_sel_embed_ensure_driver(browser, hint, timeout_ms);
+    enif_free(browser);
+    enif_free(hint);
+    return make_handle(env, dh);
+}
+
+static ERL_NIF_TERM nif_driver_url(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
+{
+    UNUSED(argc);
+    void *dh;
+    if (!get_handle(env, argv[0], &dh)) return enif_make_badarg(env);
+    return take_cstr(env, aether_sel_embed_driver_url(dh));
+}
+
+static ERL_NIF_TERM nif_driver_pid(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
+{
+    UNUSED(argc);
+    void *dh;
+    if (!get_handle(env, argv[0], &dh)) return enif_make_badarg(env);
+    return enif_make_int(env, aether_sel_embed_driver_pid(dh));
+}
+
+static ERL_NIF_TERM nif_stop_driver(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
+{
+    UNUSED(argc);
+    void *dh;
+    if (!get_handle(env, argv[0], &dh)) return enif_make_badarg(env);
+    aether_sel_embed_stop_driver(dh);
+    return enif_make_atom(env, "ok");
 }
 
 static ERL_NIF_TERM nif_route(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
@@ -632,6 +743,14 @@ static ErlNifFunc nif_funcs[] = {
     {"last_error",      1, nif_last_error,      0},
     {"session_id",      1, nif_session_id,      0},
     {"by_locator",      2, nif_by_locator,      0},
+    {"set_ca",          2, nif_set_ca,          0},
+    {"set_insecure",    2, nif_set_insecure,    0},
+    {"resolve_driver",  2, nif_resolve_driver,  0},
+    {"launch_driver",   2, nif_launch_driver,   0},
+    {"ensure_driver",   3, nif_ensure_driver,   0},
+    {"driver_url",      1, nif_driver_url,      0},
+    {"driver_pid",      1, nif_driver_pid,      0},
+    {"stop_driver",     1, nif_stop_driver,     0},
     {"route",           1, nif_route,           0},
     {"error_code",      1, nif_error_code,      0},
     {"bidi_open",        1, nif_bidi_open,        0},

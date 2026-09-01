@@ -12,11 +12,46 @@
 -define(W3C_KEY, <<"element-6066-11e4-a52e-4f735466cecf">>).
 
 main(_) ->
+    %% Driver orchestration runs first — it self-spawns a driver via the engine,
+    %% independent of any chromedriver on PATH.
+    driver_orchestration(),
     case which("chromedriver") of
         false ->
             io:format("SKIPPED: chromedriver not on PATH~n"), halt(0);
         DriverBin ->
             run(DriverBin)
+    end.
+
+%% Driver orchestration: resolve + spawn a chromedriver in-binding (no driver on
+%% PATH, no Grid), drive a page through the self-launched driver, tear it down.
+%% Self-skips if the engine cannot resolve a driver here (offline, empty cache).
+driver_orchestration() ->
+    case selenium:resolve_driver(<<"chrome">>) of
+        <<>> ->
+            io:format("SKIPPED: engine cannot resolve a chromedriver (offline, no cache)~n");
+        Path ->
+            true = filelib:is_regular(Path),
+            io:format("  ok: resolve_driver -> ~s~n", [Path]),
+            {ok, Dh} = selenium:ensure_driver(<<"chrome">>),
+            Url = selenium:driver_url(Dh),
+            true = binary:part(Url, 0, 4) =:= <<"http">>,
+            true = selenium:driver_pid(Dh) > 0,
+            ok = selenium:stop_driver(Dh),
+            0 = selenium:driver_pid(Dh),
+            io:format("  ok: ensure_driver -> url/pid, stop terminated it~n"),
+            {ok, D, Dh2} = selenium:local_chrome(chrome_opts()),
+            try
+                true = byte_size(selenium:session_id(D)) > 0,
+                {ok, _} = selenium:get(D, <<"data:text/html,",
+                    (uri_pct(<<"<title>Aether Selenium</title><h1 id='hdr'>Hello</h1>">>))/binary>>),
+                {ok, <<"Aether Selenium">>} = selenium:title(D),
+                {ok, Hdr} = selenium:find_element(D, <<"id">>, <<"hdr">>),
+                {ok, <<"Hello">>} = selenium:element_text(D, Hdr),
+                io:format("  ok: local_chrome (self-spawned driver) drove a page~n")
+            after
+                selenium:quit(D),
+                selenium:stop_driver(Dh2)
+            end
     end.
 
 run(DriverBin) ->

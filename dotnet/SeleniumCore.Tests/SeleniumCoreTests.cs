@@ -144,6 +144,48 @@ namespace SeleniumCore.Tests
             }
         }
 
+        // Driver orchestration over the engine: resolve + spawn a chromedriver
+        // in-binding (no chromedriver on PATH, no Grid), drive a page through the
+        // self-launched driver, and tear it down. Self-skips if the engine can't
+        // resolve a driver here (offline, empty cache).
+        [SkippableFact]
+        public void DriverOrchestration()
+        {
+            string path = WebDriver.ResolveDriver("chrome");
+            Skip.If(string.IsNullOrEmpty(path), "engine cannot resolve a chromedriver (offline, no cache)");
+            System.IO.File.Exists(path).ShouldBeTrue($"resolve_driver returned a non-file: {path}");
+
+            // ensure_driver spawns it; the handle exposes url + pid.
+            DriverProcess proc = WebDriver.EnsureDriver("chrome")!;
+            proc.ShouldNotBeNull();
+            try
+            {
+                proc.Url.ShouldStartWith("http");
+                proc.Pid.ShouldBeGreaterThan(0);
+            }
+            finally
+            {
+                proc.Stop();
+                proc.Pid.ShouldBe(0);
+            }
+
+            // LocalChrome spawns its own driver, runs a session, and stops it on Quit.
+            var chromeArgs = new List<object?> { "--headless=new", "--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage" };
+            var chromeOpts = new Dictionary<string, object?> { ["args"] = chromeArgs };
+            string? chromeBin = Environment.GetEnvironmentVariable("SEL_CHROME_BINARY");
+            if (!string.IsNullOrEmpty(chromeBin)) chromeOpts["binary"] = chromeBin;
+            var d = WebDriver.LocalChrome(new Dictionary<string, object?> { ["goog:chromeOptions"] = chromeOpts });
+            try
+            {
+                d.SessionId.Length.ShouldBeGreaterThan(0);
+                d.Get("data:text/html;charset=utf-8," +
+                      Uri.EscapeDataString("<title>Aether Selenium</title><h1 id='hdr'>Hello</h1>"));
+                d.Title.ShouldBe("Aether Selenium");
+                d.FindElement(By.Id, "hdr").Text.ShouldBe("Hello");
+            }
+            finally { d.Quit(); }
+        }
+
         // WebDriver-BiDi over the same engine: subscribe to console log entries,
         // emit one via the classic script channel, and receive the event
         // asynchronously over the demux — the bidirectional half, driven from C#.

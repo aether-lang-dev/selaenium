@@ -30,6 +30,14 @@
     by_locator/2,
     route/1,
     error_code/1,
+    set_ca/2,
+    set_insecure/2,
+    resolve_driver/2,
+    launch_driver/2,
+    ensure_driver/3,
+    driver_url/1,
+    driver_pid/1,
+    stop_driver/1,
     bidi_open/1,
     bidi_close/1,
     bidi_send/4,
@@ -87,6 +95,16 @@ session_id(_Handle) -> erlang:nif_error(not_loaded).
 by_locator(_Strategy, _Value) -> erlang:nif_error(not_loaded).
 route(_Name) -> erlang:nif_error(not_loaded).
 error_code(_W3cError) -> erlang:nif_error(not_loaded).
+
+%% ---- TLS config + driver orchestration ----
+set_ca(_Handle, _CaPath) -> erlang:nif_error(not_loaded).
+set_insecure(_Handle, _On) -> erlang:nif_error(not_loaded).
+resolve_driver(_Browser, _Hint) -> erlang:nif_error(not_loaded).
+launch_driver(_DriverPath, _TimeoutMs) -> erlang:nif_error(not_loaded).
+ensure_driver(_Browser, _Hint, _TimeoutMs) -> erlang:nif_error(not_loaded).
+driver_url(_Dh) -> erlang:nif_error(not_loaded).
+driver_pid(_Dh) -> erlang:nif_error(not_loaded).
+stop_driver(_Dh) -> erlang:nif_error(not_loaded).
 
 %% ---- WebDriver-BiDi (over the session's webSocketUrl) ----
 bidi_open(_WsUrl) -> erlang:nif_error(not_loaded).

@@ -38,6 +38,16 @@ typedef char* (*fn_str)(const char*);  /* cstr -> owned string */
 typedef int   (*fn_strint)(const char*);
 typedef void  (*fn_free)(char*);
 
+/* ---- TLS config + driver orchestration ---- */
+typedef void  (*fn_set_ca)(void*, const char*);          /* set_ca(session, path) */
+typedef void  (*fn_set_insecure)(void*, int);            /* set_insecure(session, on) */
+typedef char* (*fn_resolve_driver)(const char*, const char*); /* -> owned path string */
+typedef void* (*fn_launch_driver)(const char*, int);     /* -> driver handle */
+typedef void* (*fn_ensure_driver)(const char*, const char*, int); /* -> driver handle */
+typedef char* (*fn_driver_url)(void*);                   /* -> owned url string */
+typedef int   (*fn_driver_pid)(void*);                   /* -> pid */
+typedef void  (*fn_stop_driver)(void*);
+
 /* ---- WebDriver-BiDi ABI (over the session's negotiated webSocketUrl) ---- */
 typedef void* (*fn_bidi_open)(const char*);              /* ws_url -> handle */
 typedef void  (*fn_bidi_close)(void*);
@@ -104,6 +114,15 @@ static struct {
     fn_atom2            get_attribute;
     fn_str              atom_str_arg;
     fn_atom2            find_relative;
+    /* ---- TLS + driver orchestration ---- */
+    fn_set_ca           set_ca;
+    fn_set_insecure     set_insecure;
+    fn_resolve_driver   resolve_driver;
+    fn_launch_driver    launch_driver;
+    fn_ensure_driver    ensure_driver;
+    fn_driver_url       driver_url;
+    fn_driver_pid       driver_pid;
+    fn_stop_driver      stop_driver;
 } ENGINE;
 
 static int load_symbols(lua_State* L, void* lib, const char* path) {
@@ -158,6 +177,14 @@ static int load_symbols(lua_State* L, void* lib, const char* path) {
     SYM(get_attribute,    "aether_sel_embed_get_attribute");
     SYM(atom_str_arg,     "aether_sel_embed_atom_str_arg");
     SYM(find_relative,    "aether_sel_embed_find_relative");
+    SYM(set_ca,           "aether_sel_embed_set_ca");
+    SYM(set_insecure,     "aether_sel_embed_set_insecure");
+    SYM(resolve_driver,   "aether_sel_embed_resolve_driver");
+    SYM(launch_driver,    "aether_sel_embed_launch_driver");
+    SYM(ensure_driver,    "aether_sel_embed_ensure_driver");
+    SYM(driver_url,       "aether_sel_embed_driver_url");
+    SYM(driver_pid,       "aether_sel_embed_driver_pid");
+    SYM(stop_driver,      "aether_sel_embed_stop_driver");
 #undef SYM
 
     ENGINE.handle = lib;
@@ -493,6 +520,59 @@ static int l_find_relative(lua_State* L) {
     return 1;
 }
 
+/* ---- TLS config + driver orchestration ---- */
+static int l_set_ca(lua_State* L) {
+    void* h = check_handle(L, 1);
+    ENGINE.set_ca(h, luaL_checkstring(L, 2));
+    return 0;
+}
+static int l_set_insecure(lua_State* L) {
+    void* h = check_handle(L, 1);
+    ENGINE.set_insecure(h, (int)luaL_checkinteger(L, 2));
+    return 0;
+}
+static int l_resolve_driver(lua_State* L) {
+    engine_load(L, NULL);
+    const char* browser = luaL_checkstring(L, 1);
+    const char* hint = luaL_checkstring(L, 2);
+    push_owned(L, ENGINE.resolve_driver(browser, hint));
+    return 1;
+}
+static int l_launch_driver(lua_State* L) {
+    engine_load(L, NULL);
+    const char* path = luaL_checkstring(L, 1);
+    int timeout_ms = (int)luaL_checkinteger(L, 2);
+    void* dh = ENGINE.launch_driver(path, timeout_ms);
+    if (!dh) { lua_pushnil(L); return 1; }
+    lua_pushlightuserdata(L, dh);
+    return 1;
+}
+static int l_ensure_driver(lua_State* L) {
+    engine_load(L, NULL);
+    const char* browser = luaL_checkstring(L, 1);
+    const char* hint = luaL_checkstring(L, 2);
+    int timeout_ms = (int)luaL_checkinteger(L, 3);
+    void* dh = ENGINE.ensure_driver(browser, hint, timeout_ms);
+    if (!dh) { lua_pushnil(L); return 1; }
+    lua_pushlightuserdata(L, dh);
+    return 1;
+}
+static int l_driver_url(lua_State* L) {
+    void* dh = check_handle(L, 1);
+    push_owned(L, ENGINE.driver_url(dh));
+    return 1;
+}
+static int l_driver_pid(lua_State* L) {
+    void* dh = check_handle(L, 1);
+    lua_pushinteger(L, ENGINE.driver_pid(dh));
+    return 1;
+}
+static int l_stop_driver(lua_State* L) {
+    void* dh = check_handle(L, 1);
+    ENGINE.stop_driver(dh);
+    return 0;
+}
+
 static const luaL_Reg MODULE[] = {
     {"open",            l_open},
     {"close",           l_close},
@@ -533,6 +613,14 @@ static const luaL_Reg MODULE[] = {
     {"get_attribute",     l_get_attribute},
     {"atom_str_arg",      l_atom_str_arg},
     {"find_relative",     l_find_relative},
+    {"set_ca",            l_set_ca},
+    {"set_insecure",      l_set_insecure},
+    {"resolve_driver",    l_resolve_driver},
+    {"launch_driver",     l_launch_driver},
+    {"ensure_driver",     l_ensure_driver},
+    {"driver_url",        l_driver_url},
+    {"driver_pid",        l_driver_pid},
+    {"stop_driver",       l_stop_driver},
     {NULL, NULL},
 };
 

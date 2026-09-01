@@ -140,6 +140,32 @@ internal static class NativeMethods
     internal static extern IntPtr BidiNetworkSetCacheBehavior(IntPtr handle, int id, string behavior, int timeoutMs);
 
     // ---- string ownership ----
+    // ---- TLS config (per session handle; set before newSession) ----
+    [DllImport(Lib, EntryPoint = "aether_sel_embed_set_ca", CharSet = CharSet.Ansi)]
+    internal static extern void SetCa(IntPtr handle, string caPath);
+
+    [DllImport(Lib, EntryPoint = "aether_sel_embed_set_insecure")]
+    internal static extern void SetInsecure(IntPtr handle, int on);
+
+    // ---- driver orchestration (opaque driver handle, independent of session) ----
+    [DllImport(Lib, EntryPoint = "aether_sel_embed_resolve_driver", CharSet = CharSet.Ansi)]
+    internal static extern IntPtr ResolveDriver(string browser, string hint);
+
+    [DllImport(Lib, EntryPoint = "aether_sel_embed_launch_driver", CharSet = CharSet.Ansi)]
+    internal static extern IntPtr LaunchDriver(string driverPath, int timeoutMs);
+
+    [DllImport(Lib, EntryPoint = "aether_sel_embed_ensure_driver", CharSet = CharSet.Ansi)]
+    internal static extern IntPtr EnsureDriver(string browser, string hint, int timeoutMs);
+
+    [DllImport(Lib, EntryPoint = "aether_sel_embed_driver_url")]
+    internal static extern IntPtr DriverUrl(IntPtr dh);
+
+    [DllImport(Lib, EntryPoint = "aether_sel_embed_driver_pid")]
+    internal static extern int DriverPid(IntPtr dh);
+
+    [DllImport(Lib, EntryPoint = "aether_sel_embed_stop_driver")]
+    internal static extern void StopDriver(IntPtr dh);
+
     [DllImport(Lib, EntryPoint = "aether_sel_embed_free_string")]
     internal static extern void FreeString(IntPtr s);
 

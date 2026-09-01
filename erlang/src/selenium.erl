@@ -13,7 +13,11 @@
 -module(selenium).
 
 -export([
-    chrome/1, chrome/2, headless_chrome/1,
+    chrome/1, chrome/2, chrome/3, headless_chrome/1,
+    resolve_driver/1, resolve_driver/2, launch_driver/1, launch_driver/2,
+    ensure_driver/1, ensure_driver/2, ensure_driver/3,
+    driver_url/1, driver_pid/1, stop_driver/1,
+    local_chrome/0, local_chrome/1,
     get/2, current_url/1, title/1, page_source/1, back/1, forward/1, refresh/1,
     find_element/3, find_elements/3,
     click/2, send_keys/3, element_text/2, tag_name/2, element_property/3, element_rect/2,
@@ -51,8 +55,14 @@
 chrome(CommandExecutor) -> chrome(CommandExecutor, #{}).
 
 chrome(CommandExecutor, Options) when is_map(Options) ->
+    chrome(CommandExecutor, Options, #{}).
+
+%% TlsOpts (optional): #{ca_path => <<...>>, insecure => true} — TLS trust config
+%% applied on the handle BEFORE newSession. ca_path pins a private-CA bundle;
+%% insecure skips verification (self-signed dev/staging Grid).
+chrome(CommandExecutor, Options, TlsOpts) when is_map(Options), is_map(TlsOpts) ->
     Caps = maps:merge(#{<<"browserName">> => <<"chrome">>}, Options),
-    new(CommandExecutor, Caps).
+    new(CommandExecutor, Caps, TlsOpts).
 
 headless_chrome(CommandExecutor) ->
     chrome(CommandExecutor, #{
@@ -62,11 +72,23 @@ headless_chrome(CommandExecutor) ->
         }
     }).
 
-new(CommandExecutor, Caps) ->
+new(CommandExecutor, Caps) -> new(CommandExecutor, Caps, #{}).
+
+new(CommandExecutor, Caps, TlsOpts) ->
     Handle = selenium_nif:open(to_bin(CommandExecutor)),
     case Handle of
         0 -> {error, {-1, <<"failed to open session handle">>}};
         _ ->
+            %% TLS trust config must land on the handle before newSession.
+            case maps:get(ca_path, TlsOpts, undefined) of
+                CaPath when is_binary(CaPath), byte_size(CaPath) > 0 ->
+                    selenium_nif:set_ca(Handle, CaPath);
+                _ -> ok
+            end,
+            case maps:get(insecure, TlsOpts, false) of
+                true -> selenium_nif:set_insecure(Handle, 1);
+                _ -> ok
+            end,
             %% Request a BiDi channel so bidi_* is available on demand; the
             %% WebSocket itself opens lazily (a classic script never opens it).
             BidiCaps = maps:put(<<"webSocketUrl">>, true, Caps),
@@ -77,6 +99,50 @@ new(CommandExecutor, Caps) ->
                     {ok, Handle};
                 Err -> selenium_nif:close(Handle), Err
             end
+    end.
+
+%% ---- driver orchestration (spawn/adopt a driver process in-binding) ----
+%% The engine resolves, download-or-caches, and launches a browser driver itself,
+%% so a caller needs neither a driver on PATH nor a running Grid. A driver handle
+%% (a non-zero integer) is independent of the W3C session handle.
+
+resolve_driver(Browser) -> resolve_driver(Browser, <<>>).
+resolve_driver(Browser, Hint) ->
+    selenium_nif:resolve_driver(to_bin(Browser), to_bin(Hint)).
+
+launch_driver(DriverPath) -> launch_driver(DriverPath, 15000).
+launch_driver(DriverPath, TimeoutMs) ->
+    case selenium_nif:launch_driver(to_bin(DriverPath), TimeoutMs) of
+        0 -> {error, driver_launch_failed};
+        Dh -> {ok, Dh}
+    end.
+
+ensure_driver() -> ensure_driver(<<"chrome">>).
+ensure_driver(Browser) -> ensure_driver(Browser, <<>>, 15000).
+ensure_driver(Browser, Hint) -> ensure_driver(Browser, Hint, 15000).
+ensure_driver(Browser, Hint, TimeoutMs) ->
+    case selenium_nif:ensure_driver(to_bin(Browser), to_bin(Hint), TimeoutMs) of
+        0 -> {error, driver_ensure_failed};
+        Dh -> {ok, Dh}
+    end.
+
+driver_url(Dh) -> selenium_nif:driver_url(Dh).
+driver_pid(Dh) -> selenium_nif:driver_pid(Dh).
+stop_driver(Dh) -> selenium_nif:stop_driver(Dh), ok.
+
+%% A Chrome session that spawns its OWN chromedriver via the engine — no driver
+%% on PATH, no Grid. Returns {ok, Handle, DriverHandle}; the caller quits the
+%% session (quit/1) and stops the driver (stop_driver/1). Options is the caps map.
+local_chrome() -> local_chrome(#{}).
+local_chrome(Options) when is_map(Options) ->
+    case ensure_driver(<<"chrome">>, <<>>, 15000) of
+        {ok, Dh} ->
+            Url = driver_url(Dh),
+            case chrome(Url, Options) of
+                {ok, Handle} -> {ok, Handle, Dh};
+                Err -> stop_driver(Dh), Err
+            end;
+        Err -> Err
     end.
 
 %% value.capabilities.webSocketUrl — the BiDi endpoint for this session, or <<>>.

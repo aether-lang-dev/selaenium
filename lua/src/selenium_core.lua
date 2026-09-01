@@ -216,10 +216,17 @@ end
 local WebDriver = {}
 WebDriver.__index = WebDriver
 
-local function new(command_executor, caps)
+local function new(command_executor, caps, tls)
   local handle = native.open(command_executor)
   if not handle then raise(-1, "failed to open session handle") end
   local self = setmetatable({ handle = handle }, WebDriver)
+  -- TLS trust config must land on the handle BEFORE newSession (the first
+  -- request). ca_path pins a private-CA bundle; insecure skips verification
+  -- entirely (self-signed dev/staging Grid — trust the host out-of-band).
+  if tls then
+    if tls.ca_path and #tls.ca_path > 0 then native.set_ca(handle, tls.ca_path) end
+    if tls.insecure then native.set_insecure(handle, 1) end
+  end
   -- Request a BiDi channel so :bidi() is available on demand; the WebSocket
   -- itself opens lazily (a classic script never opens it).
   local bidi_caps = { webSocketUrl = true }
@@ -235,18 +242,87 @@ local function new(command_executor, caps)
   return self
 end
 
-function M.chrome(command_executor, options)
+-- options: a raw capabilities table merged under browserName=chrome.
+-- tls (optional): { ca_path=..., insecure=... } — applied before newSession.
+function M.chrome(command_executor, options, tls)
   local caps = { browserName = "chrome" }
   if options then for k, v in pairs(options) do caps[k] = v end end
-  return new(command_executor, caps)
+  return new(command_executor, caps, tls)
 end
 
-function M.headless_chrome(command_executor)
+function M.headless_chrome(command_executor, tls)
   return M.chrome(command_executor, {
     ["goog:chromeOptions"] = {
       args = { "--headless=new", "--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage" },
     },
-  })
+  }, tls)
+end
+
+-- ==== driver orchestration (spawn/adopt a driver process in-binding) ====
+-- The engine resolves, download-or-caches, and launches a browser driver itself,
+-- so a caller needs neither a driver on PATH nor a running Grid.
+
+-- Resolve the local driver binary path for `browser` without launching it.
+-- `hint` pins a version/path; "" auto-detects. Returns "" if none resolvable.
+function M.resolve_driver(browser, hint)
+  return native.resolve_driver(browser or "chrome", hint or "")
+end
+
+-- A driver process launched by the engine. :url()/:pid()/:stop() (idempotent).
+local DriverProcess = {}
+DriverProcess.__index = DriverProcess
+
+local function wrap_driver(handle)
+  if not handle then return nil end
+  return setmetatable({ handle = handle }, DriverProcess)
+end
+
+function DriverProcess:url()
+  if not self.handle then return "" end
+  return native.driver_url(self.handle)
+end
+
+function DriverProcess:pid()
+  if not self.handle then return 0 end
+  return native.driver_pid(self.handle)
+end
+
+function DriverProcess:stop()
+  if self.handle then
+    native.stop_driver(self.handle)
+    self.handle = nil
+  end
+end
+
+M.DriverProcess = DriverProcess
+
+-- Launch a driver at an explicit binary path. Returns a DriverProcess or nil.
+function M.launch_driver(driver_path, timeout_ms)
+  return wrap_driver(native.launch_driver(driver_path, timeout_ms or 15000))
+end
+
+-- Resolve (detect/download/cache) AND launch a driver in one step.
+function M.ensure_driver(browser, hint, timeout_ms)
+  return wrap_driver(native.ensure_driver(browser or "chrome", hint or "", timeout_ms or 15000))
+end
+
+-- A Chrome session that spawns its OWN chromedriver via the engine — no driver
+-- on PATH, no Grid. The driver is stopped on :quit(). opts:
+--   { options=<caps>, hint="", timeout_ms=15000, ca_path=..., insecure=... }
+function M.local_chrome(opts)
+  opts = opts or {}
+  local proc = M.ensure_driver("chrome", opts.hint or "", opts.timeout_ms or 15000)
+  if not proc then raise(-1, "could not resolve/launch chromedriver") end
+  local ok, driver = pcall(function()
+    return M.chrome(proc:url(), opts.options,
+      { ca_path = opts.ca_path, insecure = opts.insecure })
+  end)
+  if not ok then
+    proc:stop()
+    error(driver, 0)
+  end
+  driver._owned_driver = proc
+  return driver
 end
 
 -- The FFI seam: one command with a params table. Returns the decoded value, or
@@ -604,6 +680,11 @@ function WebDriver:quit()
   local ok, err = pcall(function() self:execute("quit", {}) end)
   native.close(self.handle)
   self.handle = nil
+  -- Stop a driver this session spawned (local_chrome), if any.
+  if self._owned_driver ~= nil then
+    self._owned_driver:stop()
+    self._owned_driver = nil
+  end
   if not ok then error(err, 0) end
 end
 

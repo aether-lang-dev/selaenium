@@ -21,13 +21,28 @@ public sealed class WebDriver : IDisposable
     private IntPtr _handle;
     private readonly string _wsUrl;
     private BiDi? _bidi;
+    // A driver process this session owns (set by LocalChrome); stopped on Quit/
+    // Dispose. Null for sessions against a caller-supplied URL.
+    private DriverProcess? _ownedDriver;
 
-    private WebDriver(string commandExecutor, IDictionary<string, object?> capabilities)
+    private WebDriver(string commandExecutor, IDictionary<string, object?> capabilities,
+                      string? caPath = null, bool insecure = false)
     {
         _handle = NativeMethods.Open(commandExecutor);
         if (_handle == IntPtr.Zero)
         {
             throw new WebDriverError("failed to open session handle", -1);
+        }
+        // TLS trust config must land on the handle BEFORE newSession (the first
+        // request). caPath pins a private-CA bundle; insecure skips verification
+        // entirely (self-signed dev/staging Grid — trust the host out-of-band).
+        if (!string.IsNullOrEmpty(caPath))
+        {
+            NativeMethods.SetCa(_handle, caPath);
+        }
+        if (insecure)
+        {
+            NativeMethods.SetInsecure(_handle, 1);
         }
         // Request a BiDi channel so `.Bidi` is available on demand; the channel
         // itself is opened lazily (a classic script never opens the WebSocket).
@@ -51,7 +66,8 @@ public sealed class WebDriver : IDisposable
     /// <summary>Pin an explicit native library path (wins over env/bundled).</summary>
     public static void ConfigureNativeLib(string path) => NativeLoader.Configure(path);
 
-    public static WebDriver Chrome(string commandExecutor, IDictionary<string, object?>? options = null)
+    public static WebDriver Chrome(string commandExecutor, IDictionary<string, object?>? options = null,
+                                   string? caPath = null, bool insecure = false)
     {
         var caps = new Dictionary<string, object?> { ["browserName"] = "chrome" };
         if (options != null)
@@ -61,7 +77,7 @@ public sealed class WebDriver : IDisposable
                 caps[kv.Key] = kv.Value;
             }
         }
-        return new WebDriver(commandExecutor, caps);
+        return new WebDriver(commandExecutor, caps, caPath, insecure);
     }
 
     public static WebDriver HeadlessChrome(string commandExecutor) =>
@@ -288,6 +304,8 @@ public sealed class WebDriver : IDisposable
         finally
         {
             CloseHandle();
+            _ownedDriver?.Stop();
+            _ownedDriver = null;
         }
     }
 
@@ -299,6 +317,8 @@ public sealed class WebDriver : IDisposable
             _bidi = null;
         }
         CloseHandle();
+        _ownedDriver?.Stop();
+        _ownedDriver = null;
     }
 
     private void CloseHandle()
@@ -310,8 +330,90 @@ public sealed class WebDriver : IDisposable
         }
     }
 
+    // ---- driver orchestration (spawn/adopt a driver process in-binding) ------
+    // The engine can resolve, download-or-cache, and launch a browser driver
+    // itself — so a caller needs neither a driver on PATH nor a running Grid.
+
+    /// <summary>Resolve the local driver binary path for <paramref name="browser"/>
+    /// without launching it (detect/download/cache as needed). <paramref name="hint"/>
+    /// pins a version/path; "" auto-detects. Returns "" if none resolvable.</summary>
+    public static string ResolveDriver(string browser = "chrome", string hint = "") =>
+        NativeMethods.TakeString(NativeMethods.ResolveDriver(browser, hint));
+
+    /// <summary>Launch a driver at an explicit binary path. Returns a
+    /// <see cref="DriverProcess"/>, or null if it did not come up in time.</summary>
+    public static DriverProcess? LaunchDriver(string driverPath, int timeoutMs = 15000)
+    {
+        IntPtr h = NativeMethods.LaunchDriver(driverPath, timeoutMs);
+        return h == IntPtr.Zero ? null : new DriverProcess(h);
+    }
+
+    /// <summary>Resolve (detect/download/cache) AND launch a driver for
+    /// <paramref name="browser"/> in one step. Returns a running
+    /// <see cref="DriverProcess"/>, or null if none could be resolved/launched.</summary>
+    public static DriverProcess? EnsureDriver(string browser = "chrome", string hint = "", int timeoutMs = 15000)
+    {
+        IntPtr h = NativeMethods.EnsureDriver(browser, hint, timeoutMs);
+        return h == IntPtr.Zero ? null : new DriverProcess(h);
+    }
+
+    /// <summary>A Chrome session that spawns its OWN chromedriver via the engine —
+    /// no driver on PATH, no Grid. The driver process is stopped on Quit/Dispose.
+    /// Throws <see cref="WebDriverError"/> if no driver can be resolved/launched.</summary>
+    public static WebDriver LocalChrome(IDictionary<string, object?>? options = null, string hint = "",
+                                        int timeoutMs = 15000, string? caPath = null, bool insecure = false)
+    {
+        DriverProcess proc = EnsureDriver("chrome", hint, timeoutMs)
+            ?? throw new WebDriverError("could not resolve/launch chromedriver", -1);
+        try
+        {
+            var caps = new Dictionary<string, object?> { ["browserName"] = "chrome" };
+            if (options != null)
+            {
+                foreach (var kv in options)
+                {
+                    caps[kv.Key] = kv.Value;
+                }
+            }
+            var driver = new WebDriver(proc.Url, caps, caPath, insecure);
+            driver._ownedDriver = proc;
+            return driver;
+        }
+        catch
+        {
+            proc.Stop();
+            throw;
+        }
+    }
+
     // ---- pure engine helpers ----
     public static string Route(string command) => NativeMethods.TakeString(NativeMethods.Route(command));
     public static int ErrorCode(string w3cError) => NativeMethods.ErrorCode(w3cError);
     public static string Locator(string by, string value) => NativeMethods.TakeString(NativeMethods.ByLocator(by, value));
+}
+
+/// <summary>A driver process launched by the engine. Owns the opaque driver
+/// handle (independent of any session); call <see cref="Stop"/> to terminate it.</summary>
+public sealed class DriverProcess
+{
+    private IntPtr _handle;
+
+    internal DriverProcess(IntPtr handle) => _handle = handle;
+
+    /// <summary>The base URL the driver is listening on — pass to
+    /// <see cref="WebDriver.Chrome"/> as the command executor.</summary>
+    public string Url => _handle == IntPtr.Zero ? string.Empty
+        : NativeMethods.TakeString(NativeMethods.DriverUrl(_handle));
+
+    /// <summary>The driver process id (0 if not running).</summary>
+    public int Pid => _handle == IntPtr.Zero ? 0 : NativeMethods.DriverPid(_handle);
+
+    public void Stop()
+    {
+        if (_handle != IntPtr.Zero)
+        {
+            NativeMethods.StopDriver(_handle);
+            _handle = IntPtr.Zero;
+        }
+    }
 }

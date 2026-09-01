@@ -5,18 +5,55 @@
 --   SEL_CHROMEDRIVER_URL, SEL_BASE_URL  (absent = skip)
 local s = require("selenium_core")
 
-local cd_url = os.getenv("SEL_CHROMEDRIVER_URL")
-local base = os.getenv("SEL_BASE_URL")
-if not cd_url or not base then
-  print("SKIPPED: SEL_CHROMEDRIVER_URL / SEL_BASE_URL not set (no chromedriver)")
-  os.exit(0)
-end
-
 local function assert_eq(got, want, label)
   if got ~= want then
     print("FAIL: " .. label .. " — got '" .. tostring(got) .. "' want '" .. tostring(want) .. "'")
     os.exit(1)
   end
+end
+
+-- ---- driver orchestration (self-spawned driver; no chromedriver on PATH) ----
+-- Runs regardless of the SEL_CHROMEDRIVER_URL harness below; self-skips only if
+-- the engine cannot resolve a driver here (offline, empty cache).
+do
+  local sel_chrome_bin = os.getenv("SEL_CHROME_BINARY")
+  local path = s.resolve_driver("chrome")
+  if path == "" then
+    print("SKIPPED: engine cannot resolve a chromedriver (offline, no cache)")
+  else
+    local f = io.open(path, "r")
+    assert(f, "resolve_driver returned a non-file: " .. path)
+    f:close()
+    print("  ok: resolve_driver -> " .. path)
+
+    local proc = s.ensure_driver("chrome")
+    assert(proc, "ensure_driver returned nil")
+    assert(proc:url():sub(1, 4) == "http", "driver url: " .. proc:url())
+    assert(proc:pid() > 0, "driver pid: " .. tostring(proc:pid()))
+    proc:stop()
+    assert_eq(proc:pid(), 0, "stop_driver clears the handle")
+    print("  ok: ensure_driver -> url/pid, stop terminated it")
+
+    local lopts = { args = { "--headless=new", "--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage" } }
+    if sel_chrome_bin and #sel_chrome_bin > 0 then lopts.binary = sel_chrome_bin end
+    local ld = s.local_chrome({ options = { ["goog:chromeOptions"] = lopts } })
+    local lok, lerr = pcall(function()
+      assert(#ld:session_id() > 0, "local_chrome session id present")
+      ld:get("data:text/html;charset=utf-8,%3Ctitle%3EAether%20Selenium%3C/title%3E%3Ch1%20id='hdr'%3EHello%3C/h1%3E")
+      assert_eq(ld:title(), "Aether Selenium", "local_chrome title")
+      assert_eq(ld:find_element(s.By.ID, "hdr"):text(), "Hello", "local_chrome #hdr text")
+    end)
+    ld:quit()
+    if not lok then print("FAIL: local_chrome — " .. tostring(lerr and lerr.message or lerr)); os.exit(1) end
+    print("  ok: local_chrome (self-spawned driver) drove a page")
+  end
+end
+
+local cd_url = os.getenv("SEL_CHROMEDRIVER_URL")
+local base = os.getenv("SEL_BASE_URL")
+if not cd_url or not base then
+  print("SKIPPED: SEL_CHROMEDRIVER_URL / SEL_BASE_URL not set (no chromedriver)")
+  os.exit(0)
 end
 
 -- Headless Chrome; point at an explicit binary when SEL_CHROME_BINARY is set
