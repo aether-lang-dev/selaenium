@@ -7,7 +7,7 @@
 //! the live mode reads SEL_CHROMEDRIVER_URL from env (the .example.ae shell
 //! spawns chromedriver) and navigates a data: URL — no in-process networking.
 const std = @import("std");
-const sel = @import("selenium_core");
+const sel = @import("selenium");
 
 fn getenv(name: [*:0]const u8) ?[]const u8 {
     const p = std.c.getenv(name) orelse return null;
@@ -27,7 +27,8 @@ fn modeFfi(a: std.mem.Allocator) !void {
     defer a.free(r);
     if (!std.mem.eql(u8, r, "POST /session/:sessionId/url")) fail("route mismatch");
     if (try sel.errorCode(a, "no such element") != 17) fail("errorCode mismatch");
-    const loc = try sel.locator(a, sel.By.id, "main");
+    const by = sel.By.id("main");
+    const loc = try sel.locator(a, by.using, by.value);
     defer a.free(loc);
     if (std.mem.indexOf(u8, loc, "*[id=") == null) fail("locator mismatch");
     const res = sel.WebDriver.chrome(a, "http://127.0.0.1:1", "{\"browserName\":\"chrome\"}");
@@ -48,7 +49,7 @@ fn modeLive(a: std.mem.Allocator) !void {
     const t = try d.title();
     defer a.free(t);
     if (!std.mem.eql(u8, t, "Installed")) fail("title mismatch");
-    var h = try d.findElement(sel.By.id, "h");
+    var h = try d.findElement(sel.By.id("h"));
     defer h.deinit();
     const txt = try d.elementText(&h);
     defer a.free(txt);

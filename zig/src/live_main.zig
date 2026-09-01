@@ -8,7 +8,7 @@
 //!   SEL_BASE_URL          — the content server base, e.g. http://127.0.0.1:PORT
 //! Everything below is pure WebDriver + std.mem/json/fmt (stable APIs).
 const std = @import("std");
-const sel = @import("selenium_core");
+const sel = @import("selenium");
 
 fn getenv(name: [*:0]const u8) ?[]const u8 {
     const p = std.c.getenv(name) orelse return null;
@@ -67,7 +67,7 @@ pub fn main() !void {
         assert(std.mem.eql(u8, t, "Page One"), "title Page One");
     }
     {
-        var hdr = try d.findElement(sel.By.id, "hdr");
+        var hdr = try d.findElement(sel.By.id("hdr"));
         defer hdr.deinit();
         const txt = try d.elementText(&hdr);
         defer a.free(txt);
@@ -77,7 +77,7 @@ pub fn main() !void {
 
     // navigation history
     {
-        var go = try d.findElement(sel.By.id, "go");
+        var go = try d.findElement(sel.By.id("go"));
         defer go.deinit();
         try d.elementClick(&go);
     }
@@ -146,7 +146,7 @@ pub fn main() !void {
 
     // W3C actions: pointer click on the button
     {
-        var btn = try d.findElement(sel.By.id, "btn");
+        var btn = try d.findElement(sel.By.id("btn"));
         defer btn.deinit();
         var rv = try d.elementRect(&btn);
         defer rv.deinit();
@@ -162,7 +162,7 @@ pub fn main() !void {
         try d.performActions(actions);
     }
     {
-        var hdr = try d.findElement(sel.By.id, "hdr");
+        var hdr = try d.findElement(sel.By.id("hdr"));
         defer hdr.deinit();
         const txt = try d.elementText(&hdr);
         defer a.free(txt);
@@ -186,7 +186,7 @@ pub fn main() !void {
 
     // negative path
     {
-        const r = d.findElement(sel.By.id, "does-not-exist");
+        const r = d.findElement(sel.By.id("does-not-exist"));
         assert(std.meta.isError(r), "findElement errored");
         assert(d.last != null and d.last.?.kind == .no_such_element, "no such element kind");
     }
@@ -419,11 +419,11 @@ pub fn main() !void {
 
         // isDisplayed: true for a visible header, false for display:none.
         {
-            var hdr = try d.findElement(sel.By.id, "hdr");
+            var hdr = try d.findElement(sel.By.id("hdr"));
             defer hdr.deinit();
             assert(try d.isDisplayed(&hdr), "isDisplayed #hdr true");
 
-            var gone = try d.findElement(sel.By.id, "gone");
+            var gone = try d.findElement(sel.By.id("gone"));
             defer gone.deinit();
             assert(!(try d.isDisplayed(&gone)), "isDisplayed #gone false");
         }
@@ -431,7 +431,7 @@ pub fn main() !void {
 
         // getAttribute: the href of the anchor carries our target.
         {
-            var lnk = try d.findElement(sel.By.id, "lnk");
+            var lnk = try d.findElement(sel.By.id("lnk"));
             defer lnk.deinit();
             var href = try d.getAttribute(&lnk, "href");
             defer href.deinit();
@@ -506,7 +506,7 @@ fn driverOrchestration(a: std.mem.Allocator) !void {
         assert(std.mem.eql(u8, t, "Aether Selenium"), "localChrome title");
     }
     {
-        var hdr = try d.findElement(sel.By.id, "hdr");
+        var hdr = try d.findElement(sel.By.id("hdr"));
         defer hdr.deinit();
         const txt = try d.elementText(&hdr);
         defer a.free(txt);

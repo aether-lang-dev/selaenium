@@ -28,7 +28,7 @@ pub fn build(b: *std.Build) void {
     const dirs = engineSearchPath(b, engine_opt);
 
     // A downstream package can @import("selenium_core").
-    _ = b.addModule("selenium_core", .{
+    _ = b.addModule("selenium", .{
         .root_source_file = b.path("src/root.zig"),
         .target = target,
         .optimize = optimize,
@@ -54,7 +54,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
-    live_mod.addImport("selenium_core", b.createModule(.{
+    live_mod.addImport("selenium", b.createModule(.{
         .root_source_file = b.path("src/root.zig"),
         .target = target,
         .optimize = optimize,
@@ -74,7 +74,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
-    example_mod.addImport("selenium_core", b.createModule(.{
+    example_mod.addImport("selenium", b.createModule(.{
         .root_source_file = b.path("src/root.zig"),
         .target = target,
         .optimize = optimize,

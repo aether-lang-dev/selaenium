@@ -1,12 +1,16 @@
 // The ergonomic Node WebDriver surface — a thin layer over the Aether core.
+// Shaped to Selenium 4.x: `Builder`, a `By` factory (By.id('x') -> a locator),
+// one-arg findElement(By...), and Selenium exception names (WebDriverException
+// and subtypes).
 //
-// NOTE: the calls are SYNCHRONOUS. The engine's execute() is a blocking FFI
-// round-trip (koffi calls block), so this binding exposes a synchronous API
-// rather than faking promises around a blocking call. This differs from the
-// upstream selenium-webdriver (which is async over an async HTTP client), but
-// it is the honest shape for a linked-in synchronous core and keeps the binding
-// a pure marshalling layer. Carries NO protocol logic — every command is one
-// native.execute() call plus JSON marshalling.
+// DELIBERATE DEVIATION FROM SELENIUM 4.x: upstream selenium-webdriver is
+// async/await over an async HTTP client; THIS binding is SYNCHRONOUS. The
+// engine's execute() is a blocking FFI round-trip (koffi calls block), so the
+// binding exposes a synchronous API rather than faking promises around a
+// blocking call. That is the honest shape for a linked-in synchronous core and
+// keeps the binding a pure marshalling layer. Carries NO protocol logic — every
+// command is one native.execute() call plus JSON marshalling. Builder/By and the
+// Selenium exception names are added; the sync surface is retained on purpose.
 
 'use strict'
 
@@ -16,55 +20,87 @@ const native = require('./native')
 // { "element-6066-11e4-a52e-4f735466cecf": "<id>" }.
 const W3C_ELEMENT_KEY = 'element-6066-11e4-a52e-4f735466cecf'
 
-// Locator strategies. Values match the engine's by_locator strategy strings;
-// id/name/className are rewritten to CSS in the engine.
-const By = {
-  ID: 'id',
-  NAME: 'name',
-  CSS_SELECTOR: 'css selector',
-  CLASS_NAME: 'className',
-  TAG_NAME: 'tag name',
-  LINK_TEXT: 'link text',
-  PARTIAL_LINK_TEXT: 'partial link text',
-  XPATH: 'xpath',
+// Locator strategies, Selenium 4.x shape: By is a FACTORY. Each static method
+// returns a locator object { strategy, value } that findElement/findElements
+// take as a single argument. The strategy strings match the engine's by_locator
+// strings; id/name/"class name" are rewritten to CSS in the engine.
+//
+//   driver.findElement(By.id('hdr'))
+//   driver.findElements(By.css('a'))
+class By {
+  constructor(strategy, value) {
+    this.strategy = strategy
+    this.value = value
+  }
+  static id(value) {
+    return new By('id', value)
+  }
+  static name(value) {
+    return new By('name', value)
+  }
+  static className(value) {
+    return new By('class name', value)
+  }
+  static css(value) {
+    return new By('css selector', value)
+  }
+  static cssSelector(value) {
+    return new By('css selector', value)
+  }
+  static tagName(value) {
+    return new By('tag name', value)
+  }
+  static linkText(value) {
+    return new By('link text', value)
+  }
+  static partialLinkText(value) {
+    return new By('partial link text', value)
+  }
+  static xpath(value) {
+    return new By('xpath', value)
+  }
 }
 
-class WebDriverError extends Error {
+// Base exception (Selenium 4.x name). Subtypes use Selenium's exception names.
+class WebDriverException extends Error {
   constructor(message = '', code = 0) {
     super(message)
-    this.name = 'WebDriverError'
+    this.name = this.constructor.name
     this.code = code
   }
 }
-class NoSuchElementError extends WebDriverError {}
-class StaleElementReferenceError extends WebDriverError {}
-class ElementClickInterceptedError extends WebDriverError {}
-class ElementNotInteractableError extends WebDriverError {}
-class InvalidSelectorError extends WebDriverError {}
-class TimeoutError extends WebDriverError {}
-class JavascriptError extends WebDriverError {}
-class UnknownCommandError extends WebDriverError {}
+class NoSuchElementException extends WebDriverException {}
+class StaleElementReferenceException extends WebDriverException {}
+class ElementClickInterceptedException extends WebDriverException {}
+class ElementNotInteractableException extends WebDriverException {}
+class InvalidSelectorException extends WebDriverException {}
+class NoSuchWindowException extends WebDriverException {}
+class NoSuchFrameException extends WebDriverException {}
+class TimeoutException extends WebDriverException {}
+class JavascriptException extends WebDriverException {}
+class UnknownCommandException extends WebDriverException {}
 
-// Engine integer error codes -> error class (see core error_code()).
+// Engine integer error codes -> exception class (see core error_code()).
 const CODE_TO_EXC = {
-  3: ElementClickInterceptedError,
-  4: ElementNotInteractableError,
-  11: InvalidSelectorError,
-  13: JavascriptError,
-  17: NoSuchElementError,
-  21: TimeoutError,
-  23: StaleElementReferenceError,
-  24: TimeoutError,
-  28: UnknownCommandError,
+  3: ElementClickInterceptedException,
+  4: ElementNotInteractableException,
+  11: InvalidSelectorException,
+  13: JavascriptException,
+  17: NoSuchElementException,
+  21: TimeoutException,
+  23: StaleElementReferenceException,
+  24: TimeoutException,
+  28: UnknownCommandException,
 }
 
 function raiseFor(code, message) {
-  const Ctor = CODE_TO_EXC[code] || WebDriverError
+  const Ctor = CODE_TO_EXC[code] || WebDriverException
   throw new Ctor(message, code)
 }
 
-function decodeBy(by, value) {
-  return JSON.parse(native.takeString(native.byLocator(by, value)))
+// Unpack a By locator into the engine's 2-arg by_locator call. NO engine change.
+function decodeBy(locator) {
+  return JSON.parse(native.takeString(native.byLocator(locator.strategy, locator.value)))
 }
 
 class WebElement {
@@ -133,7 +169,7 @@ class WebDriver {
   constructor(commandExecutor, capabilities, { caPath = null, insecure = false } = {}) {
     this._handle = native.open(commandExecutor)
     if (native.isNull(this._handle)) {
-      throw new WebDriverError('failed to open session handle', -1)
+      throw new WebDriverException('failed to open session handle', -1)
     }
     if (caPath) native.setCa(this._handle, caPath)
     if (insecure) native.setInsecure(this._handle, 1)
@@ -161,14 +197,14 @@ class WebDriver {
   }
 
   // The FFI seam: one command by name with a params object. Returns the decoded
-  // `value` payload, or throws a typed WebDriverError.
+  // `value` payload, or throws a typed WebDriverException.
   _execute(command, params = {}) {
     const rc = native.execute(this._handle, command, JSON.stringify(params))
     if (rc !== 0) {
       const code = native.lastErrorCode(this._handle)
       const message = native.takeString(native.lastError(this._handle))
       if (rc === -1 && code === 0) {
-        throw new WebDriverError(message || 'transport failure', -1)
+        throw new WebDriverException(message || 'transport failure', -1)
       }
       raiseFor(code, message)
     }
@@ -184,7 +220,7 @@ class WebDriver {
       const code = native.lastErrorCode(this._handle)
       const message = native.takeString(native.lastError(this._handle))
       if (rc === -1 && code === 0) {
-        throw new WebDriverError(message || 'transport failure', -1)
+        throw new WebDriverException(message || 'transport failure', -1)
       }
       raiseFor(code, message)
     }
@@ -235,12 +271,13 @@ class WebDriver {
   }
 
   // ---- elements ----
-  findElement(by, value) {
-    const result = this._execute('findElement', decodeBy(by, value))
+  // findElement(By.id('x')) — one locator arg (Selenium 4.x shape).
+  findElement(locator) {
+    const result = this._execute('findElement', decodeBy(locator))
     return new WebElement(this, result[W3C_ELEMENT_KEY])
   }
-  findElements(by, value) {
-    const result = this._execute('findElements', decodeBy(by, value))
+  findElements(locator) {
+    const result = this._execute('findElements', decodeBy(locator))
     return result.map((e) => new WebElement(this, e[W3C_ELEMENT_KEY]))
   }
 
@@ -346,11 +383,11 @@ class WebDriver {
   get bidi() {
     if (this._bidi === null) {
       if (!this._wsUrl) {
-        throw new WebDriverError('BiDi not available: the session negotiated no webSocketUrl', 0)
+        throw new WebDriverException('BiDi not available: the session negotiated no webSocketUrl', 0)
       }
       const handle = native.bidiOpen(this._wsUrl)
       if (native.isNull(handle)) {
-        throw new WebDriverError('BiDi channel failed to open', -1)
+        throw new WebDriverException('BiDi channel failed to open', -1)
       }
       this._bidi = new BiDi(handle)
     }
@@ -451,7 +488,7 @@ class BiDi {
     // send + pump until this id's reply arrives (the engine's convenience).
     const cid = this._id()
     if (native.bidiSend(this._handle, cid, method, JSON.stringify(params)) !== 0) {
-      throw new WebDriverError(`BiDi send failed: ${method}`, -1)
+      throw new WebDriverException(`BiDi send failed: ${method}`, -1)
     }
     let waited = 0
     const step = 50
@@ -461,7 +498,7 @@ class BiDi {
       if (native.bidiPump(this._handle, step) < 0) break
       waited += step
     }
-    throw new TimeoutError(`BiDi command timed out: ${method}`, 0)
+    throw new TimeoutException(`BiDi command timed out: ${method}`, 0)
   }
 
   // ---- typed convenience commands ----
@@ -486,7 +523,7 @@ class BiDi {
   evaluate(expression, timeoutMs = 30000) {
     const ctx = this.topContext(timeoutMs)
     if (!ctx) {
-      throw new WebDriverError('no browsing context for script.evaluate', 0)
+      throw new WebDriverException('no browsing context for script.evaluate', 0)
     }
     const raw = native.takeString(
       native.bidiScriptEvaluate(this._handle, this._id(), expression, ctx, timeoutMs),
@@ -507,7 +544,7 @@ class BiDi {
   navigate(url, timeoutMs = 30000) {
     const ctx = this.topContext(timeoutMs)
     if (!ctx) {
-      throw new WebDriverError('no browsing context for navigate', 0)
+      throw new WebDriverException('no browsing context for navigate', 0)
     }
     const raw = native.takeString(
       native.bidiNavigate(this._handle, this._id(), ctx, url, timeoutMs),
@@ -673,12 +710,12 @@ function ensureDriver(browser = 'chrome', hint = '', timeoutMs = 15000) {
 
 // A Chrome session that spawns its own chromedriver via the engine — no driver
 // on PATH, no Grid. The driver process is stopped on quit(). Throws
-// WebDriverError if the driver can't be resolved/launched.
+// WebDriverException if the driver can't be resolved/launched.
 class LocalChrome extends WebDriver {
   constructor(options = null, { hint = '', timeoutMs = 15000, caPath = null, insecure = false } = {}) {
     const proc = ensureDriver('chrome', hint, timeoutMs)
     if (proc === null) {
-      throw new WebDriverError('could not resolve/launch chromedriver', -1)
+      throw new WebDriverException('could not resolve/launch chromedriver', -1)
     }
     const caps = { browserName: 'chrome' }
     if (options) Object.assign(caps, options)
@@ -695,6 +732,62 @@ class LocalChrome extends WebDriver {
   }
 }
 
+// The Selenium 4.x session entry-point. Chain forBrowser/usingServer, then
+// build() returns a WebDriver:
+//
+//   const driver = new Builder().forBrowser('chrome').usingServer(url).build()
+//
+// With NO usingServer(url), build() launches the engine's own chromedriver (the
+// LocalChrome path) — no driver on PATH, no Grid needed. This mirrors upstream's
+// Builder, but build() returns a synchronous WebDriver (see the header note),
+// not a promise.
+class Builder {
+  constructor() {
+    this._browser = 'chrome'
+    this._server = null
+    this._capabilities = {}
+    this._tls = {}
+  }
+
+  forBrowser(name) {
+    this._browser = name
+    return this
+  }
+
+  usingServer(url) {
+    this._server = url
+    return this
+  }
+
+  // Merge extra capabilities (e.g. { 'goog:chromeOptions': { args: [...] } }).
+  withCapabilities(caps) {
+    Object.assign(this._capabilities, caps)
+    return this
+  }
+
+  // TLS trust config for a remote Grid: { caPath, insecure }.
+  usingTls(tls) {
+    this._tls = tls
+    return this
+  }
+
+  build() {
+    const options = Object.keys(this._capabilities).length ? this._capabilities : null
+    if (this._server) {
+      const caps = { browserName: this._browser }
+      if (options) Object.assign(caps, options)
+      return new WebDriver(this._server, caps, this._tls)
+    }
+    if (this._browser !== 'chrome') {
+      throw new WebDriverException(
+        `Builder without usingServer() only supports 'chrome' (got '${this._browser}')`,
+        -1,
+      )
+    }
+    return new LocalChrome(options, this._tls)
+  }
+}
+
 // ---- pure engine helpers ----
 function route(command) {
   return native.takeString(native.route(command))
@@ -707,20 +800,23 @@ function locator(by, value) {
 }
 
 module.exports = {
+  Builder,
   By,
   WebDriver,
   WebElement,
   BiDi,
   BidiEvent,
-  WebDriverError,
-  NoSuchElementError,
-  StaleElementReferenceError,
-  ElementClickInterceptedError,
-  ElementNotInteractableError,
-  InvalidSelectorError,
-  TimeoutError,
-  JavascriptError,
-  UnknownCommandError,
+  WebDriverException,
+  NoSuchElementException,
+  StaleElementReferenceException,
+  ElementClickInterceptedException,
+  ElementNotInteractableException,
+  InvalidSelectorException,
+  NoSuchWindowException,
+  NoSuchFrameException,
+  TimeoutException,
+  JavascriptException,
+  UnknownCommandException,
   DriverProcess,
   LocalChrome,
   resolveDriver,

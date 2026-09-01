@@ -106,20 +106,24 @@ test('driver orchestration', async (t) => {
     assert.strictEqual(proc.pid, 0, 'stop() should clear the handle')
   }
 
-  // LocalChrome ties it together: spawn its own driver, run a session, and stop
-  // the driver on quit — the whole point of the orchestration ABI. Honors
-  // SEL_CHROME_BINARY if set. This must NOT need chromedriver on PATH.
+  // Builder without usingServer() ties it together: the engine spawns its own
+  // driver, runs a session, and stops the driver on quit — the whole point of
+  // the orchestration ABI. Honors SEL_CHROME_BINARY if set. This must NOT need
+  // chromedriver on PATH.
   const chromeArgs = ['--headless=new', '--no-sandbox', '--disable-gpu', '--disable-dev-shm-usage']
   const chromeOptions = { args: chromeArgs }
   const chromeBin = process.env.SEL_CHROME_BINARY
   if (chromeBin) chromeOptions.binary = chromeBin
-  const d = new s.LocalChrome({ 'goog:chromeOptions': chromeOptions })
+  const d = new s.Builder()
+    .forBrowser('chrome')
+    .withCapabilities({ 'goog:chromeOptions': chromeOptions })
+    .build()
   try {
-    assert.ok(d.sessionId, 'no session id from LocalChrome')
+    assert.ok(d.sessionId, 'no session id from Builder-launched Chrome')
     const html = '<html><head><title>Aether Selenium</title></head><body><h1 id="hdr">Hello</h1></body></html>'
     d.get(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`)
     assert.strictEqual(d.title, 'Aether Selenium', `title=${d.title}`)
-    assert.strictEqual(d.findElement(s.By.ID, 'hdr').text, 'Hello')
+    assert.strictEqual(d.findElement(s.By.id('hdr')).text, 'Hello')
   } finally {
     d.quit()
   }
@@ -144,18 +148,27 @@ test('live chrome + surface', async (t) => {
       return
     }
 
-    // From here on, everything is synchronous (blocking FFI).
-    const d = s.WebDriver.headlessChrome(`http://127.0.0.1:${cdPort}`)
+    // From here on, everything is synchronous (blocking FFI). Builder with an
+    // explicit usingServer() -> the Remote/WebDriver path against a running driver.
+    const d = new s.Builder()
+      .forBrowser('chrome')
+      .usingServer(`http://127.0.0.1:${cdPort}`)
+      .withCapabilities({
+        'goog:chromeOptions': {
+          args: ['--headless=new', '--no-sandbox', '--disable-gpu', '--disable-dev-shm-usage'],
+        },
+      })
+      .build()
     try {
       assert.ok(d.sessionId, 'no session id after newSession')
 
       d.get(`${base}/one`)
       assert.strictEqual(d.title, 'Page One')
-      assert.strictEqual(d.findElement(s.By.ID, 'hdr').text, 'One')
-      assert.strictEqual(d.findElement(s.By.CSS_SELECTOR, '#go').tagName.toLowerCase(), 'a')
+      assert.strictEqual(d.findElement(s.By.id('hdr')).text, 'One')
+      assert.strictEqual(d.findElement(s.By.css('#go')).tagName.toLowerCase(), 'a')
 
       // navigation history
-      d.findElement(s.By.ID, 'go').click()
+      d.findElement(s.By.id('go')).click()
       assert.strictEqual(d.title, 'Page Two')
       d.back()
       assert.strictEqual(d.title, 'Page One')
@@ -190,7 +203,7 @@ test('live chrome + surface', async (t) => {
       assert.strictEqual(d.executeAsyncScript('arguments[arguments.length-1](42);'), 42)
 
       // W3C actions: pointer click on the button.
-      const rect = d.findElement(s.By.ID, 'btn').rect
+      const rect = d.findElement(s.By.id('btn')).rect
       const cx = Math.round(rect.x + rect.width / 2)
       const cy = Math.round(rect.y + rect.height / 2)
       d.performActions([
@@ -205,7 +218,7 @@ test('live chrome + surface', async (t) => {
           ],
         },
       ])
-      assert.strictEqual(d.findElement(s.By.ID, 'hdr').text, 'clicked')
+      assert.strictEqual(d.findElement(s.By.id('hdr')).text, 'clicked')
       d.clearActions()
 
       // screenshot -> PNG
@@ -214,8 +227,8 @@ test('live chrome + surface', async (t) => {
 
       // negative path: typed error
       assert.throws(
-        () => d.findElement(s.By.ID, 'does-not-exist'),
-        (e) => e instanceof s.NoSuchElementError,
+        () => d.findElement(s.By.id('does-not-exist')),
+        (e) => e instanceof s.NoSuchElementException,
       )
     } finally {
       d.quit()
@@ -386,11 +399,11 @@ test('live chrome + atoms', async (t) => {
       d.get(`data:text/html,${encodeURIComponent(html)}`)
 
       // isDisplayed atom
-      assert.strictEqual(d.findElement(s.By.ID, 'hdr').isDisplayed(), true, '#hdr should be displayed')
-      assert.strictEqual(d.findElement(s.By.ID, 'gone').isDisplayed(), false, '#gone should be hidden')
+      assert.strictEqual(d.findElement(s.By.id('hdr')).isDisplayed(), true, '#hdr should be displayed')
+      assert.strictEqual(d.findElement(s.By.id('gone')).isDisplayed(), false, '#gone should be hidden')
 
       // getAttribute atom (property-or-attribute)
-      const href = d.findElement(s.By.ID, 'lnk').getAttribute('href')
+      const href = d.findElement(s.By.id('lnk')).getAttribute('href')
       assert.ok(href.includes('example.com/x'), `href missing: ${href}`)
 
       // relative locators: the button is below the header

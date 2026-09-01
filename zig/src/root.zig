@@ -80,16 +80,40 @@ const c = struct {
 
 pub const w3c_element_key = "element-6066-11e4-a52e-4f735466cecf";
 
-/// Locator strategies (engine strategy strings; id/name/class rewrite to CSS).
+/// A locator: a (strategy, value) pair produced by the `By` factory and passed
+/// to `findElement`/`findElements` (Selenium 4.x's one-arg locator shape).
+pub const Locator = struct {
+    using: []const u8,
+    value: []const u8,
+};
+
+/// Locator strategies as factory functions (Selenium 4.x `By.id("x")` shape).
+/// Each returns a `Locator`; the engine rewrites id/name/class name to CSS.
 pub const By = struct {
-    pub const id = "id";
-    pub const name = "name";
-    pub const css = "css selector";
-    pub const class_name = "className";
-    pub const tag_name = "tag name";
-    pub const link_text = "link text";
-    pub const partial_link_text = "partial link text";
-    pub const xpath = "xpath";
+    pub fn id(value: []const u8) Locator {
+        return .{ .using = "id", .value = value };
+    }
+    pub fn name(value: []const u8) Locator {
+        return .{ .using = "name", .value = value };
+    }
+    pub fn cssSelector(value: []const u8) Locator {
+        return .{ .using = "css selector", .value = value };
+    }
+    pub fn className(value: []const u8) Locator {
+        return .{ .using = "class name", .value = value };
+    }
+    pub fn tagName(value: []const u8) Locator {
+        return .{ .using = "tag name", .value = value };
+    }
+    pub fn linkText(value: []const u8) Locator {
+        return .{ .using = "link text", .value = value };
+    }
+    pub fn partialLinkText(value: []const u8) Locator {
+        return .{ .using = "partial link text", .value = value };
+    }
+    pub fn xpath(value: []const u8) Locator {
+        return .{ .using = "xpath", .value = value };
+    }
 };
 
 pub const ErrorKind = enum {
@@ -512,8 +536,8 @@ pub const WebDriver = struct {
     }
 
     // ---- elements ----
-    pub fn findElement(self: *WebDriver, by: []const u8, value: []const u8) Error!WebElement {
-        const loc = try locator(self.allocator, by, value);
+    pub fn findElement(self: *WebDriver, by: Locator) Error!WebElement {
+        const loc = try locator(self.allocator, by.using, by.value);
         defer self.allocator.free(loc);
         var v = try self.execute("findElement", loc);
         defer v.deinit();

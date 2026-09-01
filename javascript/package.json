@@ -1,5 +1,5 @@
 {
-  "name": "selenium-core",
+  "name": "selenium-webdriver",
   "version": "0.1.0",
   "description": "Selenium WebDriver for Node — a thin koffi wrapper over the shared pure-Aether WebDriver core (libselenium_core.so)",
   "license": "Apache-2.0",
