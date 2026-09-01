@@ -4,34 +4,45 @@
 # block) and that the shared engine helpers marshal correctly. Needs only the .so
 # (linked via ldflags / -L native). Crystal's built-in `spec` framework.
 require "spec"
-require "../src/selenium_core"
+require "../src/selenium"
 
-describe SeleniumCore do
+describe Selenium do
   it "route" do
-    SeleniumCore.route("get").should eq("POST /session/:sessionId/url")
-    SeleniumCore.route("nope").should eq("")
+    Selenium.route("get").should eq("POST /session/:sessionId/url")
+    Selenium.route("nope").should eq("")
   end
 
   it "error_code" do
-    SeleniumCore.error_code("no such element").should eq(17)
-    SeleniumCore.error_code("").should eq(0)
+    Selenium.error_code("no such element").should eq(17)
+    Selenium.error_code("").should eq(0)
   end
 
   it "locator css" do
-    SeleniumCore.locator(SeleniumCore::By::CSS, "div.foo")
+    Selenium.locator(Selenium::By::CSS, "div.foo")
       .should eq("{\"using\":\"css selector\",\"value\":\"div.foo\"}")
   end
 
   it "locator id rewrite" do
-    SeleniumCore.locator(SeleniumCore::By::ID, "main").should contain("*[id=")
+    Selenium.locator(Selenium::By::ID, "main").should contain("*[id=")
+  end
+
+  it "By factory yields a Locator carrying strategy + value" do
+    loc = Selenium::By.id("hdr")
+    loc.strategy.should eq("id")
+    loc.value.should eq("hdr")
+  end
+
+  it "By.class_name maps to the W3C 'class name'" do
+    Selenium::By.class_name("btn").strategy.should eq("class name")
+    Selenium::By::CLASS_NAME.should eq("class name")
   end
 
   it "transport failure -> code -1" do
-    d = SeleniumCore::WebDriver.new("http://127.0.0.1:1")
+    d = Selenium::WebDriver.new("http://127.0.0.1:1")
     threw = false
     begin
       d.execute("newSession", "{}")
-    rescue e : SeleniumCore::WebDriverError
+    rescue e : Selenium::WebDriverError
       threw = e.code == -1
     end
     threw.should be_true

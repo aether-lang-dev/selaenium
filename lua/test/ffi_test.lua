@@ -1,7 +1,7 @@
 -- No-browser FFI test: proves the Lua C extension loads libselenium_core.so and
 -- marshals correctly, exercising the pure engine helpers and the transport
 -- error path. Run by lua/.tests.ae via the Lua 5.4 host.
-local s = require("selenium_core")
+local s = require("selenium")
 
 local fails = 0
 local function check(cond, label)

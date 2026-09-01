@@ -1,7 +1,7 @@
 // Julia binding tests. Julia's built-in `ccall` invokes the engine's flat C ABI
 // (aether_sel_embed_*) DIRECTLY — no glue, no second copy of the marshalling
 // rules. The idiomatic Julia surface (By constants, caller-owned-string handling,
-// typed error, WebDriver) is in src/SeleniumCore.jl. The engine .so is located
+// typed error, WebDriver) is in src/Selenium.jl. The engine .so is located
 // via SELENIUM_CORE_LIB (injected from the engine's shared_lib artifact) — ccall's
 // library handle is that absolute path. julia.test runs the no-browser FFI facts
 // (Test stdlib).

@@ -2,7 +2,7 @@
 // (aether_sel_embed_*) DIRECTLY via a `lib`/`fun` block (@[Link]) — no glue, no
 // second copy of the marshalling rules. The idiomatic Crystal surface (By
 // constants, caller-owned-string handling, typed error, WebDriver) is in
-// src/selenium_core.cr. The engine .so is staged into native/ (copy.file) and
+// src/selenium.cr. The engine .so is staged into native/ (copy.file) and
 // CRYSTAL_LIBRARY_PATH points Crystal's linker there so `-lselenium_core`
 // resolves. crystal.test runs the no-browser FFI facts (crystal spec).
 //

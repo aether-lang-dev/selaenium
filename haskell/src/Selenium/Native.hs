@@ -3,7 +3,7 @@
 -- | Raw FFI surface over the Selenium core C ABI (the @aether_sel_embed_*@
 -- symbols from @core\/embed.ae@, linked from @libselenium_core.so@). This module
 -- is the ONLY place in the Haskell binding that knows about the C ABI;
--- "SeleniumCore" is idiomatic Haskell on top of it. No protocol logic lives here
+-- "Selenium" is idiomatic Haskell on top of it. No protocol logic lives here
 -- — the engine is @core\/selenium_core.ae@, shared by every language binding.
 --
 -- Like Go\/cgo, Nim and Zig, this binding LINKS the engine (see the .cabal
@@ -13,7 +13,7 @@
 -- Ownership: every @CString@ this ABI returns is caller-owned and goes through
 -- exactly one helper, 'takeString', which copies it into a Haskell 'String' and
 -- frees the original via @aether_sel_embed_free_string@.
-module SeleniumCore.Native
+module Selenium.Native
   ( selOpen
   , selClose
   , selExecute

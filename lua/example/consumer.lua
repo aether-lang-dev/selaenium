@@ -1,9 +1,9 @@
--- Third-party consumer example: requires the INSTALLED selenium_core Lua package
--- (the packaged copy staged under target/lua-pkg, carrying selenium_core.lua +
+-- Third-party consumer example: requires the INSTALLED selenium Lua package
+-- (the packaged copy staged under target/lua-pkg, carrying selenium.lua +
 -- the C extension + a bundled native/ .so, but NO core/ sibling — so the
 -- extension's own native/ fallback is the only way the engine loads). Run with
 -- SELENIUM_CORE_LIB unset. Modes: ffi | discovery | live (via SEL_MODE).
-local s = require("selenium_core")
+local s = require("selenium")
 
 local function fail(msg)
   io.stderr:write("FAIL: " .. msg .. "\n")

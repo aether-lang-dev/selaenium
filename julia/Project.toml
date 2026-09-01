@@ -1,0 +1,7 @@
+name = "Selenium"
+uuid = "5e1e7a0e-8b3a-4f9d-9c2a-1f3b5d7c9e11"
+authors = ["Paul Hammant"]
+version = "0.1.0"
+
+[compat]
+julia = "1.6"

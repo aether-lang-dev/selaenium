@@ -1,4 +1,4 @@
--- selenium_core — the idiomatic Lua WebDriver API over the shared Aether core.
+-- selenium — the idiomatic Lua WebDriver API over the shared Aether core.
 --
 -- Carries NO protocol logic: the W3C command map, routing, By normalization,
 -- error decode and HTTP round-trip all live in the Aether engine, reached
@@ -15,16 +15,36 @@ local native = require("selenium_core_native")
 
 local M = {}
 
+-- By: a factory in the Selenium 4.x shape. Each constructor returns a locator
+-- table {strategy=..., value=...}; find_element/find_elements take that one
+-- table. The strategy-name CONSTANTS remain on By (By.ID etc.) so the legacy
+-- two-arg form find_element(By.ID, "x") keeps working (additive).
+--
+-- CLASS_NAME is the W3C "class name" (not "className").
 M.By = {
   ID = "id",
   NAME = "name",
   CSS = "css selector",
-  CLASS_NAME = "className",
+  CLASS_NAME = "class name",
   TAG_NAME = "tag name",
   LINK_TEXT = "link text",
   PARTIAL_LINK_TEXT = "partial link text",
   XPATH = "xpath",
 }
+
+-- A By locator carries (strategy, value); find_element unpacks it into the
+-- existing engine call. Mirrors Java's By.id("x") static factory.
+local function by_locator(strategy)
+  return function(value) return { strategy = strategy, value = value } end
+end
+M.By.id = by_locator("id")
+M.By.name = by_locator("name")
+M.By.css_selector = by_locator("css selector")
+M.By.class_name = by_locator("class name")
+M.By.tag_name = by_locator("tag name")
+M.By.link_text = by_locator("link text")
+M.By.partial_link_text = by_locator("partial link text")
+M.By.xpath = by_locator("xpath")
 
 local W3C_ELEMENT_KEY = "element-6066-11e4-a52e-4f735466cecf"
 
@@ -386,13 +406,25 @@ local function decode_by(by, value)
   return json.decode(native.by_locator(by, value))
 end
 
+-- Normalize find args to (strategy, value). The Selenium 4.x shape is a single
+-- By locator table {strategy, value} (from By.id("x") etc.); the legacy
+-- (By.ID, "x") two-string form is still accepted (additive).
+local function locator_args(by, value)
+  if type(by) == "table" and by.strategy ~= nil then
+    return by.strategy, by.value
+  end
+  return by, value
+end
+
 function WebDriver:find_element(by, value)
-  local r = self:execute("findElement", decode_by(by, value))
+  local strategy, v = locator_args(by, value)
+  local r = self:execute("findElement", decode_by(strategy, v))
   return wrap_element(self, r[W3C_ELEMENT_KEY])
 end
 
 function WebDriver:find_elements(by, value)
-  local r = self:execute("findElements", decode_by(by, value))
+  local strategy, v = locator_args(by, value)
+  local r = self:execute("findElements", decode_by(strategy, v))
   local out = {}
   for i = 1, #r do out[i] = wrap_element(self, r[i][W3C_ELEMENT_KEY]) end
   return out

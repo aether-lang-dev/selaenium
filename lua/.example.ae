@@ -1,6 +1,6 @@
 // Lua consumer-install proof: prove the packaged rock drives the engine from a
 // CLEAN environment for a third party. lua.consumer_example stages the package
-// (selenium_core.lua + the C extension + native/.so + consumer.lua — no core/)
+// (selenium.lua + the C extension + native/.so + consumer.lua — no core/)
 // as lua-pkg, asserts the .so shipped, then runs the consumer from that dir with
 // LUA_PATH/LUA_CPATH pointed there, SEL_MODE=<mode> (via a shell wrapper) and
 // SELENIUM_CORE_LIB unset — so only the bundled .so satisfies the load. Modes:
@@ -13,7 +13,7 @@ aeb(cap) {
     bldr.build() {
         dep("lua/.package.ae")
         lua.consumer_example() {
-            stage("src/selenium_core.lua", "lua-pkg/selenium_core.lua")
+            stage("src/selenium.lua", "lua-pkg/selenium.lua")
             stage("selenium_core_native.so", "lua-pkg/selenium_core_native.so")
             stage("native/libselenium_core.so", "lua-pkg/native/libselenium_core.so")
             stage("example/consumer.lua", "lua-pkg/consumer.lua")

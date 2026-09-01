@@ -1,5 +1,5 @@
 cabal-version:      2.4
-name:               selenium-core
+name:               selenium
 version:            0.1.0
 synopsis:           Selenium WebDriver for Haskell — a thin FFI binding over the shared pure-Aether WebDriver core.
 license:            Apache-2.0
@@ -16,8 +16,8 @@ build-type:         Simple
 
 library
   hs-source-dirs:   src
-  exposed-modules:  SeleniumCore
-                  , SeleniumCore.Native
+  exposed-modules:  Selenium
+                  , Selenium.Native
   build-depends:    base       >=4.14 && <5
                   , bytestring >=0.10 && <0.13
   default-language: Haskell2010
@@ -29,7 +29,7 @@ test-suite live
   hs-source-dirs:   test
   main-is:          Live.hs
   build-depends:    base
-                  , selenium-core
+                  , selenium
   default-language: Haskell2010
   ghc-options:      -threaded -rtsopts
   extra-libraries:  selenium_core

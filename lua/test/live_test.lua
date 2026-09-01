@@ -3,7 +3,7 @@
 -- sockets/process, so chromedriver and a content server are started by
 -- lua/.tests.ae, which passes their URLs in via env:
 --   SEL_CHROMEDRIVER_URL, SEL_BASE_URL  (absent = skip)
-local s = require("selenium_core")
+local s = require("selenium")
 
 local function assert_eq(got, want, label)
   if got ~= want then
@@ -41,7 +41,7 @@ do
       assert(#ld:session_id() > 0, "local_chrome session id present")
       ld:get("data:text/html;charset=utf-8,%3Ctitle%3EAether%20Selenium%3C/title%3E%3Ch1%20id='hdr'%3EHello%3C/h1%3E")
       assert_eq(ld:title(), "Aether Selenium", "local_chrome title")
-      assert_eq(ld:element_text(ld:find_element(s.By.ID, "hdr")), "Hello", "local_chrome #hdr text")
+      assert_eq(ld:element_text(ld:find_element(s.By.id("hdr"))), "Hello", "local_chrome #hdr text")
     end)
     ld:quit()
     if not lok then print("FAIL: local_chrome — " .. tostring(lerr and lerr.message or lerr)); os.exit(1) end
@@ -68,11 +68,11 @@ local ok, err = pcall(function()
 
   d:get(base .. "/one")
   assert_eq(d:title(), "Page One", "title")
-  assert_eq(d:find_element(s.By.ID, "hdr"):text(), "One", "hdr text")
-  assert_eq(d:find_element(s.By.CSS, "#go"):tag_name():lower(), "a", "tag name")
+  assert_eq(d:find_element(s.By.id("hdr")):text(), "One", "hdr text")
+  assert_eq(d:find_element(s.By.css_selector("#go")):tag_name():lower(), "a", "tag name")
   print("  ok: navigate + find + text/tag")
 
-  -- navigation history
+  -- navigation history (legacy two-arg By form still works)
   d:find_element(s.By.ID, "go"):click()
   assert_eq(d:title(), "Page Two", "after click")
   d:back()
@@ -104,7 +104,7 @@ local ok, err = pcall(function()
   d:set_script_timeout(10000)
 
   -- W3C actions: pointer click on the button
-  local btn = d:find_element(s.By.ID, "btn")
+  local btn = d:find_element(s.By.id("btn"))
   local r = d:element_rect(btn)
   local cx = math.floor(r.x + r.width / 2)
   local cy = math.floor(r.y + r.height / 2)
@@ -117,7 +117,7 @@ local ok, err = pcall(function()
       { type = "pointerUp", button = 0 },
     },
   } })
-  assert_eq(d:element_text(d:find_element(s.By.ID, "hdr")), "clicked", "actions click fired")
+  assert_eq(d:element_text(d:find_element(s.By.id("hdr"))), "clicked", "actions click fired")
   d:clear_actions()
   print("  ok: W3C actions")
 
@@ -127,7 +127,7 @@ local ok, err = pcall(function()
   print("  ok: screenshot")
 
   -- negative path
-  local nok, nerr = pcall(function() return d:find_element(s.By.ID, "does-not-exist") end)
+  local nok, nerr = pcall(function() return d:find_element(s.By.id("does-not-exist")) end)
   assert((not nok) and nerr.code == 17, "no such element error")
   print("  ok: no such element error")
 
@@ -136,9 +136,9 @@ local ok, err = pcall(function()
   d:get("data:text/html,<h1 id='hdr'>H</h1><button id='btn'>b</button>"
         .. "<p id='gone' style='display:none'>x</p>"
         .. "<a id='lnk' href='https://example.com/x'>l</a>")
-  local a_hdr = d:find_element(s.By.ID, "hdr")
-  local a_gone = d:find_element(s.By.ID, "gone")
-  local a_lnk = d:find_element(s.By.ID, "lnk")
+  local a_hdr = d:find_element(s.By.id("hdr"))
+  local a_gone = d:find_element(s.By.id("gone"))
+  local a_lnk = d:find_element(s.By.id("lnk"))
   assert(a_hdr:is_displayed() == true, "is_displayed #hdr true")
   assert(a_gone:is_displayed() == false, "is_displayed #gone false")
   local href = a_lnk:get_attribute("href")

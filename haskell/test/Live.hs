@@ -14,7 +14,7 @@ import Data.List (isInfixOf)
 import System.Environment (lookupEnv)
 import System.Exit (exitFailure)
 
-import SeleniumCore
+import Selenium
 
 main :: IO ()
 main = do
@@ -30,6 +30,9 @@ main = do
   check (ec == 17) "errorCode no such element"
   loc <- locator ById "main"
   check ("*[id=" `isInfixOf` loc) "locator id rewrite"
+  -- By factory (Selenium 4.x shape): a smart constructor returns a Locator.
+  check (locStrategy (byId "hdr") == "id") "byId strategy"
+  check (locStrategy (byClassName "b") == "class name") "byClassName -> class name"
   transport <- try (chrome "http://127.0.0.1:1" "{\"browserName\":\"chrome\"}")
   case transport of
     Left (WebDriverError code _) -> check (code == -1) "transport failure -> code -1"
@@ -56,12 +59,12 @@ liveSurface check cdUrl base = do
   get d (base ++ "/one")
   t1 <- title d
   check (t1 == "Page One") "title"
-  hdr <- findElement d ById "hdr"
+  hdr <- findElement d (byId "hdr")
   txt <- elementText d hdr
   check (txt == "One") "hdr text"
 
   -- navigation history
-  go <- findElement d ById "go"
+  go <- findElement d (byId "go")
   elementClick d go
   t2 <- title d
   check (t2 == "Page Two") "after click"
@@ -80,7 +83,7 @@ liveSurface check cdUrl base = do
   check (s2 == "42") "script args"
 
   -- negative path
-  nse <- try (findElement d ById "does-not-exist")
+  nse <- try (findElement d (byId "does-not-exist"))
   case nse of
     Left (WebDriverError code _) -> check (code == 17) "no such element error"
     Right _ -> check False "no such element error"

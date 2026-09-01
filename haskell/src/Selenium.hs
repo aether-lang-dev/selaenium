@@ -2,18 +2,27 @@
 --
 -- Carries NO protocol logic: the W3C command map, routing, By normalization,
 -- error decode and HTTP round-trip all live in the Aether engine, reached
--- through "SeleniumCore.Native" (which links @libselenium_core.so@). This module
+-- through "Selenium.Native" (which links @libselenium_core.so@). This module
 -- marshals strings across the boundary.
 --
 -- Command params are passed as JSON strings (build them with @aeson@ if you
 -- like), and command results come back as the raw JSON string of the response
 -- @value@ — keeping the binding dependency-light (base + bytestring only). The
 -- engine is the source of truth for every wire shape.
-module SeleniumCore
+module Selenium
   ( WebDriver
   , WebDriverError (..)
   , By (..)
   , byString
+  , Locator (..)
+  , byId
+  , byName
+  , byCss
+  , byClassName
+  , byTagName
+  , byLinkText
+  , byPartialLinkText
+  , byXpath
   , chrome
   , headlessChrome
   , execute
@@ -36,7 +45,7 @@ import Control.Exception (Exception, throwIO)
 import Data.List (isInfixOf)
 import Foreign.Ptr (Ptr, nullPtr)
 
-import qualified SeleniumCore.Native as N
+import qualified Selenium.Native as N
 
 -- | A live WebDriver session.
 newtype WebDriver = WebDriver (Ptr ())
@@ -57,11 +66,32 @@ byString :: By -> String
 byString ById = "id"
 byString ByName = "name"
 byString ByCss = "css selector"
-byString ByClassName = "className"
+byString ByClassName = "class name"
 byString ByTagName = "tag name"
 byString ByLinkText = "link text"
 byString ByPartialLinkText = "partial link text"
 byString ByXpath = "xpath"
+
+-- | A locator carrying a (strategy, value) pair — what the @by*@ smart
+-- constructors return and what 'findElement' takes (Selenium 4.x one-arg find).
+data Locator = Locator
+  { locStrategy :: String
+  , locValue :: String
+  }
+  deriving (Show, Eq)
+
+-- Smart constructors mirroring Java's @By.id("x")@ etc. Each returns a
+-- 'Locator'. @byClassName@ carries the W3C @"class name"@ strategy.
+byId, byName, byCss, byClassName, byTagName, byLinkText, byPartialLinkText, byXpath
+  :: String -> Locator
+byId = Locator (byString ById)
+byName = Locator (byString ByName)
+byCss = Locator (byString ByCss)
+byClassName = Locator (byString ByClassName)
+byTagName = Locator (byString ByTagName)
+byLinkText = Locator (byString ByLinkText)
+byPartialLinkText = Locator (byString ByPartialLinkText)
+byXpath = Locator (byString ByXpath)
 
 w3cElementKey :: String
 w3cElementKey = "element-6066-11e4-a52e-4f735466cecf"
@@ -128,10 +158,15 @@ forward d = execute d "goForward" "{}" >> pure ()
 
 -- ---- elements ----
 
--- | Find one element; returns its opaque id string.
-findElement :: WebDriver -> By -> String -> IO String
-findElement d by value = do
-  loc <- locator by value
+-- | Find one element by a 'Locator' (Selenium 4.x one-arg find):
+--
+-- > findElement d (byId "hdr")
+--
+-- Returns the opaque W3C element id string, or throws 'WebDriverError' 17 when
+-- the response carries no element reference.
+findElement :: WebDriver -> Locator -> IO String
+findElement d (Locator strategy value) = do
+  loc <- N.selByLocator strategy value
   v <- execute d "findElement" loc
   case extractElementId v of
     Just eid -> pure eid
