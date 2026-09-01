@@ -1,17 +1,42 @@
-namespace SeleniumCore;
+namespace OpenQA.Selenium;
 
 /// <summary>
-/// Locator strategies. Values match the engine's by_locator strategy strings;
-/// Id/Name/ClassName are rewritten to CSS in the engine.
+/// A locator: a (strategy, value) pair produced by one of the static factory
+/// methods and passed to <see cref="IWebDriver.FindElement(By)"/> /
+/// <see cref="IWebDriver.FindElements(By)"/>. Mirrors Selenium 4.x's
+/// <c>By.Id("x")</c> grammar. The strategy strings are exactly what the shared
+/// engine's <c>by_locator</c> accepts; ClassName uses the W3C-canonical
+/// <c>"class name"</c> form.
 /// </summary>
-public static class By
+public sealed class By
 {
-    public const string Id = "id";
-    public const string Name = "name";
-    public const string CssSelector = "css selector";
-    public const string ClassName = "className";
-    public const string TagName = "tag name";
-    public const string LinkText = "link text";
-    public const string PartialLinkText = "partial link text";
-    public const string XPath = "xpath";
+    private By(string strategy, string value)
+    {
+        Strategy = strategy;
+        Value = value;
+    }
+
+    /// <summary>The engine strategy string (e.g. <c>"css selector"</c>).</summary>
+    public string Strategy { get; }
+
+    /// <summary>The raw selector value.</summary>
+    public string Value { get; }
+
+    public static By Id(string value) => new("id", value);
+
+    public static By Name(string value) => new("name", value);
+
+    public static By ClassName(string value) => new("class name", value);
+
+    public static By CssSelector(string value) => new("css selector", value);
+
+    public static By TagName(string value) => new("tag name", value);
+
+    public static By LinkText(string value) => new("link text", value);
+
+    public static By PartialLinkText(string value) => new("partial link text", value);
+
+    public static By Xpath(string value) => new("xpath", value);
+
+    public override string ToString() => $"By.{Strategy}: {Value}";
 }

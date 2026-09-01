@@ -6,7 +6,7 @@ using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Threading;
 
-namespace SeleniumCore;
+namespace OpenQA.Selenium;
 
 /// <summary>
 /// Resolves the native Selenium core library across the layouts it can ship in:

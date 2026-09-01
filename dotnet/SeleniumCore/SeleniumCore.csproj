@@ -4,11 +4,11 @@
     <TargetFramework>net8.0</TargetFramework>
     <ImplicitUsings>disable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <AssemblyName>SeleniumCore</AssemblyName>
-    <RootNamespace>SeleniumCore</RootNamespace>
+    <AssemblyName>WebDriver</AssemblyName>
+    <RootNamespace>OpenQA.Selenium</RootNamespace>
     <!-- Packaging: bundle the engine .so as a runtime-specific native asset so a
          NuGet consumer gets it under runtimes/linux-x64/native/ automatically. -->
-    <PackageId>SeleniumCore</PackageId>
+    <PackageId>Selenium.WebDriver</PackageId>
     <Version>0.1.0</Version>
     <IncludeBuildOutput>true</IncludeBuildOutput>
   </PropertyGroup>

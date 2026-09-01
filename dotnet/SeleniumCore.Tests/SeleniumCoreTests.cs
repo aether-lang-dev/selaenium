@@ -7,7 +7,7 @@ using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
 using System.Threading;
-using SeleniumCore;
+using OpenQA.Selenium;
 using Xunit;
 using Shouldly;
 
@@ -18,29 +18,29 @@ namespace SeleniumCore.Tests
     public class FfiTests
     {
         [Fact] public void RouteGet() =>
-            WebDriver.Route("get").ShouldBe("POST /session/:sessionId/url");
+            RemoteWebDriver.Route("get").ShouldBe("POST /session/:sessionId/url");
 
         [Fact] public void RouteUnknown() =>
-            WebDriver.Route("nope").ShouldBe("");
+            RemoteWebDriver.Route("nope").ShouldBe("");
 
         [Fact] public void ErrorCodeNoSuchElement() =>
-            WebDriver.ErrorCode("no such element").ShouldBe(17);
+            RemoteWebDriver.ErrorCode("no such element").ShouldBe(17);
 
         [Fact] public void ErrorCodeSuccess() =>
-            WebDriver.ErrorCode("").ShouldBe(0);
+            RemoteWebDriver.ErrorCode("").ShouldBe(0);
 
         [Fact] public void LocatorCss() =>
-            WebDriver.Locator(By.CssSelector, "div.foo")
+            RemoteWebDriver.Locator("css selector", "div.foo")
                 .ShouldBe("{\"using\":\"css selector\",\"value\":\"div.foo\"}");
 
         [Fact] public void LocatorIdRewrite() =>
-            WebDriver.Locator(By.Id, "main")
+            RemoteWebDriver.Locator("id", "main")
                 .ShouldBe("{\"using\":\"css selector\",\"value\":\"*[id=\\\"main\\\"]\"}");
 
         [Fact]
         public void TransportFailureIsWebDriverErrorMinusOne()
         {
-            var ex = Should.Throw<WebDriverError>(() => WebDriver.Chrome("http://127.0.0.1:1"));
+            var ex = Should.Throw<WebDriverException>(() => RemoteWebDriver.Chrome("http://127.0.0.1:1"));
             ex.Code.ShouldBe(-1);
         }
     }
@@ -75,7 +75,7 @@ namespace SeleniumCore.Tests
                 var chromeOpts = new Dictionary<string, object?> { ["args"] = chromeArgs };
                 string? chromeBin = Environment.GetEnvironmentVariable("SEL_CHROME_BINARY");
                 if (!string.IsNullOrEmpty(chromeBin)) chromeOpts["binary"] = chromeBin;
-                var d = WebDriver.Chrome($"http://127.0.0.1:{cdPort}",
+                var d = RemoteWebDriver.Chrome($"http://127.0.0.1:{cdPort}",
                     new Dictionary<string, object?> { ["goog:chromeOptions"] = chromeOpts });
                 try
                 {
@@ -83,10 +83,10 @@ namespace SeleniumCore.Tests
 
                     d.Get(baseUrl + "/one");
                     d.Title.ShouldBe("Page One");
-                    d.FindElement(By.Id, "hdr").Text.ShouldBe("One");
-                    d.FindElement(By.CssSelector, "#go").TagName.ToLowerInvariant().ShouldBe("a");
+                    d.FindElement(By.Id("hdr")).Text.ShouldBe("One");
+                    d.FindElement(By.CssSelector("#go")).TagName.ToLowerInvariant().ShouldBe("a");
 
-                    d.FindElement(By.Id, "go").Click();
+                    d.FindElement(By.Id("go")).Click();
                     d.Title.ShouldBe("Page Two");
                     d.Back();
                     d.Title.ShouldBe("Page One");
@@ -109,7 +109,7 @@ namespace SeleniumCore.Tests
                     d.ExecuteScript("return 'hi';")!.Value.GetString().ShouldBe("hi");
                     d.ExecuteScript("return arguments[0]+arguments[1];", 40, 2)!.Value.GetInt32().ShouldBe(42);
 
-                    Rect rect = d.FindElement(By.Id, "btn").Rect;
+                    Rect rect = d.FindElement(By.Id("btn")).Rect;
                     int cx = (int)(rect.X + rect.Width / 2);
                     int cy = (int)(rect.Y + rect.Height / 2);
                     d.PerformActions(new List<object?>
@@ -127,13 +127,13 @@ namespace SeleniumCore.Tests
                             },
                         },
                     });
-                    d.FindElement(By.Id, "hdr").Text.ShouldBe("clicked");
+                    d.FindElement(By.Id("hdr")).Text.ShouldBe("clicked");
                     d.ClearActions();
 
                     byte[] png = Convert.FromBase64String(d.ScreenshotBase64());
                     (png.Length > 8 && png[1] == 'P' && png[2] == 'N' && png[3] == 'G').ShouldBeTrue();
 
-                    Should.Throw<NoSuchElementError>(() => d.FindElement(By.Id, "does-not-exist"));
+                    Should.Throw<NoSuchElementException>(() => d.FindElement(By.Id("does-not-exist")));
                 }
                 finally { d.Quit(); }
             }
@@ -151,12 +151,12 @@ namespace SeleniumCore.Tests
         [SkippableFact]
         public void DriverOrchestration()
         {
-            string path = WebDriver.ResolveDriver("chrome");
+            string path = RemoteWebDriver.ResolveDriver("chrome");
             Skip.If(string.IsNullOrEmpty(path), "engine cannot resolve a chromedriver (offline, no cache)");
             System.IO.File.Exists(path).ShouldBeTrue($"resolve_driver returned a non-file: {path}");
 
             // ensure_driver spawns it; the handle exposes url + pid.
-            DriverProcess proc = WebDriver.EnsureDriver("chrome")!;
+            DriverProcess proc = RemoteWebDriver.EnsureDriver("chrome")!;
             proc.ShouldNotBeNull();
             try
             {
@@ -169,19 +169,21 @@ namespace SeleniumCore.Tests
                 proc.Pid.ShouldBe(0);
             }
 
-            // LocalChrome spawns its own driver, runs a session, and stops it on Quit.
+            // new ChromeDriver(options) spawns its own driver, runs a session, and
+            // stops it on Quit — the Selenium 4.x authentic entry point (over the
+            // same engine resolve+launch path as LocalChrome).
             var chromeArgs = new List<object?> { "--headless=new", "--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage" };
             var chromeOpts = new Dictionary<string, object?> { ["args"] = chromeArgs };
             string? chromeBin = Environment.GetEnvironmentVariable("SEL_CHROME_BINARY");
             if (!string.IsNullOrEmpty(chromeBin)) chromeOpts["binary"] = chromeBin;
-            var d = WebDriver.LocalChrome(new Dictionary<string, object?> { ["goog:chromeOptions"] = chromeOpts });
+            IWebDriver d = new ChromeDriver(new Dictionary<string, object?> { ["goog:chromeOptions"] = chromeOpts });
             try
             {
                 d.SessionId.Length.ShouldBeGreaterThan(0);
                 d.Get("data:text/html;charset=utf-8," +
                       Uri.EscapeDataString("<title>Aether Selenium</title><h1 id='hdr'>Hello</h1>"));
                 d.Title.ShouldBe("Aether Selenium");
-                d.FindElement(By.Id, "hdr").Text.ShouldBe("Hello");
+                d.FindElement(By.Id("hdr")).Text.ShouldBe("Hello");
             }
             finally { d.Quit(); }
         }
@@ -208,7 +210,7 @@ namespace SeleniumCore.Tests
                 var chromeOpts = new Dictionary<string, object?> { ["args"] = chromeArgs };
                 string? chromeBin = Environment.GetEnvironmentVariable("SEL_CHROME_BINARY");
                 if (!string.IsNullOrEmpty(chromeBin)) chromeOpts["binary"] = chromeBin;
-                var d = WebDriver.Chrome($"http://127.0.0.1:{cdPort}",
+                var d = RemoteWebDriver.Chrome($"http://127.0.0.1:{cdPort}",
                     new Dictionary<string, object?> { ["goog:chromeOptions"] = chromeOpts });
                 try
                 {
@@ -291,7 +293,7 @@ namespace SeleniumCore.Tests
                 var chromeOpts = new Dictionary<string, object?> { ["args"] = chromeArgs };
                 string? chromeBin = Environment.GetEnvironmentVariable("SEL_CHROME_BINARY");
                 if (!string.IsNullOrEmpty(chromeBin)) chromeOpts["binary"] = chromeBin;
-                var d = WebDriver.Chrome($"http://127.0.0.1:{cdPort}",
+                var d = RemoteWebDriver.Chrome($"http://127.0.0.1:{cdPort}",
                     new Dictionary<string, object?> { ["goog:chromeOptions"] = chromeOpts });
                 try
                 {
@@ -300,10 +302,10 @@ namespace SeleniumCore.Tests
                         + "<p id='gone' style='display:none'>x</p>"
                         + "<a id='lnk' href='https://example.com/x'>l</a>");
 
-                    d.FindElement(By.Id, "hdr").IsDisplayed().ShouldBeTrue();
-                    d.FindElement(By.Id, "gone").IsDisplayed().ShouldBeFalse();
+                    d.FindElement(By.Id("hdr")).Displayed.ShouldBeTrue();
+                    d.FindElement(By.Id("gone")).Displayed.ShouldBeFalse();
 
-                    string? href = d.FindElement(By.Id, "lnk").GetAttribute("href");
+                    string? href = d.FindElement(By.Id("lnk")).GetAttribute("href");
                     href.ShouldNotBeNull();
                     href!.ShouldContain("example.com/x");
 

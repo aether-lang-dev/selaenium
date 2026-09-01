@@ -1,6 +1,6 @@
-namespace SeleniumCore.FSharp
+namespace OpenQA.Selenium.FSharp
 
-open SeleniumCore
+open OpenQA.Selenium
 
 /// Idiomatic F# over the .NET binding.
 ///
@@ -12,23 +12,27 @@ open SeleniumCore
 ///
 /// What F# adds: a `headlessChrome url (fun d -> …)` loan-pattern that quits at
 /// the end, a `By` module re-export, and the pure engine helpers as functions.
-module SeleniumCore =
+module Selenium =
 
-    /// By strategies (the same string constants the engine expects).
+    /// By strategies as F#-friendly functions over the Selenium 4.x `By` factory.
+    /// Each returns a `By` locator carrying (strategy, value).
     module By =
-        let ID = SeleniumCore.By.Id
-        let NAME = SeleniumCore.By.Name
-        let CSS_SELECTOR = SeleniumCore.By.CssSelector
-        let CLASS_NAME = SeleniumCore.By.ClassName
-        let TAG_NAME = SeleniumCore.By.TagName
+        let id (value: string) : By = OpenQA.Selenium.By.Id(value)
+        let name (value: string) : By = OpenQA.Selenium.By.Name(value)
+        let cssSelector (value: string) : By = OpenQA.Selenium.By.CssSelector(value)
+        let className (value: string) : By = OpenQA.Selenium.By.ClassName(value)
+        let tagName (value: string) : By = OpenQA.Selenium.By.TagName(value)
+        let linkText (value: string) : By = OpenQA.Selenium.By.LinkText(value)
+        let partialLinkText (value: string) : By = OpenQA.Selenium.By.PartialLinkText(value)
+        let xpath (value: string) : By = OpenQA.Selenium.By.Xpath(value)
 
     /// Pure engine helpers (no session) — shared with every binding.
-    let route (command: string) : string = WebDriver.Route(command)
-    let errorCode (w3cError: string) : int = WebDriver.ErrorCode(w3cError)
-    let locator (by: string) (value: string) : string = WebDriver.Locator(by, value)
+    let route (command: string) : string = RemoteWebDriver.Route(command)
+    let errorCode (w3cError: string) : int = RemoteWebDriver.ErrorCode(w3cError)
+    let locator (by: string) (value: string) : string = RemoteWebDriver.Locator(by, value)
 
     /// Loan-pattern: open a headless Chrome session, run `body`, always quit.
-    let headlessChrome (commandExecutor: string) (body: WebDriver -> 'a) : 'a =
-        let d = WebDriver.HeadlessChrome(commandExecutor)
-        try body d
+    let headlessChrome (commandExecutor: string) (body: IWebDriver -> 'a) : 'a =
+        let d = RemoteWebDriver.HeadlessChrome(commandExecutor)
+        try body (d :> IWebDriver)
         finally d.Quit()

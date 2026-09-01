@@ -3,35 +3,52 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
 
-namespace SeleniumCore;
+namespace OpenQA.Selenium;
 
 /// <summary>
-/// A WebDriver session over the shared pure-Aether engine. Re-glued to the one
-/// <c>libselenium_core.so</c> via P/Invoke (<see cref="NativeMethods"/>);
+/// A WebDriver session over the shared pure-Aether engine (the concrete
+/// <see cref="IWebDriver"/> / <see cref="IJavaScriptExecutor"/>). Re-glued to the
+/// one <c>libselenium_core.so</c> via P/Invoke (<see cref="NativeMethods"/>);
 /// carries NO protocol logic — every command is one native Execute call plus
 /// JSON marshalling. The W3C command map, routing, By normalization, error
 /// decode and HTTP round-trip all live in the shared engine.
 ///
+/// Named to match Selenium 4.x (<c>OpenQA.Selenium.Remote.RemoteWebDriver</c>
+/// shape); <see cref="ChromeDriver"/> subclasses it for the local-launch entry
+/// point, and the static <see cref="Chrome"/>/<see cref="LocalChrome"/> factories
+/// remain for callers that already use them.
+///
 /// Command results are returned as <see cref="JsonElement"/> (System.Text.Json).
 /// </summary>
-public sealed class WebDriver : IDisposable
+public class RemoteWebDriver : IWebDriver
 {
     internal const string W3CElementKey = "element-6066-11e4-a52e-4f735466cecf";
 
     private IntPtr _handle;
     private readonly string _wsUrl;
     private BiDi? _bidi;
-    // A driver process this session owns (set by LocalChrome); stopped on Quit/
-    // Dispose. Null for sessions against a caller-supplied URL.
+    // A driver process this session owns (set by LocalChrome/ChromeDriver);
+    // stopped on Quit/Dispose. Null for sessions against a caller-supplied URL.
     private DriverProcess? _ownedDriver;
 
-    private WebDriver(string commandExecutor, IDictionary<string, object?> capabilities,
-                      string? caPath = null, bool insecure = false)
+    /// <summary>
+    /// Connect to a running remote end at <paramref name="commandExecutor"/> (a
+    /// WebDriver base URL: Grid, a standalone driver, etc.) and start a session
+    /// negotiating the given capabilities. Mirrors Selenium 4.x
+    /// <c>new RemoteWebDriver(uri, options)</c>.
+    /// </summary>
+    public RemoteWebDriver(string commandExecutor, IDictionary<string, object?> capabilities)
+        : this(commandExecutor, capabilities, null, false)
+    {
+    }
+
+    protected RemoteWebDriver(string commandExecutor, IDictionary<string, object?> capabilities,
+                              string? caPath, bool insecure)
     {
         _handle = NativeMethods.Open(commandExecutor);
         if (_handle == IntPtr.Zero)
         {
-            throw new WebDriverError("failed to open session handle", -1);
+            throw new WebDriverException("failed to open session handle", -1);
         }
         // TLS trust config must land on the handle BEFORE newSession (the first
         // request). caPath pins a private-CA bundle; insecure skips verification
@@ -66,8 +83,8 @@ public sealed class WebDriver : IDisposable
     /// <summary>Pin an explicit native library path (wins over env/bundled).</summary>
     public static void ConfigureNativeLib(string path) => NativeLoader.Configure(path);
 
-    public static WebDriver Chrome(string commandExecutor, IDictionary<string, object?>? options = null,
-                                   string? caPath = null, bool insecure = false)
+    public static RemoteWebDriver Chrome(string commandExecutor, IDictionary<string, object?>? options = null,
+                                         string? caPath = null, bool insecure = false)
     {
         var caps = new Dictionary<string, object?> { ["browserName"] = "chrome" };
         if (options != null)
@@ -77,10 +94,10 @@ public sealed class WebDriver : IDisposable
                 caps[kv.Key] = kv.Value;
             }
         }
-        return new WebDriver(commandExecutor, caps, caPath, insecure);
+        return new RemoteWebDriver(commandExecutor, caps, caPath, insecure);
     }
 
-    public static WebDriver HeadlessChrome(string commandExecutor) =>
+    public static RemoteWebDriver HeadlessChrome(string commandExecutor) =>
         Chrome(commandExecutor, new Dictionary<string, object?>
         {
             ["goog:chromeOptions"] = new Dictionary<string, object?>
@@ -104,7 +121,7 @@ public sealed class WebDriver : IDisposable
             string message = NativeMethods.TakeString(NativeMethods.LastError(_handle));
             if (rc == -1 && code == 0)
             {
-                throw new WebDriverError(string.IsNullOrEmpty(message) ? "transport failure" : message, -1);
+                throw new WebDriverException(string.IsNullOrEmpty(message) ? "transport failure" : message, -1);
             }
             throw Classify(code, message);
         }
@@ -128,7 +145,7 @@ public sealed class WebDriver : IDisposable
             string message = NativeMethods.TakeString(NativeMethods.LastError(_handle));
             if (rc == -1 && code == 0)
             {
-                throw new WebDriverError(string.IsNullOrEmpty(message) ? "transport failure" : message, -1);
+                throw new WebDriverException(string.IsNullOrEmpty(message) ? "transport failure" : message, -1);
             }
             throw Classify(code, message);
         }
@@ -154,35 +171,35 @@ public sealed class WebDriver : IDisposable
     /// spatial relation to anchors, nearest first. Each filter is a dictionary
     /// { "kind": "above"|"below"|"left"|"right"|"near", "sel": "&lt;css&gt;" } (near also
     /// accepts "dist").</summary>
-    public IReadOnlyList<WebElement> FindRelative(string baseCss, params IDictionary<string, object?>[] filters)
+    public IReadOnlyList<RemoteWebElement> FindRelative(string baseCss, params IDictionary<string, object?>[] filters)
     {
         string filtersJson = JsonSerializer.Serialize(filters);
         JsonElement? result = AtomResult(NativeMethods.FindRelative(_handle, baseCss, filtersJson));
-        var els = new List<WebElement>();
+        var els = new List<RemoteWebElement>();
         if (result is { ValueKind: JsonValueKind.Array } arr)
         {
             foreach (JsonElement r in arr.EnumerateArray())
             {
                 if (r.TryGetProperty("element-6066-11e4-a52e-4f735466cecf", out JsonElement idEl))
                 {
-                    els.Add(new WebElement(this, idEl.GetString()!));
+                    els.Add(new RemoteWebElement(this, idEl.GetString()!));
                 }
             }
         }
         return els;
     }
 
-    internal static WebDriverError Classify(int code, string message) => code switch
+    internal static WebDriverException Classify(int code, string message) => code switch
     {
-        3 => new ElementClickInterceptedError(message, code),
-        4 => new ElementNotInteractableError(message, code),
-        11 => new InvalidSelectorError(message, code),
-        13 => new JavascriptError(message, code),
-        17 => new NoSuchElementError(message, code),
-        21 or 24 => new TimeoutError(message, code),
-        23 => new StaleElementReferenceError(message, code),
-        28 => new UnknownCommandError(message, code),
-        _ => new WebDriverError(message, code),
+        3 => new ElementClickInterceptedException(message, code),
+        4 => new ElementNotInteractableException(message, code),
+        11 => new InvalidSelectorException(message, code),
+        13 => new JavaScriptException(message, code),
+        17 => new NoSuchElementException(message, code),
+        21 or 24 => new TimeoutException(message, code),
+        23 => new StaleElementReferenceException(message, code),
+        28 => new UnknownCommandException(message, code),
+        _ => new WebDriverException(message, code),
     };
 
     private static Dictionary<string, object?> DecodeBy(string by, string value)
@@ -206,17 +223,17 @@ public sealed class WebDriver : IDisposable
     public void Refresh() => Execute("refresh", null);
 
     // ---- elements ----
-    public WebElement FindElement(string by, string value)
+    public IWebElement FindElement(By by)
     {
-        JsonElement result = Execute("findElement", DecodeBy(by, value))!.Value;
-        return new WebElement(this, result.GetProperty(W3CElementKey).GetString()!);
+        JsonElement result = Execute("findElement", DecodeBy(by.Strategy, by.Value))!.Value;
+        return new RemoteWebElement(this, result.GetProperty(W3CElementKey).GetString()!);
     }
 
-    public IReadOnlyList<WebElement> FindElements(string by, string value)
+    public IReadOnlyList<IWebElement> FindElements(By by)
     {
-        JsonElement result = Execute("findElements", DecodeBy(by, value))!.Value;
+        JsonElement result = Execute("findElements", DecodeBy(by.Strategy, by.Value))!.Value;
         return result.EnumerateArray()
-            .Select(e => new WebElement(this, e.GetProperty(W3CElementKey).GetString()!))
+            .Select(e => (IWebElement)new RemoteWebElement(this, e.GetProperty(W3CElementKey).GetString()!))
             .ToList();
     }
 
@@ -306,12 +323,12 @@ public sealed class WebDriver : IDisposable
             {
                 if (string.IsNullOrEmpty(_wsUrl))
                 {
-                    throw new WebDriverError("BiDi not available: the session negotiated no webSocketUrl", 0);
+                    throw new WebDriverException("BiDi not available: the session negotiated no webSocketUrl", 0);
                 }
                 IntPtr handle = NativeMethods.BidiOpen(_wsUrl);
                 if (handle == IntPtr.Zero)
                 {
-                    throw new WebDriverError("BiDi channel failed to open", -1);
+                    throw new WebDriverException("BiDi channel failed to open", -1);
                 }
                 _bidi = new BiDi(handle);
             }
@@ -391,12 +408,12 @@ public sealed class WebDriver : IDisposable
 
     /// <summary>A Chrome session that spawns its OWN chromedriver via the engine —
     /// no driver on PATH, no Grid. The driver process is stopped on Quit/Dispose.
-    /// Throws <see cref="WebDriverError"/> if no driver can be resolved/launched.</summary>
-    public static WebDriver LocalChrome(IDictionary<string, object?>? options = null, string hint = "",
-                                        int timeoutMs = 15000, string? caPath = null, bool insecure = false)
+    /// Throws <see cref="WebDriverException"/> if no driver can be resolved/launched.</summary>
+    public static RemoteWebDriver LocalChrome(IDictionary<string, object?>? options = null, string hint = "",
+                                              int timeoutMs = 15000, string? caPath = null, bool insecure = false)
     {
         DriverProcess proc = EnsureDriver("chrome", hint, timeoutMs)
-            ?? throw new WebDriverError("could not resolve/launch chromedriver", -1);
+            ?? throw new WebDriverException("could not resolve/launch chromedriver", -1);
         try
         {
             var caps = new Dictionary<string, object?> { ["browserName"] = "chrome" };
@@ -407,7 +424,7 @@ public sealed class WebDriver : IDisposable
                     caps[kv.Key] = kv.Value;
                 }
             }
-            var driver = new WebDriver(proc.Url, caps, caPath, insecure);
+            var driver = new RemoteWebDriver(proc.Url, caps, caPath, insecure);
             driver._ownedDriver = proc;
             return driver;
         }
@@ -417,6 +434,11 @@ public sealed class WebDriver : IDisposable
             throw;
         }
     }
+
+    /// <summary>Adopt a driver process this session owns so it is stopped on
+    /// Quit/Dispose (used by <see cref="ChromeDriver"/>, which launches its own
+    /// driver before the base constructor runs).</summary>
+    private protected void AdoptDriver(DriverProcess proc) => _ownedDriver = proc;
 
     // ---- pure engine helpers ----
     public static string Route(string command) => NativeMethods.TakeString(NativeMethods.Route(command));

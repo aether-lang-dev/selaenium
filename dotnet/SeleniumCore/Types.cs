@@ -1,6 +1,6 @@
 using System.Text.Json.Serialization;
 
-namespace SeleniumCore;
+namespace OpenQA.Selenium;
 
 /// <summary>A browser cookie as returned by GetCookies/GetCookie. Fields absent
 /// from the wire payload keep their default (Expiry null = session cookie).</summary>

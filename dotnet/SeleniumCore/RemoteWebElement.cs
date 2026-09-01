@@ -1,20 +1,21 @@
 using System.Collections.Generic;
 using System.Text.Json;
 
-namespace SeleniumCore;
+namespace OpenQA.Selenium;
 
 /// <summary>
-/// A remote element handle. Methods issue element-scoped commands, passing this
-/// element's id as the <c>:id</c> path parameter (the engine separates path
-/// params from the body).
+/// A remote element handle (the concrete <see cref="IWebElement"/>). Methods issue
+/// element-scoped commands, passing this element's id as the <c>:id</c> path
+/// parameter (the engine separates path params from the body). Named to match
+/// Selenium 4.x's <c>RemoteWebElement</c> shape.
 /// </summary>
-public sealed class WebElement
+public class RemoteWebElement : IWebElement
 {
-    private readonly WebDriver _driver;
+    private readonly RemoteWebDriver _driver;
 
     public string Id { get; }
 
-    internal WebElement(WebDriver driver, string id)
+    internal RemoteWebElement(RemoteWebDriver driver, string id)
     {
         _driver = driver;
         Id = id;
@@ -47,7 +48,7 @@ public sealed class WebElement
 
     /// <summary>Whether the element is shown (the isDisplayed atom — the visibility
     /// algorithm, run in-page by the engine — not a naive style check).</summary>
-    public bool IsDisplayed() => _driver.AtomIsDisplayed(Id);
+    public bool Displayed => _driver.AtomIsDisplayed(Id);
 
     /// <summary>The classic getAttribute(name): property-or-attribute (boolean attrs,
     /// live properties like value/checked), via the shared engine atom. Use
@@ -61,8 +62,8 @@ public sealed class WebElement
     public JsonElement? GetProperty(string name) =>
         Exec("getElementProperty", new Dictionary<string, object?> { ["name"] = name });
 
-    public bool IsEnabled() => Exec("isElementEnabled", null)!.Value.GetBoolean();
-    public bool IsSelected() => Exec("isElementSelected", null)!.Value.GetBoolean();
+    public bool Enabled => Exec("isElementEnabled", null)!.Value.GetBoolean();
+    public bool Selected => Exec("isElementSelected", null)!.Value.GetBoolean();
 
     public Rect Rect => Exec("getElementRect", null)?.Deserialize<Rect>() ?? new Rect();
 }

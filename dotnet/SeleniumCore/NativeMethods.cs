@@ -1,7 +1,7 @@
 using System;
 using System.Runtime.InteropServices;
 
-namespace SeleniumCore;
+namespace OpenQA.Selenium;
 
 /// <summary>
 /// Raw P/Invoke surface over the native Selenium core library — 1:1 with the

@@ -2,7 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Text.Json;
 
-namespace SeleniumCore;
+namespace OpenQA.Selenium;
 
 /// <summary>
 /// The common WebDriver-BiDi event names (W3C spec). Pass to
@@ -93,7 +93,7 @@ public sealed class BiDi
         int cid = NextId();
         if (NativeMethods.BidiSend(_handle, cid, method, paramsJson) != 0)
         {
-            throw new WebDriverError($"BiDi send failed: {method}", -1);
+            throw new WebDriverException($"BiDi send failed: {method}", -1);
         }
         int waited = 0, step = 50;
         while (waited < timeoutMs)
@@ -109,7 +109,7 @@ public sealed class BiDi
             }
             waited += step;
         }
-        throw new TimeoutError($"BiDi command timed out: {method}", 0);
+        throw new TimeoutException($"BiDi command timed out: {method}", 0);
     }
 
     // ---- typed convenience commands ----
@@ -139,7 +139,7 @@ public sealed class BiDi
     /// {"type":"number","value":42}). BiDi's richer alternative to ExecuteScript.</summary>
     public Dictionary<string, object?> Evaluate(string expression, string? context = null, int timeoutMs = 30000)
     {
-        string ctx = context ?? TopContext(timeoutMs) ?? throw new WebDriverError("no browsing context for script.evaluate", 0);
+        string ctx = context ?? TopContext(timeoutMs) ?? throw new WebDriverException("no browsing context for script.evaluate", 0);
         string raw = NativeMethods.TakeString(NativeMethods.BidiScriptEvaluate(_handle, NextId(), expression, ctx, timeoutMs));
         return raw.Length == 0 ? new Dictionary<string, object?>() : ParseObject(raw);
     }
@@ -160,7 +160,7 @@ public sealed class BiDi
     /// <summary>browsingContext.navigate a context to url (wait: complete).</summary>
     public Dictionary<string, object?> Navigate(string url, string? context = null, int timeoutMs = 30000)
     {
-        string ctx = context ?? TopContext(timeoutMs) ?? throw new WebDriverError("no browsing context for navigate", 0);
+        string ctx = context ?? TopContext(timeoutMs) ?? throw new WebDriverException("no browsing context for navigate", 0);
         string raw = NativeMethods.TakeString(NativeMethods.BidiNavigate(_handle, NextId(), ctx, url, timeoutMs));
         return raw.Length == 0 ? new Dictionary<string, object?>() : ParseObject(raw);
     }

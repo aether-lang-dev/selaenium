@@ -1,58 +1,59 @@
 using System;
 
-namespace SeleniumCore;
+namespace OpenQA.Selenium;
 
 /// <summary>
 /// Base for all remote-end errors, carrying the engine's stable W3C error code
-/// (0 = success, -1 = transport failure). <see cref="WebDriver.Classify"/> maps
-/// codes to the typed subtypes below.
+/// (0 = success, -1 = transport failure). <see cref="RemoteWebDriver.Classify"/>
+/// maps codes to the typed subtypes below. Mirrors Selenium 4.x's
+/// <c>OpenQA.Selenium.WebDriverException</c> naming.
 /// </summary>
-public class WebDriverError : Exception
+public class WebDriverException : Exception
 {
     public int Code { get; }
 
-    public WebDriverError(string message, int code) : base(message)
+    public WebDriverException(string message, int code) : base(message)
     {
         Code = code;
     }
 }
 
-public sealed class NoSuchElementError : WebDriverError
+public sealed class NoSuchElementException : WebDriverException
 {
-    public NoSuchElementError(string m, int c) : base(m, c) { }
+    public NoSuchElementException(string m, int c) : base(m, c) { }
 }
 
-public sealed class StaleElementReferenceError : WebDriverError
+public sealed class StaleElementReferenceException : WebDriverException
 {
-    public StaleElementReferenceError(string m, int c) : base(m, c) { }
+    public StaleElementReferenceException(string m, int c) : base(m, c) { }
 }
 
-public sealed class ElementClickInterceptedError : WebDriverError
+public sealed class ElementClickInterceptedException : WebDriverException
 {
-    public ElementClickInterceptedError(string m, int c) : base(m, c) { }
+    public ElementClickInterceptedException(string m, int c) : base(m, c) { }
 }
 
-public sealed class ElementNotInteractableError : WebDriverError
+public sealed class ElementNotInteractableException : WebDriverException
 {
-    public ElementNotInteractableError(string m, int c) : base(m, c) { }
+    public ElementNotInteractableException(string m, int c) : base(m, c) { }
 }
 
-public sealed class InvalidSelectorError : WebDriverError
+public sealed class InvalidSelectorException : WebDriverException
 {
-    public InvalidSelectorError(string m, int c) : base(m, c) { }
+    public InvalidSelectorException(string m, int c) : base(m, c) { }
 }
 
-public sealed class TimeoutError : WebDriverError
+public sealed class TimeoutException : WebDriverException
 {
-    public TimeoutError(string m, int c) : base(m, c) { }
+    public TimeoutException(string m, int c) : base(m, c) { }
 }
 
-public sealed class JavascriptError : WebDriverError
+public sealed class JavaScriptException : WebDriverException
 {
-    public JavascriptError(string m, int c) : base(m, c) { }
+    public JavaScriptException(string m, int c) : base(m, c) { }
 }
 
-public sealed class UnknownCommandError : WebDriverError
+public sealed class UnknownCommandException : WebDriverException
 {
-    public UnknownCommandError(string m, int c) : base(m, c) { }
+    public UnknownCommandException(string m, int c) : base(m, c) { }
 }
