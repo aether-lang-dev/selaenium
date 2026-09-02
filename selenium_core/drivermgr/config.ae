@@ -27,6 +27,7 @@ struct Config {
     cache_path:      string   // cache root override (else SE_CACHE_PATH / default)
     offline:         int      // 1 = never touch the network (cache/PATH only)
     timeout:         int      // per-request seconds (0 -> caller default)
+    ttl:             int      // metadata-cache TTL seconds (default 3600; 0 disables)
 }
 
 // Field accessors (the struct is opaque to other modules).
@@ -38,6 +39,7 @@ proxy(c: ptr) -> string { x = c as *Config; return x.proxy }
 cache_path(c: ptr) -> string { x = c as *Config; return x.cache_path }
 offline(c: ptr) -> int { x = c as *Config; return x.offline }
 timeout(c: ptr) -> int { x = c as *Config; return x.timeout }
+ttl(c: ptr) -> int { x = c as *Config; return x.ttl }
 
 // parse(hint, browser) — resolve every setting. `browser` selects the browser-
 // specific env keys (e.g. SE_CHROME_VERSION alongside SE_BROWSER_VERSION), as
@@ -59,6 +61,8 @@ parse(hint: string, browser: string) -> ptr {
     c.cache_path = _str(root, "cachePath", os.getenv("SE_CACHE_PATH"))
     c.offline = _bool(root, "offline", os.getenv("SE_OFFLINE"))
     c.timeout = _int(root, "timeout", os.getenv("SE_TIMEOUT"))
+    // ttl defaults to 3600 (TTL_SEC) when unset; an explicit 0 disables caching.
+    c.ttl = _int_default(root, "ttl", os.getenv("SE_TTL"), 3600)
     return c as ptr
 }
 
@@ -115,6 +119,12 @@ _bool(root: ptr, key: string, envval: string) -> int {
 }
 
 _int(root: ptr, key: string, envval: string) -> int {
+    return _int_default(root, key, envval, 0)
+}
+
+// Like _int but returns `dflt` when neither the hint key nor the env var is
+// present. An explicit hint/env value (including 0) wins over the default.
+_int_default(root: ptr, key: string, envval: string, dflt: int) -> int {
     if root != null {
         if json.object_has(root, key) == 1 {
             v, _v = json.object_get(root, key)
@@ -122,9 +132,9 @@ _int(root: ptr, key: string, envval: string) -> int {
         }
     }
     t = string.trim(envval)
-    if string.length(t) == 0 { return 0 }
+    if string.length(t) == 0 { return dflt }
     n, err = string.to_int(t)
-    if string.length(err) > 0 { return 0 }
+    if string.length(err) > 0 { return dflt }
     return n
 }
 

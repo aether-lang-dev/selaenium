@@ -1,0 +1,136 @@
+// metadata.ae — the driver-version TTL cache (se-metadata.json in the cache
+// dir). Ports rust/src/metadata.rs: a resolve consults it before hitting the
+// network and updates it after, so a repeated resolve within the TTL window
+// skips the version-endpoint round-trip entirely.
+//
+// Schema (subset — we cache drivers; browsers array is preserved untouched):
+//   { "drivers": [ {major_browser_version, driver_name, driver_version,
+//                   driver_ttl}, ... ], "browsers": [...] }
+// driver_ttl is an ABSOLUTE expiry (now + ttl_seconds). On read, entries whose
+// ttl <= now are pruned (metadata.rs:88-115). A driver is cached only when its
+// major and version are both non-empty (should_cache_driver_version,
+// metadata.rs:174-180); the classic rule also EXCLUDES stable/latest resolves
+// (those pass major_browser_version="" here, so they are naturally not cached).
+import std.json
+import std.string
+import std.file
+import std.fs
+import std.time
+
+METADATA_FILE() -> string { return "se-metadata.json" }
+// TTL_SEC default (lib.rs:99). SE_TTL overrides via the caller.
+DEFAULT_TTL() -> int { return 3600 }
+
+// lookup_driver(cache_root, driver_name, major) -> cached driver_version, or ""
+// when absent or expired. `major` is the browser MAJOR the driver was matched
+// to (the metadata key), e.g. "138".
+lookup_driver(cache_root: string, driver_name: string, major: string) -> string {
+    if string.length(major) == 0 { return "" }
+    body = _read(cache_root)
+    if string.length(body) == 0 { return "" }
+    root, perr = json.parse(body)
+    if string.length(perr) > 0 { return "" }
+    drivers, _d = json.object_get(root, "drivers")
+    n = json.array_size(drivers)
+    now = _now()
+    i = 0
+    while i < n {
+        e, _e = json.array_get(drivers, i)
+        dn, _dn = json.get_string(_get(e, "driver_name"))
+        mv, _mv = json.get_string(_get(e, "major_browser_version"))
+        ttl = json.get_int(_get(e, "driver_ttl"))
+        if string.equals(dn, driver_name) == 1 {
+            if string.equals(mv, major) == 1 {
+                if ttl > now {
+                    dv, _dv = json.get_string(_get(e, "driver_version"))
+                    return string.concat(dv, "")
+                }
+            }
+        }
+        i = i + 1
+    }
+    return ""
+}
+
+// store_driver(cache_root, driver_name, major, driver_version, ttl_seconds) —
+// upsert an entry (now + ttl_seconds expiry) and rewrite the file, dropping any
+// already-expired drivers. No-op when major or version is empty (matches
+// should_cache_driver_version) or ttl_seconds <= 0 (caching disabled).
+store_driver(cache_root: string, driver_name: string, major: string, driver_version: string, ttl_seconds: int) {
+    if ttl_seconds <= 0 { return }
+    if string.length(major) == 0 { return }
+    if string.length(driver_version) == 0 { return }
+
+    now = _now()
+    out = json.arr()
+
+    // Carry forward existing, non-expired drivers except the one we're upserting.
+    body = _read(cache_root)
+    if string.length(body) > 0 {
+        root, perr = json.parse(body)
+        if string.length(perr) == 0 {
+            drivers, _d = json.object_get(root, "drivers")
+            n = json.array_size(drivers)
+            i = 0
+            while i < n {
+                e, _e = json.array_get(drivers, i)
+                dn, _dn = json.get_string(_get(e, "driver_name"))
+                mv, _mv = json.get_string(_get(e, "major_browser_version"))
+                ttl = json.get_int(_get(e, "driver_ttl"))
+                keep = 1
+                if ttl <= now { keep = 0 }
+                if string.equals(dn, driver_name) == 1 {
+                    if string.equals(mv, major) == 1 { keep = 0 }   // replaced below
+                }
+                if keep == 1 {
+                    dv, _dv = json.get_string(_get(e, "driver_version"))
+                    _p = json.push(out, _mk_driver(dn, mv, dv, ttl))
+                }
+                i = i + 1
+            }
+        }
+    }
+
+    // The fresh entry.
+    _pn = json.push(out, _mk_driver(driver_name, major, driver_version, now + ttl_seconds))
+
+    doc = json.obj()
+    _s = json.set(doc, "drivers", out)
+    text, eerr = json.encode(doc)
+    if string.length(eerr) > 0 { return }
+    _md = fs.mkdir_p(cache_root)
+    _w = file.write(_path(cache_root), text)
+}
+
+// ---- internals ----
+
+_path(cache_root: string) -> string {
+    return string.concat(cache_root, string.concat("/", METADATA_FILE()))
+}
+
+_read(cache_root: string) -> string {
+    p = _path(cache_root)
+    if file.exists(p) == 0 { return "" }
+    body, err = file.read(p)
+    if string.length(err) > 0 { return "" }
+    return body
+}
+
+_now() -> int {
+    dt = time.now()
+    return dt.epoch as int
+}
+
+_get(obj: ptr, key: string) -> ptr {
+    v, _v = json.object_get(obj, key)
+    return v
+}
+
+_mk_driver(driver_name: string, major: string, driver_version: string, ttl: int) -> ptr {
+    o = json.obj()
+    _a = json.set(o, "driver_name", json.str(driver_name))
+    _b = json.set(o, "major_browser_version", json.str(major))
+    _c = json.set(o, "driver_version", json.str(driver_version))
+    _d = json.set(o, "driver_ttl", json.from_int(ttl))
+    return o
+}

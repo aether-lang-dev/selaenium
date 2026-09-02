@@ -12,6 +12,7 @@ import edgedriver
 import firefoxdl
 import drivercache
 import config
+import metadata
 import std.string
 import std.http.client
 import std.os
@@ -51,8 +52,19 @@ resolve_chrome(hint: string) -> string {
         }
     }
 
-    // 2. resolve the driver version + url via CfT (fetch at the edge). Offline:
-    //    no network — fall straight to a cached-or-PATH driver.
+    // 2a. TTL metadata short-circuit: if a driver version was resolved for this
+    //     browser major recently AND that binary is already cached, skip the
+    //     CfT version fetch entirely (metadata.rs). Only applies to a known
+    //     major (stable/empty resolutions are not cached, matching classic).
+    bmaj = _major_str(bver)
+    cached_ver = metadata.lookup_driver(root, "chromedriver", bmaj)
+    if string.length(cached_ver) > 0 {
+        hit = drivercache.driver_path_in_cache(root, _driver_name(), label, cached_ver)
+        if drivercache.cached(hit) == 1 { return hit }
+    }
+
+    // 2b. resolve the driver version + url via CfT (fetch at the edge). Offline:
+    //     no network — fall straight to a cached-or-PATH driver.
     resolved = null
     if config.offline(cfg) == 0 {
         which = cft.which_endpoint(bver)
@@ -74,6 +86,11 @@ resolve_chrome(hint: string) -> string {
 
     dver = cft.resolved_version(resolved)
     durl = cft.resolved_url(resolved)
+
+    // Record the (major -> driver version) mapping for the TTL window so a
+    // repeat resolve within it can skip the CfT fetch (no-op for a stable/empty
+    // major or ttl<=0, per should_cache_driver_version).
+    metadata.store_driver(root, "chromedriver", bmaj, dver, config.ttl(cfg))
     if string.length(dver) == 0 {
         return _cached_or_path(root, _driver_name(), label, bver)
     }
@@ -107,6 +124,14 @@ _driver_name() -> string {
     return "chromedriver"
 }
 
+// The browser MAJOR as a string for the metadata key, or "" when there is no
+// concrete major (empty/stable resolutions -> "" -> not cached).
+_major_str(bver: string) -> string {
+    m = version.major(bver)
+    if m < 0 { return "" }
+    return string.from_int(m)
+}
+
 // resolve_firefox(hint) -> absolute path to a runnable geckodriver, or "".
 // Ports firefox.rs request_driver_version: detect Firefox + major, fetch the
 // SeleniumHQ geckodriver-support table and range-match (first match wins); on a
@@ -136,6 +161,17 @@ resolve_firefox(hint: string) -> string {
     }
     fmaj = version.major(bver)
 
+    label = gecko.platform_label(o, a)
+    fmaj_s = _major_str(bver)
+
+    // TTL short-circuit: a cached (firefox-major -> geckodriver version) whose
+    // binary is present skips the support-table fetch.
+    cached_ver = metadata.lookup_driver(root, "geckodriver", fmaj_s)
+    if string.length(cached_ver) > 0 {
+        hit = drivercache.driver_path_in_cache(root, _named(o, "geckodriver"), label, cached_ver)
+        if drivercache.cached(hit) == 1 { return hit }
+    }
+
     // 2. resolve the geckodriver version + url (skip the network when offline).
     resolved = null
     if config.offline(cfg) == 0 {
@@ -156,10 +192,10 @@ resolve_firefox(hint: string) -> string {
     dver = gecko.resolved_version(resolved)
     durl = gecko.resolved_url(resolved)
     if string.length(dver) == 0 { return _which_named("geckodriver") }
+    metadata.store_driver(root, "geckodriver", fmaj_s, dver, config.ttl(cfg))
 
     // 3. cache-or-download. geckodriver: <name>[.exe]; the archive kind is
     //    inferred from the URL suffix by drivercache (.tar.gz off Windows).
-    label = gecko.platform_label(o, a)
     got = drivercache.ensure(root, _named(o, "geckodriver"), label, dver, durl, config.proxy(cfg))
     if string.length(got) > 0 { return got }
     return _which_named("geckodriver")
@@ -198,6 +234,18 @@ resolve_edge(hint: string) -> string {
     }
     if emaj < 0 { return _which_named("msedgedriver") }
 
+    label = edgedriver.platform_label(o, a)
+    emaj_s = string.from_int(emaj)
+
+    // TTL short-circuit: a cached (major -> msedgedriver version) whose binary is
+    // present skips the LATEST_RELEASE fetch. This is the case that most needs it
+    // — the Edge version endpoint drifts between calls, forcing re-downloads.
+    cached_ver = metadata.lookup_driver(root, "msedgedriver", emaj_s)
+    if string.length(cached_ver) > 0 {
+        hit = drivercache.driver_path_in_cache(root, _named(o, "msedgedriver"), label, cached_ver)
+        if drivercache.cached(hit) == 1 { return hit }
+    }
+
     // 2b. LATEST_RELEASE_<major>_<OS> -> the exact driver version.
     rel_body = _fetch(edgedriver.latest_release_url(emaj, o), cfg)
     dver = edgedriver.parse_version(rel_body)
@@ -205,9 +253,9 @@ resolve_edge(hint: string) -> string {
 
     durl = edgedriver.driver_url(dver, o, a)
     if string.length(durl) == 0 { return _which_named("msedgedriver") }
+    metadata.store_driver(root, "msedgedriver", emaj_s, dver, config.ttl(cfg))
 
     // 3. cache-or-download (.zip on all platforms).
-    label = edgedriver.platform_label(o, a)
     got = drivercache.ensure(root, _named(o, "msedgedriver"), label, dver, durl, config.proxy(cfg))
     if string.length(got) > 0 { return got }
     return _which_named("msedgedriver")
