@@ -8,6 +8,33 @@ per release/README.md.
 ---
 
 ```
+artifact-set=B2 Firefox+Edge resolution (ae 0.622.0)
+  linux64  host.so  sha256=5eda8bc584392a22a61388e58f5a9d014f9434a15651fdc134506711c4dc9ecd
+  macos-x64 dylib   sha256=daf15edb592b04730720397ec007f806f450075cc719f5b739f39171f655ab74
+  win64    dll      sha256=a17687a12468706c4cfb7104370788c53e3037eff72ea3e6055790707113994a
+built-on=ChromeOS/Linux dev box (dylib+dll via ae build --target=, zig cc) — NO native build on mac/win
+date=2026-09-02  coverage=ffi+live-self-provision
+result=PASS (Firefox all 3 OSes; Edge Linux+macOS full, Windows resolve+download only)
+suite=empty-cache resolve_driver + ensure_driver for firefox and edge:
+  FIREFOX: geckodriver 0.37.1 resolved via SeleniumHQ geckodriver-support.json (firefox 140 on
+    Linux) or the releases/latest fallback (no browser on mac/win); downloaded (tar.gz on
+    Linux/macOS -> mac64/linux64, zip on Windows -> win64), launched live + stopped. Linux port
+    ~40953, macOS ~49181, Windows ~62130. Real runnable binaries (geckodriver --version OK).
+  EDGE: msedgedriver resolved via msedgedriver.microsoft.com LATEST_STABLE (UTF-16LE body decoded)
+    -> LATEST_RELEASE_<major>_<OS>; downloaded (zip), unpacked. Linux 152.0.4191.53 launched live
+    (port 44943); macOS mac64 launched live (port 49193); Windows win64 downloaded + the .exe runs
+    + binds 127.0.0.1 standalone, but the ENGINE's launch()/os.spawn_proc of msedgedriver HANGS on
+    Windows (geckodriver/chromedriver launch fine) — a driver.ae launch-layer/spawn issue, NOT a
+    resolution issue (filed aether asks/win-spawn-msedgedriver-launch-hang.md).
+notes=B2 of docs/Selenium-Manager-Port.md. New drivermgr modules gecko.ae + edgedriver.ae; ports
+  firefox.rs/edge.rs. Two general fixes landed with it: _download now follows redirects (GitHub
+  releases 302s to objects.githubusercontent.com — chromedriver only worked before because
+  googleapis served 200 direct), and .tar.gz unpack via `tar -xzf`. Edge Windows launch is the one
+  open item; everything up to and including the resolved+downloaded+runnable driver is proven on
+  all three OSes.
+```
+
+```
 sha256=f4799aa3518085d7a1dea54873ff1bcd620075373d1dd216761391e9604cb5b2
 artifact=libselenium_core win64 dll (ae 0.622.0, drivermgr xplat + tls13_client import + binary-download/cache-path fixes)
 target=win64  host=winbaz (Windows 10, x86_64, MSYS2/git-bash)  date=2026-09-02
