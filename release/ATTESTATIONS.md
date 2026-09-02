@@ -8,6 +8,35 @@ per release/README.md.
 ---
 
 ```
+artifact-set=B3 Chrome-for-Testing browser auto-download (ae 0.622.0)
+  linux64  host.so  sha256=f623870f2727e168585e72468c1f3244fdd89ca2a9d8575365964ee4a4ef19e8
+  macos-x64 dylib   sha256=d53333fa5a9ec83add9174c5e41c39705c0bc664c87247db7622aff0465025c9
+built-on=ChromeOS/Linux dev box (dylib via ae build --target=x86_64-macos, zig cc)
+date=2026-09-02  coverage=browser-download+unpack+binary-path (+headless-run on Linux)
+result=PASS (download/unpack/binary-path both OSes; headless render proven on Linux)
+suite=empty-cache CfT `chrome` artifact resolve + ensure_browser:
+  LINUX: CfT chrome 152.0.7977.75 resolved from the known-good `chrome` array, downloaded
+    (~150MB .zip), unpacked KEEPING the tree with the top folder (chrome-linux64/) stripped ->
+    ~/.cache/selenium/chrome/linux64/152.../chrome; 24-entry tree intact (.so/.pak/locales);
+    binary reports 152 AND renders headless (--dump-dom of a data: URL returned <title>ok + text);
+    2nd call = 0.29s cache hit.
+  MACOS: same, mac-x64, ~366MB unpacked; the .app bundle nested exec path resolved correctly:
+    .../152.../Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing; the binary
+    reports 152 through that path. A full headless *session* crashed in THIS Intel-mac VM
+    (crashpad/graphics substrate) — an environment limit, not a download-manager defect; the
+    identical headless render passed on Linux. Everything B3 owns (resolve->download->tree-preserve
+    ->top-strip->OS binary sub-path) is proven on macOS.
+notes=B3 of docs/Selenium-Manager-Port.md, Chrome slice. New: cft.resolve_latest_chrome_from /
+  resolve_known_good_chrome_from (reads the `chrome` artifact, shared nav w/ chromedriver);
+  drivercache.ensure_browser (tree-preserving unpack + top-folder strip; POSIX unzip+lift, Windows
+  Expand-Archive+Move-Item); resolve.chrome_browser_binary; ABI verb sel_embed_browser_binary (49
+  verbs). Fires only when NO system Chrome is present. Other browsers need OS installers
+  (Firefox mac .dmg/.pkg + win NSIS-SFX; Edge .msi/.pkg/.deb) and return ""; Firefox-Linux
+  (.tar.bz2/.tar.xz) is the one remaining easy browser-download port. Windows chrome-download
+  untested here but follows the same .zip path B2 geckodriver.zip already proved on winbaz.
+```
+
+```
 artifact-set=B2 Firefox+Edge resolution (ae 0.622.0)
   linux64  host.so  sha256=5eda8bc584392a22a61388e58f5a9d014f9434a15651fdc134506711c4dc9ecd
   macos-x64 dylib   sha256=daf15edb592b04730720397ec007f806f450075cc719f5b739f39171f655ab74
