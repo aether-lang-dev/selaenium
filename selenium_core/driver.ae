@@ -48,6 +48,18 @@ resolve_driver(browser: string, hint: string) -> string {
     return which(exe)
 }
 
+// browser_binary(browser) — absolute path to a self-provisioned browser binary
+// (downloaded into the cache) when no system browser is installed, else "".
+// A binding points its capabilities at this (goog:chromeOptions.binary /
+// moz:firefoxOptions.binary) so a headless run works with no system browser.
+// Only Chrome-for-Testing is auto-downloaded today (a plain zip); other
+// browsers need OS installers (see docs) and return "".
+browser_binary(browser: string) -> string {
+    if string.equals(browser, "chrome") == 1 { return resolve.chrome_browser_binary() }
+    if string.equals(browser, "chromium") == 1 { return resolve.chrome_browser_binary() }
+    return ""
+}
+
 // The conventional driver executable name for a browser. PURE — the first datum
 // the Selenium-Manager port will expand (per-browser modules).
 driver_exe_for(browser: string) -> string {

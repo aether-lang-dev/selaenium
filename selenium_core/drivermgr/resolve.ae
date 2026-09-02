@@ -29,13 +29,17 @@ import std.cryptography.tls13_client
 resolve_chrome(hint: string) -> string {
     label = version.platform_label(_os(), _arch())
 
-    // 1. detect the browser version (system Chrome, else a cached CfT Chrome).
+    // 1. detect the browser version. Prefer system Chrome; if none is
+    //    installed, self-provision a Chrome-for-Testing browser into the cache
+    //    (Capability 9) and use ITS version to match the driver. That downloaded
+    //    Chrome is also what a session should point goog:chromeOptions.binary at
+    //    (exposed via chrome_browser_binary()).
     bpath = browser.chrome_path()
     bver = ""
     if string.length(bpath) > 0 {
         bver = browser.chrome_version(bpath)
     } else {
-        bver = _cached_chrome_version(label)
+        bver = _ensure_chrome_browser_version(label)
     }
 
     // 2. resolve the driver version + url via CfT (fetch at the edge).
@@ -198,15 +202,55 @@ _fetch(url: string) -> string {
     return client.response_body(resp)
 }
 
-// A cached CfT Chrome's version from the cache dir name, when there's no system
-// Chrome: <cache>/chrome/<label>/<version>/chrome exists.
-_cached_chrome_version(label: string) -> string {
+// Ensure a Chrome-for-Testing browser is present in the cache (download it if
+// not) and return its version — so the driver resolution downstream matches it.
+// This implements Capability 9's auto path: no system Chrome -> provision one.
+// Returns "" if the browser can't be provisioned (offline / unsupported), which
+// leaves resolve_chrome on the CfT "latest" path + PATH fallback.
+_ensure_chrome_browser_version(label: string) -> string {
+    p = _ensure_chrome_browser(label)
+    if string.length(p) == 0 { return "" }
+    return browser.chrome_version(p)
+}
+
+// chrome_browser_binary() — absolute path to a self-provisioned CfT Chrome
+// binary for this host, downloading it if absent, or "" if a system Chrome
+// exists (no download needed) or provisioning failed. A binding sets
+// goog:chromeOptions.binary to this when there is no system Chrome.
+chrome_browser_binary() -> string {
+    if string.length(browser.chrome_path()) > 0 { return "" }
+    return _ensure_chrome_browser(version.platform_label(_os(), _arch()))
+}
+
+// Download-or-cache the latest-stable CfT Chrome browser; return its binary
+// path or "". Reads the CfT `chrome` artifact (not chromedriver) from the same
+// last-known-good JSON. Linux arm64 is unsupported by CfT (returns "").
+_ensure_chrome_browser(label: string) -> string {
+    o = _os()
+    if string.equals(o, "linux") == 1 {
+        if string.equals(_arch(), "arm64") == 1 { return "" }
+    }
+    body = _fetch(cft.latest_versions_url())
+    if string.length(body) == 0 { return "" }
+    resolved = cft.resolve_latest_chrome_from(body, label)
+    if resolved == null { return "" }
+    cver = cft.resolved_version(resolved)
+    curl = cft.resolved_url(resolved)
+    if string.length(cver) == 0 { return "" }
     root = drivercache.default_cache_root()
-    // We can't list dirs portably here without more fs surface; probe the
-    // version the metadata/latest-stable would yield instead. Simplest correct
-    // behaviour: empty version -> CfT "latest" path resolves the current stable,
-    // which matches a freshly-cached CfT Chrome. So return "" to take Path A.
-    return ""
+    return drivercache.ensure_browser(root, "chrome", label, cver, curl, _chrome_binary_subpath())
+}
+
+// The CfT Chrome binary sub-path within its cache dir, per OS (chrome.rs
+// get_browser_binary_path / CFT_MACOS_APP_NAME). The zip's top folder is
+// stripped on unpack, so the sub-path has no chrome-<label>/ prefix.
+_chrome_binary_subpath() -> string {
+    o = _os()
+    if string.equals(o, "macos") == 1 {
+        return "Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing"
+    }
+    if string.equals(o, "windows") == 1 { return "chrome.exe" }
+    return "chrome"
 }
 
 _which_driver() -> string {

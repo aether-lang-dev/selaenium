@@ -54,8 +54,34 @@ which_endpoint(browser_version: string) -> string {
 }
 
 // resolve_latest_stable_from(body, platform_label) — PURE: navigate a fetched
-// last-known-good-*.json, read channels.Stable, return a *Resolved or null.
+// last-known-good-*.json, read channels.Stable, return a *Resolved (chromedriver)
+// or null.
 resolve_latest_stable_from(body: string, platform_label: string) -> ptr {
+    return _resolve_latest(body, platform_label, "chromedriver")
+}
+
+// resolve_latest_chrome_from(body, platform_label) — same navigation, but the
+// CfT *chrome* browser artifact (Capability 9, pinned/auto browser download).
+resolve_latest_chrome_from(body: string, platform_label: string) -> ptr {
+    return _resolve_latest(body, platform_label, "chrome")
+}
+
+// resolve_known_good_from(body, browser_version, platform_label) — PURE:
+// navigate a fetched known-good-*.json, filter versions[] by MAJOR prefix, take
+// the highest (.last of the ascending list). Returns a *Resolved (chromedriver)
+// or null.
+resolve_known_good_from(body: string, browser_version: string, platform_label: string) -> ptr {
+    return _resolve_known_good(body, browser_version, platform_label, "chromedriver")
+}
+
+// resolve_known_good_chrome_from(...) — same, but the *chrome* browser artifact.
+resolve_known_good_chrome_from(body: string, browser_version: string, platform_label: string) -> ptr {
+    return _resolve_known_good(body, browser_version, platform_label, "chrome")
+}
+
+// ---- shared navigation over the two artifact arrays (chrome / chromedriver) ----
+
+_resolve_latest(body: string, platform_label: string, artifact: string) -> ptr {
     root, perr = json.parse(body)
     if string.length(perr) > 0 { return null }
     channels, _c = json.object_get(root, "channels")
@@ -63,15 +89,12 @@ resolve_latest_stable_from(body: string, platform_label: string) -> ptr {
     verv, _vv = json.object_get(stable, "version")
     ver, _v = json.get_string(verv)
     dl, _d = json.object_get(stable, "downloads")
-    cd, _cd = json.object_get(dl, "chromedriver")
-    durl = _platform_url(cd, platform_label)
+    arr, _a = json.object_get(dl, artifact)
+    durl = _platform_url(arr, platform_label)
     return _mk(ver, durl)
 }
 
-// resolve_known_good_from(body, browser_version, platform_label) — PURE:
-// navigate a fetched known-good-*.json, filter versions[] by MAJOR prefix, take
-// the highest (.last of the ascending list). Returns a *Resolved or null.
-resolve_known_good_from(body: string, browser_version: string, platform_label: string) -> ptr {
+_resolve_known_good(body: string, browser_version: string, platform_label: string, artifact: string) -> ptr {
     major = string.from_int(version.major(browser_version))
     root, perr = json.parse(body)
     if string.length(perr) > 0 { return null }
@@ -80,7 +103,7 @@ resolve_known_good_from(body: string, browser_version: string, platform_label: s
     // Ascending list: scan forward, keep the LAST whose version starts with the
     // major (prefix match, exactly as the Rust filter+last()).
     best_ver = ""
-    best_cd = null
+    best_arr = null
     i = 0
     while i < n {
         e, _e = json.array_get(versions, i)
@@ -89,13 +112,13 @@ resolve_known_good_from(body: string, browser_version: string, platform_label: s
         if _starts_with_major(ev, major) == 1 {
             best_ver = ev
             dl, _d = json.object_get(e, "downloads")
-            cd, _cd = json.object_get(dl, "chromedriver")
-            best_cd = cd
+            arr, _a = json.object_get(dl, artifact)
+            best_arr = arr
         }
         i = i + 1
     }
     if string.length(best_ver) == 0 { return null }
-    durl = _platform_url(best_cd, platform_label)
+    durl = _platform_url(best_arr, platform_label)
     return _mk(best_ver, durl)
 }
 

@@ -102,6 +102,89 @@ ensure(root: string, driver_name: string, label: string, version: string, url: s
     return extracted
 }
 
+// browser_dir_in_cache(root, browser_name, label, version) — the browser cache
+// DIR (no trailing binary): <root>/<browser>/<label>/<version>. The caller joins
+// the OS-specific binary sub-path (lib.rs:1316 get_browser_path_in_cache).
+browser_dir_in_cache(root: string, browser_name: string, label: string, version: string) -> string {
+    d = string.concat(root, string.concat("/", browser_name))
+    d = string.concat(d, string.concat("/", label))
+    return string.concat(d, string.concat("/", version))
+}
+
+// ensure_browser(root, browser_name, label, version, url, bin_subpath) — return
+// an absolute path to a runnable BROWSER binary: cache hit if present, else
+// download the CfT zip + unpack it (KEEPING the directory tree, unlike a driver
+// which flattens to a single binary), then return <dir>/<bin_subpath>. "" on
+// failure. bin_subpath is OS-specific (e.g. "chrome", "chrome.exe", or the
+// mac .app exec path). The CfT chrome zip wraps everything in one top folder
+// (chrome-linux64/ etc.) which is stripped so contents land under <dir>.
+ensure_browser(root: string, browser_name: string, label: string, version: string, url: string, bin_subpath: string) -> string {
+    dir = browser_dir_in_cache(root, browser_name, label, version)
+    target = string.concat(dir, string.concat("/", bin_subpath))
+    if file_exists(target) == 1 {
+        _c0 = fs.chmod(target, 493)
+        return target
+    }
+    if string.length(url) == 0 { return "" }
+    _md = fs.mkdir_p(dir)
+
+    zip_path = string.concat(dir, "/_browser.zip")
+    if _download(url, zip_path) != 0 { return "" }
+
+    // Unpack into a stage dir (tree preserved), then lift the single top folder's
+    // contents up into <dir> so <dir>/<bin_subpath> resolves.
+    stage = string.concat(dir, "/_stage")
+    if _is_windows() == 1 {
+        _ub = _expand_browser_windows(zip_path, stage, dir)
+    } else {
+        _ub = _expand_browser_posix(zip_path, stage, dir)
+    }
+    _rm = _remove(zip_path)
+
+    if file_exists(target) == 0 { return "" }
+    _c = fs.chmod(target, 493)
+    return target
+}
+
+// POSIX: unzip -o (tree preserved) into stage, then move the contents of the
+// single top folder up into dir (cp -R stage/<top>/. dir/). Shelled at the
+// FS-adapter edge, like the driver unzip.
+_expand_browser_posix(zip_path: string, stage: string, dir: string) -> int {
+    sh = "set -e; rm -rf '${stage}'; mkdir -p '${stage}';"
+    sh = string.concat(sh, "unzip -o -q '${zip_path}' -d '${stage}' >/dev/null 2>&1;")
+    // The zip has one top folder; copy its contents (incl. dotfiles) into dir.
+    sh = string.concat(sh, "top=$(ls '${stage}'); ")
+    sh = string.concat(sh, "if [ $(echo \"$top\" | wc -l) -eq 1 ]; then cp -a '${stage}'/\"$top\"/. '${dir}'/; else cp -a '${stage}'/. '${dir}'/; fi;")
+    sh = string.concat(sh, "rm -rf '${stage}'")
+    argv = list.new()
+    list.add(argv, "-c")
+    list.add(argv, sh)
+    _o, _s, _e = os.run_capture("/bin/sh", argv, null)
+    list.free(argv)
+    return 0
+}
+
+// Windows: Expand-Archive into stage, then move the single top folder's children
+// into dir (Move-Item stage\<top>\* dir).
+_expand_browser_windows(zip_path: string, stage: string, dir: string) -> int {
+    ps = "$ErrorActionPreference='Stop';"
+    ps = string.concat(ps, "if(Test-Path '${stage}'){Remove-Item -Recurse -Force '${stage}'};")
+    ps = string.concat(ps, "Expand-Archive -Force -LiteralPath '${zip_path}' -DestinationPath '${stage}';")
+    ps = string.concat(ps, "$tops=Get-ChildItem -Force '${stage}';")
+    ps = string.concat(ps, "if($tops.Count -eq 1 -and $tops[0].PSIsContainer){")
+    ps = string.concat(ps, "Get-ChildItem -Force $tops[0].FullName | ForEach-Object{Move-Item -Force -LiteralPath $_.FullName -Destination '${dir}'}}")
+    ps = string.concat(ps, "else{Get-ChildItem -Force '${stage}' | ForEach-Object{Move-Item -Force -LiteralPath $_.FullName -Destination '${dir}'}};")
+    ps = string.concat(ps, "Remove-Item -Recurse -Force '${stage}'")
+    argv = list.new()
+    list.add(argv, "-NoProfile")
+    list.add(argv, "-NonInteractive")
+    list.add(argv, "-Command")
+    list.add(argv, ps)
+    _o, _s, _e = os.run_capture("powershell", argv, null)
+    list.free(argv)
+    return 0
+}
+
 _is_windows() -> int {
     if string.equals(os.getenv("OS"), "Windows_NT") == 1 { return 1 }
     return 0

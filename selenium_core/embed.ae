@@ -202,6 +202,15 @@ sel_embed_launch_driver(driver_path: string, timeout_ms: int) -> ptr {
     return driver.launch(driver_path, timeout_ms)
 }
 
+// A self-provisioned browser binary path for `browser`, or "" when a system
+// browser exists (use it) or none could be provisioned. When non-empty, set the
+// binding's binary capability to it (goog:chromeOptions.binary). Downloads a
+// Chrome-for-Testing browser on first call if no system Chrome is present.
+// Caller frees. Only chrome/chromium provision today; others return "".
+sel_embed_browser_binary(browser: string) -> string {
+    return sel_embed_dup(driver.browser_binary(browser))
+}
+
 // resolve_driver(browser,hint) then launch. Returns a driver handle, or null —
 // the binding's cue to SKIP a live test (same "no driver" semantics as before).
 sel_embed_ensure_driver(browser: string, hint: string, timeout_ms: int) -> ptr {
