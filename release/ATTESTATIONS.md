@@ -8,6 +8,17 @@ per release/README.md.
 ---
 
 ```
+sha256=f4799aa3518085d7a1dea54873ff1bcd620075373d1dd216761391e9604cb5b2
+artifact=libselenium_core win64 dll (ae 0.622.0, drivermgr xplat + tls13_client import + binary-download/cache-path fixes)
+target=win64  host=winbaz (Windows 10, x86_64, MSYS2/git-bash)  date=2026-09-02
+built-on=ChromeOS/Linux dev box via 'ae build --target=x86_64-windows' (zig cc) — NO native build on Windows
+coverage=ffi+live-self-provision
+result=PASS
+suite=C LoadLibrary/GetProcAddress harness (compiled on-target with a standalone zig cc): with an EMPTY cache and no system Chrome, resolve_driver("chrome") fetched CfT metadata over https (pure-Aether TLS 1.3 via bcrypt.dll, no OpenSSL), resolved latest stable 152.0.7977.75 win64, downloaded + unpacked chromedriver.exe via PowerShell Expand-Archive into C:/Users/paul/.cache/selenium/... (23,805,952 bytes, --version OK); 2nd call = 0.98s cache hit; ensure_driver("chrome") spawned a live ChromeDriver 152 (port 52082) and stopped it
+notes=Required on-target: SSL_CERT_FILE -> the MSYS ca-bundle.crt (the pure-TLS trust store); a C compiler for the harness (used a standalone ziglang.org zig 0.13.0 as `zig cc` — winbaz had none). The dll imports only WS2_32.dll + bcrypt.dll (system) — self-contained, no OpenSSL. Surfaced + fixed two bugs this build (see commit 4af8ddd): binary download corruption (file.write text-encoded the zip) and the Windows cache root using MSYS /c/... HOME that PowerShell rejects.
+```
+
+```
 sha256=55ceb2a75bbcfe3e18a08119a0ee2cc1db23e82c647349d9efc56802447a1c2f
 artifact=libselenium_core macos-amd64 dylib (ae 0.622.0, drivermgr xplat + tls13_client import)
 target=macos-amd64  host=macvm (macOS, x86_64)  date=2026-09-02
