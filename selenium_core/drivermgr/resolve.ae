@@ -11,6 +11,11 @@ import drivercache
 import std.string
 import std.http.client
 import std.os
+// Links the pure-Aether TLS 1.3 client so std.http.client can do https in a
+// cross-built engine (no OpenSSL is linked into an `ae build --target=` lib).
+// Without this import the CfT metadata/download fetch fails on every
+// cross-compiled artifact (aether-lang-dev/aether#1849, fixed in ae 0.622.0).
+import std.cryptography.tls13_client
 
 // resolve_chrome(hint) -> absolute path to a runnable chromedriver, or "".
 // The transparent path behind webdriver.chrome() / sel_embed_ensure_driver:
