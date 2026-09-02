@@ -128,6 +128,10 @@ _unzip_windows(zip_path: string, dest_dir: string, driver_name: string) -> int {
 // response_body_length + fs.write_binary — the binary-safe pair.
 _download(url: string, path: string) -> int {
     req = client.request("GET", url)
+    // Bound the driver-zip download (default 0ns = block forever). The zip is
+    // ~10-25MB and runs over pure-Aether TLS on cross-builds (~25s observed);
+    // 300s is generous while still failing cleanly on a stalled transfer.
+    _to = client.set_timeout(req, 300s)
     resp, err = client.send_request(req)
     if string.length(err) > 0 { return 1 }
     if client.response_status(resp) != 200 { return 1 }

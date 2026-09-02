@@ -77,6 +77,10 @@ _driver_name() -> string {
 
 _fetch(url: string) -> string {
     req = client.request("GET", url)
+    // Bound the CfT metadata fetch: the std.http default (0ns) blocks forever,
+    // so a stalled endpoint would wedge resolution with no error. The JSON is
+    // small; 60s is ample and still catches a genuine stall.
+    _to = client.set_timeout(req, 60s)
     resp, err = client.send_request(req)
     if string.length(err) > 0 { return "" }
     if client.response_status(resp) != 200 { return "" }
