@@ -15,14 +15,21 @@ import std.file
 import std.fs
 import std.http.client
 
-// default_cache_root() — <home>/.cache/selenium (SE_CACHE_PATH overrides). On
-// Windows HOME is usually unset, so fall back to USERPROFILE. Forward slashes
-// work in Windows file APIs, so the layout is uniform across OSes.
+// default_cache_root() — <home>/.cache/selenium (SE_CACHE_PATH overrides).
+// On Windows prefer USERPROFILE (a native C:\... path) over HOME: under
+// MSYS/git-bash HOME is set to a POSIX-style /c/Users/... which PowerShell's
+// -LiteralPath (used by the unzip step) rejects as "not a valid file system
+// path". Backslashes are normalized to forward slashes, which the Windows file
+// APIs accept, so the cache layout is uniform across OSes.
 default_cache_root() -> string {
     env = os.getenv("SE_CACHE_PATH")
     if string.length(env) > 0 { return env }
-    home = os.getenv("HOME")
-    if string.length(home) == 0 { home = os.getenv("USERPROFILE") }
+    home = ""
+    if _is_windows() == 1 {
+        home = os.getenv("USERPROFILE")
+        home = string.replace_all(home, "\\", "/")
+    }
+    if string.length(home) == 0 { home = os.getenv("HOME") }
     if string.length(home) == 0 { home = "/tmp" }
     return string.concat(home, "/.cache/selenium")
 }
@@ -114,13 +121,19 @@ _unzip_windows(zip_path: string, dest_dir: string, driver_name: string) -> int {
 // ---- internals ----
 
 // Download `url` to `path` via the engine's http client. Returns 0 on success.
+// The body is a driver ZIP: binary with embedded NULs and high bytes, so it
+// MUST be written with the byte-length-explicit binary path. file.write() is a
+// text write that re-encodes high bytes (UTF-8), inflating the zip and
+// corrupting it (observed: +41525 bytes on the win64 driver). Use
+// response_body_length + fs.write_binary — the binary-safe pair.
 _download(url: string, path: string) -> int {
     req = client.request("GET", url)
     resp, err = client.send_request(req)
     if string.length(err) > 0 { return 1 }
     if client.response_status(resp) != 200 { return 1 }
     body = client.response_body(resp)
-    werr = file.write(path, body)
+    blen = client.response_body_length(resp)
+    werr = fs.write_binary(path, body, blen)
     if string.length(werr) > 0 { return 1 }
     return 0
 }
