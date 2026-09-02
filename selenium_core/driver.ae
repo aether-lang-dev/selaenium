@@ -54,9 +54,9 @@ resolve_driver(browser: string, hint: string) -> string {
 // moz:firefoxOptions.binary) so a headless run works with no system browser.
 // Only Chrome-for-Testing is auto-downloaded today (a plain zip); other
 // browsers need OS installers (see docs) and return "".
-browser_binary(browser: string) -> string {
-    if string.equals(browser, "chrome") == 1 { return resolve.chrome_browser_binary() }
-    if string.equals(browser, "chromium") == 1 { return resolve.chrome_browser_binary() }
+browser_binary(browser: string, hint: string) -> string {
+    if string.equals(browser, "chrome") == 1 { return resolve.chrome_browser_binary(hint) }
+    if string.equals(browser, "chromium") == 1 { return resolve.chrome_browser_binary(hint) }
     return ""
 }
 

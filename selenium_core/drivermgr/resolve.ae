@@ -10,6 +10,7 @@ import cft
 import gecko
 import edgedriver
 import drivercache
+import config
 import std.string
 import std.http.client
 import std.os
@@ -27,49 +28,75 @@ import std.cryptography.tls13_client
 // Falls back to a chromedriver already on PATH when detection/resolution can't
 // proceed (the user-supplied / PATH short-circuit).
 resolve_chrome(hint: string) -> string {
+    cfg = config.parse(hint, "chrome")
     label = version.platform_label(_os(), _arch())
+    root = _cache_root(cfg)
 
-    // 1. detect the browser version. Prefer system Chrome; if none is
-    //    installed, self-provision a Chrome-for-Testing browser into the cache
-    //    (Capability 9) and use ITS version to match the driver. That downloaded
-    //    Chrome is also what a session should point goog:chromeOptions.binary at
-    //    (exposed via chrome_browser_binary()).
-    bpath = browser.chrome_path()
-    bver = ""
-    if string.length(bpath) > 0 {
-        bver = browser.chrome_version(bpath)
-    } else {
-        bver = _ensure_chrome_browser_version(label)
-    }
+    // An explicit driver path (hint/SE_DRIVER_PATH) short-circuits everything.
+    dpath = config.driver_path(cfg)
+    if string.length(dpath) > 0 { return dpath }
 
-    // 2. resolve the driver version + url via CfT (fetch at the edge).
-    which = cft.which_endpoint(bver)
-    resolved = null
-    if string.equals(which, "latest") == 1 {
-        body = _fetch(cft.latest_versions_url())
-        resolved = cft.resolve_latest_stable_from(body, label)
-    } else {
-        if string.equals(which, "good") == 1 {
-            body = _fetch(cft.known_good_url())
-            resolved = cft.resolve_known_good_from(body, bver, label)
+    // 1. determine the Chrome version to match the driver to. A pinned
+    //    browserVersion (hint/SE_*) wins; else detect system Chrome; else (no
+    //    system Chrome) self-provision a CfT Chrome and use its version.
+    bver = config.browser_version(cfg)
+    if config.is_channel(bver) == 1 { bver = "" }   // channel -> latest-stable path
+    if string.length(bver) == 0 {
+        bpath = browser.chrome_path()
+        if string.length(bpath) > 0 {
+            bver = browser.chrome_version(bpath)
+        } else {
+            bver = _ensure_chrome_browser_version(cfg, label)
         }
     }
 
-    // Resolution failed (offline, below-CfT-floor, unknown) -> PATH fallback.
+    // 2. resolve the driver version + url via CfT (fetch at the edge). Offline:
+    //    no network — fall straight to a cached-or-PATH driver.
+    resolved = null
+    if config.offline(cfg) == 0 {
+        which = cft.which_endpoint(bver)
+        if string.equals(which, "latest") == 1 {
+            body = _fetch(cft.latest_versions_url(), cfg)
+            resolved = cft.resolve_latest_stable_from(body, label)
+        } else {
+            if string.equals(which, "good") == 1 {
+                body = _fetch(cft.known_good_url(), cfg)
+                resolved = cft.resolve_known_good_from(body, bver, label)
+            }
+        }
+    }
+
+    // Resolution failed / offline -> cached-or-PATH driver.
     if resolved == null {
-        return _which_driver()
+        return _cached_or_path(root, _driver_name(), label, bver)
     }
 
     dver = cft.resolved_version(resolved)
     durl = cft.resolved_url(resolved)
     if string.length(dver) == 0 {
-        return _which_driver()
+        return _cached_or_path(root, _driver_name(), label, bver)
     }
 
     // 3. cache-or-download. The driver binary is chromedriver(.exe on Windows).
-    root = drivercache.default_cache_root()
-    got = drivercache.ensure(root, _driver_name(), label, dver, durl)
+    got = drivercache.ensure(root, _driver_name(), label, dver, durl, config.proxy(cfg))
     if string.length(got) > 0 { return got }
+    return _which_driver()
+}
+
+// The cache root: an explicit cachePath (hint/SE_CACHE_PATH via config) or the
+// default. drivercache.default_cache_root already honors SE_CACHE_PATH, so this
+// only needs to apply a hint-supplied override.
+_cache_root(cfg: ptr) -> string {
+    cp = config.cache_path(cfg)
+    if string.length(cp) > 0 { return cp }
+    return drivercache.default_cache_root()
+}
+
+// A driver already in this cache for `label` (any resolvable version implied by
+// bver), else one on PATH. The offline / resolution-failed fallback. When bver
+// resolves to a known major we could scan the cache dir, but without a portable
+// dir-list we simply defer to a PATH driver — the classic soft fallback.
+_cached_or_path(root: string, driver_name: string, label: string, bver: string) -> string {
     return _which_driver()
 }
 
@@ -85,28 +112,37 @@ _driver_name() -> string {
 // table-fetch failure, fall back to the GitHub releases/latest redirect. Then
 // cache-or-download the matching release asset. PATH fallback throughout.
 resolve_firefox(hint: string) -> string {
+    cfg = config.parse(hint, "firefox")
     o = _os()
     a = _arch()
+    root = _cache_root(cfg)
 
-    // 1. detect Firefox + its major version.
-    bpath = browser.firefox_path()
-    bver = ""
-    if string.length(bpath) > 0 { bver = browser.firefox_version(bpath) }
+    dpath = config.driver_path(cfg)
+    if string.length(dpath) > 0 { return dpath }
+
+    // 1. Firefox major: a pinned browserVersion wins, else detect.
+    bver = config.browser_version(cfg)
+    if config.is_channel(bver) == 1 { bver = "" }
+    if string.length(bver) == 0 {
+        bpath = browser.firefox_path()
+        if string.length(bpath) > 0 { bver = browser.firefox_version(bpath) }
+    }
     fmaj = version.major(bver)
 
-    // 2. resolve the geckodriver version + url. Primary = support table.
+    // 2. resolve the geckodriver version + url (skip the network when offline).
     resolved = null
-    body = _fetch(gecko.support_url())
-    if string.length(body) > 0 {
-        if fmaj >= 0 {
-            resolved = gecko.resolve_support_from(body, fmaj, o, a)
+    if config.offline(cfg) == 0 {
+        body = _fetch(gecko.support_url(), cfg)
+        if string.length(body) > 0 {
+            if fmaj >= 0 {
+                resolved = gecko.resolve_support_from(body, fmaj, o, a)
+            }
         }
-    }
-    // Fallback = the releases/latest redirect (firefox.rs:283-298), used when
-    // the table couldn't be read OR no row matched the detected major.
-    if resolved == null {
-        tag = _latest_geckodriver_tag()
-        resolved = gecko.resolve_from_latest_tag(tag, o, a)
+        // Fallback = the releases/latest redirect (firefox.rs:283-298).
+        if resolved == null {
+            tag = _latest_geckodriver_tag(cfg)
+            resolved = gecko.resolve_from_latest_tag(tag, o, a)
+        }
     }
     if resolved == null { return _which_named("geckodriver") }
 
@@ -116,9 +152,8 @@ resolve_firefox(hint: string) -> string {
 
     // 3. cache-or-download. geckodriver: <name>[.exe]; the archive kind is
     //    inferred from the URL suffix by drivercache (.tar.gz off Windows).
-    root = drivercache.default_cache_root()
     label = gecko.platform_label(o, a)
-    got = drivercache.ensure(root, _named(o, "geckodriver"), label, dver, durl)
+    got = drivercache.ensure(root, _named(o, "geckodriver"), label, dver, durl, config.proxy(cfg))
     if string.length(got) > 0 { return got }
     return _which_named("geckodriver")
 }
@@ -128,25 +163,36 @@ resolve_firefox(hint: string) -> string {
 // when the browser version is unknown, then LATEST_RELEASE_<major>_<OS> for the
 // exact driver version, then cache-or-download the .zip. PATH fallback.
 resolve_edge(hint: string) -> string {
+    cfg = config.parse(hint, "edge")
     o = _os()
     a = _arch()
+    root = _cache_root(cfg)
 
-    // 1. detect Edge + its major (empty when absent -> LATEST_STABLE decides).
-    bpath = browser.edge_path()
-    bver = ""
-    if string.length(bpath) > 0 { bver = browser.edge_version(bpath) }
+    dpath = config.driver_path(cfg)
+    if string.length(dpath) > 0 { return dpath }
+
+    // Offline: no network endpoints to consult -> PATH driver.
+    if config.offline(cfg) == 1 { return _which_named("msedgedriver") }
+
+    // 1. Edge major: a pinned browserVersion wins, else detect.
+    bver = config.browser_version(cfg)
+    if config.is_channel(bver) == 1 { bver = "" }
+    if string.length(bver) == 0 {
+        bpath = browser.edge_path()
+        if string.length(bpath) > 0 { bver = browser.edge_version(bpath) }
+    }
     emaj = version.major(bver)
 
     // 2a. no concrete major -> read LATEST_STABLE to get one (edge.rs:247-270).
     if emaj < 0 {
-        stable_body = _fetch(edgedriver.latest_stable_url())
+        stable_body = _fetch(edgedriver.latest_stable_url(), cfg)
         stable_ver = edgedriver.parse_version(stable_body)
         emaj = version.major(stable_ver)
     }
     if emaj < 0 { return _which_named("msedgedriver") }
 
     // 2b. LATEST_RELEASE_<major>_<OS> -> the exact driver version.
-    rel_body = _fetch(edgedriver.latest_release_url(emaj, o))
+    rel_body = _fetch(edgedriver.latest_release_url(emaj, o), cfg)
     dver = edgedriver.parse_version(rel_body)
     if string.length(dver) == 0 { return _which_named("msedgedriver") }
 
@@ -154,9 +200,8 @@ resolve_edge(hint: string) -> string {
     if string.length(durl) == 0 { return _which_named("msedgedriver") }
 
     // 3. cache-or-download (.zip on all platforms).
-    root = drivercache.default_cache_root()
     label = edgedriver.platform_label(o, a)
-    got = drivercache.ensure(root, _named(o, "msedgedriver"), label, dver, durl)
+    got = drivercache.ensure(root, _named(o, "msedgedriver"), label, dver, durl, config.proxy(cfg))
     if string.length(got) > 0 { return got }
     return _which_named("msedgedriver")
 }
@@ -164,11 +209,13 @@ resolve_edge(hint: string) -> string {
 // The geckodriver version from the releases/latest redirect: GET .../latest with
 // redirects followed, read the effective URL (.../releases/tag/vX.Y.Z), pull the
 // version out. "" on failure. firefox.rs:283-298 + downloads.rs:90-100.
-_latest_geckodriver_tag() -> string {
+_latest_geckodriver_tag(cfg: ptr) -> string {
     url = string.concat(gecko.RELEASES_URL(), "latest")
     req = client.request("GET", url)
     _fr = client.set_follow_redirects(req, 10)
-    _to = client.set_timeout(req, 60s)
+    _to = client.set_timeout(req, _fetch_timeout(cfg))
+    px = config.proxy(cfg)
+    if string.length(px) > 0 { _px = client.use_http_proxy(req, px) }
     resp, err = client.send_request(req)
     if string.length(err) > 0 { return "" }
     eff = client.response_url(resp)
@@ -190,16 +237,26 @@ _which_named(base: string) -> string {
 
 // ---- internals ----
 
-_fetch(url: string) -> string {
+_fetch(url: string, cfg: ptr) -> string {
     req = client.request("GET", url)
     // Bound the CfT metadata fetch: the std.http default (0ns) blocks forever,
-    // so a stalled endpoint would wedge resolution with no error. The JSON is
-    // small; 60s is ample and still catches a genuine stall.
-    _to = client.set_timeout(req, 60s)
+    // so a stalled endpoint would wedge resolution with no error. A hint/SE_
+    // TIMEOUT (seconds) overrides; else 60s is ample for the small JSON.
+    _to = client.set_timeout(req, _fetch_timeout(cfg))
+    // Apply an explicit forward proxy (hint/SE_PROXY) when set.
+    px = config.proxy(cfg)
+    if string.length(px) > 0 { _px = client.use_http_proxy(req, px) }
     resp, err = client.send_request(req)
     if string.length(err) > 0 { return "" }
     if client.response_status(resp) != 200 { return "" }
     return client.response_body(resp)
+}
+
+// The metadata-fetch timeout: config.timeout seconds if set (>0), else 60s.
+_fetch_timeout(cfg: ptr) -> Duration {
+    t = config.timeout(cfg)
+    if t > 0 { return t * 1s }
+    return 60s
 }
 
 // Ensure a Chrome-for-Testing browser is present in the cache (download it if
@@ -207,38 +264,51 @@ _fetch(url: string) -> string {
 // This implements Capability 9's auto path: no system Chrome -> provision one.
 // Returns "" if the browser can't be provisioned (offline / unsupported), which
 // leaves resolve_chrome on the CfT "latest" path + PATH fallback.
-_ensure_chrome_browser_version(label: string) -> string {
-    p = _ensure_chrome_browser(label)
+_ensure_chrome_browser_version(cfg: ptr, label: string) -> string {
+    p = _ensure_chrome_browser(cfg, label)
     if string.length(p) == 0 { return "" }
     return browser.chrome_version(p)
 }
 
-// chrome_browser_binary() — absolute path to a self-provisioned CfT Chrome
+// chrome_browser_binary(hint) — absolute path to a self-provisioned CfT Chrome
 // binary for this host, downloading it if absent, or "" if a system Chrome
 // exists (no download needed) or provisioning failed. A binding sets
-// goog:chromeOptions.binary to this when there is no system Chrome.
-chrome_browser_binary() -> string {
+// goog:chromeOptions.binary to this when there is no system Chrome. Honors the
+// same hint (cachePath / proxy / offline / browserVersion) as resolve_chrome.
+chrome_browser_binary(hint: string) -> string {
     if string.length(browser.chrome_path()) > 0 { return "" }
-    return _ensure_chrome_browser(version.platform_label(_os(), _arch()))
+    cfg = config.parse(hint, "chrome")
+    return _ensure_chrome_browser(cfg, version.platform_label(_os(), _arch()))
 }
 
-// Download-or-cache the latest-stable CfT Chrome browser; return its binary
-// path or "". Reads the CfT `chrome` artifact (not chromedriver) from the same
-// last-known-good JSON. Linux arm64 is unsupported by CfT (returns "").
-_ensure_chrome_browser(label: string) -> string {
+// Download-or-cache a CfT Chrome browser; return its binary path or "". Reads
+// the CfT `chrome` artifact from the last-known-good JSON. A pinned
+// browserVersion selects that version (known-good path); else latest-stable.
+// Offline or Linux arm64 (unsupported by CfT) -> "".
+_ensure_chrome_browser(cfg: ptr, label: string) -> string {
+    if config.offline(cfg) == 1 { return "" }
     o = _os()
     if string.equals(o, "linux") == 1 {
         if string.equals(_arch(), "arm64") == 1 { return "" }
     }
-    body = _fetch(cft.latest_versions_url())
-    if string.length(body) == 0 { return "" }
-    resolved = cft.resolve_latest_chrome_from(body, label)
+    pin = config.browser_version(cfg)
+    if config.is_channel(pin) == 1 { pin = "" }
+    resolved = null
+    if string.length(pin) > 0 {
+        body = _fetch(cft.known_good_url(), cfg)
+        if string.length(body) == 0 { return "" }
+        resolved = cft.resolve_known_good_chrome_from(body, pin, label)
+    } else {
+        body = _fetch(cft.latest_versions_url(), cfg)
+        if string.length(body) == 0 { return "" }
+        resolved = cft.resolve_latest_chrome_from(body, label)
+    }
     if resolved == null { return "" }
     cver = cft.resolved_version(resolved)
     curl = cft.resolved_url(resolved)
     if string.length(cver) == 0 { return "" }
-    root = drivercache.default_cache_root()
-    return drivercache.ensure_browser(root, "chrome", label, cver, curl, _chrome_binary_subpath())
+    root = _cache_root(cfg)
+    return drivercache.ensure_browser(root, "chrome", label, cver, curl, _chrome_binary_subpath(), config.proxy(cfg))
 }
 
 // The CfT Chrome binary sub-path within its cache dir, per OS (chrome.rs

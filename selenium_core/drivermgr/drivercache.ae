@@ -48,10 +48,10 @@ cached(path: string) -> int {
     return file_exists(path)
 }
 
-// ensure(root, driver_name, label, version, url) — return an absolute path to a
-// runnable driver: the cache hit if present, else download `url` + unpack into
-// the cache. "" on failure.
-ensure(root: string, driver_name: string, label: string, version: string, url: string) -> string {
+// ensure(root, driver_name, label, version, url, proxy) — return an absolute
+// path to a runnable driver: the cache hit if present, else download `url`
+// (through `proxy` if non-empty) + unpack into the cache. "" on failure.
+ensure(root: string, driver_name: string, label: string, version: string, url: string, proxy: string) -> string {
     target = driver_path_in_cache(root, driver_name, label, version)
     if file_exists(target) == 1 {
         return target
@@ -71,7 +71,7 @@ ensure(root: string, driver_name: string, label: string, version: string, url: s
     // zip paths flatten. Windows has no /bin/sh or unzip -> PowerShell.
     if _is_targz(url) == 1 {
         arc_path = string.concat(dest_dir, "/_download.tar.gz")
-        if _download(url, arc_path) != 0 { return "" }
+        if _download(url, arc_path, proxy) != 0 { return "" }
         argv = list.new()
         list.add(argv, "-c")
         list.add(argv, "tar -xzf '${arc_path}' -C '${dest_dir}' >/dev/null 2>&1")
@@ -80,7 +80,7 @@ ensure(root: string, driver_name: string, label: string, version: string, url: s
         _rmt = _remove(arc_path)
     } else {
         zip_path = string.concat(dest_dir, "/_download.zip")
-        if _download(url, zip_path) != 0 { return "" }
+        if _download(url, zip_path, proxy) != 0 { return "" }
         if _is_windows() == 1 {
             _unzip_windows(zip_path, dest_dir, driver_name)
         } else {
@@ -118,7 +118,7 @@ browser_dir_in_cache(root: string, browser_name: string, label: string, version:
 // failure. bin_subpath is OS-specific (e.g. "chrome", "chrome.exe", or the
 // mac .app exec path). The CfT chrome zip wraps everything in one top folder
 // (chrome-linux64/ etc.) which is stripped so contents land under <dir>.
-ensure_browser(root: string, browser_name: string, label: string, version: string, url: string, bin_subpath: string) -> string {
+ensure_browser(root: string, browser_name: string, label: string, version: string, url: string, bin_subpath: string, proxy: string) -> string {
     dir = browser_dir_in_cache(root, browser_name, label, version)
     target = string.concat(dir, string.concat("/", bin_subpath))
     if file_exists(target) == 1 {
@@ -129,7 +129,7 @@ ensure_browser(root: string, browser_name: string, label: string, version: strin
     _md = fs.mkdir_p(dir)
 
     zip_path = string.concat(dir, "/_browser.zip")
-    if _download(url, zip_path) != 0 { return "" }
+    if _download(url, zip_path, proxy) != 0 { return "" }
 
     // Unpack into a stage dir (tree preserved), then lift the single top folder's
     // contents up into <dir> so <dir>/<bin_subpath> resolves.
@@ -225,7 +225,7 @@ _unzip_windows(zip_path: string, dest_dir: string, driver_name: string) -> int {
 // text write that re-encodes high bytes (UTF-8), inflating the zip and
 // corrupting it (observed: +41525 bytes on the win64 driver). Use
 // response_body_length + fs.write_binary — the binary-safe pair.
-_download(url: string, path: string) -> int {
+_download(url: string, path: string, proxy: string) -> int {
     req = client.request("GET", url)
     // Follow redirects: GitHub's releases/download/... 302s to
     // objects.githubusercontent.com (geckodriver), and other CDNs redirect too;
@@ -235,6 +235,8 @@ _download(url: string, path: string) -> int {
     // ~10-25MB and runs over pure-Aether TLS on cross-builds (~25s observed);
     // 300s is generous while still failing cleanly on a stalled transfer.
     _to = client.set_timeout(req, 300s)
+    // Route through an explicit forward proxy (hint/SE_PROXY) when set.
+    if string.length(proxy) > 0 { _px = client.use_http_proxy(req, proxy) }
     resp, err = client.send_request(req)
     if string.length(err) > 0 { return 1 }
     if client.response_status(resp) != 200 { return 1 }

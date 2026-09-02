@@ -1,0 +1,144 @@
+// config.ae — resolved driver-manager configuration from a caller `hint` plus
+// SE_* environment variables. Ports the settings/precedence of classic
+// rust/src/config.rs, minus the on-disk se-config.toml layer (a file in the
+// cache dir; low value, may be added later).
+//
+// Precedence per setting: hint (the binding's per-call opts, = the CLI flag)
+// beats a SE_* env var beats a hardcoded default. An empty hint value or unset
+// env var falls through (empty is treated as unset, exactly like config.rs's
+// `!result.is_empty()`).
+//
+// The hint is a small JSON object, e.g.
+//   {"browserVersion":"138","driverVersion":"...","offline":true,
+//    "proxy":"http://host:3128","cachePath":"/tmp/se","driverPath":"...",
+//    "browserPath":"...","timeout":300}
+// "" or "{}" -> all defaults. Unknown keys are ignored.
+import std.json
+import std.string
+import std.os
+import std.heap
+
+struct Config {
+    browser_version: string   // "" | "138" | "138.0..." | "stable"/"beta"/"dev"/"canary"/"esr"
+    driver_version:  string   // pin the driver version directly
+    browser_path:    string   // explicit browser binary (skip detection)
+    driver_path:     string   // explicit driver binary (skip resolution entirely)
+    proxy:           string   // forward proxy URL for the CfT/GitHub/Azure fetches
+    cache_path:      string   // cache root override (else SE_CACHE_PATH / default)
+    offline:         int      // 1 = never touch the network (cache/PATH only)
+    timeout:         int      // per-request seconds (0 -> caller default)
+}
+
+// Field accessors (the struct is opaque to other modules).
+browser_version(c: ptr) -> string { x = c as *Config; return x.browser_version }
+driver_version(c: ptr) -> string { x = c as *Config; return x.driver_version }
+browser_path(c: ptr) -> string { x = c as *Config; return x.browser_path }
+driver_path(c: ptr) -> string { x = c as *Config; return x.driver_path }
+proxy(c: ptr) -> string { x = c as *Config; return x.proxy }
+cache_path(c: ptr) -> string { x = c as *Config; return x.cache_path }
+offline(c: ptr) -> int { x = c as *Config; return x.offline }
+timeout(c: ptr) -> int { x = c as *Config; return x.timeout }
+
+// parse(hint, browser) — resolve every setting. `browser` selects the browser-
+// specific env keys (e.g. SE_CHROME_VERSION alongside SE_BROWSER_VERSION), as
+// config.rs's key lists do. Never returns null; a bad hint JSON is treated as
+// no hint (env/defaults only).
+parse(hint: string, browser: string) -> ptr {
+    root = null
+    if string.length(hint) > 0 {
+        r, perr = json.parse(hint)
+        if string.length(perr) == 0 { root = r }
+    }
+
+    c = heap.new(Config)
+    c.browser_version = _str(root, "browserVersion", _env2("SE_BROWSER_VERSION", _browser_env(browser, "VERSION")))
+    c.driver_version = _str(root, "driverVersion", os.getenv("SE_DRIVER_VERSION"))
+    c.browser_path = _str(root, "browserPath", _env2("SE_BROWSER_PATH", _browser_env(browser, "PATH")))
+    c.driver_path = _str(root, "driverPath", os.getenv("SE_DRIVER_PATH"))
+    c.proxy = _str(root, "proxy", os.getenv("SE_PROXY"))
+    c.cache_path = _str(root, "cachePath", os.getenv("SE_CACHE_PATH"))
+    c.offline = _bool(root, "offline", os.getenv("SE_OFFLINE"))
+    c.timeout = _int(root, "timeout", os.getenv("SE_TIMEOUT"))
+    return c as ptr
+}
+
+// is_version_specific(v) — classic rule (lib.rs:860): a version is "specific"
+// (used verbatim) iff it contains a dot; a bare major or a channel word is not.
+is_version_specific(v: string) -> int {
+    return string.contains(v, ".")
+}
+
+// is_channel(v) — one of the browser channel words (stable/beta/dev/canary/
+// nightly/esr). Case-insensitive, matching classic's eq_ignore_ascii_case.
+is_channel(v: string) -> int {
+    lv = string.to_lower(v)
+    if string.equals(lv, "stable") == 1 { return 1 }
+    if string.equals(lv, "beta") == 1 { return 1 }
+    if string.equals(lv, "dev") == 1 { return 1 }
+    if string.equals(lv, "canary") == 1 { return 1 }
+    if string.equals(lv, "nightly") == 1 { return 1 }
+    if string.equals(lv, "esr") == 1 { return 1 }
+    return 0
+}
+
+// ---- internals ----
+
+// hint-string-or-env-fallback. A present, non-empty JSON string wins; else the
+// (already env-resolved) fallback; else "".
+_str(root: ptr, key: string, envval: string) -> string {
+    if root != null {
+        if json.object_has(root, key) == 1 {
+            v, _v = json.object_get(root, key)
+            s, _s = json.get_string(v)
+            if string.length(s) > 0 { return string.concat(s, "") }
+        }
+    }
+    // Own the env value too (getenv results are not ours to hold long-term).
+    return string.concat(envval, "")
+}
+
+// hint-bool-or-env. JSON true / env "true"/"1" -> 1; else 0. Matches config.rs:
+// a non-bool env silently yields the default (0).
+_bool(root: ptr, key: string, envval: string) -> int {
+    if root != null {
+        if json.object_has(root, key) == 1 {
+            v, _v = json.object_get(root, key)
+            b = json.get_bool(v)
+            if b == 1 { return 1 }
+            return 0
+        }
+    }
+    lv = string.to_lower(string.trim(envval))
+    if string.equals(lv, "true") == 1 { return 1 }
+    if string.equals(lv, "1") == 1 { return 1 }
+    return 0
+}
+
+_int(root: ptr, key: string, envval: string) -> int {
+    if root != null {
+        if json.object_has(root, key) == 1 {
+            v, _v = json.object_get(root, key)
+            return json.get_int(v)
+        }
+    }
+    t = string.trim(envval)
+    if string.length(t) == 0 { return 0 }
+    n, err = string.to_int(t)
+    if string.length(err) > 0 { return 0 }
+    return n
+}
+
+// First non-empty of two env values (the generic SE_ key, then the browser-
+// specific one), matching config.rs's key-list order (generic first).
+_env2(generic: string, specific: string) -> string {
+    g = os.getenv(generic)
+    if string.length(g) > 0 { return g }
+    return os.getenv(specific)
+}
+
+// SE_<BROWSER>_<SUFFIX>, e.g. browser "chrome" + "VERSION" -> "SE_CHROME_VERSION".
+_browser_env(browser: string, suffix: string) -> string {
+    if string.length(browser) == 0 { return "" }
+    u = string.to_upper(browser)
+    return string.concat("SE_", string.concat(u, string.concat("_", suffix)))
+}

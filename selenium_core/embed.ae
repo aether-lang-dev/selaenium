@@ -206,9 +206,11 @@ sel_embed_launch_driver(driver_path: string, timeout_ms: int) -> ptr {
 // browser exists (use it) or none could be provisioned. When non-empty, set the
 // binding's binary capability to it (goog:chromeOptions.binary). Downloads a
 // Chrome-for-Testing browser on first call if no system Chrome is present.
-// Caller frees. Only chrome/chromium provision today; others return "".
-sel_embed_browser_binary(browser: string) -> string {
-    return sel_embed_dup(driver.browser_binary(browser))
+// `hint` is the same opts JSON as resolve_driver (browserVersion / cachePath /
+// proxy / offline are honored). Caller frees. Only chrome/chromium provision
+// today; others return "".
+sel_embed_browser_binary(browser: string, hint: string) -> string {
+    return sel_embed_dup(driver.browser_binary(browser, hint))
 }
 
 // resolve_driver(browser,hint) then launch. Returns a driver handle, or null —
