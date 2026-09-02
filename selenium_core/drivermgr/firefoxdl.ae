@@ -1,0 +1,87 @@
+// firefoxdl.ae — Firefox BROWSER download resolution (Linux only). Ports the
+// archive path of rust/src/firefox.rs get_browser_url_for_download
+// (firefox.rs:552-631) for the simple-extraction platforms.
+//
+// Only Linux is supported here: it ships a plain tarball
+// (.tar.bz2 <135, .tar.xz >=135) that untars to a `firefox/` top folder.
+// Windows (NSIS 7z-SFX .exe) and macOS (.dmg/.pkg) need real installer
+// machinery and are out of scope (resolve returns "" -> no auto-download).
+//
+// Version discovery: product-details firefox_versions.json, key
+// LATEST_FIREFOX_VERSION (firefox.rs:417-437). PURE navigation of the fetched
+// JSON; the NET fetch lives at the edge (resolve.ae).
+import version
+import std.json
+import std.string
+
+VERSIONS_URL() -> string { return "https://product-details.mozilla.org/1.0/firefox_versions.json" }
+RELEASES_URL() -> string { return "https://ftp.mozilla.org/pub/firefox/releases/" }
+LANG() -> string { return "en-US" }
+// The Linux x86_64 -> .tar.xz cutover (firefox.rs:585-599).
+XZ_MIN_MAJOR() -> int { return 135 }
+
+versions_url() -> string { return VERSIONS_URL() }
+
+// latest_stable_from(body) — PURE: the LATEST_FIREFOX_VERSION value out of a
+// fetched firefox_versions.json, or "".
+latest_stable_from(body: string) -> string {
+    root, perr = json.parse(body)
+    if string.length(perr) > 0 { return "" }
+    v, _v = json.object_get(root, "LATEST_FIREFOX_VERSION")
+    s, _s = json.get_string(v)
+    return string.concat(s, "")
+}
+
+// download_url(fx_version, os, arch) — the Firefox release archive URL, or ""
+// for an unsupported os/arch (only linux x86_64/arm64/i686 are wired here).
+// firefox.rs:552-608:
+//   {base}{ver}/{platform_label}/{lang}/firefox-{ver}.{ext}
+download_url(fx_version: string, os: string, arch: string) -> string {
+    if string.equals(os, "linux") == 0 { return "" }
+    plabel = _linux_platform_label(arch)
+    if string.length(plabel) == 0 { return "" }
+    ext = _linux_ext(fx_version)
+    u = string.concat(RELEASES_URL(), fx_version)
+    u = string.concat(u, string.concat("/", plabel))
+    u = string.concat(u, string.concat("/", LANG()))
+    u = string.concat(u, "/firefox-")
+    u = string.concat(u, fx_version)
+    u = string.concat(u, ".")
+    u = string.concat(u, ext)
+    return u
+}
+
+// The cache platform label (dir segment) for a downloaded Firefox
+// (firefox.rs:538-550 uses the driver platform_label — win/mac/linux tokens).
+platform_label(os: string, arch: string) -> string {
+    if string.equals(os, "linux") == 0 { return "" }
+    if string.equals(arch, "x86") == 1 { return "linux32" }
+    if _is_arm(arch) == 1 { return "linux-arm64" }
+    return "linux64"
+}
+
+// The binary sub-path inside the unpacked Firefox dir (top `firefox/` folder is
+// stripped on unpack): just "firefox" on Linux.
+binary_subpath() -> string { return "firefox" }
+
+// ---- internals ----
+
+// firefox.rs:585-608 linux platform labels for the release archive path.
+_linux_platform_label(arch: string) -> string {
+    if string.equals(arch, "x86") == 1 { return "linux-i686" }
+    if _is_arm(arch) == 1 { return "linux-aarch64" }
+    return "linux-x86_64"
+}
+
+// .tar.bz2 below Firefox 135, .tar.xz from 135 on (firefox.rs:591-599).
+_linux_ext(fx_version: string) -> string {
+    maj = version.major(fx_version)
+    if maj >= XZ_MIN_MAJOR() { return "tar.xz" }
+    return "tar.bz2"
+}
+
+_is_arm(arch: string) -> int {
+    if string.equals(arch, "arm64") == 1 { return 1 }
+    if string.equals(arch, "aarch64") == 1 { return 1 }
+    return 0
+}

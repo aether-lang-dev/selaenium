@@ -9,6 +9,7 @@ import version
 import cft
 import gecko
 import edgedriver
+import firefoxdl
 import drivercache
 import config
 import std.string
@@ -120,12 +121,18 @@ resolve_firefox(hint: string) -> string {
     dpath = config.driver_path(cfg)
     if string.length(dpath) > 0 { return dpath }
 
-    // 1. Firefox major: a pinned browserVersion wins, else detect.
+    // 1. Firefox major: a pinned browserVersion wins, else detect system
+    //    Firefox, else (Linux, none installed) self-provision one and use its
+    //    version — the geckodriver support table keys on the Firefox major.
     bver = config.browser_version(cfg)
     if config.is_channel(bver) == 1 { bver = "" }
     if string.length(bver) == 0 {
         bpath = browser.firefox_path()
-        if string.length(bpath) > 0 { bver = browser.firefox_version(bpath) }
+        if string.length(bpath) > 0 {
+            bver = browser.firefox_version(bpath)
+        } else {
+            bver = _ensure_firefox_browser_version(cfg, o, a)
+        }
     }
     fmaj = version.major(bver)
 
@@ -321,6 +328,45 @@ _chrome_binary_subpath() -> string {
     }
     if string.equals(o, "windows") == 1 { return "chrome.exe" }
     return "chrome"
+}
+
+// Ensure a Firefox browser is present in the cache (Linux only — the tarball is
+// a plain extraction; mac/win need installers) and return its version. "" if
+// unsupported OS / offline / provisioning failed.
+_ensure_firefox_browser_version(cfg: ptr, os: string, arch: string) -> string {
+    p = _ensure_firefox_browser(cfg, os, arch)
+    if string.length(p) == 0 { return "" }
+    return browser.firefox_version(p)
+}
+
+// firefox_browser_binary(hint) — a self-provisioned Firefox binary path
+// (Linux), or "" if a system Firefox exists / unsupported OS / failed. A binding
+// sets moz:firefoxOptions.binary to this when there is no system Firefox.
+firefox_browser_binary(hint: string) -> string {
+    if string.length(browser.firefox_path()) > 0 { return "" }
+    cfg = config.parse(hint, "firefox")
+    return _ensure_firefox_browser(cfg, _os(), _arch())
+}
+
+// Download-or-cache a Firefox browser (Linux tarball). A pinned browserVersion
+// selects that version; else latest-stable from firefox_versions.json. "" for
+// non-Linux, offline, or failure.
+_ensure_firefox_browser(cfg: ptr, os: string, arch: string) -> string {
+    if config.offline(cfg) == 1 { return "" }
+    if string.equals(os, "linux") == 0 { return "" }
+    fver = config.browser_version(cfg)
+    if config.is_channel(fver) == 1 { fver = "" }
+    if string.length(fver) == 0 {
+        body = _fetch(firefoxdl.versions_url(), cfg)
+        if string.length(body) == 0 { return "" }
+        fver = firefoxdl.latest_stable_from(body)
+    }
+    if string.length(fver) == 0 { return "" }
+    furl = firefoxdl.download_url(fver, os, arch)
+    if string.length(furl) == 0 { return "" }
+    root = _cache_root(cfg)
+    label = firefoxdl.platform_label(os, arch)
+    return drivercache.ensure_browser(root, "firefox", label, fver, furl, firefoxdl.binary_subpath(), config.proxy(cfg))
 }
 
 _which_driver() -> string {

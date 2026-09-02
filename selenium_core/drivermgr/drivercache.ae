@@ -128,22 +128,49 @@ ensure_browser(root: string, browser_name: string, label: string, version: strin
     if string.length(url) == 0 { return "" }
     _md = fs.mkdir_p(dir)
 
-    zip_path = string.concat(dir, "/_browser.zip")
-    if _download(url, zip_path, proxy) != 0 { return "" }
-
-    // Unpack into a stage dir (tree preserved), then lift the single top folder's
-    // contents up into <dir> so <dir>/<bin_subpath> resolves.
-    stage = string.concat(dir, "/_stage")
-    if _is_windows() == 1 {
-        _ub = _expand_browser_windows(zip_path, stage, dir)
+    // Archive kind from the URL: a CfT Chrome .zip, or a Firefox-Linux tarball
+    // (.tar.xz / .tar.bz2). Both wrap files in one top folder (chrome-linux64/,
+    // firefox/) that is stripped so <dir>/<bin_subpath> resolves.
+    if _is_browser_tarball(url) == 1 {
+        arc = string.concat(dir, "/_browser.tar")
+        if _download(url, arc, proxy) != 0 { return "" }
+        _ub = _expand_browser_tar(arc, dir, url)
+        _rmt = _remove(arc)
     } else {
-        _ub = _expand_browser_posix(zip_path, stage, dir)
+        zip_path = string.concat(dir, "/_browser.zip")
+        if _download(url, zip_path, proxy) != 0 { return "" }
+        stage = string.concat(dir, "/_stage")
+        if _is_windows() == 1 {
+            _ub = _expand_browser_windows(zip_path, stage, dir)
+        } else {
+            _ub = _expand_browser_posix(zip_path, stage, dir)
+        }
+        _rm = _remove(zip_path)
     }
-    _rm = _remove(zip_path)
 
     if file_exists(target) == 0 { return "" }
     _c = fs.chmod(target, 493)
     return target
+}
+
+// A browser archive that is a gzip/xz/bzip2 tarball (Firefox-Linux) rather than
+// a zip (CfT Chrome). tar handles all three compressions via its auto-detect.
+_is_browser_tarball(url: string) -> int {
+    if string.ends_with(url, ".tar.xz") == 1 { return 1 }
+    if string.ends_with(url, ".tar.bz2") == 1 { return 1 }
+    if string.ends_with(url, ".tar.gz") == 1 { return 1 }
+    return 0
+}
+
+// Untar into <dir>, stripping the single top folder (--strip-components=1) so
+// the binary lands at <dir>/<bin_subpath>. tar -a/auto-detects xz|bz2|gz.
+_expand_browser_tar(arc: string, dir: string, url: string) -> int {
+    argv = list.new()
+    list.add(argv, "-c")
+    list.add(argv, "tar --strip-components=1 -xf '${arc}' -C '${dir}' >/dev/null 2>&1")
+    _o, _s, _e = os.run_capture("/bin/sh", argv, null)
+    list.free(argv)
+    return 0
 }
 
 // POSIX: unzip -o (tree preserved) into stage, then move the contents of the

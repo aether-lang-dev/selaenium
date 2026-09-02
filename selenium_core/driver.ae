@@ -57,6 +57,7 @@ resolve_driver(browser: string, hint: string) -> string {
 browser_binary(browser: string, hint: string) -> string {
     if string.equals(browser, "chrome") == 1 { return resolve.chrome_browser_binary(hint) }
     if string.equals(browser, "chromium") == 1 { return resolve.chrome_browser_binary(hint) }
+    if string.equals(browser, "firefox") == 1 { return resolve.firefox_browser_binary(hint) }
     return ""
 }
 
