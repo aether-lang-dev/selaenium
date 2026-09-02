@@ -1,0 +1,129 @@
+// edgedriver.ae — msedgedriver (Microsoft Edge) version resolution + download-
+// URL construction. Ports rust/src/edge.rs (classic-selenium branch):
+//
+//   * version mapping: text endpoints on msedgedriver.microsoft.com.
+//     LATEST_STABLE gives a concrete latest major when the browser version is
+//     unknown/stable; LATEST_RELEASE_<major>_<OS> gives the exact driver
+//     version for a major. edge.rs:247-283.
+//   * download URL: msedgedriver.microsoft.com/<version>/edgedriver_<label>.zip
+//     (.zip on ALL platforms). edge.rs:309-335.
+//
+// Unlike CfT/gecko this resolution reads PLAIN-TEXT version endpoints, not JSON,
+// so there is little to navigate — the module is mostly pure URL/label building
+// plus a version-text extractor. The NET fetches live at the edge (resolve.ae).
+import version
+import std.string
+
+DRIVER_URL() -> string { return "https://msedgedriver.microsoft.com/" }
+
+// The LATEST_STABLE text endpoint — a concrete latest driver version, used to
+// derive a major when the detected Edge version is empty/unknown. edge.rs:62,247.
+latest_stable_url() -> string { return string.concat(DRIVER_URL(), "LATEST_STABLE") }
+
+// The LATEST_RELEASE_<major>_<OS> text endpoint — the exact driver version for a
+// browser major on this OS. `os` is "windows"/"macos"/"linux" (upper-cased to
+// match Rust's get_os().to_uppercase()). edge.rs:271-283.
+latest_release_url(major: int, os: string) -> string {
+    u = string.concat(DRIVER_URL(), "LATEST_RELEASE_")
+    u = string.concat(u, string.from_int(major))
+    u = string.concat(u, "_")
+    u = string.concat(u, _os_upper(os))
+    return u
+}
+
+// parse_version(text) — extract the version from a msedgedriver text endpoint
+// body. These endpoints return UTF-16LE with a BOM (e.g. bytes ff fe 31 00 35
+// 00 ... for "152..."), so every ASCII digit is followed by a NUL. Char-by-char
+// version scanning breaks on the interleaved NULs, so first compact the body to
+// just its digit/dot bytes (which drops the BOM and NULs), then extract. Works
+// for a plain-ASCII body too. edge.rs decodes then parse_version's.
+parse_version(text: string) -> string {
+    compact = _digits_and_dots(text)
+    return version.version_extract(compact)
+}
+
+// Keep only ASCII digits and dots from `s`, in order — collapses a UTF-16LE
+// (NUL-interleaved) version string to plain ASCII and strips the BOM/CRLF.
+_digits_and_dots(s: string) -> string {
+    n = string.length(s)
+    out = ""
+    i = 0
+    while i < n {
+        ch = string.substring(s, i, i + 1)
+        if _is_dd(ch) == 1 { out = string.concat(out, ch) }
+        i = i + 1
+    }
+    return out
+}
+
+_is_dd(ch: string) -> int {
+    if string.equals(ch, ".") == 1 { return 1 }
+    if string.equals(ch, "0") == 1 { return 1 }
+    if string.equals(ch, "1") == 1 { return 1 }
+    if string.equals(ch, "2") == 1 { return 1 }
+    if string.equals(ch, "3") == 1 { return 1 }
+    if string.equals(ch, "4") == 1 { return 1 }
+    if string.equals(ch, "5") == 1 { return 1 }
+    if string.equals(ch, "6") == 1 { return 1 }
+    if string.equals(ch, "7") == 1 { return 1 }
+    if string.equals(ch, "8") == 1 { return 1 }
+    if string.equals(ch, "9") == 1 { return 1 }
+    return 0
+}
+
+// driver_url(version, os, arch) — the msedgedriver download URL. .zip on every
+// platform. edge.rs:309-335. Linux arm64 is unsupported by Microsoft -> "".
+driver_url(driver_version: string, os: string, arch: string) -> string {
+    label = driver_label(os, arch)
+    if string.length(label) == 0 { return "" }
+    u = string.concat(DRIVER_URL(), driver_version)
+    u = string.concat(u, "/edgedriver_")
+    u = string.concat(u, label)
+    u = string.concat(u, ".zip")
+    return u
+}
+
+// driver_label(os, arch) — the per-platform token in the asset name.
+// edge.rs:309-326. Linux arm64 -> "" (Microsoft ships none).
+driver_label(os: string, arch: string) -> string {
+    if string.equals(os, "windows") == 1 {
+        if _is_arm(arch) == 1 { return "arm64" }
+        if string.equals(arch, "x86") == 1 { return "win32" }
+        return "win64"
+    }
+    if string.equals(os, "macos") == 1 {
+        if _is_arm(arch) == 1 { return "mac64_m1" }
+        return "mac64"
+    }
+    // linux
+    if _is_arm(arch) == 1 { return "" }
+    return "linux64"
+}
+
+// The cache platform label (dir segment). edge.rs:376-392.
+platform_label(os: string, arch: string) -> string {
+    if string.equals(os, "windows") == 1 {
+        if _is_arm(arch) == 1 { return "win-arm64" }
+        if string.equals(arch, "x86") == 1 { return "win32" }
+        return "win64"
+    }
+    if string.equals(os, "macos") == 1 {
+        if _is_arm(arch) == 1 { return "mac-arm64" }
+        return "mac64"
+    }
+    return "linux64"
+}
+
+// ---- internals ----
+
+_os_upper(os: string) -> string {
+    if string.equals(os, "windows") == 1 { return "WINDOWS" }
+    if string.equals(os, "macos") == 1 { return "MACOS" }
+    return "LINUX"
+}
+
+_is_arm(arch: string) -> int {
+    if string.equals(arch, "arm64") == 1 { return 1 }
+    if string.equals(arch, "aarch64") == 1 { return 1 }
+    return 0
+}

@@ -103,6 +103,45 @@ version_extract(output: string) -> string {
     return ""
 }
 
+// version_extract_short(output) — like version_extract but accepts a version
+// with as few as ONE dot (Firefox reports "Mozilla Firefox 133.0"; Edge and
+// Chrome report 3-4 parts). Returns the first run of digits-and-dots with at
+// least one dot, or "". Chrome/Edge callers keep using version_extract (>=2
+// dots) so a stray "1.2" in unrelated output can't shadow a real 4-part token.
+version_extract_short(output: string) -> string {
+    n = string.length(output)
+    i = 0
+    start = -1
+    dots = 0
+    while i < n {
+        ch = string.substring(output, i, i + 1)
+        is_digit = _is_digit(ch)
+        is_dot = string.equals(ch, ".")
+        if is_digit == 1 {
+            if start < 0 { start = i; dots = 0 }
+        } else {
+            if is_dot == 1 {
+                if start >= 0 { dots = dots + 1 }
+            } else {
+                if start >= 0 {
+                    if dots >= 1 {
+                        return _strip_trailing_dot(string.substring(output, start, i))
+                    }
+                }
+                start = -1
+                dots = 0
+            }
+        }
+        i = i + 1
+    }
+    if start >= 0 {
+        if dots >= 1 {
+            return _strip_trailing_dot(string.substring(output, start, n))
+        }
+    }
+    return ""
+}
+
 _is_digit(ch: string) -> int {
     if string.equals(ch, "0") == 1 { return 1 }
     if string.equals(ch, "1") == 1 { return 1 }

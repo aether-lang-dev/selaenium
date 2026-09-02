@@ -93,6 +93,143 @@ chrome_version(browser_path: string) -> string {
     return version.version_extract(out)
 }
 
+// ---- Firefox (firefox.rs:159-208 install map, :135-149 PATH names) ----
+
+// firefox_path() — the installed Firefox binary, or "". OS-fixed locations
+// first, then PATH names.
+firefox_path() -> string {
+    if _is_windows() == 1 {
+        w = _scan_firefox_windows()
+        if string.length(w) > 0 { return w }
+    } else {
+        m = _scan_firefox_macos()
+        if string.length(m) > 0 { return m }
+    }
+    if file.exists("/usr/bin/firefox") == 1 { return "/usr/bin/firefox" }
+    if file.exists("/usr/bin/firefox-esr") == 1 { return "/usr/bin/firefox-esr" }
+    if file.exists("/usr/bin/firefox-trunk") == 1 { return "/usr/bin/firefox-trunk" }
+    // PATH: channel-specific names first, then plain firefox (firefox.rs:135-149).
+    p = _which("firefox-devedition")
+    if string.length(p) > 0 { return p }
+    p = _which("firefox-esr")
+    if string.length(p) > 0 { return p }
+    return _which("firefox")
+}
+
+_scan_firefox_macos() -> string {
+    cands = list.new()
+    list.add(cands, "/Applications/Firefox.app/Contents/MacOS/firefox")
+    list.add(cands, "/Applications/Firefox Developer Edition.app/Contents/MacOS/firefox")
+    list.add(cands, "/Applications/Firefox Nightly.app/Contents/MacOS/firefox")
+    home = os.getenv("HOME")
+    if string.length(home) > 0 {
+        list.add(cands, string.concat(home, "/Applications/Firefox.app/Contents/MacOS/firefox"))
+    }
+    found = _first_existing(cands)
+    list.free(cands)
+    return found
+}
+
+_scan_firefox_windows() -> string {
+    cands = list.new()
+    pf = os.getenv("ProgramFiles")
+    pf86 = os.getenv("ProgramFiles(x86)")
+    if string.length(pf) > 0 {
+        list.add(cands, string.concat(pf, "/Mozilla Firefox/firefox.exe"))
+        list.add(cands, string.concat(pf, "/Firefox Developer Edition/firefox.exe"))
+        list.add(cands, string.concat(pf, "/Firefox Nightly/firefox.exe"))
+    }
+    if string.length(pf86) > 0 {
+        list.add(cands, string.concat(pf86, "/Mozilla Firefox/firefox.exe"))
+    }
+    found = _first_existing(cands)
+    list.free(cands)
+    return found
+}
+
+// firefox_version(path) — `<path> -v` → "Mozilla Firefox 133.0" → "133.0".
+// Firefox uses `-v` (not --version) and reports as few as 2 version parts, so
+// the short extractor is used. firefox.rs:210-216.
+firefox_version(browser_path: string) -> string {
+    if string.length(browser_path) == 0 { return "" }
+    argv = list.new()
+    list.add(argv, "-v")
+    out, status, err = os.run_capture(browser_path, argv, null)
+    list.free(argv)
+    if string.length(err) > 0 { return "" }
+    if string.contains(string.to_lower(out), "error") == 1 { return "" }
+    return version.version_extract_short(out)
+}
+
+// ---- Edge (edge.rs:147-195 install map, :52-60 Linux dirs) ----
+
+// edge_path() — the installed Microsoft Edge binary, or "".
+edge_path() -> string {
+    if _is_windows() == 1 {
+        w = _scan_edge_windows()
+        if string.length(w) > 0 { return w }
+    } else {
+        m = _scan_edge_macos()
+        if string.length(m) > 0 { return m }
+    }
+    // Linux fixed channel paths (edge.rs:147-160) + dir scan names.
+    if file.exists("/usr/bin/microsoft-edge") == 1 { return "/usr/bin/microsoft-edge" }
+    if file.exists("/usr/bin/microsoft-edge-beta") == 1 { return "/usr/bin/microsoft-edge-beta" }
+    if file.exists("/usr/bin/microsoft-edge-dev") == 1 { return "/usr/bin/microsoft-edge-dev" }
+    if file.exists("/opt/microsoft/msedge/msedge") == 1 { return "/opt/microsoft/msedge/msedge" }
+    p = _which("microsoft-edge")
+    if string.length(p) > 0 { return p }
+    p = _which("microsoft-edge-stable")
+    if string.length(p) > 0 { return p }
+    return _which("msedge")
+}
+
+_scan_edge_macos() -> string {
+    cands = list.new()
+    list.add(cands, "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge")
+    list.add(cands, "/Applications/Microsoft Edge Beta.app/Contents/MacOS/Microsoft Edge Beta")
+    list.add(cands, "/Applications/Microsoft Edge Dev.app/Contents/MacOS/Microsoft Edge Dev")
+    list.add(cands, "/Applications/Microsoft Edge Canary.app/Contents/MacOS/Microsoft Edge Canary")
+    found = _first_existing(cands)
+    list.free(cands)
+    return found
+}
+
+_scan_edge_windows() -> string {
+    cands = list.new()
+    pf = os.getenv("ProgramFiles")
+    pf86 = os.getenv("ProgramFiles(x86)")
+    if string.length(pf86) > 0 {
+        list.add(cands, string.concat(pf86, "/Microsoft/Edge/Application/msedge.exe"))
+        list.add(cands, string.concat(pf86, "/Microsoft/Edge Beta/Application/msedge.exe"))
+        list.add(cands, string.concat(pf86, "/Microsoft/Edge Dev/Application/msedge.exe"))
+    }
+    if string.length(pf) > 0 {
+        list.add(cands, string.concat(pf, "/Microsoft/Edge/Application/msedge.exe"))
+    }
+    found = _first_existing(cands)
+    list.free(cands)
+    return found
+}
+
+// edge_version(path) — `<path> --version` → "Microsoft Edge 125.0.2535.51".
+// edge.rs:197-221.
+edge_version(browser_path: string) -> string {
+    if string.length(browser_path) == 0 { return "" }
+    argv = list.new()
+    list.add(argv, "--version")
+    out, status, err = os.run_capture(browser_path, argv, null)
+    list.free(argv)
+    if string.length(err) > 0 { return "" }
+    if string.contains(string.to_lower(out), "error") == 1 { return "" }
+    return version.version_extract(out)
+}
+
+_is_windows() -> int {
+    if string.equals(os.getenv("OS"), "Windows_NT") == 1 { return 1 }
+    return 0
+}
+
 // ---- internals ----
 
 // CHROME_KNOWN_DIRS × CHROME_KNOWN_NAMES, name-major (every dir for a name

@@ -1,0 +1,150 @@
+// gecko.ae — geckodriver (Firefox) version resolution + download-URL
+// construction. Ports rust/src/firefox.rs (classic-selenium branch):
+//
+//   * version mapping: fetch geckodriver-support.json (rows of
+//     {geckodriver-version, min-firefox-version, max-firefox-version?}),
+//     keep rows where min <= firefox_major <= max (max absent = open-ended),
+//     take the FIRST match (the list is newest-first). firefox.rs:252-280.
+//   * download URL: github.com/mozilla/geckodriver/releases/download/v<ver>/
+//     geckodriver-v<ver>-<label>. firefox.rs:321-354.
+//
+// The NET fetch of the support JSON lives at the edge (resolve.ae); this module
+// is PURE — it navigates already-fetched JSON and builds strings, so it is
+// unit-testable offline with canned bodies (the injectable-adapter seam, same
+// as cft.ae).
+import std.json
+import std.string
+import std.heap
+
+// The SeleniumHQ-hosted geckodriver support table + the geckodriver releases
+// base, verbatim from firefox.rs:44-45.
+SUPPORT_JSON_URL() -> string { return "https://raw.githubusercontent.com/SeleniumHQ/selenium/trunk/common/geckodriver/geckodriver-support.json" }
+RELEASES_URL() -> string { return "https://github.com/mozilla/geckodriver/releases/" }
+
+// A resolved geckodriver: version + platform download URL ("" if no URL could
+// be built). Mirrors cft.Resolved so resolve.ae treats both uniformly.
+struct Resolved {
+    version: string
+    url: string
+}
+resolved_version(r: ptr) -> string {
+    if r == null { return "" }
+    x = r as *Resolved
+    return x.version
+}
+resolved_url(r: ptr) -> string {
+    if r == null { return "" }
+    x = r as *Resolved
+    return x.url
+}
+
+// The support-table URL, exposed so the orchestrator fetches at the edge.
+support_url() -> string { return SUPPORT_JSON_URL() }
+
+// resolve_support_from(body, firefox_major, os, arch) — PURE: navigate a fetched
+// geckodriver-support.json, range-match firefox_major, take the first match,
+// and build the download URL for os/arch. Returns *Resolved or null (no match /
+// parse error). firefox.rs:252-280.
+resolve_support_from(body: string, firefox_major: int, os: string, arch: string) -> ptr {
+    root, perr = json.parse(body)
+    if string.length(perr) > 0 { return null }
+    releases, _r = json.object_get(root, "geckodriver-releases")
+    n = json.array_size(releases)
+    i = 0
+    while i < n {
+        e, _e = json.array_get(releases, i)
+        gvv, _gv = json.object_get(e, "geckodriver-version")
+        gver, _g = json.get_string(gvv)
+        minv, _mn = json.object_get(e, "min-firefox-version")
+        minf = json.get_int(minv)
+        // max-firefox-version is optional; absent -> open-ended (huge ceiling).
+        maxf = 100000
+        has_max = json.object_has(e, "max-firefox-version")
+        if has_max == 1 {
+            maxv, _mx = json.object_get(e, "max-firefox-version")
+            maxf = json.get_int(maxv)
+        }
+        if firefox_major >= minf {
+            if firefox_major <= maxf {
+                return _mk(gver, driver_url(gver, os, arch))
+            }
+        }
+        i = i + 1
+    }
+    return null
+}
+
+// resolve_from_latest_tag(tag_version, os, arch) — PURE: build a *Resolved from a
+// geckodriver version already parsed out of the releases/latest redirect (the
+// firefox.rs:283-298 fallback when the support JSON can't be read). `tag_version`
+// is the bare "0.34.0" (no leading v).
+resolve_from_latest_tag(tag_version: string, os: string, arch: string) -> ptr {
+    if string.length(tag_version) == 0 { return null }
+    return _mk(tag_version, driver_url(tag_version, os, arch))
+}
+
+// driver_url(version, os, arch) — the geckodriver release asset URL.
+// firefox.rs:321-354. version is bare ("0.34.0"); the URL embeds v<version>.
+driver_url(version: string, os: string, arch: string) -> string {
+    label = driver_label(os, arch)
+    if string.length(label) == 0 { return "" }
+    // <base>download/v<ver>/geckodriver-v<ver>-<label>
+    u = string.concat(RELEASES_URL(), "download/v")
+    u = string.concat(u, version)
+    u = string.concat(u, "/geckodriver-v")
+    u = string.concat(u, version)
+    u = string.concat(u, "-")
+    u = string.concat(u, label)
+    return u
+}
+
+// driver_label(os, arch) — the per-platform asset suffix, verbatim from
+// firefox.rs:321-345. macOS is a universal build off-arm64 (x86 & x86_64 both
+// map to macos.tar.gz).
+driver_label(os: string, arch: string) -> string {
+    if string.equals(os, "windows") == 1 {
+        if string.equals(arch, "x86") == 1 { return "win32.zip" }
+        if _is_arm(arch) == 1 { return "win-aarch64.zip" }
+        return "win64.zip"
+    }
+    if string.equals(os, "macos") == 1 {
+        if _is_arm(arch) == 1 { return "macos-aarch64.tar.gz" }
+        return "macos.tar.gz"
+    }
+    // linux
+    if string.equals(arch, "x86") == 1 { return "linux32.tar.gz" }
+    if _is_arm(arch) == 1 { return "linux-aarch64.tar.gz" }
+    return "linux64.tar.gz"
+}
+
+// The cache platform label (dir segment), distinct from the asset suffix.
+// firefox.rs:395-415.
+platform_label(os: string, arch: string) -> string {
+    if string.equals(os, "windows") == 1 {
+        if string.equals(arch, "x86") == 1 { return "win32" }
+        if _is_arm(arch) == 1 { return "win-arm64" }
+        return "win64"
+    }
+    if string.equals(os, "macos") == 1 {
+        if _is_arm(arch) == 1 { return "mac-arm64" }
+        return "mac64"
+    }
+    if string.equals(arch, "x86") == 1 { return "linux32" }
+    if _is_arm(arch) == 1 { return "linux-arm64" }
+    return "linux64"
+}
+
+// ---- internals ----
+
+_is_arm(arch: string) -> int {
+    if string.equals(arch, "arm64") == 1 { return 1 }
+    if string.equals(arch, "aarch64") == 1 { return 1 }
+    return 0
+}
+
+_mk(ver: string, url: string) -> ptr {
+    r = heap.new(Resolved)
+    r.version = string.concat(ver, "")
+    r.url = string.concat(url, "")
+    return r as ptr
+}

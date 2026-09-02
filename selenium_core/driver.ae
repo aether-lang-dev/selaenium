@@ -27,19 +27,22 @@ struct Driver {
     port: int
 }
 
-// ---- resolution layer (full driver management for chrome; PATH for others) ----
+// ---- resolution layer (full driver management for chrome/firefox/edge) ----
 
-// Resolve the driver binary to run for `browser` (e.g. "chrome"). For chrome/
-// chromium this runs the full Selenium-Manager pipeline (drivermgr/resolve.ae):
-// detect the installed (or cached) Chrome + version, resolve the matching
-// chromedriver via Chrome-for-Testing, and return it from cache or download it
-// transparently — falling back to a chromedriver on PATH when that can't
-// proceed. Other browsers use the PATH lookup for now (their per-browser
-// resolvers are the next port milestones). Returns an absolute path or "".
-// `hint` carries policy (pinned version, cache dir, "offline", channel).
+// Resolve the driver binary to run for `browser`. chrome/chromium, firefox, and
+// edge each run the full Selenium-Manager pipeline (drivermgr/resolve.ae):
+// detect the installed browser + version, resolve the matching driver
+// (chromedriver via Chrome-for-Testing, geckodriver via the SeleniumHQ support
+// table + GitHub releases, msedgedriver via the microsoft.com version
+// endpoints), and return it from cache or download it transparently — falling
+// back to a driver on PATH when that can't proceed. Any other browser name uses
+// the plain PATH lookup. Returns an absolute path or "". `hint` carries policy
+// (pinned version, cache dir, "offline", channel).
 resolve_driver(browser: string, hint: string) -> string {
     if string.equals(browser, "chrome") == 1 { return resolve.resolve_chrome(hint) }
     if string.equals(browser, "chromium") == 1 { return resolve.resolve_chrome(hint) }
+    if string.equals(browser, "firefox") == 1 { return resolve.resolve_firefox(hint) }
+    if string.equals(browser, "edge") == 1 { return resolve.resolve_edge(hint) }
     exe = driver_exe_for(browser)
     if string.length(exe) == 0 { return "" }
     return which(exe)

@@ -7,6 +7,8 @@
 import browser
 import version
 import cft
+import gecko
+import edgedriver
 import drivercache
 import std.string
 import std.http.client
@@ -71,6 +73,115 @@ resolve_chrome(hint: string) -> string {
 _driver_name() -> string {
     if string.equals(_os(), "windows") == 1 { return "chromedriver.exe" }
     return "chromedriver"
+}
+
+// resolve_firefox(hint) -> absolute path to a runnable geckodriver, or "".
+// Ports firefox.rs request_driver_version: detect Firefox + major, fetch the
+// SeleniumHQ geckodriver-support table and range-match (first match wins); on a
+// table-fetch failure, fall back to the GitHub releases/latest redirect. Then
+// cache-or-download the matching release asset. PATH fallback throughout.
+resolve_firefox(hint: string) -> string {
+    o = _os()
+    a = _arch()
+
+    // 1. detect Firefox + its major version.
+    bpath = browser.firefox_path()
+    bver = ""
+    if string.length(bpath) > 0 { bver = browser.firefox_version(bpath) }
+    fmaj = version.major(bver)
+
+    // 2. resolve the geckodriver version + url. Primary = support table.
+    resolved = null
+    body = _fetch(gecko.support_url())
+    if string.length(body) > 0 {
+        if fmaj >= 0 {
+            resolved = gecko.resolve_support_from(body, fmaj, o, a)
+        }
+    }
+    // Fallback = the releases/latest redirect (firefox.rs:283-298), used when
+    // the table couldn't be read OR no row matched the detected major.
+    if resolved == null {
+        tag = _latest_geckodriver_tag()
+        resolved = gecko.resolve_from_latest_tag(tag, o, a)
+    }
+    if resolved == null { return _which_named("geckodriver") }
+
+    dver = gecko.resolved_version(resolved)
+    durl = gecko.resolved_url(resolved)
+    if string.length(dver) == 0 { return _which_named("geckodriver") }
+
+    // 3. cache-or-download. geckodriver: <name>[.exe]; the archive kind is
+    //    inferred from the URL suffix by drivercache (.tar.gz off Windows).
+    root = drivercache.default_cache_root()
+    label = gecko.platform_label(o, a)
+    got = drivercache.ensure(root, _named(o, "geckodriver"), label, dver, durl)
+    if string.length(got) > 0 { return got }
+    return _which_named("geckodriver")
+}
+
+// resolve_edge(hint) -> absolute path to a runnable msedgedriver, or "".
+// Ports edge.rs request_driver_version: fetch LATEST_STABLE to derive a major
+// when the browser version is unknown, then LATEST_RELEASE_<major>_<OS> for the
+// exact driver version, then cache-or-download the .zip. PATH fallback.
+resolve_edge(hint: string) -> string {
+    o = _os()
+    a = _arch()
+
+    // 1. detect Edge + its major (empty when absent -> LATEST_STABLE decides).
+    bpath = browser.edge_path()
+    bver = ""
+    if string.length(bpath) > 0 { bver = browser.edge_version(bpath) }
+    emaj = version.major(bver)
+
+    // 2a. no concrete major -> read LATEST_STABLE to get one (edge.rs:247-270).
+    if emaj < 0 {
+        stable_body = _fetch(edgedriver.latest_stable_url())
+        stable_ver = edgedriver.parse_version(stable_body)
+        emaj = version.major(stable_ver)
+    }
+    if emaj < 0 { return _which_named("msedgedriver") }
+
+    // 2b. LATEST_RELEASE_<major>_<OS> -> the exact driver version.
+    rel_body = _fetch(edgedriver.latest_release_url(emaj, o))
+    dver = edgedriver.parse_version(rel_body)
+    if string.length(dver) == 0 { return _which_named("msedgedriver") }
+
+    durl = edgedriver.driver_url(dver, o, a)
+    if string.length(durl) == 0 { return _which_named("msedgedriver") }
+
+    // 3. cache-or-download (.zip on all platforms).
+    root = drivercache.default_cache_root()
+    label = edgedriver.platform_label(o, a)
+    got = drivercache.ensure(root, _named(o, "msedgedriver"), label, dver, durl)
+    if string.length(got) > 0 { return got }
+    return _which_named("msedgedriver")
+}
+
+// The geckodriver version from the releases/latest redirect: GET .../latest with
+// redirects followed, read the effective URL (.../releases/tag/vX.Y.Z), pull the
+// version out. "" on failure. firefox.rs:283-298 + downloads.rs:90-100.
+_latest_geckodriver_tag() -> string {
+    url = string.concat(gecko.RELEASES_URL(), "latest")
+    req = client.request("GET", url)
+    _fr = client.set_follow_redirects(req, 10)
+    _to = client.set_timeout(req, 60s)
+    resp, err = client.send_request(req)
+    if string.length(err) > 0 { return "" }
+    eff = client.response_url(resp)
+    // .../releases/tag/v0.34.0 -> take the tail after the last '/', drop a
+    // leading 'v'. version_extract_short pulls the numeric run out.
+    return version.version_extract_short(eff)
+}
+
+// <name>[.exe] for the host OS.
+_named(o: string, base: string) -> string {
+    if string.equals(o, "windows") == 1 { return string.concat(base, ".exe") }
+    return base
+}
+
+// A driver of the given base name on PATH, or "".
+_which_named(base: string) -> string {
+    return string.trim(os.which(base))
 }
 
 // ---- internals ----

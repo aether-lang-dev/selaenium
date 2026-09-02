@@ -62,38 +62,54 @@ ensure(root: string, driver_name: string, label: string, version: string, url: s
     dest_dir = _dirname(target)
     _md = fs.mkdir_p(dest_dir)
 
-    // Download the zip to a temp file.
-    zip_path = string.concat(dest_dir, "/_download.zip")
-    if _download(url, zip_path) != 0 { return "" }
-
-    // Unzip flat into dest_dir. The CfT zip (115+) wraps files in a top folder,
-    // so extract then flatten to <dest_dir>/<driver_name>. POSIX has `unzip -j`
-    // (junk paths); Windows has neither /bin/sh nor unzip, so use PowerShell
-    // Expand-Archive then locate the (nested) driver .exe.
     extracted = string.concat(dest_dir, string.concat("/", driver_name))
-    if _is_windows() == 1 {
-        _unzip_windows(zip_path, dest_dir, driver_name)
-    } else {
+
+    // Archive kind from the URL suffix: geckodriver ships .tar.gz on
+    // macOS/Linux, everything else (chromedriver, msedgedriver, geckodriver on
+    // Windows) is .zip. tar.gz carries a bare binary (no wrapper dir); the zips
+    // may wrap files in a top folder (chromedriver 115+, msedgedriver), so the
+    // zip paths flatten. Windows has no /bin/sh or unzip -> PowerShell.
+    if _is_targz(url) == 1 {
+        arc_path = string.concat(dest_dir, "/_download.tar.gz")
+        if _download(url, arc_path) != 0 { return "" }
         argv = list.new()
         list.add(argv, "-c")
-        list.add(argv, "unzip -o -j '${zip_path}' -d '${dest_dir}' >/dev/null 2>&1")
+        list.add(argv, "tar -xzf '${arc_path}' -C '${dest_dir}' >/dev/null 2>&1")
         _u, ustat, _ue = os.run_capture("/bin/sh", argv, null)
         list.free(argv)
+        _rmt = _remove(arc_path)
+    } else {
+        zip_path = string.concat(dest_dir, "/_download.zip")
+        if _download(url, zip_path) != 0 { return "" }
+        if _is_windows() == 1 {
+            _unzip_windows(zip_path, dest_dir, driver_name)
+        } else {
+            argv = list.new()
+            list.add(argv, "-c")
+            list.add(argv, "unzip -o -j '${zip_path}' -d '${dest_dir}' >/dev/null 2>&1")
+            _u, ustat, _ue = os.run_capture("/bin/sh", argv, null)
+            list.free(argv)
+        }
+        _rm = _remove(zip_path)
     }
 
     if file_exists(extracted) == 0 {
         return ""
     }
     // chmod 0755 (0o755 == 493) — a no-op semantically on Windows but harmless.
+    // (The downloaded archive was already removed in the unpack branch above.)
     _c = fs.chmod(extracted, 493)
-    // Clean up the zip (best-effort).
-    _rm = _remove(zip_path)
     return extracted
 }
 
 _is_windows() -> int {
     if string.equals(os.getenv("OS"), "Windows_NT") == 1 { return 1 }
     return 0
+}
+
+// True if the download URL is a gzip tarball (geckodriver on macOS/Linux).
+_is_targz(url: string) -> int {
+    return string.ends_with(url, ".tar.gz")
 }
 
 // Windows unpack: Expand-Archive into a temp subdir, then copy the driver .exe
@@ -128,6 +144,10 @@ _unzip_windows(zip_path: string, dest_dir: string, driver_name: string) -> int {
 // response_body_length + fs.write_binary — the binary-safe pair.
 _download(url: string, path: string) -> int {
     req = client.request("GET", url)
+    // Follow redirects: GitHub's releases/download/... 302s to
+    // objects.githubusercontent.com (geckodriver), and other CDNs redirect too;
+    // without this the download gets a 30x and fails the 200 check below.
+    _fr = client.set_follow_redirects(req, 10)
     // Bound the driver-zip download (default 0ns = block forever). The zip is
     // ~10-25MB and runs over pure-Aether TLS on cross-builds (~25s observed);
     // 300s is generous while still failing cleanly on a stalled transfer.
