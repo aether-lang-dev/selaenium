@@ -14,24 +14,24 @@ artifact-set=B2 Firefox+Edge resolution (ae 0.622.0)
   win64    dll      sha256=a17687a12468706c4cfb7104370788c53e3037eff72ea3e6055790707113994a
 built-on=ChromeOS/Linux dev box (dylib+dll via ae build --target=, zig cc) — NO native build on mac/win
 date=2026-09-02  coverage=ffi+live-self-provision
-result=PASS (Firefox all 3 OSes; Edge Linux+macOS full, Windows resolve+download only)
+result=PASS (Firefox AND Edge, all 3 OSes — full detect/resolve/download/unpack/launch)
 suite=empty-cache resolve_driver + ensure_driver for firefox and edge:
   FIREFOX: geckodriver 0.37.1 resolved via SeleniumHQ geckodriver-support.json (firefox 140 on
     Linux) or the releases/latest fallback (no browser on mac/win); downloaded (tar.gz on
     Linux/macOS -> mac64/linux64, zip on Windows -> win64), launched live + stopped. Linux port
     ~40953, macOS ~49181, Windows ~62130. Real runnable binaries (geckodriver --version OK).
   EDGE: msedgedriver resolved via msedgedriver.microsoft.com LATEST_STABLE (UTF-16LE body decoded)
-    -> LATEST_RELEASE_<major>_<OS>; downloaded (zip), unpacked. Linux 152.0.4191.53 launched live
-    (port 44943); macOS mac64 launched live (port 49193); Windows win64 downloaded + the .exe runs
-    + binds 127.0.0.1 standalone, but the ENGINE's launch()/os.spawn_proc of msedgedriver HANGS on
-    Windows (geckodriver/chromedriver launch fine) — a driver.ae launch-layer/spawn issue, NOT a
-    resolution issue (filed aether asks/win-spawn-msedgedriver-launch-hang.md).
+    -> LATEST_RELEASE_<major>_<OS>; downloaded (zip), unpacked, launched live + stopped. Linux
+    152.0.4191.53 (port 44943); macOS mac64 (port 49193); Windows win64 (port 63773). A clean
+    Windows download+unpack+launch measured 26.9s end-to-end (pure-Aether TLS moves the ~10MB
+    msedgedriver zip at ~0.4MB/s — generous download timeouts matter; NOT a hang).
 notes=B2 of docs/Selenium-Manager-Port.md. New drivermgr modules gecko.ae + edgedriver.ae; ports
   firefox.rs/edge.rs. Two general fixes landed with it: _download now follows redirects (GitHub
   releases 302s to objects.githubusercontent.com — chromedriver only worked before because
-  googleapis served 200 direct), and .tar.gz unpack via `tar -xzf`. Edge Windows launch is the one
-  open item; everything up to and including the resolved+downloaded+runnable driver is proven on
-  all three OSes.
+  googleapis served 200 direct), and .tar.gz unpack via `tar -xzf`. NB: with no se-metadata TTL
+  cache yet (B1 remainder), the Edge LATEST_RELEASE endpoint can drift to a newer patch between
+  calls and trigger a needless re-download; that + orphaned driver processes from killed test runs
+  first read as a Windows "launch hang" — it was slow download throughput, not a defect.
 ```
 
 ```
