@@ -69,12 +69,16 @@ chrome(CommandExecutor, Options, TlsOpts) when is_map(Options), is_map(TlsOpts) 
     new(CommandExecutor, Caps, TlsOpts).
 
 headless_chrome(CommandExecutor) ->
-    chrome(CommandExecutor, #{
-        <<"goog:chromeOptions">> => #{
-            <<"args">> => [<<"--headless=new">>, <<"--no-sandbox">>,
-                           <<"--disable-gpu">>, <<"--disable-dev-shm-usage">>]
-        }
-    }).
+    Opts0 = #{<<"args">> => [<<"--headless=new">>, <<"--no-sandbox">>,
+                             <<"--disable-gpu">>, <<"--disable-dev-shm-usage">>]},
+    %% Honor SEL_CHROME_BINARY (a box with no system Chrome but a cached
+    %% Chrome-for-Testing), matching the other bindings' headless helpers.
+    Opts = case os:getenv("SEL_CHROME_BINARY") of
+        false -> Opts0;
+        "" -> Opts0;
+        Bin -> Opts0#{<<"binary">> => list_to_binary(Bin)}
+    end,
+    chrome(CommandExecutor, #{<<"goog:chromeOptions">> => Opts}).
 
 new(CommandExecutor, Caps) -> new(CommandExecutor, Caps, #{}).
 
