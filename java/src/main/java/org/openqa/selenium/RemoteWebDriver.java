@@ -101,8 +101,16 @@ public class RemoteWebDriver implements WebDriver {
     }
 
     public static RemoteWebDriver headlessChrome(String commandExecutor) {
-        return chrome(commandExecutor, Map.of("goog:chromeOptions",
-                Map.of("args", List.of("--headless=new", "--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage"))));
+        Map<String, Object> chromeOpts = new java.util.LinkedHashMap<>();
+        chromeOpts.put("args",
+                List.of("--headless=new", "--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage"));
+        // Honor SEL_CHROME_BINARY (a box with no system Chrome but a cached
+        // Chrome-for-Testing), pointing goog:chromeOptions.binary at it.
+        String chromeBin = System.getenv("SEL_CHROME_BINARY");
+        if (chromeBin != null && !chromeBin.isEmpty()) {
+            chromeOpts.put("binary", chromeBin);
+        }
+        return chrome(commandExecutor, Map.of("goog:chromeOptions", chromeOpts));
     }
 
     // ---- driver orchestration (spawn/adopt a driver process in-binding) ------
