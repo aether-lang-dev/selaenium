@@ -250,10 +250,24 @@ W3C): **network interception** (`network.*`), **console/JS log capture**
 
 ## Rollout
 
-1. **This note reviewed** (Simon on the event model + scope). ← we are here
-2. `selenium_bidi.ae` + the ABI, driven by the proven probe, one module deep
-   (`session` + `browsingContext` + `log.entryAdded`).
-3. One binding wired (Python — ctypes, already the reference), with a live test.
-4. Widen module-by-module; other bindings follow the Python shape.
+1. ✅ **This note reviewed** (Simon on the event model + scope).
+2. ✅ `selenium_bidi.ae` + the ABI (shape C: `bidi_demux.ae` frame router +
+   `selenium_bidi.ae` live session), driven by the proven probe. Went well past
+   one module: `session` + `browsingContext` + `script.evaluate` + `log.entry
+   Added` + the full `network.*` interception suite.
+3. ✅ **Python wired (ctypes) with GREEN live tests (2026-09-03).** All 22
+   `aether_sel_embed_bidi_*` verbs bound in `python/selenium/_native.py`; the
+   `BiDi` class + lazy `driver.bidi` accessor in `_webdriver.py`.
+   `python/test/test_live_chrome.py` runs green against real Chrome 138:
+   `test_live_bidi` (subscribe→async `log.entryAdded`, `session.status`,
+   `evaluate` 6*7→42 + Promise→42, network intercept/provideResponse/
+   setCacheBehavior) and `test_live_bidi_auth` (`network.authRequired` →
+   `continueWithAuth` → read the protected secret). Also verified through the
+   raw C ABI (`tests/bidi_abi_smoke.c`: two concurrent commands correlate by id).
+   NB the live test needs a chromedriver whose version MATCHES the local Chrome —
+   the driver-manager's `resolve_driver("chrome")` gives it; a mismatched PATH
+   chromedriver makes newSession hang.
+4. ⏳ Widen module-by-module; other bindings follow the Python shape (native
+   BiDi shims already present across the FFI bindings — live tests are the gap).
 
 Nothing above changes the W3C engine or any existing binding.
