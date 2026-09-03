@@ -58,9 +58,12 @@
   ([command-executor opts] (RemoteWebDriver/chrome command-executor (->java opts))))
 
 (defn headless-chrome [command-executor]
-  (chrome command-executor
-          {"goog:chromeOptions"
-           {"args" ["--headless=new" "--no-sandbox" "--disable-gpu" "--disable-dev-shm-usage"]}}))
+  (let [opts (cond-> {"args" ["--headless=new" "--no-sandbox" "--disable-gpu" "--disable-dev-shm-usage"]}
+               ;; Honor SEL_CHROME_BINARY (a box with no system Chrome but a
+               ;; cached Chrome-for-Testing), like the Kotlin/Groovy sugar.
+               (seq (or (System/getenv "SEL_CHROME_BINARY") ""))
+               (assoc "binary" (System/getenv "SEL_CHROME_BINARY")))]
+    (chrome command-executor {"goog:chromeOptions" opts})))
 
 (defn quit [^RemoteWebDriver d] (.quit d))
 (defn session-id [^RemoteWebDriver d] (.sessionId d))
