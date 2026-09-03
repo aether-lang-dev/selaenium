@@ -267,7 +267,19 @@ W3C): **network interception** (`network.*`), **console/JS log capture**
    NB the live test needs a chromedriver whose version MATCHES the local Chrome —
    the driver-manager's `resolve_driver("chrome")` gives it; a mismatched PATH
    chromedriver makes newSession hang.
-4. ⏳ Widen module-by-module; other bindings follow the Python shape (native
-   BiDi shims already present across the FFI bindings — live tests are the gap).
+4. ✅ **Widened — 6 bindings verified GREEN live vs real Chrome 138
+   (2026-09-03), across 6 distinct FFI mechanisms:** Python (ctypes), Go (cgo),
+   Ruby (Fiddle), Rust (extern "C"), Nim (importc), Dart (dart:ffi). Each runs
+   the same core BiDi flow (subscribe→async `log.entryAdded`, `session.status`,
+   `script.evaluate`) and most run the full network-interception suite too. All
+   11 own-FFI bindings bind the 22 `bidi_*` verbs and ship a `BiDi` wrapper +
+   `.bidi` accessor; java/zig/lua/erlang have the tests written and pass through
+   the C ABI but need their aeb/fixture harness to run here (zig wants
+   SEL_CHROMEDRIVER_URL + a specific content-server fixture; java wants the
+   JUnit classpath via aeb). REMAINING wrapper+test work only for the bindings
+   with NO own bidi FFI: the JVM family (kotlin/scala/groovy/clojure — thin
+   wrapper over the existing Java `BiDi`), elixir/gleam/lfe (over the Erlang
+   NIF, which already has all 22), and haskell/julia/crystal/fsharp (need the 22
+   FFI decls too).
 
 Nothing above changes the W3C engine or any existing binding.
