@@ -4,7 +4,7 @@
   needs chromedriver + a content server (started here via com.sun.net.httpserver
   and ProcessBuilder); skips if chromedriver is absent."
   (:require [selenium :as sel])
-  (:import [org.openqa.selenium WebDriverException NoSuchElementException]
+  (:import [org.openqa.selenium WebDriverException NoSuchElementException BidiEvent]
            [com.sun.net.httpserver HttpServer HttpHandler]
            [java.net InetSocketAddress ServerSocket Socket InetAddress]
            [java.nio.charset StandardCharsets]
@@ -112,6 +112,21 @@
           ;; screenshot
           (let [png (.decode (Base64/getDecoder) (sel/screenshot-base64 d))]
             (check (and (> (alength png) 8) (= (byte \P) (aget png 1)) (= (byte \N) (aget png 2))) "screenshot is PNG"))
+
+          ;; WebDriver-BiDi over the shared Java Panama binding (Clojure reaches
+          ;; the Java BiDi class directly via interop — no Clojure-side FFI).
+          (check (.bidiAvailable d) "bidi available (webSocketUrl negotiated)")
+          (let [bidi (.bidi d)]
+            (check (= "success" (.get (.subscribe bidi (into-array String [BidiEvent/LOG_ENTRY_ADDED])) "type"))
+                   "bidi.subscribe(log.entryAdded)")
+            (sel/execute-script d "console.log('bidi-hello');")
+            (let [ev (.nextEvent bidi BidiEvent/LOG_ENTRY_ADDED 8000)]
+              (check (and ev (.contains (str ev) "bidi-hello"))
+                     "log.entryAdded event received async, carries the text"))
+            (check (= "success" (.get (.command bidi "session.status" nil 10000) "type"))
+                   "bidi.command(session.status)")
+            (check (not (.isEmpty (.topContext bidi 10000))) "bidi topContext")
+            (check (= 42 (.intValue (.evaluateValue bidi "6*7" 30000))) "bidi.evaluate 6*7 -> 42"))
 
           ;; negative path
           (let [nse (try (sel/find-element d :id "does-not-exist") false

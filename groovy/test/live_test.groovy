@@ -10,6 +10,7 @@ import org.openqa.selenium.RemoteWebDriver
 import org.openqa.selenium.By
 import org.openqa.selenium.WebDriverException
 import org.openqa.selenium.NoSuchElementException
+import org.openqa.selenium.BidiEvent
 import org.openqa.selenium.groovy.Selenium
 import com.sun.net.httpserver.HttpServer
 import com.sun.net.httpserver.HttpHandler
@@ -128,6 +129,22 @@ if (driverBin == null) {
                 // screenshot
                 def png = Base64.decoder.decode(d.screenshotBase64())
                 check(png.length > 8 && png[1] == (byte) 'P' && png[2] == (byte) 'N', "screenshot is PNG")
+
+                // WebDriver-BiDi over the shared Java Panama binding (Groovy
+                // reaches the Java BiDi class directly — no Groovy-side FFI).
+                check(d.bidiAvailable(), "bidi available (webSocketUrl negotiated)")
+                def bidi = d.bidi()
+                check(bidi.subscribe(BidiEvent.LOG_ENTRY_ADDED)["type"] == "success",
+                    "bidi.subscribe(log.entryAdded)")
+                d.executeScript("console.log('bidi-hello');")
+                def ev = bidi.nextEvent(BidiEvent.LOG_ENTRY_ADDED, 8000)
+                check(ev != null && ev.toString().contains("bidi-hello"),
+                    "log.entryAdded event received async, carries the text")
+                check(bidi.command("session.status", null, 10000)["type"] == "success",
+                    "bidi.command(session.status)")
+                check(!bidi.topContext(10000).isEmpty(), "bidi topContext")
+                check(((Number) bidi.evaluateValue("6*7", 30000)).intValue() == 42,
+                    "bidi.evaluate 6*7 -> 42")
 
                 // negative path
                 def nse = false
