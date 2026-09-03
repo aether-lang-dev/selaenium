@@ -1,6 +1,7 @@
 package org.openqa.selenium.kotlin
 
 import com.sun.net.httpserver.HttpServer
+import org.openqa.selenium.BidiEvent
 import org.openqa.selenium.NoSuchElementException
 import org.openqa.selenium.RemoteWebDriver
 import org.openqa.selenium.WebDriverException
@@ -138,6 +139,22 @@ private fun liveSurface(driverBin: String) {
             // screenshot -> PNG
             val png = Base64.getDecoder().decode(d.screenshotBase64())
             check(png.size > 8 && png[1] == 'P'.code.toByte() && png[2] == 'N'.code.toByte(), "screenshot is PNG")
+
+            // WebDriver-BiDi over the same FFM binding: the Java BiDi class is
+            // reached directly through Kotlin/Java interop — no Kotlin-side FFI.
+            check(d.bidiAvailable(), "bidi available (webSocketUrl negotiated)")
+            val bidi = d.bidi()
+            val ack = bidi.subscribe(BidiEvent.LOG_ENTRY_ADDED)
+            check(ack["type"] == "success", "bidi.subscribe(log.entryAdded)")
+            d.script("console.log('bidi-hello');")
+            val ev = bidi.nextEvent(BidiEvent.LOG_ENTRY_ADDED, 8000)
+            check(ev != null && ev.toString().contains("bidi-hello"),
+                "log.entryAdded event received async, carries the text")
+            val status = bidi.command("session.status", null, 10000)
+            check(status["type"] == "success", "bidi.command(session.status)")
+            check(bidi.topContext(10000).isNotEmpty(), "bidi topContext")
+            check((bidi.evaluateValue("6*7", 30000) as Number).toInt() == 42,
+                "bidi.evaluate 6*7 -> 42")
 
             // negative path
             var nse = false
