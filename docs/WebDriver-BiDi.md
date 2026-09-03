@@ -267,21 +267,26 @@ W3C): **network interception** (`network.*`), **console/JS log capture**
    NB the live test needs a chromedriver whose version MATCHES the local Chrome —
    the driver-manager's `resolve_driver("chrome")` gives it; a mismatched PATH
    chromedriver makes newSession hang.
-4. ✅ **Widened — 9 bindings verified GREEN live vs real Chrome
+4. ✅ **Widened — 11 bindings verified GREEN live vs real Chrome
    (2026-09-03):** Python (ctypes), Go (cgo), Ruby (Fiddle), Rust (extern "C"),
    Nim (importc), Dart (dart:ffi) — verified on the ChromeOS box vs Chrome 138 —
-   plus the JVM family Kotlin, Groovy, Clojure (all three ride the one Java
+   plus the JVM family Kotlin, Groovy, Clojure, Scala (all four ride the one Java
    Panama binding, reaching the Java `BiDi` class directly via JVM interop with
-   NO binding-side FFI) — verified on catchyos vs Chrome 152. Each runs the same
-   core BiDi flow (bidiAvailable → subscribe→async `log.entryAdded` → command
-   `session.status` → topContext → `evaluate` 6*7→42); several also run the full
-   network-interception suite (Go + Ruby the authRequired→continueWithAuth flow).
+   NO binding-side FFI) and Erlang (NIF) — verified on catchyos vs Chrome 152.
+   Each runs the same core BiDi flow (bidiAvailable → subscribe→async
+   `log.entryAdded` → command `session.status` → topContext → `evaluate` 6*7→42);
+   several also run the full network-interception suite (Go + Ruby + Erlang the
+   authRequired→continueWithAuth flow). A cross-binding fix landed on the way:
+   the Java `RemoteWebDriver.headlessChrome` (and Erlang/Clojure `headless_chrome`)
+   now honor `SEL_CHROME_BINARY`, so the live tests run on a box with only a
+   cached Chrome-for-Testing.
    All 11 own-FFI bindings bind the 22 `bidi_*` verbs and ship a `BiDi` wrapper +
-   `.bidi` accessor; java/zig/lua/erlang have the tests written and pass through
-   the C ABI smoke but need their aeb/fixture harness to run here (zig wants
-   SEL_CHROMEDRIVER_URL + a specific content-server fixture). REMAINING: scala
-   (Java-Panama family, FFI-only test today — add a live BiDi test);
-   elixir/gleam/lfe (over the Erlang NIF, which already has all 22 — add wrapper
-   + test); haskell/julia/crystal/fsharp (need the 22 bidi FFI decls too).
+   `.bidi` accessor; zig/lua have the tests written and pass the C-ABI smoke but
+   need their fixture harness to run here (zig wants SEL_CHROMEDRIVER_URL + a
+   specific content-server fixture). REMAINING: elixir/gleam/lfe (over the Erlang
+   NIF — the NIF has all 22, but these wrap the NIF DIRECTLY so each must mirror
+   the bidi orchestration that `erlang/src/selenium.erl` does: the
+   bidi_send→pump→poll_reply await loop); haskell/julia/crystal/fsharp (need the
+   22 bidi FFI decls + wrapper + test).
 
 Nothing above changes the W3C engine or any existing binding.
