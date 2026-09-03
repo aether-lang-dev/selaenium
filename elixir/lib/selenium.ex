@@ -56,7 +56,10 @@ defmodule Selenium do
         {:error, {-1, "failed to open session handle"}}
 
       _ ->
-        payload = %{"capabilities" => %{"alwaysMatch" => caps}}
+        # Request a BiDi channel so bidi_* works on demand; the remote end
+        # returns value.capabilities.webSocketUrl (mirrors erlang/src/selenium.erl).
+        bidi_caps = Map.put(caps, "webSocketUrl", true)
+        payload = %{"capabilities" => %{"alwaysMatch" => bidi_caps}}
 
         case execute(handle, "newSession", payload) do
           {:ok, value} ->
@@ -229,7 +232,7 @@ defmodule Selenium do
   @doc "The top-level browsing context id, or nil."
   def bidi_top_context(h, timeout_ms \\ 10_000) do
     case bidi_command(h, "browsingContext.getTree", %{}, timeout_ms) do
-      {:ok, %{"contexts" => [%{"context" => ctx} | _]}} -> ctx
+      {:ok, %{"result" => %{"contexts" => [%{"context" => ctx} | _]}}} -> ctx
       _ -> nil
     end
   end
@@ -245,7 +248,7 @@ defmodule Selenium do
     }
 
     case bidi_command(h, "script.evaluate", params, timeout_ms) do
-      {:ok, %{"result" => %{"value" => v}}} -> {:ok, v}
+      {:ok, %{"result" => %{"result" => %{"value" => v}}}} -> {:ok, v}
       {:ok, other} -> {:ok, other}
       err -> err
     end
