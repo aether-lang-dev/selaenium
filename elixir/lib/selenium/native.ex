@@ -31,4 +31,15 @@ defmodule Selenium.Native do
   defdelegate by_locator(strategy, value), to: :selenium_nif
   defdelegate route(name), to: :selenium_nif
   defdelegate error_code(w3c_error), to: :selenium_nif
+
+  # ---- WebDriver-BiDi (the raw demux primitives; orchestration in Selenium) ----
+  defdelegate bidi_open(ws_url), to: :selenium_nif
+  defdelegate bidi_close(bidi_handle), to: :selenium_nif
+  defdelegate bidi_send(bidi_handle, id, method, params_json), to: :selenium_nif
+  defdelegate bidi_pump(bidi_handle, timeout_ms), to: :selenium_nif
+  defdelegate bidi_poll_reply(bidi_handle, id), to: :selenium_nif
+  defdelegate bidi_wait_event(bidi_handle, method, timeout_ms), to: :selenium_nif
+  defdelegate bidi_subscribe(bidi_handle, id, events_csv, timeout_ms), to: :selenium_nif
+  defdelegate bidi_unsubscribe(bidi_handle, id, events_csv, timeout_ms), to: :selenium_nif
+  defdelegate bidi_lost_events(bidi_handle), to: :selenium_nif
 end

@@ -59,8 +59,13 @@ defmodule Selenium do
         payload = %{"capabilities" => %{"alwaysMatch" => caps}}
 
         case execute(handle, "newSession", payload) do
-          {:ok, _} -> {:ok, handle}
-          err -> Native.close(handle) && err
+          {:ok, value} ->
+            # Register the negotiated webSocketUrl so `bidi_*` works on demand.
+            bidi_register(handle, ws_url_of(value))
+            {:ok, handle}
+
+          err ->
+            Native.close(handle) && err
         end
     end
   end
@@ -174,6 +179,168 @@ defmodule Selenium do
   def route(command), do: Native.route(to_string(command))
   def error_code(w3c_error), do: Native.error_code(to_string(w3c_error))
   def locator(by, value), do: Native.by_locator(to_string(by), to_string(value))
+
+  # ---- WebDriver-BiDi ----
+  # The NIF exposes the raw demux primitives; the orchestration (id-correlated
+  # send→pump→poll_reply await loop, lazy ws open, event drain) lives here,
+  # mirroring erlang/src/selenium.erl. Per-session BiDi state {ws_url, bidi
+  # handle, next_id} is kept in a public ETS table keyed by the session handle.
+
+  @bidi_table :selenium_elixir_bidi
+
+  @doc "True if this session negotiated a webSocketUrl (BiDi usable)."
+  def bidi_available(h) do
+    case bidi_lookup(h) do
+      {:ok, ws_url, _bh, _id} -> ws_url != ""
+      :error -> false
+    end
+  end
+
+  @doc "session.subscribe to one or more event names; wait for the ack."
+  def bidi_subscribe(h, events, timeout_ms \\ 10_000) do
+    with_bidi(h, fn bh ->
+      id = bidi_next_id(h)
+      {:ok, ack(Native.bidi_subscribe(bh, id, join_events(events), timeout_ms))}
+    end)
+  end
+
+  @doc "Block until an event whose method matches arrives, or timeout. {:ok, event} | {:ok, :timeout}."
+  def bidi_next_event(h, method, timeout_ms \\ 5_000) do
+    with_bidi(h, fn bh ->
+      case Native.bidi_wait_event(bh, to_string(method), timeout_ms) do
+        "" -> {:ok, :timeout}
+        raw -> {:ok, decode(raw)}
+      end
+    end)
+  end
+
+  @doc "Issue any BiDi command; send + pump-poll until this id's reply arrives."
+  def bidi_command(h, method, params \\ %{}, timeout_ms \\ 10_000) do
+    with_bidi(h, fn bh ->
+      id = bidi_next_id(h)
+
+      case Native.bidi_send(bh, id, to_string(method), encode(params)) do
+        0 -> bidi_await_reply(bh, id, timeout_ms, 50, 0, method)
+        _ -> {:error, {-1, "BiDi send failed: #{method}"}}
+      end
+    end)
+  end
+
+  @doc "The top-level browsing context id, or nil."
+  def bidi_top_context(h, timeout_ms \\ 10_000) do
+    case bidi_command(h, "browsingContext.getTree", %{}, timeout_ms) do
+      {:ok, %{"contexts" => [%{"context" => ctx} | _]}} -> ctx
+      _ -> nil
+    end
+  end
+
+  @doc "script.evaluate in the top context, returning the raw value (awaits promises)."
+  def bidi_evaluate_value(h, expr, timeout_ms \\ 30_000) do
+    ctx = bidi_top_context(h, timeout_ms)
+
+    params = %{
+      "expression" => to_string(expr),
+      "target" => %{"context" => ctx},
+      "awaitPromise" => true
+    }
+
+    case bidi_command(h, "script.evaluate", params, timeout_ms) do
+      {:ok, %{"result" => %{"value" => v}}} -> {:ok, v}
+      {:ok, other} -> {:ok, other}
+      err -> err
+    end
+  end
+
+  defp bidi_await_reply(_bh, _id, timeout_ms, _step, waited, method) when waited >= timeout_ms,
+    do: {:error, {24, "BiDi command timed out: #{method}"}}
+
+  defp bidi_await_reply(bh, id, timeout_ms, step, waited, method) do
+    case Native.bidi_poll_reply(bh, id) do
+      "" ->
+        case Native.bidi_pump(bh, step) do
+          rc when rc < 0 -> {:error, {-1, "BiDi channel closed"}}
+          _ -> bidi_await_reply(bh, id, timeout_ms, step, waited + step, method)
+        end
+
+      raw ->
+        {:ok, decode(raw)}
+    end
+  end
+
+  # --- BiDi session state (ETS) ---
+
+  defp bidi_table do
+    case :ets.info(@bidi_table, :name) do
+      :undefined ->
+        try do
+          :ets.new(@bidi_table, [:named_table, :public, :set])
+        rescue
+          ArgumentError -> @bidi_table
+        end
+
+      _ ->
+        @bidi_table
+    end
+  end
+
+  defp bidi_register(handle, ws_url) do
+    :ets.insert(bidi_table(), {handle, ws_url, :undefined, 1})
+  end
+
+  defp bidi_lookup(handle) do
+    case :ets.info(@bidi_table, :name) do
+      :undefined ->
+        :error
+
+      _ ->
+        case :ets.lookup(@bidi_table, handle) do
+          [{^handle, ws_url, bh, next_id}] -> {:ok, ws_url, bh, next_id}
+          [] -> :error
+        end
+    end
+  end
+
+  defp bidi_next_id(handle), do: :ets.update_counter(@bidi_table, handle, {4, 1}) - 1
+
+  # Lazily open the ws channel on first use; return the BiDi handle.
+  defp bidi_channel(handle) do
+    case bidi_lookup(handle) do
+      {:ok, "", _, _} ->
+        {:error, {0, "BiDi not available: no webSocketUrl negotiated"}}
+
+      {:ok, _ws, bh, _id} when bh != :undefined ->
+        {:ok, bh}
+
+      {:ok, ws_url, :undefined, _id} ->
+        case Native.bidi_open(ws_url) do
+          0 ->
+            {:error, {-1, "BiDi channel failed to open"}}
+
+          bh ->
+            :ets.update_element(@bidi_table, handle, {3, bh})
+            {:ok, bh}
+        end
+
+      :error ->
+        {:error, {0, "BiDi not available: unknown session handle"}}
+    end
+  end
+
+  defp with_bidi(handle, fun) do
+    case bidi_channel(handle) do
+      {:ok, bh} -> fun.(bh)
+      {:error, _} = err -> err
+    end
+  end
+
+  defp join_events(events) when is_list(events), do: Enum.map_join(events, ",", &to_string/1)
+  defp join_events(event), do: to_string(event)
+
+  defp ack(""), do: %{}
+  defp ack(raw), do: decode(raw)
+
+  defp ws_url_of(%{"capabilities" => %{"webSocketUrl" => url}}) when is_binary(url), do: url
+  defp ws_url_of(_), do: ""
 
   defp decode_by(by, value),
     do: decode(Native.by_locator(strategy_string(by), to_string(value)))

@@ -108,6 +108,20 @@ defmodule SeleniumTest do
             raw = Base.decode64!(shot)
             assert binary_part(raw, 1, 3) == "PNG"
 
+            # WebDriver-BiDi over the shared Erlang NIF (Elixir mirrors the
+            # send->pump->poll_reply orchestration in Selenium; no Elixir FFI).
+            assert Selenium.bidi_available(d)
+            {:ok, ack} = Selenium.bidi_subscribe(d, ["log.entryAdded"])
+            assert Map.get(ack, "type") == "success"
+            {:ok, _} = Selenium.execute_script(d, "console.log('bidi-hello');")
+            {:ok, ev} = Selenium.bidi_next_event(d, "log.entryAdded", 8_000)
+            assert ev != :timeout
+            assert inspect(ev) =~ "bidi-hello"
+            {:ok, status} = Selenium.bidi_command(d, "session.status")
+            assert Map.get(status, "type") == "success"
+            assert is_binary(Selenium.bidi_top_context(d))
+            assert {:ok, 42} = Selenium.bidi_evaluate_value(d, "6*7")
+
             # negative path
             assert {:error, {17, _}} = Selenium.find_element(d, "id", "does-not-exist")
           after
