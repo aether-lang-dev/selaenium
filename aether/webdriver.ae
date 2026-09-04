@@ -28,6 +28,11 @@ import std.json
 import std.string
 import std.heap
 import std.file
+import std.map
+
+// C-runtime exit, for find_or_fail's fail-loud path (a locator typo should abort
+// the run, not surface as a confusing downstream symptom).
+extern exit(code: int)
 
 // ---- By locator strategies (typed; no stringly-typed "css selector") ----
 By_CSS() -> string { return "css" }
@@ -54,21 +59,26 @@ struct WdSession {
 
 // webdriver.chrome() { … } — resolve + launch chromedriver for the local Chrome
 // (transparent: detect -> CfT -> cache/download -> launch, nothing on PATH),
-// then open a W3C session. Block config forwards to the driver manager
-// (version/cache/offline/timeout_ms). Returns a *Session, or null if no driver.
+// then open a W3C session. The trailing block configures the session:
+//   with_headless(0)   — run HEADED (a real window; default is headless=new)
+//   with_arg("--lang=en") — append an extra goog:chromeOptions arg
+// plus the driver-manager hints (with_version/with_cache/with_offline). The
+// session OWNS the driver it started — quit() reaps it. Returns a *Session, or
+// null if no driver.
 builder chrome(): ptr {
     dh = driver.ensure("chrome", _hint(_builder), _timeout(_builder))
     if dh == null { return null }
     url = driver.url_of(dh)
     eng = selenium_core.session_new(url)
     sess = _mk(eng, dh)
-    // newSession with headless chrome caps. When there's no system Chrome but a
-    // cached Chrome-for-Testing exists, point goog:chromeOptions.binary at it
+    // newSession with chrome caps. When there's no system Chrome but a cached
+    // Chrome-for-Testing exists, point goog:chromeOptions.binary at it
     // (chromedriver otherwise looks for a system chrome that isn't there).
     bin_opt = _chrome_binary_opt()
     // Request webSocketUrl:true so a BiDi channel is available on demand; the URL
     // is captured and BiDi is opened lazily (non-BiDi users pay nothing).
-    caps = "{\"capabilities\":{\"alwaysMatch\":{\"browserName\":\"chrome\",\"webSocketUrl\":true,\"goog:chromeOptions\":{${bin_opt}\"args\":[\"--headless=new\",\"--no-sandbox\",\"--disable-dev-shm-usage\"]}}}}"
+    args = _chrome_args(_builder)
+    caps = "{\"capabilities\":{\"alwaysMatch\":{\"browserName\":\"chrome\",\"webSocketUrl\":true,\"goog:chromeOptions\":{${bin_opt}\"args\":${args}}}}}"
     rc = selenium_core.execute(eng, "newSession", caps)
     if rc != 0 {
         quit(sess)
@@ -78,11 +88,79 @@ builder chrome(): ptr {
     return sess
 }
 
+// ---- chrome() block setters (called inside the chrome() { … } block) ----
+
+// Run headed (a real, watchable window) when `on` is 0; headless (the default)
+// when non-zero. Headless stays the default so CI never pops a window.
+with_headless(_ctx: ptr, on: int) {
+    if _ctx != null { map_put_raw(_ctx, "headless", string.from_int(on)) }
+}
+// Append an extra goog:chromeOptions arg (e.g. "--window-size=1280,800").
+// May be called repeatedly; args accumulate.
+with_arg(_ctx: ptr, arg: string) {
+    if _ctx != null {
+        prev = ""
+        if map_has(_ctx, "extra_args") == 1 { prev = map_get_raw(_ctx, "extra_args") }
+        if string.length(prev) > 0 { prev = string.concat(prev, ",") }
+        map_put_raw(_ctx, "extra_args", string.concat(prev, _qjson(arg)))
+    }
+}
+
+// Driver-manager block setters — pin a browser version, override the cache dir,
+// force offline (cache/PATH only), or set the launch timeout. These forward to
+// drivermgr via _hint/_timeout.
+with_version(_ctx: ptr, v: string) { if _ctx != null { map_put_raw(_ctx, "version", v) } }
+with_cache(_ctx: ptr, path: string) { if _ctx != null { map_put_raw(_ctx, "cache", path) } }
+with_offline(_ctx: ptr) { if _ctx != null { map_put_raw(_ctx, "offline", "1") } }
+with_timeout(_ctx: ptr, ms: int) { if _ctx != null { map_put_raw(_ctx, "timeout_ms", string.from_int(ms)) } }
+
+// Build the goog:chromeOptions "args" JSON array from the block config. Default:
+// ["--headless=new","--no-sandbox","--disable-dev-shm-usage"]. with_headless(0)
+// drops --headless=new (headed); with_arg appends. The two container args stay
+// (they're not about headedness).
+_chrome_args(_ctx: ptr) -> string {
+    headed = 0
+    extra = ""
+    if _ctx != null {
+        if map_has(_ctx, "headless") == 1 {
+            hv, _e = string.to_int(map_get_raw(_ctx, "headless"))
+            if hv == 0 { headed = 1 }
+        }
+        if map_has(_ctx, "extra_args") == 1 { extra = map_get_raw(_ctx, "extra_args") }
+    }
+    parts = "\"--no-sandbox\",\"--disable-dev-shm-usage\""
+    if headed == 0 { parts = string.concat("\"--headless=new\",", parts) }
+    if string.length(extra) > 0 { parts = string.concat(parts, string.concat(",", extra)) }
+    return string.concat("[", string.concat(parts, "]"))
+}
+
 // webdriver.remote(url) — open a session against an already-running remote end
 // (a Grid hub or a driver URL), no local driver process. Caps default to chrome.
+// The session owns NOTHING — quit() ends the session but reaps no process (a
+// Grid hub / a driver you started elsewhere is not this session's to kill). If
+// you started the driver yourself via driver.ensure and want quit() to reap it,
+// use remote_owning(url, dh) instead.
 remote(url: string) -> ptr {
+    return _remote(url, null)
+}
+
+// webdriver.remote_owning(url, driver_handle) — like remote(), but the session
+// TAKES OWNERSHIP of the given drivermgr Driver handle (from driver.ensure), so
+// quit() reaps the chromedriver process too. This is the intended path for
+// "run a LOCAL browser with custom caps": ensure() the driver yourself, build
+// whatever caps you want, and hand the handle over so teardown is one quit()
+// with no orphaned chromedriver to track.
+//
+//   dh = driver.ensure("chrome", "", 20000)
+//   d  = webdriver.remote_owning(driver.url_of(dh), dh)   // headed, no leak
+//   ... ; webdriver.quit(d)                               // reaps the driver
+remote_owning(url: string, driver_handle: ptr) -> ptr {
+    return _remote(url, driver_handle)
+}
+
+_remote(url: string, drv: ptr) -> ptr {
     eng = selenium_core.session_new(url)
-    sess = _mk(eng, null)
+    sess = _mk(eng, drv)
     caps = "{\"capabilities\":{\"alwaysMatch\":{\"browserName\":\"chrome\",\"webSocketUrl\":true}}}"
     rc = selenium_core.execute(eng, "newSession", caps)
     if rc != 0 { quit(sess); return null }
@@ -137,6 +215,12 @@ element_text(sp: ptr, elem_id: string) -> string {
 element_tag(sp: ptr, elem_id: string) -> string {
     return _do_str(sp, "getElementTagName", _elem_body(elem_id))
 }
+// Click the element. NOTE: this returns as soon as the click handler has fired
+// — it does NOT wait for the page to settle. For an app that re-renders from a
+// server push (Datastar/htmx/LiveView, anything SSE/WebSocket-driven), the DOM
+// the next statement reads is the one from BEFORE the response arrived. Don't
+// paper over it with sleep(); poll the resulting state with wait_until / a
+// wait_for_* condition instead (they re-read the live DOM each attempt).
 click(sp: ptr, elem_id: string) { _do(sp, "clickElement", _elem_body(elem_id)) }
 
 // Type `text` into the element (W3C: {text, value:[chars]}). The `value` char
@@ -395,6 +479,55 @@ wait_for_alert(sp: ptr, timeout_ms: int) -> int {
         waited = waited + WAIT_POLL_MS()
     }
     return 0
+}
+
+// wait_until(timeout_ms) { predicate } — poll a caller-supplied predicate every
+// WAIT_POLL_MS until it returns 1 or the budget elapses. 1 if it held, else 0.
+// This is the general escape hatch behind wait_for_*; the predicate re-reads the
+// live DOM each attempt, which is exactly what an app that re-renders from a
+// server push (Datastar/htmx/LiveView) needs — click returns before the page
+// has settled, so poll the state, don't sleep(). Call site (the `|_| -> expr`
+// form is the one that evaluates the expression as the int result):
+//
+//   ok = webdriver.wait_until(d, 4000) callback |_| ->
+//       string.equals(webdriver.element_text(d, el), "Approved")
+//
+// (`sp` is accepted for symmetry / future condition helpers; the predicate
+// closes over the session itself.)
+wait_until(sp: ptr, timeout_ms: int, pred: fn) -> int {
+    waited = 0
+    while waited <= timeout_ms {
+        if call(pred) == 1 { return 1 }
+        sleep(WAIT_POLL_MS())
+        waited = waited + WAIT_POLL_MS()
+    }
+    return 0
+}
+
+// exists(by, value) -> 1 if an element matching (by,value) is present RIGHT NOW,
+// else 0. Spells the intent "I expect this to be present/absent" distinctly from
+// find(), whose "" return is easy to mistake for a found-empty result. Pairs
+// with the waits: use exists() for an immediate check, wait_for_element() to
+// block until present.
+exists(sp: ptr, by: string, value: string) -> int {
+    el = find(sp, by, value)
+    if string.length(el) > 0 { return 1 }
+    return 0
+}
+
+// find_or_fail(by, value) — like find() but returns the element id, or aborts the
+// process with a clear message when nothing matches. For tests/scripts where a
+// missing element is a bug in the test (a locator typo) rather than a valid
+// "not there yet" — the case where find()'s quiet "" turns a real failure into a
+// confusing downstream symptom. Prefer the waits when the element may appear
+// late; use this when it MUST be there already.
+find_or_fail(sp: ptr, by: string, value: string) -> string {
+    el = find(sp, by, value)
+    if string.length(el) == 0 {
+        println(string.concat("webdriver.find_or_fail: no element for ", string.concat(by, string.concat("=", value))))
+        exit(1)
+    }
+    return el
 }
 
 // title/url equality-or-contains poll shared by the four title/url waits.
@@ -987,11 +1120,31 @@ _rslash(s: string, before: int) -> int {
     return -1
 }
 
+// The driver-manager hint JSON built from the block config (version/cache/
+// offline) — the {browserVersion,cachePath,offline} shape drivermgr's
+// config.parse honors. "" when the block set none.
 _hint(cfg: ptr) -> string {
-    // reserved: version/cache/offline forwarding (parallels webdriver.ae DSL).
-    return ""
+    if cfg == null { return "" }
+    fields = ""
+    if map_has(cfg, "version") == 1 { fields = _hint_add(fields, "browserVersion", map_get_raw(cfg, "version")) }
+    if map_has(cfg, "cache") == 1 { fields = _hint_add(fields, "cachePath", map_get_raw(cfg, "cache")) }
+    if map_has(cfg, "offline") == 1 { fields = _hint_add(fields, "offline", "true") }
+    if string.length(fields) == 0 { return "" }
+    return string.concat("{", string.concat(fields, "}"))
+}
+_hint_add(acc: string, key: string, val: string) -> string {
+    pair = string.concat(_qjson(key), string.concat(":", _qjson(val)))
+    if string.length(acc) == 0 { return pair }
+    return string.concat(acc, string.concat(",", pair))
 }
 
+// The driver launch/readiness timeout in ms — block override, else 15s.
 _timeout(cfg: ptr) -> int {
+    if cfg != null {
+        if map_has(cfg, "timeout_ms") == 1 {
+            t, _e = string.to_int(map_get_raw(cfg, "timeout_ms"))
+            if t > 0 { return t }
+        }
+    }
     return 15000
 }
