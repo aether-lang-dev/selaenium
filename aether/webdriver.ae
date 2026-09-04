@@ -139,6 +139,41 @@ element_tag(sp: ptr, elem_id: string) -> string {
 }
 click(sp: ptr, elem_id: string) { _do(sp, "clickElement", _elem_body(elem_id)) }
 
+// Type `text` into the element (W3C: {text, value:[chars]}). The `value` char
+// array is what actually drives the keystrokes; `text` is the convenience form.
+send_keys(sp: ptr, elem_id: string, text: string) {
+    body = "{\"id\":${_qjson(elem_id)},\"text\":${_qjson(text)},\"value\":${_char_array(text)}}"
+    _do(sp, "sendKeysToElement", body)
+}
+
+// Clear an editable element's value.
+clear(sp: ptr, elem_id: string) { _do(sp, "clearElement", _elem_body(elem_id)) }
+
+// Element state (W3C endpoints). is_enabled/is_selected return 1/0.
+is_enabled(sp: ptr, elem_id: string) -> int { return _do_bool(sp, "isElementEnabled", _elem_body(elem_id)) }
+is_selected(sp: ptr, elem_id: string) -> int { return _do_bool(sp, "isElementSelected", _elem_body(elem_id)) }
+
+// The element's CSS property value (e.g. "display", "color").
+css_value(sp: ptr, elem_id: string, name: string) -> string {
+    return _do_str(sp, "getElementValueOfCssProperty", "{\"id\":${_qjson(elem_id)},\"name\":${_qjson(name)}}")
+}
+
+// A DOM property (getElementProperty) — the live JS property, distinct from the
+// attribute (use get_attribute for the classic property-or-attribute value).
+property(sp: ptr, elem_id: string, name: string) -> string {
+    return _do_str(sp, "getElementProperty", "{\"id\":${_qjson(elem_id)},\"name\":${_qjson(name)}}")
+}
+
+// The element's bounding rect as JSON {"x","y","width","height"}.
+element_rect(sp: ptr, elem_id: string) -> string {
+    return _do_str(sp, "getElementRect", _elem_body(elem_id))
+}
+
+// A PNG screenshot of just this element, base64.
+element_screenshot(sp: ptr, elem_id: string) -> string {
+    return _do_str(sp, "takeElementScreenshot", _elem_body(elem_id))
+}
+
 // find_relative(session, base_css, filters_json) -> first matching element id
 // ("" if none). Relative locators: candidates matching base_css filtered by
 // spatial relations to anchors, nearest first. filters_json is a JSON array of
@@ -206,7 +241,244 @@ delete_all_cookies(sp: ptr) { _do(sp, "deleteAllCookies", "{}") }
 
 // ---- windows / screenshot ----
 window_handles(sp: ptr) -> string { return _do_str(sp, "getWindowHandles", "{}") }
+current_window_handle(sp: ptr) -> string { return _do_str(sp, "getCurrentWindowHandle", "{}") }
 screenshot_base64(sp: ptr) -> string { return _do_str(sp, "screenshot", "{}") }
+
+// Switch focus to another window/tab by handle.
+switch_to_window(sp: ptr, handle: string) { _do(sp, "switchToWindow", _json1("handle", handle)) }
+
+// Open a new window ("tab" or "window") and return the {handle,type} JSON.
+new_window(sp: ptr, kind: string) -> string { return _do_str(sp, "newWindow", _json1("type", kind)) }
+
+// Close the current window/tab.
+close_window(sp: ptr) { _do(sp, "close", "{}") }
+
+// Window rect + sizing (W3C).
+window_rect(sp: ptr) -> string { return _do_str(sp, "getWindowRect", "{}") }
+set_window_rect(sp: ptr, width: int, height: int) {
+    _do(sp, "setWindowRect", "{\"width\":${string.from_int(width)},\"height\":${string.from_int(height)}}")
+}
+maximize(sp: ptr) { _do(sp, "maximizeWindow", "{}") }
+minimize(sp: ptr) { _do(sp, "minimizeWindow", "{}") }
+fullscreen(sp: ptr) { _do(sp, "fullscreenWindow", "{}") }
+
+// Print the current page to PDF (base64), W3C printPage. `options_json` is the
+// print options object ("{}" for defaults).
+print_pdf(sp: ptr, options_json: string) -> string { return _do_str(sp, "printPage", options_json) }
+
+// ---- frames ----
+switch_to_frame(sp: ptr, frame_id_json: string) { _do(sp, "switchToFrame", "{\"id\":${frame_id_json}}") }
+switch_to_parent_frame(sp: ptr) { _do(sp, "switchToFrameParent", "{}") }
+switch_to_default_content(sp: ptr) { _do(sp, "switchToFrame", "{\"id\":null}") }
+
+// ---- alerts ----
+alert_text(sp: ptr) -> string { return _do_str(sp, "getAlertText", "{}") }
+accept_alert(sp: ptr) { _do(sp, "acceptAlert", "{}") }
+dismiss_alert(sp: ptr) { _do(sp, "dismissAlert", "{}") }
+send_alert_text(sp: ptr, text: string) { _do(sp, "setAlertValue", _json1("text", text)) }
+// 1 if an alert is currently present (getAlertText succeeds), else 0.
+alert_present(sp: ptr) -> int {
+    rc = _exec(sp, "getAlertText", "{}")
+    if rc == 0 { return 1 }
+    return 0
+}
+
+// ---- explicit waits (WebDriverWait + the common ExpectedConditions) ----
+//
+// Each wait_* polls the condition every WAIT_POLL_MS until it holds or
+// timeout_ms elapses. Element-returning waits give the element id ("" on
+// timeout); boolean waits give 1 (held) / 0 (timed out). Poll cadence mirrors
+// classic's 200ms default; the loop uses the engine's builtin sleep(ms) — a
+// real timed wait, not a busy spin.
+
+WAIT_POLL_MS() -> int { return 200 }
+
+// Wait until an element matching (by,value) is present in the DOM; return its
+// id, or "" on timeout. (classic until.elementLocated)
+wait_for_element(sp: ptr, by: string, value: string, timeout_ms: int) -> string {
+    waited = 0
+    while waited <= timeout_ms {
+        el = find(sp, by, value)
+        if string.length(el) > 0 { return el }
+        sleep(WAIT_POLL_MS())
+        waited = waited + WAIT_POLL_MS()
+    }
+    return ""
+}
+
+// Wait until the element is present AND displayed; return its id or "".
+// (classic until.elementIsVisible, folded with elementLocated)
+wait_for_visible(sp: ptr, by: string, value: string, timeout_ms: int) -> string {
+    waited = 0
+    while waited <= timeout_ms {
+        el = find(sp, by, value)
+        if string.length(el) > 0 {
+            if is_displayed(sp, el) == 1 { return el }
+        }
+        sleep(WAIT_POLL_MS())
+        waited = waited + WAIT_POLL_MS()
+    }
+    return ""
+}
+
+// Wait until the element is present, displayed AND enabled (clickable); id or "".
+wait_for_clickable(sp: ptr, by: string, value: string, timeout_ms: int) -> string {
+    waited = 0
+    while waited <= timeout_ms {
+        el = find(sp, by, value)
+        if string.length(el) > 0 {
+            if is_displayed(sp, el) == 1 {
+                if is_enabled(sp, el) == 1 { return el }
+            }
+        }
+        sleep(WAIT_POLL_MS())
+        waited = waited + WAIT_POLL_MS()
+    }
+    return ""
+}
+
+// Wait until NO element matches (by,value) — i.e. it's absent/removed. 1 if the
+// element became absent within the timeout, else 0. (classic stalenessOf, by
+// locator rather than a stale ref)
+wait_until_gone(sp: ptr, by: string, value: string, timeout_ms: int) -> int {
+    waited = 0
+    while waited <= timeout_ms {
+        el = find(sp, by, value)
+        if string.length(el) == 0 { return 1 }
+        sleep(WAIT_POLL_MS())
+        waited = waited + WAIT_POLL_MS()
+    }
+    return 0
+}
+
+// Wait until the page title equals / contains the given string. 1/0.
+wait_for_title_is(sp: ptr, want: string, timeout_ms: int) -> int {
+    return _wait_str(sp, "title", want, 1, timeout_ms)
+}
+wait_for_title_contains(sp: ptr, substr: string, timeout_ms: int) -> int {
+    return _wait_str(sp, "title", substr, 0, timeout_ms)
+}
+// Wait until the current URL equals / contains the given string. 1/0.
+wait_for_url_is(sp: ptr, want: string, timeout_ms: int) -> int {
+    return _wait_str(sp, "url", want, 1, timeout_ms)
+}
+wait_for_url_contains(sp: ptr, substr: string, timeout_ms: int) -> int {
+    return _wait_str(sp, "url", substr, 0, timeout_ms)
+}
+
+// Wait until an element's text equals / contains the given string. 1/0.
+wait_for_text_is(sp: ptr, elem_id: string, want: string, timeout_ms: int) -> int {
+    waited = 0
+    while waited <= timeout_ms {
+        if string.equals(element_text(sp, elem_id), want) == 1 { return 1 }
+        sleep(WAIT_POLL_MS())
+        waited = waited + WAIT_POLL_MS()
+    }
+    return 0
+}
+wait_for_text_contains(sp: ptr, elem_id: string, substr: string, timeout_ms: int) -> int {
+    waited = 0
+    while waited <= timeout_ms {
+        if string.contains(element_text(sp, elem_id), substr) == 1 { return 1 }
+        sleep(WAIT_POLL_MS())
+        waited = waited + WAIT_POLL_MS()
+    }
+    return 0
+}
+
+// Wait until a JavaScript alert is present. 1/0. (classic alertIsPresent)
+wait_for_alert(sp: ptr, timeout_ms: int) -> int {
+    waited = 0
+    while waited <= timeout_ms {
+        if alert_present(sp) == 1 { return 1 }
+        sleep(WAIT_POLL_MS())
+        waited = waited + WAIT_POLL_MS()
+    }
+    return 0
+}
+
+// title/url equality-or-contains poll shared by the four title/url waits.
+// field is "title" or "url"; exact=1 -> equals, exact=0 -> contains.
+_wait_str(sp: ptr, field: string, want: string, exact: int, timeout_ms: int) -> int {
+    waited = 0
+    while waited <= timeout_ms {
+        cur = ""
+        if string.equals(field, "title") == 1 { cur = title(sp) }
+        if string.equals(field, "url") == 1 { cur = current_url(sp) }
+        if exact == 1 {
+            if string.equals(cur, want) == 1 { return 1 }
+        } else {
+            if string.contains(cur, want) == 1 { return 1 }
+        }
+        sleep(WAIT_POLL_MS())
+        waited = waited + WAIT_POLL_MS()
+    }
+    return 0
+}
+
+// ---- Actions (W3C input) — high-level convenience over the `actions` route ----
+//
+// A full fluent builder needs mutable action-chain objects; the idiomatic form
+// here is composable helpers that emit + send the W3C actions payload directly.
+// perform_actions() is the raw escape hatch (send any {"actions":[...]} JSON);
+// the rest are the everyday gestures. All target the mouse/key virtual devices.
+
+// Send a raw W3C actions array (the value of the top-level "actions" key).
+// e.g. perform_actions(d, "[{\"type\":\"pointer\",\"id\":\"mouse\",...}]")
+perform_actions(sp: ptr, actions_json: string) { _do(sp, "actions", "{\"actions\":${actions_json}}") }
+release_actions(sp: ptr) { _do(sp, "clearActions", "{}") }
+
+// Move the pointer to the centre of an element and click (a pointer action
+// sequence). Same effect as click() but through the input-actions device — the
+// path for hover-then-click and drag composition.
+action_click(sp: ptr, elem_id: string) {
+    seq = _join3(_ptr_move_origin(elem_id), _ptr_down(), _ptr_up())
+    perform_actions(sp, _ptr_seq(seq))
+}
+// Double-click at the element centre.
+action_double_click(sp: ptr, elem_id: string) {
+    mv = _ptr_move_origin(elem_id)
+    seq = _joinc(_joinc(_joinc(_joinc(mv, _ptr_down()), _ptr_up()), _ptr_down()), _ptr_up())
+    perform_actions(sp, _ptr_seq(seq))
+}
+// Right-click (contextmenu) at the element centre.
+action_context_click(sp: ptr, elem_id: string) {
+    seq = _joinc(_joinc(_ptr_move_origin(elem_id), "{\"type\":\"pointerDown\",\"button\":2}"), "{\"type\":\"pointerUp\",\"button\":2}")
+    perform_actions(sp, _ptr_seq(seq))
+}
+// Hover: move the pointer to the element centre (no button).
+action_move_to(sp: ptr, elem_id: string) {
+    perform_actions(sp, _ptr_seq(_ptr_move_origin(elem_id)))
+}
+// Drag `source` onto `target` (press at source, move to target, release).
+action_drag_and_drop(sp: ptr, source_id: string, target_id: string) {
+    seq = _joinc(_joinc(_joinc(_ptr_move_origin(source_id), _ptr_down()), _ptr_move_origin(target_id)), _ptr_up())
+    perform_actions(sp, _ptr_seq(seq))
+}
+
+// ---- Select (native <select> dropdown helper) ----
+//
+// A <select> is driven by clicking its <option> children. These take the SELECT
+// element id and drive it via executeScript over the option list — the same
+// approach classic's Select uses under the hood. Return 1 on success / 0 if no
+// matching option. For single-select; multi-select works too (each call toggles
+// one option). select_by_visible_text matches the option's displayed text.
+
+select_by_value(sp: ptr, select_id: string, value: string) -> int {
+    return _select_option(sp, select_id, "value", value)
+}
+select_by_visible_text(sp: ptr, select_id: string, text: string) -> int {
+    return _select_option(sp, select_id, "text", text)
+}
+select_by_index(sp: ptr, select_id: string, index: int) -> int {
+    return _select_option(sp, select_id, "index", string.from_int(index))
+}
+// The currently-selected option's visible text ("" if none). execute_script
+// returns the raw JSON value (a quoted string), so unwrap to the bare text.
+selected_option_text(sp: ptr, select_id: string) -> string {
+    js = "var s=arguments[0]; return s.options[s.selectedIndex] ? s.options[s.selectedIndex].text : '';"
+    return _unwrap(execute_script(sp, js, _elem_arg(select_id)))
+}
 
 // ---- error surface ----
 last_error(sp: ptr) -> string {
@@ -487,6 +759,76 @@ _do_str(sp: ptr, name: string, body: string) -> string {
     rc = _exec(sp, name, body)
     if rc != 0 { return "" }
     return _unwrap(_value(sp))
+}
+
+// run a command whose value is a JSON boolean; return 1 for true, else 0.
+_do_bool(sp: ptr, name: string, body: string) -> int {
+    v = _do_str(sp, name, body)
+    if string.equals(v, "true") == 1 { return 1 }
+    return 0
+}
+
+// A JSON array of the single characters in `s` — the W3C `value` field for
+// sendKeys (["h","i"]). Multi-byte handling matches the engine's string ops.
+_char_array(s: string) -> string {
+    n = string.length(s)
+    out = "["
+    i = 0
+    while i < n {
+        ch = string.substring(s, i, i + 1)
+        if i > 0 { out = string.concat(out, ",") }
+        out = string.concat(out, _qjson(ch))
+        i = i + 1
+    }
+    return string.concat(out, "]")
+}
+
+// ---- Actions/Select internals ----
+
+// a,b joined with a comma (Aether has no string `+`).
+_joinc(a: string, b: string) -> string { return string.concat(a, string.concat(",", b)) }
+_join3(a: string, b: string, c: string) -> string { return _joinc(_joinc(a, b), c) }
+
+// Wrap a comma-separated list of pointer action objects into a one-device
+// pointer (mouse) action sequence — the W3C `actions` array.
+_ptr_seq(inner_actions: string) -> string {
+    head = "{\"type\":\"pointer\",\"id\":\"mouse\",\"parameters\":{\"pointerType\":\"mouse\"},\"actions\":["
+    return string.concat(head, string.concat(inner_actions, "]}"))
+}
+// pointerMove to an element's centre (origin = the element reference).
+_ptr_move_origin(elem_id: string) -> string {
+    origin = string.concat("{\"element-6066-11e4-a52e-4f735466cecf\":", string.concat(_qjson(elem_id), "}"))
+    return string.concat("{\"type\":\"pointerMove\",\"duration\":0,\"x\":0,\"y\":0,\"origin\":", string.concat(origin, "}"))
+}
+_ptr_down() -> string { return "{\"type\":\"pointerDown\",\"button\":0}" }
+_ptr_up() -> string { return "{\"type\":\"pointerUp\",\"button\":0}" }
+
+// A one-element executeScript args array [{elementKey: id}] — passes an element
+// reference into the script's arguments[0].
+_elem_arg(elem_id: string) -> string {
+    return string.concat("[{\"element-6066-11e4-a52e-4f735466cecf\":", string.concat(_qjson(elem_id), "}]"))
+}
+
+// Drive a <select> by clicking the option matching on `how` ("value"/"text"/
+// "index"). Runs one executeScript that finds + selects the option and fires an
+// input+change event (as classic does). Returns 1 if an option matched, else 0.
+_select_option(sp: ptr, select_id: string, how: string, key: string) -> int {
+    // arguments: [selectEl, how, key]
+    args = string.concat("[{\"element-6066-11e4-a52e-4f735466cecf\":", _qjson(select_id))
+    args = string.concat(args, "},")
+    args = string.concat(args, _qjson(how))
+    args = string.concat(args, ",")
+    args = string.concat(args, _qjson(key))
+    args = string.concat(args, "]")
+    js = "var s=arguments[0],how=arguments[1],key=arguments[2],hit=false;"
+    js = string.concat(js, "for(var i=0;i<s.options.length;i++){var o=s.options[i];")
+    js = string.concat(js, "if((how==='value'&&o.value===key)||(how==='text'&&o.text===key)||(how==='index'&&i===parseInt(key,10))){")
+    js = string.concat(js, "o.selected=true;hit=true;")
+    js = string.concat(js, "s.dispatchEvent(new Event('input',{bubbles:true}));s.dispatchEvent(new Event('change',{bubbles:true}));break;}}")
+    js = string.concat(js, "return hit;")
+    r = execute_script(sp, js, args)
+    if string.equals(r, "true") == 1 { return 1 }
+    return 0
 }
 
 // JSON value text -> bare string when it's a JSON string, else the raw text.
