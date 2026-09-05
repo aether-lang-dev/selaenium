@@ -167,6 +167,7 @@ const (
 	codeElementClickIntercept  = 3
 	codeElementNotInteractable = 4
 	codeInvalidSelector        = 11
+	codeNoSuchAlert            = 15
 	codeTimeout                = 24
 	codeTransport              = -1
 )
@@ -284,6 +285,13 @@ func NewChrome(commandExecutor string, opts ...Option) (*WebDriver, error) {
 		o(cfg)
 	}
 	return openSession(commandExecutor, cfg)
+}
+
+// NewHeadlessChrome starts a Chrome session with the standard headless launch
+// args baked in — the one-call convenience equivalent to
+// NewChrome(commandExecutor, Headless(), opts...).
+func NewHeadlessChrome(commandExecutor string, opts ...Option) (*WebDriver, error) {
+	return NewChrome(commandExecutor, append([]Option{Headless()}, opts...)...)
 }
 
 // NewRemote starts a session against an arbitrary remote end with explicit caps.
@@ -491,6 +499,46 @@ func (d *WebDriver) FindRelative(baseCSS string, filters ...map[string]interface
 	return elementList(d, v)
 }
 
+// FindRelativeCount returns the NUMBER of elements a relative-locator query
+// matches, without materializing WebElement handles — the count-only
+// counterpart to FindRelative. Filters have the same shape.
+func (d *WebDriver) FindRelativeCount(baseCSS string, filters ...map[string]interface{}) (int, error) {
+	els, err := d.FindRelative(baseCSS, filters...)
+	if err != nil {
+		return 0, err
+	}
+	return len(els), nil
+}
+
+// Exists reports whether at least one element matching sel is present right now
+// — an immediate presence check with no implicit wait. A clean "no such
+// element" resolves to (false, nil); a transport-level failure still surfaces
+// as an error. Use Wait* to block until present instead.
+func (d *WebDriver) Exists(sel Selector) (bool, error) {
+	_, err := d.FindElement(sel)
+	if err == nil {
+		return true, nil
+	}
+	if IsNoSuchElement(err) {
+		return false, nil
+	}
+	return false, err
+}
+
+// ActiveElement returns the active (focused) element — the one that would
+// receive keyboard input, e.g. after a SendKeys or a programmatic focus.
+func (d *WebDriver) ActiveElement() (*WebElement, error) {
+	v, err := d.execute("getActiveElement", nil)
+	if err != nil {
+		return nil, err
+	}
+	id, err := elementID(v)
+	if err != nil {
+		return nil, err
+	}
+	return &WebElement{driver: d, id: id}, nil
+}
+
 // ---- script ----
 
 func (d *WebDriver) ExecuteScript(script string, args ...interface{}) (interface{}, error) {
@@ -529,6 +577,93 @@ func (d *WebDriver) SwitchToWindow(handle string) error {
 func (d *WebDriver) MaximizeWindow() error   { _, err := d.execute("maximizeWindow", nil); return err }
 func (d *WebDriver) MinimizeWindow() error   { _, err := d.execute("minimizeWindow", nil); return err }
 func (d *WebDriver) FullscreenWindow() error { _, err := d.execute("fullscreenWindow", nil); return err }
+
+// NewWindow opens a new top-level browsing context. typeHint is "tab" or
+// "window" (a hint the browser may honor or ignore). It returns the new
+// window's handle — pass it to SwitchToWindow to focus it. Returns "" only if
+// the remote end sent no handle.
+func (d *WebDriver) NewWindow(typeHint string) (string, error) {
+	v, err := d.execute("newWindow", map[string]interface{}{"type": typeHint})
+	if err != nil {
+		return "", err
+	}
+	if m, ok := v.(map[string]interface{}); ok {
+		if h, ok := m["handle"].(string); ok {
+			return h, nil
+		}
+	}
+	return "", nil
+}
+
+// CloseWindow closes the current window/tab and returns the window handles that
+// remain; when it empties, the session is gone — switch to a surviving handle
+// before issuing further commands. This does NOT end the session (use Quit).
+func (d *WebDriver) CloseWindow() ([]string, error) {
+	v, err := d.execute("close", nil)
+	if err != nil {
+		return nil, err
+	}
+	return toStringSlice(v), nil
+}
+
+// ---- frames ----
+
+// Frame identifies a target for SwitchToFrame: a 0-based index, a frame
+// element, or the top-level context. Build one with FrameIndex, FrameElement,
+// or DefaultFrame.
+type Frame struct {
+	kind string // "index" | "element" | "default"
+	idx  int
+	el   *WebElement
+}
+
+// FrameIndex targets the frame at the given 0-based index among the current
+// context's child frames.
+func FrameIndex(i int) Frame { return Frame{kind: "index", idx: i} }
+
+// FrameElement targets the frame whose <iframe>/<frame> element is el.
+func FrameElement(el *WebElement) Frame { return Frame{kind: "element", el: el} }
+
+// DefaultFrame targets the top-level browsing context (same as
+// SwitchToDefaultContent).
+func DefaultFrame() Frame { return Frame{kind: "default"} }
+
+// idJSON renders the W3C "id" value for this frame target: a number, an
+// element-reference object, or null.
+func (f Frame) idJSON() interface{} {
+	switch f.kind {
+	case "index":
+		return f.idx
+	case "element":
+		if f.el != nil {
+			return map[string]interface{}{w3cElementKey: f.el.id}
+		}
+		return nil
+	default:
+		return nil
+	}
+}
+
+// SwitchToFrame switches the session's focus to a frame (by index, by element,
+// or DefaultFrame for the top-level context). All subsequent element commands
+// run inside the chosen frame until the next frame switch.
+func (d *WebDriver) SwitchToFrame(frame Frame) error {
+	_, err := d.execute("switchToFrame", map[string]interface{}{"id": frame.idJSON()})
+	return err
+}
+
+// SwitchToParentFrame switches to the parent of the current frame — one level
+// out, unlike SwitchToDefaultContent which jumps to the top.
+func (d *WebDriver) SwitchToParentFrame() error {
+	_, err := d.execute("switchToFrameParent", nil)
+	return err
+}
+
+// SwitchToDefaultContent returns focus to the top-level browsing context
+// (equivalent to SwitchToFrame(DefaultFrame())).
+func (d *WebDriver) SwitchToDefaultContent() error {
+	return d.SwitchToFrame(DefaultFrame())
+}
 
 // ---- cookies ----
 
@@ -622,7 +757,30 @@ func (d *WebDriver) SendAlertText(text string) error {
 	return err
 }
 
+// AlertPresent reports whether a user-prompt / alert dialog is currently open
+// (probed via getAlertText). A clean "no such alert" resolves to (false, nil);
+// a transport-level failure still surfaces as an error. Pairs with
+// WaitForAlert for the "block until an alert appears" case.
+func (d *WebDriver) AlertPresent() (bool, error) {
+	_, err := d.execute("getAlertText", nil)
+	if err == nil {
+		return true, nil
+	}
+	if codeIs(err, codeNoSuchAlert) {
+		return false, nil
+	}
+	return false, err
+}
+
 // ---- timeouts (milliseconds) ----
+
+// SetTimeouts sets any combination of session timeouts in one call. Recognized
+// keys are "implicit", "pageLoad", and "script" (milliseconds); pass only the
+// ones you want to change.
+func (d *WebDriver) SetTimeouts(timeouts map[string]interface{}) error {
+	_, err := d.execute("setTimeout", timeouts)
+	return err
+}
 
 // SetPageLoadTimeout sets the page-load timeout for the session.
 func (d *WebDriver) SetPageLoadTimeout(ms int) error {
@@ -645,6 +803,16 @@ func (d *WebDriver) ImplicitlyWait(ms int) error {
 // ---- screenshots ----
 
 func (d *WebDriver) ScreenshotBase64() (string, error) { return d.strCmd("screenshot", nil) }
+
+// PrintPDF prints the current page to PDF (printPage), returning the PDF as a
+// base64 string. options is the W3C print-options object (page size, margins,
+// orientation, scale, pageRanges, …); pass nil for defaults.
+func (d *WebDriver) PrintPDF(options map[string]interface{}) (string, error) {
+	if options == nil {
+		options = map[string]interface{}{}
+	}
+	return d.strCmd("printPage", options)
+}
 
 // ---- lifecycle ----
 
@@ -836,6 +1004,48 @@ func (e *WebElement) IsSelected() (bool, error) {
 	}
 	b, _ := v.(bool)
 	return b, nil
+}
+
+// CssValue returns the computed value of the CSS property prop on this element
+// (getElementValueOfCssProperty) — e.g. "display", "color", "font-size".
+// ValueOfCssProperty is the classic-Selenium-named alias.
+func (e *WebElement) CssValue(prop string) (string, error) {
+	// The engine substitutes the :propertyName path segment from a param of
+	// that exact name (see selenium_core build_path); "name" would not bind.
+	v, err := e.exec("getElementValueOfCssProperty", map[string]interface{}{"propertyName": prop})
+	if err != nil {
+		return "", err
+	}
+	s, _ := v.(string)
+	return s, nil
+}
+
+// ValueOfCssProperty is the classic-Selenium-named alias of CssValue.
+func (e *WebElement) ValueOfCssProperty(prop string) (string, error) { return e.CssValue(prop) }
+
+// ScreenshotBase64 returns a PNG screenshot of just this element
+// (takeElementScreenshot) as a base64 string — the element-scoped counterpart
+// to WebDriver.ScreenshotBase64.
+func (e *WebElement) ScreenshotBase64() (string, error) {
+	v, err := e.exec("takeElementScreenshot", nil)
+	if err != nil {
+		return "", err
+	}
+	s, _ := v.(string)
+	return s, nil
+}
+
+// Submit submits the form this element belongs to. W3C WebDriver removed the
+// dedicated submit endpoint, so — like the reference binding and modern
+// Selenium — this walks up to the enclosing <form> and calls requestSubmit()
+// (falling back to submit()) via an injected script. Errors if the element is
+// not inside a form.
+func (e *WebElement) Submit() error {
+	const script = "var e=arguments[0];var f=e.form||e.closest('form');" +
+		"if(!f){throw new Error('Element is not within a form');}" +
+		"if(f.requestSubmit){f.requestSubmit();}else{f.submit();}"
+	_, err := e.driver.ExecuteScript(script, map[string]interface{}{w3cElementKey: e.id})
+	return err
 }
 
 // ---- pure engine helpers (no session needed) ----

@@ -52,6 +52,40 @@ func TestKeysCodePoints(t *testing.T) {
 	}
 }
 
+func TestKeysChord(t *testing.T) {
+	s := Keys.Chord(Keys.Control, "a")
+	rs := []rune(s)
+	if len(rs) != 3 {
+		t.Fatalf("chord %q: got %d runes, want 3 (modifier, 'a', NULL)", s, len(rs))
+	}
+	if rs[0] != 0xE009 {
+		t.Errorf("chord[0] = U+%04X; want Control U+E009", rs[0])
+	}
+	if rs[1] != 'a' {
+		t.Errorf("chord[1] = %q; want 'a'", rs[1])
+	}
+	if rs[2] != 0xE000 {
+		t.Errorf("chord ends U+%04X; want terminating NULL U+E000", rs[2])
+	}
+}
+
+func TestFrameIDJSON(t *testing.T) {
+	if got := FrameIndex(2).idJSON(); got != 2 {
+		t.Errorf("FrameIndex(2).idJSON() = %v; want 2", got)
+	}
+	if got := DefaultFrame().idJSON(); got != nil {
+		t.Errorf("DefaultFrame().idJSON() = %v; want nil", got)
+	}
+	el := &WebElement{id: "FID"}
+	m, ok := FrameElement(el).idJSON().(map[string]interface{})
+	if !ok {
+		t.Fatalf("FrameElement.idJSON() = %T; want map", FrameElement(el).idJSON())
+	}
+	if m[w3cElementKey] != "FID" {
+		t.Errorf("FrameElement id = %v; want the W3C element ref FID", m[w3cElementKey])
+	}
+}
+
 // ---- Wait ------------------------------------------------------------------
 
 func TestWaitUntilReturnsOnTrue(t *testing.T) {

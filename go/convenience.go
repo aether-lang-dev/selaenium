@@ -148,6 +148,15 @@ var Keys = keySet{
 	Command: "\uE03D",
 }
 
+// Chord builds a modifier chord: modifier held while text is typed, then the
+// sequence closed by the terminating NULL the protocol uses to release held
+// modifiers \u2014 e.g. selenium.Keys.Chord(selenium.Keys.Control, "a") for
+// select-all. This is the classic Keys.chord helper, rendered as a single
+// string you pass to WebElement.SendKeys.
+func (keySet) Chord(modifier, text string) string {
+	return modifier + text + "\uE000"
+}
+
 // ---- Waits (explicit WebDriverWait + ExpectedConditions) -------------------
 
 // DefaultPollInterval is the delay between condition polls for a Waiter, the
@@ -540,6 +549,30 @@ func (s *Select) SelectByIndex(index int) error {
 		return &Error{Code: codeNoSuchElement, Message: fmt.Sprintf("no option at index %d", index)}
 	}
 	return selectOption(opts[index])
+}
+
+// DeselectAll deselects every selected option (multi-select only). It returns
+// an error on a single-select, mirroring mainstream's NotImplementedError.
+func (s *Select) DeselectAll() error {
+	if !s.IsMultiple {
+		return &Error{Code: 1, Message: "DeselectAll only makes sense on a multi-select"}
+	}
+	opts, err := s.Options()
+	if err != nil {
+		return err
+	}
+	for _, o := range opts {
+		sel, err := o.IsSelected()
+		if err != nil {
+			return err
+		}
+		if sel {
+			if err := o.Click(); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 // selectOption clicks an option only if it is not already selected (so a click

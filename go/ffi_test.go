@@ -58,3 +58,25 @@ func TestTransportFailure(t *testing.T) {
 		t.Fatalf("want transport *Error(-1), got %T %v", err, err)
 	}
 }
+
+// TestNewSurfaceRoutes proves the commands the full-feature methods issue
+// (new/close window, frame switching, active element, print, element CSS value,
+// element screenshot, unified timeouts) each map to a real W3C endpoint in the
+// shared engine's route table — i.e. they are wired to genuine commands.
+func TestNewSurfaceRoutes(t *testing.T) {
+	for _, c := range []struct{ cmd, want string }{
+		{"newWindow", "POST /session/:sessionId/window/new"},
+		{"close", "DELETE /session/:sessionId/window"},
+		{"switchToFrame", "POST /session/:sessionId/frame"},
+		{"switchToFrameParent", "POST /session/:sessionId/frame/parent"},
+		{"getActiveElement", "GET /session/:sessionId/element/active"},
+		{"printPage", "POST /session/:sessionId/print"},
+		{"getElementValueOfCssProperty", "GET /session/:sessionId/element/:id/css/:propertyName"},
+		{"takeElementScreenshot", "GET /session/:sessionId/element/:id/screenshot"},
+		{"setTimeout", "POST /session/:sessionId/timeouts"},
+	} {
+		if got := Route(c.cmd); got != c.want {
+			t.Errorf("Route(%q) = %q; want %q", c.cmd, got, c.want)
+		}
+	}
+}
