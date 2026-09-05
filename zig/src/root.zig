@@ -116,6 +116,77 @@ pub const By = struct {
     }
 };
 
+/// Special keys — the W3C WebDriver Unicode private-use code points for non-text
+/// keys (W3C §17.4.2). Each constant is the UTF-8 encoding of a scalar in
+/// U+E000..=U+E03D. Embed one in a `sendKeys` string, or build a modifier chord
+/// with `Keys.chord`. Mirrors mainstream Selenium's `Keys`.
+pub const Keys = struct {
+    pub const null_key = "\u{E000}";
+    pub const cancel = "\u{E001}";
+    pub const help = "\u{E002}";
+    pub const backspace = "\u{E003}";
+    pub const tab = "\u{E004}";
+    pub const clear = "\u{E005}";
+    pub const @"return" = "\u{E006}";
+    pub const enter = "\u{E007}";
+    pub const shift = "\u{E008}";
+    pub const control = "\u{E009}";
+    pub const alt = "\u{E00A}";
+    pub const pause = "\u{E00B}";
+    pub const escape = "\u{E00C}";
+    pub const space = "\u{E00D}";
+    pub const page_up = "\u{E00E}";
+    pub const page_down = "\u{E00F}";
+    pub const end = "\u{E010}";
+    pub const home = "\u{E011}";
+    pub const left = "\u{E012}";
+    pub const up = "\u{E013}";
+    pub const right = "\u{E014}";
+    pub const down = "\u{E015}";
+    pub const insert = "\u{E016}";
+    pub const delete = "\u{E017}";
+    pub const semicolon = "\u{E018}";
+    pub const equals = "\u{E019}";
+    pub const numpad0 = "\u{E01A}";
+    pub const numpad1 = "\u{E01B}";
+    pub const numpad2 = "\u{E01C}";
+    pub const numpad3 = "\u{E01D}";
+    pub const numpad4 = "\u{E01E}";
+    pub const numpad5 = "\u{E01F}";
+    pub const numpad6 = "\u{E020}";
+    pub const numpad7 = "\u{E021}";
+    pub const numpad8 = "\u{E022}";
+    pub const numpad9 = "\u{E023}";
+    pub const multiply = "\u{E024}";
+    pub const add = "\u{E025}";
+    pub const separator = "\u{E026}";
+    pub const subtract = "\u{E027}";
+    pub const decimal = "\u{E028}";
+    pub const divide = "\u{E029}";
+    pub const f1 = "\u{E031}";
+    pub const f2 = "\u{E032}";
+    pub const f3 = "\u{E033}";
+    pub const f4 = "\u{E034}";
+    pub const f5 = "\u{E035}";
+    pub const f6 = "\u{E036}";
+    pub const f7 = "\u{E037}";
+    pub const f8 = "\u{E038}";
+    pub const f9 = "\u{E039}";
+    pub const f10 = "\u{E03A}";
+    pub const f11 = "\u{E03B}";
+    pub const f12 = "\u{E03C}";
+    pub const meta = "\u{E03D}";
+    pub const command = "\u{E03D}";
+
+    /// A modifier chord: `modifier` held while `text` is typed, then closed by
+    /// the terminating NULL the protocol uses to release held modifiers — e.g.
+    /// `Keys.chord(a, Keys.control, "a")` for select-all. Returns an owned slice
+    /// (the caller frees). The classic `Keys.chord` helper.
+    pub fn chord(allocator: std.mem.Allocator, modifier: []const u8, text: []const u8) Error![]u8 {
+        return std.mem.concat(allocator, u8, &.{ modifier, text, null_key }) catch Error.OutOfMemory;
+    }
+};
+
 pub const ErrorKind = enum {
     transport,
     no_such_element,
@@ -193,6 +264,39 @@ fn takeString(allocator: std.mem.Allocator, ptr: [*c]u8) Error![]u8 {
 /// to a heap allocation for long strings (JSON params).
 fn cstr(allocator: std.mem.Allocator, s: []const u8) Error![:0]u8 {
     return allocator.dupeZ(u8, s) catch Error.OutOfMemory;
+}
+
+/// Append `s` to `buf` as a JSON string literal (with surrounding quotes),
+/// escaping the characters JSON requires. Used to build params where a value
+/// may contain quotes, backslashes, or control chars (e.g. sendKeys text).
+fn appendJsonString(allocator: std.mem.Allocator, buf: *std.ArrayList(u8), s: []const u8) Error!void {
+    buf.append(allocator, '"') catch return Error.OutOfMemory;
+    for (s) |ch| {
+        switch (ch) {
+            '"' => buf.appendSlice(allocator, "\\\"") catch return Error.OutOfMemory,
+            '\\' => buf.appendSlice(allocator, "\\\\") catch return Error.OutOfMemory,
+            '\n' => buf.appendSlice(allocator, "\\n") catch return Error.OutOfMemory,
+            '\r' => buf.appendSlice(allocator, "\\r") catch return Error.OutOfMemory,
+            '\t' => buf.appendSlice(allocator, "\\t") catch return Error.OutOfMemory,
+            0x08 => buf.appendSlice(allocator, "\\b") catch return Error.OutOfMemory,
+            0x0C => buf.appendSlice(allocator, "\\f") catch return Error.OutOfMemory,
+            0...0x07, 0x0B, 0x0E...0x1F => {
+                var tmp: [6]u8 = undefined;
+                const esc = std.fmt.bufPrint(&tmp, "\\u{x:0>4}", .{ch}) catch return Error.OutOfMemory;
+                buf.appendSlice(allocator, esc) catch return Error.OutOfMemory;
+            },
+            else => buf.append(allocator, ch) catch return Error.OutOfMemory,
+        }
+    }
+    buf.append(allocator, '"') catch return Error.OutOfMemory;
+}
+
+/// A JSON-string-literal of `s` as an owned slice (quotes included, escaped).
+fn jsonString(allocator: std.mem.Allocator, s: []const u8) Error![]u8 {
+    var buf = std.ArrayList(u8).empty;
+    defer buf.deinit(allocator);
+    try appendJsonString(allocator, &buf, s);
+    return buf.toOwnedSlice(allocator) catch Error.OutOfMemory;
 }
 
 // ---- pure engine helpers (caller owns the returned slice) ----
@@ -516,12 +620,26 @@ pub const WebDriver = struct {
         return self.stringCmd("getTitle", "{}");
     }
 
+    /// The current document URL as an owned slice (`getCurrentUrl`).
+    pub fn currentUrl(self: *WebDriver) Error![]u8 {
+        return self.stringCmd("getCurrentUrl", "{}");
+    }
+
+    /// The current page's serialized source as an owned slice (`getPageSource`).
+    pub fn pageSource(self: *WebDriver) Error![]u8 {
+        return self.stringCmd("getPageSource", "{}");
+    }
+
     pub fn back(self: *WebDriver) Error!void {
         var v = try self.execute("goBack", "{}");
         v.deinit();
     }
     pub fn forward(self: *WebDriver) Error!void {
         var v = try self.execute("goForward", "{}");
+        v.deinit();
+    }
+    pub fn refresh(self: *WebDriver) Error!void {
+        var v = try self.execute("refresh", "{}");
         v.deinit();
     }
 
@@ -540,6 +658,29 @@ pub const WebDriver = struct {
         const loc = try locator(self.allocator, by.using, by.value);
         defer self.allocator.free(loc);
         var v = try self.execute("findElement", loc);
+        defer v.deinit();
+        const id = self.extractElementId(v.value) catch return Error.WebDriver;
+        return WebElement{ .driver = self, .id = id };
+    }
+
+    /// True if at least one element matching `by` is present right now — an
+    /// immediate presence check with no implicit wait. A clean not-found maps
+    /// to `false`; a transport failure still surfaces as `error.WebDriver`.
+    pub fn exists(self: *WebDriver, by: Locator) Error!bool {
+        var el = self.findElement(by) catch {
+            if (self.last) |l| {
+                if (l.kind == .no_such_element) return false;
+            }
+            return Error.WebDriver;
+        };
+        el.deinit();
+        return true;
+    }
+
+    /// The active (focused) element (`getActiveElement`) — what would receive
+    /// keyboard input.
+    pub fn activeElement(self: *WebDriver) Error!WebElement {
+        var v = try self.execute("getActiveElement", "{}");
         defer v.deinit();
         const id = self.extractElementId(v.value) catch return Error.WebDriver;
         return WebElement{ .driver = self, .id = id };
@@ -599,6 +740,126 @@ pub const WebDriver = struct {
         return self.elementCmd("getElementRect", e.id, "");
     }
 
+    /// An element command whose response is a JSON string; returns it owned.
+    fn elementStringCmd(self: *WebDriver, command: []const u8, element_id: []const u8, extra_json: []const u8) Error![]u8 {
+        var v = try self.elementCmd(command, element_id, extra_json);
+        defer v.deinit();
+        const s = switch (v.value) {
+            .string => |x| x,
+            else => "",
+        };
+        return self.allocator.dupe(u8, s) catch Error.OutOfMemory;
+    }
+
+    /// An element command whose response is a JSON bool; false for anything else.
+    fn elementBoolCmd(self: *WebDriver, command: []const u8, element_id: []const u8) Error!bool {
+        var v = try self.elementCmd(command, element_id, "");
+        defer v.deinit();
+        return switch (v.value) {
+            .bool => |b| b,
+            else => false,
+        };
+    }
+
+    /// Clear a text/input element (`clearElement`).
+    pub fn elementClear(self: *WebDriver, e: *const WebElement) Error!void {
+        var v = try self.elementCmd("clearElement", e.id, "");
+        v.deinit();
+    }
+
+    /// Type `text` into the element (`sendKeysToElement`). Accepts `Keys`
+    /// constants embedded in the string (they are forwarded unchanged). The
+    /// value is sent both as the whole string and as the W3C per-scalar array.
+    pub fn elementSendKeys(self: *WebDriver, e: *const WebElement, text: []const u8) Error!void {
+        // Build the ["a","b",...] scalar array (one entry per Unicode scalar).
+        var buf = std.ArrayList(u8).empty;
+        defer buf.deinit(self.allocator);
+        try buf.append(self.allocator, '[');
+        var view = std.unicode.Utf8View.init(text) catch return Error.BadResponse;
+        var it = view.iterator();
+        var first = true;
+        while (it.nextCodepointSlice()) |slice| {
+            if (!first) try buf.append(self.allocator, ',');
+            first = false;
+            try appendJsonString(self.allocator, &buf, slice);
+        }
+        try buf.append(self.allocator, ']');
+        const text_json = try jsonString(self.allocator, text);
+        defer self.allocator.free(text_json);
+        const extra = try std.fmt.allocPrint(self.allocator, ",\"text\":{s},\"value\":{s}", .{ text_json, buf.items });
+        defer self.allocator.free(extra);
+        var v = try self.elementCmd("sendKeysToElement", e.id, extra);
+        v.deinit();
+    }
+
+    /// True if the element is enabled (`isElementEnabled`).
+    pub fn isEnabled(self: *WebDriver, e: *const WebElement) Error!bool {
+        return self.elementBoolCmd("isElementEnabled", e.id);
+    }
+
+    /// True if the element is selected/checked (`isElementSelected`).
+    pub fn isSelected(self: *WebDriver, e: *const WebElement) Error!bool {
+        return self.elementBoolCmd("isElementSelected", e.id);
+    }
+
+    /// A live DOM/JS property of the element (`getElementProperty`). Returns the
+    /// parsed value (owned; `.deinit()`) — the property may be any JSON type or
+    /// `null` when absent.
+    pub fn elementProperty(self: *WebDriver, e: *const WebElement, name: []const u8) Error!std.json.Parsed(std.json.Value) {
+        const extra = try std.fmt.allocPrint(self.allocator, ",\"name\":\"{s}\"", .{name});
+        defer self.allocator.free(extra);
+        return self.elementCmd("getElementProperty", e.id, extra);
+    }
+
+    /// The computed value of a CSS property (`getElementValueOfCssProperty`),
+    /// e.g. "display", "color". Owned slice.
+    pub fn cssValue(self: *WebDriver, e: *const WebElement, prop: []const u8) Error![]u8 {
+        const extra = try std.fmt.allocPrint(self.allocator, ",\"name\":\"{s}\"", .{prop});
+        defer self.allocator.free(extra);
+        return self.elementStringCmd("getElementValueOfCssProperty", e.id, extra);
+    }
+
+    /// Classic-Selenium-named alias of `cssValue`.
+    pub fn valueOfCssProperty(self: *WebDriver, e: *const WebElement, prop: []const u8) Error![]u8 {
+        return self.cssValue(e, prop);
+    }
+
+    /// A base64 PNG screenshot of just this element (`takeElementScreenshot`).
+    pub fn elementScreenshotBase64(self: *WebDriver, e: *const WebElement) Error![]u8 {
+        return self.elementStringCmd("takeElementScreenshot", e.id, "");
+    }
+
+    /// Submit the form this element belongs to. W3C removed the dedicated
+    /// `submit` endpoint, so (like the reference binding and modern Selenium)
+    /// this walks up to the enclosing `<form>` and calls `requestSubmit()`
+    /// (falling back to `submit()`) via an injected script. `error.WebDriver`
+    /// (kind other) if the element is not inside a form.
+    pub fn submit(self: *WebDriver, e: *const WebElement) Error!void {
+        const script =
+            "var e=arguments[0];var f=e.form||e.closest('form');" ++
+            "if(!f){throw new Error('Element is not within a form');}" ++
+            "if(f.requestSubmit){f.requestSubmit();}else{f.submit();}";
+        const args = try std.fmt.allocPrint(self.allocator, "[{{\"{s}\":\"{s}\"}}]", .{ w3c_element_key, e.id });
+        defer self.allocator.free(args);
+        var v = try self.executeScript(script, args);
+        v.deinit();
+    }
+
+    /// Find the first descendant of `parent` matching `by` (element-scoped
+    /// `findChildElement`).
+    pub fn findChildElement(self: *WebDriver, parent: *const WebElement, by: Locator) Error!WebElement {
+        const loc = try locator(self.allocator, by.using, by.value);
+        defer self.allocator.free(loc);
+        // {"id":"<parent>","using":"...","value":"..."} — merge the parent id
+        // into the locator object by replacing its leading `{`.
+        const p = try std.fmt.allocPrint(self.allocator, "{{\"id\":\"{s}\",{s}", .{ parent.id, loc[1..] });
+        defer self.allocator.free(p);
+        var v = try self.execute("findChildElement", p);
+        defer v.deinit();
+        const id = self.extractElementId(v.value) catch return Error.WebDriver;
+        return WebElement{ .driver = self, .id = id };
+    }
+
     // ---- cookies ----
     pub fn deleteAllCookies(self: *WebDriver) Error!void {
         var v = try self.execute("deleteAllCookies", "{}");
@@ -615,6 +876,18 @@ pub const WebDriver = struct {
         defer self.allocator.free(p);
         return self.execute("getCookie", p);
     }
+    /// All cookies visible to the current page (`getCookies`); parsed array
+    /// value (owned; `.deinit()`).
+    pub fn cookies(self: *WebDriver) Error!std.json.Parsed(std.json.Value) {
+        return self.execute("getCookies", "{}");
+    }
+    /// Delete the named cookie (`deleteCookie`).
+    pub fn deleteCookie(self: *WebDriver, name: []const u8) Error!void {
+        const p = try std.fmt.allocPrint(self.allocator, "{{\"name\":\"{s}\"}}", .{name});
+        defer self.allocator.free(p);
+        var v = try self.execute("deleteCookie", p);
+        v.deinit();
+    }
 
     // ---- windows ----
     pub fn windowHandlesCount(self: *WebDriver) Error!usize {
@@ -625,6 +898,113 @@ pub const WebDriver = struct {
             else => 0,
         };
     }
+
+    /// Turn a parsed JSON array-of-strings into an owned `[][]u8` the caller
+    /// frees with `freeStringList`.
+    fn ownStringArray(self: *WebDriver, value: std.json.Value) Error![][]u8 {
+        const arr = switch (value) {
+            .array => |a| a,
+            else => return self.allocator.alloc([]u8, 0) catch Error.OutOfMemory,
+        };
+        var out = self.allocator.alloc([]u8, arr.items.len) catch return Error.OutOfMemory;
+        var i: usize = 0;
+        errdefer {
+            var j: usize = 0;
+            while (j < i) : (j += 1) self.allocator.free(out[j]);
+            self.allocator.free(out);
+        }
+        while (i < arr.items.len) : (i += 1) {
+            const s = switch (arr.items[i]) {
+                .string => |x| x,
+                else => "",
+            };
+            out[i] = self.allocator.dupe(u8, s) catch return Error.OutOfMemory;
+        }
+        return out;
+    }
+
+    /// Free a `[][]u8` returned by `windowHandles`/`newWindow`/etc.
+    pub fn freeStringList(self: *WebDriver, list: [][]u8) void {
+        for (list) |s| self.allocator.free(s);
+        self.allocator.free(list);
+    }
+
+    /// All open window/tab handles (owned; free with `freeStringList`).
+    pub fn windowHandles(self: *WebDriver) Error![][]u8 {
+        var v = try self.execute("getWindowHandles", "{}");
+        defer v.deinit();
+        return self.ownStringArray(v.value);
+    }
+
+    /// The current window/tab handle as an owned slice (`getCurrentWindowHandle`).
+    pub fn currentWindowHandle(self: *WebDriver) Error![]u8 {
+        return self.stringCmd("getCurrentWindowHandle", "{}");
+    }
+
+    /// The current window rect ({x,y,width,height}); parsed value (owned).
+    pub fn getWindowRect(self: *WebDriver) Error!std.json.Parsed(std.json.Value) {
+        return self.execute("getWindowRect", "{}");
+    }
+
+    /// Open a new top-level browsing context (`newWindow`). `type_hint` is
+    /// "tab" or "window". Returns the new window's handle (owned; "" if the
+    /// remote end sent none) — pass it to `switchToWindow` to focus it.
+    pub fn newWindow(self: *WebDriver, type_hint: []const u8) Error![]u8 {
+        const p = try std.fmt.allocPrint(self.allocator, "{{\"type\":\"{s}\"}}", .{type_hint});
+        defer self.allocator.free(p);
+        var v = try self.execute("newWindow", p);
+        defer v.deinit();
+        const h = switch (v.value) {
+            .object => |o| if (o.get("handle")) |hv| switch (hv) {
+                .string => |s| s,
+                else => "",
+            } else "",
+            else => "",
+        };
+        return self.allocator.dupe(u8, h) catch Error.OutOfMemory;
+    }
+
+    /// Close the current window/tab (`close`). Returns the surviving handles
+    /// (owned; free with `freeStringList`). Does NOT end the session (use
+    /// `quit`); when the list empties, switch to a surviving handle first.
+    pub fn closeWindow(self: *WebDriver) Error![][]u8 {
+        var v = try self.execute("close", "{}");
+        defer v.deinit();
+        return self.ownStringArray(v.value);
+    }
+
+    // ---- frames ----
+
+    /// Switch focus to a frame by 0-based index (`switchToFrame`).
+    pub fn switchToFrame(self: *WebDriver, index: u32) Error!void {
+        const p = try std.fmt.allocPrint(self.allocator, "{{\"id\":{d}}}", .{index});
+        defer self.allocator.free(p);
+        var v = try self.execute("switchToFrame", p);
+        v.deinit();
+    }
+
+    /// Switch focus to the frame hosted by `element` (`switchToFrame` with an
+    /// element-reference id).
+    pub fn switchToFrameElement(self: *WebDriver, element: *const WebElement) Error!void {
+        const p = try std.fmt.allocPrint(self.allocator, "{{\"id\":{{\"{s}\":\"{s}\"}}}}", .{ w3c_element_key, element.id });
+        defer self.allocator.free(p);
+        var v = try self.execute("switchToFrame", p);
+        v.deinit();
+    }
+
+    /// Return focus to the top-level browsing context (`switchToFrame` null id).
+    pub fn switchToDefaultContent(self: *WebDriver) Error!void {
+        var v = try self.execute("switchToFrame", "{\"id\":null}");
+        v.deinit();
+    }
+
+    /// Switch to the parent of the current frame — one level out, unlike
+    /// `switchToDefaultContent` which jumps to the top (`switchToFrameParent`).
+    pub fn switchToParentFrame(self: *WebDriver) Error!void {
+        var v = try self.execute("switchToFrameParent", "{}");
+        v.deinit();
+    }
+
     pub fn setWindowRect(self: *WebDriver, rect_json: []const u8) Error!void {
         var v = try self.execute("setWindowRect", rect_json);
         v.deinit();
@@ -694,8 +1074,27 @@ pub const WebDriver = struct {
         var v = try self.execute("setAlertValue", p);
         v.deinit();
     }
+    /// True if a user-prompt / alert dialog is currently present (probed via
+    /// `getAlertText`). A clean "no such alert" (code 15) maps to `false`; any
+    /// other failure surfaces as `error.WebDriver`.
+    pub fn alertPresent(self: *WebDriver) Error!bool {
+        var v = self.execute("getAlertText", "{}") catch {
+            if (self.last) |l| {
+                if (l.code == 15) return false;
+            }
+            return Error.WebDriver;
+        };
+        v.deinit();
+        return true;
+    }
 
     // ---- timeouts ----
+    /// Set one or more timeouts in a single call. `timeouts_json` is the W3C
+    /// object body, e.g. `{"implicit":5000,"pageLoad":30000,"script":30000}`.
+    pub fn setTimeouts(self: *WebDriver, timeouts_json: []const u8) Error!void {
+        var v = try self.execute("setTimeout", timeouts_json);
+        v.deinit();
+    }
     pub fn setPageLoadTimeout(self: *WebDriver, ms: i64) Error!void {
         const p = try std.fmt.allocPrint(self.allocator, "{{\"pageLoad\":{d}}}", .{ms});
         defer self.allocator.free(p);
@@ -715,9 +1114,143 @@ pub const WebDriver = struct {
         v.deinit();
     }
 
+    // ---- explicit waits ----
+
+    /// Start an explicit wait with `timeout_ms`. Poll cadence defaults to
+    /// `default_poll_ms`; override with `Wait.pollEvery`. Feed the returned
+    /// `Wait` a predicate via `until`/`untilNot`, or use a `waitFor*` helper.
+    pub fn wait(self: *WebDriver, timeout_ms: u64) Wait {
+        return .{ .driver = self, .timeout_ms = timeout_ms };
+    }
+
+    /// `findElement` that maps a NoSuchElement miss to null instead of an error
+    /// — the primitive the element-returning waits poll on.
+    fn tryFind(self: *WebDriver, by: Locator) Error!?WebElement {
+        return self.findElement(by) catch {
+            if (self.last) |l| {
+                if (l.kind == .no_such_element) return null;
+            }
+            return Error.WebDriver;
+        };
+    }
+
+    /// Block until an element matching `by` is present in the DOM; return it
+    /// (owned; `.deinit()`). `error.WebDriver` (kind timeout) on timeout.
+    pub fn waitForElement(self: *WebDriver, by: Locator, timeout_ms: u64) Error!WebElement {
+        var elapsed: u64 = 0;
+        while (true) {
+            if (try self.tryFind(by)) |el| return el;
+            if (elapsed >= timeout_ms) {
+                self.setLast(21, self.allocator.dupe(u8, "waited for element") catch "");
+                return Error.WebDriver;
+            }
+            std.Thread.sleep(default_poll_ms * std.time.ns_per_ms);
+            elapsed += default_poll_ms;
+        }
+    }
+
+    /// Block until an element matching `by` is present AND displayed; return it.
+    pub fn waitForVisible(self: *WebDriver, by: Locator, timeout_ms: u64) Error!WebElement {
+        var elapsed: u64 = 0;
+        while (true) {
+            if (try self.tryFind(by)) |el| {
+                if (try self.isDisplayed(&el)) return el;
+                var mel = el;
+                mel.deinit();
+            }
+            if (elapsed >= timeout_ms) {
+                self.setLast(21, self.allocator.dupe(u8, "waited for visible element") catch "");
+                return Error.WebDriver;
+            }
+            std.Thread.sleep(default_poll_ms * std.time.ns_per_ms);
+            elapsed += default_poll_ms;
+        }
+    }
+
+    /// Block until an element matching `by` is present, displayed AND enabled
+    /// (clickable); return it.
+    pub fn waitForClickable(self: *WebDriver, by: Locator, timeout_ms: u64) Error!WebElement {
+        var elapsed: u64 = 0;
+        while (true) {
+            if (try self.tryFind(by)) |el| {
+                if ((try self.isDisplayed(&el)) and (try self.isEnabled(&el))) return el;
+                var mel = el;
+                mel.deinit();
+            }
+            if (elapsed >= timeout_ms) {
+                self.setLast(21, self.allocator.dupe(u8, "waited for clickable element") catch "");
+                return Error.WebDriver;
+            }
+            std.Thread.sleep(default_poll_ms * std.time.ns_per_ms);
+            elapsed += default_poll_ms;
+        }
+    }
+
+    /// Block until NO element matches `by` — it is absent/removed. (classic
+    /// staleness, by locator.) `error.WebDriver` (kind timeout) on timeout.
+    pub fn waitUntilGone(self: *WebDriver, by: Locator, timeout_ms: u64) Error!void {
+        var elapsed: u64 = 0;
+        while (true) {
+            if ((try self.tryFind(by)) == null) return;
+            if (elapsed >= timeout_ms) {
+                self.setLast(21, self.allocator.dupe(u8, "waited for element to disappear") catch "");
+                return Error.WebDriver;
+            }
+            std.Thread.sleep(default_poll_ms * std.time.ns_per_ms);
+            elapsed += default_poll_ms;
+        }
+    }
+
+    fn waitTitleUrl(self: *WebDriver, comptime which: enum { title, url }, comptime mode: enum { is, contains }, needle: []const u8, timeout_ms: u64) Error!void {
+        var elapsed: u64 = 0;
+        while (true) {
+            const cur = switch (which) {
+                .title => try self.title(),
+                .url => try self.currentUrl(),
+            };
+            defer self.allocator.free(cur);
+            const ok = switch (mode) {
+                .is => std.mem.eql(u8, cur, needle),
+                .contains => std.mem.indexOf(u8, cur, needle) != null,
+            };
+            if (ok) return;
+            if (elapsed >= timeout_ms) {
+                self.setLast(21, self.allocator.dupe(u8, "waited for title/url condition") catch "");
+                return Error.WebDriver;
+            }
+            std.Thread.sleep(default_poll_ms * std.time.ns_per_ms);
+            elapsed += default_poll_ms;
+        }
+    }
+
+    /// Block until the page title equals `title`.
+    pub fn waitForTitleIs(self: *WebDriver, want: []const u8, timeout_ms: u64) Error!void {
+        return self.waitTitleUrl(.title, .is, want, timeout_ms);
+    }
+    /// Block until the page title contains `substr`.
+    pub fn waitForTitleContains(self: *WebDriver, substr: []const u8, timeout_ms: u64) Error!void {
+        return self.waitTitleUrl(.title, .contains, substr, timeout_ms);
+    }
+    /// Block until the current URL equals `url`.
+    pub fn waitForUrlIs(self: *WebDriver, want: []const u8, timeout_ms: u64) Error!void {
+        return self.waitTitleUrl(.url, .is, want, timeout_ms);
+    }
+    /// Block until the current URL contains `substr`.
+    pub fn waitForUrlContains(self: *WebDriver, substr: []const u8, timeout_ms: u64) Error!void {
+        return self.waitTitleUrl(.url, .contains, substr, timeout_ms);
+    }
+
     // ---- screenshots ----
     pub fn screenshotBase64(self: *WebDriver) Error![]u8 {
         return self.stringCmd("screenshot", "{}");
+    }
+
+    /// Print the current page to PDF (`printPage`), returning the PDF as an
+    /// owned base64 slice. `options_json` is the W3C print-options object body
+    /// (page size, margins, orientation, scale, pageRanges, …); pass "{}" for
+    /// defaults.
+    pub fn printPdf(self: *WebDriver, options_json: []const u8) Error![]u8 {
+        return self.stringCmd("printPage", options_json);
     }
 
     // ---- lifecycle ----
@@ -1099,6 +1632,521 @@ pub const BiDi = struct {
 fn joinCsv(allocator: std.mem.Allocator, events: []const []const u8) Error![]u8 {
     return std.mem.join(allocator, ",", events) catch Error.OutOfMemory;
 }
+
+// ---- Select: the <select> dropdown convenience tier ----
+
+/// A read-only snapshot of one `<option>`'s matchable fields — the pure core of
+/// the option scan, unit-testable with no browser.
+pub const OptionInfo = struct {
+    text: []const u8,
+    value: []const u8,
+};
+
+/// The first option index whose visible text equals `text`, or null. First
+/// match wins in document order (as the Python reference iterates).
+pub fn findOptionByText(options: []const OptionInfo, text: []const u8) ?usize {
+    for (options, 0..) |o, i| {
+        if (std.mem.eql(u8, o.text, text)) return i;
+    }
+    return null;
+}
+
+/// The first option index whose `value` attribute equals `value`, or null.
+pub fn findOptionByValue(options: []const OptionInfo, value: []const u8) ?usize {
+    for (options, 0..) |o, i| {
+        if (std.mem.eql(u8, o.value, value)) return i;
+    }
+    return null;
+}
+
+/// A wrapper over a `<select>` element that selects among its `<option>`
+/// children by clicking them — the same approach mainstream Selenium's `Select`
+/// uses. Build one with `Select.init`; it borrows the element (which borrows the
+/// driver).
+pub const Select = struct {
+    driver: *WebDriver,
+    element: *const WebElement,
+    is_multiple: bool,
+
+    /// Wrap `element` as a `<select>`. `error.WebDriver` (kind other) if the
+    /// element is not a `<select>` tag.
+    pub fn init(driver: *WebDriver, element: *const WebElement) Error!Select {
+        const tag = try driver.elementTagName(element);
+        defer driver.allocator.free(tag);
+        if (!std.ascii.eqlIgnoreCase(tag, "select")) {
+            driver.setLast(0, driver.allocator.dupe(u8, "Select only works on <select> elements") catch "");
+            return Error.WebDriver;
+        }
+        // `multiple` is a boolean attribute: present (non-"false") == multi.
+        var multi = false;
+        var attr = try driver.getAttribute(element, "multiple");
+        defer attr.deinit();
+        switch (attr.value) {
+            .string => |s| multi = s.len > 0 and !std.mem.eql(u8, s, "false"),
+            .bool => |b| multi = b,
+            else => {},
+        }
+        return Select{ .driver = driver, .element = element, .is_multiple = multi };
+    }
+
+    /// Whether this is a multi-select (`multiple` attribute present).
+    pub fn isMultiple(self: *const Select) bool {
+        return self.is_multiple;
+    }
+
+    /// All `<option>` children, in document order. Caller frees each with
+    /// `.deinit()` and the slice with `allocator.free`.
+    pub fn options(self: *const Select) Error![]WebElement {
+        const loc = try locator(self.driver.allocator, "tag name", "option");
+        defer self.driver.allocator.free(loc);
+        const p = try std.fmt.allocPrint(self.driver.allocator, "{{\"id\":\"{s}\",{s}", .{ self.element.id, loc[1..] });
+        defer self.driver.allocator.free(p);
+        var v = try self.driver.execute("findChildElements", p);
+        defer v.deinit();
+        const arr = switch (v.value) {
+            .array => |a| a,
+            else => return self.driver.allocator.alloc(WebElement, 0) catch Error.OutOfMemory,
+        };
+        var out = self.driver.allocator.alloc(WebElement, arr.items.len) catch return Error.OutOfMemory;
+        var i: usize = 0;
+        errdefer {
+            var j: usize = 0;
+            while (j < i) : (j += 1) out[j].deinit();
+            self.driver.allocator.free(out);
+        }
+        while (i < arr.items.len) : (i += 1) {
+            const id = self.driver.extractElementId(arr.items[i]) catch return Error.WebDriver;
+            out[i] = WebElement{ .driver = self.driver, .id = id };
+        }
+        return out;
+    }
+
+    fn freeOptions(self: *const Select, opts: []WebElement) void {
+        for (opts) |*o| o.deinit();
+        self.driver.allocator.free(opts);
+    }
+
+    /// Click `o` to select it, unless already selected (a second click would
+    /// toggle a multi-select option back off).
+    fn selectOption(self: *const Select, o: *const WebElement) Error!void {
+        if (!try self.driver.isSelected(o)) try self.driver.elementClick(o);
+    }
+
+    /// The options currently selected (owned; free each `.deinit()` + slice).
+    pub fn allSelectedOptions(self: *const Select) Error![]WebElement {
+        const opts = try self.options();
+        defer self.driver.allocator.free(opts);
+        var list = std.ArrayList(WebElement).empty;
+        errdefer {
+            for (list.items) |*e| e.deinit();
+            list.deinit(self.driver.allocator);
+        }
+        for (opts) |*o| {
+            if (try self.driver.isSelected(o)) {
+                list.append(self.driver.allocator, o.*) catch return Error.OutOfMemory;
+            } else {
+                var mo = o.*;
+                mo.deinit();
+            }
+        }
+        return list.toOwnedSlice(self.driver.allocator) catch Error.OutOfMemory;
+    }
+
+    /// The first selected option (owned; `.deinit()`). `error.WebDriver` (kind
+    /// no_such_element) if none is selected.
+    pub fn firstSelectedOption(self: *const Select) Error!WebElement {
+        const opts = try self.options();
+        defer self.driver.allocator.free(opts);
+        for (opts, 0..) |*o, idx| {
+            if (try self.driver.isSelected(o)) {
+                // hand out this one; free the rest
+                for (opts, 0..) |*other, j| {
+                    if (j != idx) other.deinit();
+                }
+                return o.*;
+            }
+        }
+        for (opts) |*o| o.deinit();
+        self.driver.setLast(17, self.driver.allocator.dupe(u8, "no option is selected") catch "");
+        return Error.WebDriver;
+    }
+
+    /// Select the option whose visible text equals `text`. `error.WebDriver`
+    /// (kind no_such_element) if none matches.
+    pub fn selectByVisibleText(self: *const Select, text: []const u8) Error!void {
+        const opts = try self.options();
+        defer self.freeOptions(opts);
+        for (opts) |*o| {
+            const t = try self.driver.elementText(o);
+            defer self.driver.allocator.free(t);
+            if (std.mem.eql(u8, t, text)) return self.selectOption(o);
+        }
+        self.driver.setLast(17, self.driver.allocator.dupe(u8, "no option with that visible text") catch "");
+        return Error.WebDriver;
+    }
+
+    /// Select the option whose `value` attribute equals `value`.
+    pub fn selectByValue(self: *const Select, value: []const u8) Error!void {
+        const opts = try self.options();
+        defer self.freeOptions(opts);
+        for (opts) |*o| {
+            var attr = try self.driver.getAttribute(o, "value");
+            defer attr.deinit();
+            const v = switch (attr.value) {
+                .string => |s| s,
+                else => "",
+            };
+            if (std.mem.eql(u8, v, value)) return self.selectOption(o);
+        }
+        self.driver.setLast(17, self.driver.allocator.dupe(u8, "no option with that value") catch "");
+        return Error.WebDriver;
+    }
+
+    /// Select the option at `index` (0-based, document order).
+    pub fn selectByIndex(self: *const Select, index: usize) Error!void {
+        const opts = try self.options();
+        defer self.freeOptions(opts);
+        if (index >= opts.len) {
+            self.driver.setLast(17, self.driver.allocator.dupe(u8, "no option at that index") catch "");
+            return Error.WebDriver;
+        }
+        return self.selectOption(&opts[index]);
+    }
+
+    /// Deselect every selected option (multi-select only). `error.WebDriver`
+    /// (kind other) on a single-select.
+    pub fn deselectAll(self: *const Select) Error!void {
+        if (!self.is_multiple) {
+            self.driver.setLast(0, self.driver.allocator.dupe(u8, "deselect_all only makes sense on a multi-select") catch "");
+            return Error.WebDriver;
+        }
+        const opts = try self.options();
+        defer self.freeOptions(opts);
+        for (opts) |*o| {
+            if (try self.driver.isSelected(o)) try self.driver.elementClick(o);
+        }
+    }
+};
+
+// ---- Actions: the fluent W3C action-sequence builder ----
+
+/// A queued sequence of W3C input actions, built by appending gestures and
+/// posted in one `actions` command by `perform`. Mirrors the Rust `Actions` /
+/// mainstream `ActionChains`. Two virtual devices (a mouse pointer and a
+/// keyboard) are kept length-synced with pauses so ticks line up. Build with
+/// `Actions.init`; call `deinit` if you never `perform`.
+pub const Actions = struct {
+    driver: *WebDriver,
+    pointer: std.ArrayList(u8), // JSON array body (no brackets), comma-led
+    key: std.ArrayList(u8),
+    pointer_ticks: usize = 0,
+    key_ticks: usize = 0,
+    pointer_has_real: bool = false,
+    key_has_real: bool = false,
+    err: bool = false,
+
+    pub fn init(driver: *WebDriver) Actions {
+        return .{ .driver = driver, .pointer = .empty, .key = .empty };
+    }
+
+    pub fn deinit(self: *Actions) void {
+        self.pointer.deinit(self.driver.allocator);
+        self.key.deinit(self.driver.allocator);
+    }
+
+    fn a(self: *Actions) std.mem.Allocator {
+        return self.driver.allocator;
+    }
+
+    fn pushPointer(self: *Actions, json: []const u8, real: bool) void {
+        if (self.err) return;
+        if (self.pointer.items.len > 0) self.pointer.append(self.a(), ',') catch {
+            self.err = true;
+            return;
+        };
+        self.pointer.appendSlice(self.a(), json) catch {
+            self.err = true;
+            return;
+        };
+        self.pointer_ticks += 1;
+        if (real) self.pointer_has_real = true;
+        self.syncLengths();
+    }
+
+    fn pushKey(self: *Actions, json: []const u8, real: bool) void {
+        if (self.err) return;
+        if (self.key.items.len > 0) self.key.append(self.a(), ',') catch {
+            self.err = true;
+            return;
+        };
+        self.key.appendSlice(self.a(), json) catch {
+            self.err = true;
+            return;
+        };
+        self.key_ticks += 1;
+        if (real) self.key_has_real = true;
+        self.syncLengths();
+    }
+
+    fn pauseJson() []const u8 {
+        return "{\"type\":\"pause\",\"duration\":0}";
+    }
+
+    // W3C requires each device's action list to be the same length; pad the
+    // shorter with zero-duration pauses so gestures don't desync ticks.
+    fn syncLengths(self: *Actions) void {
+        if (self.err) return;
+        while (self.pointer_ticks < self.key_ticks) {
+            if (self.pointer.items.len > 0) self.pointer.append(self.a(), ',') catch {
+                self.err = true;
+                return;
+            };
+            self.pointer.appendSlice(self.a(), pauseJson()) catch {
+                self.err = true;
+                return;
+            };
+            self.pointer_ticks += 1;
+        }
+        while (self.key_ticks < self.pointer_ticks) {
+            if (self.key.items.len > 0) self.key.append(self.a(), ',') catch {
+                self.err = true;
+                return;
+            };
+            self.key.appendSlice(self.a(), pauseJson()) catch {
+                self.err = true;
+                return;
+            };
+            self.key_ticks += 1;
+        }
+    }
+
+    fn moveTo(self: *Actions, id: []const u8) void {
+        var buf: [512]u8 = undefined;
+        const j = std.fmt.bufPrint(&buf, "{{\"type\":\"pointerMove\",\"duration\":100,\"x\":0,\"y\":0,\"origin\":{{\"{s}\":\"{s}\"}}}}", .{ w3c_element_key, id }) catch {
+            self.err = true;
+            return;
+        };
+        self.pushPointer(j, true);
+    }
+    fn buttonDown(self: *Actions, button: u8) void {
+        var buf: [64]u8 = undefined;
+        const j = std.fmt.bufPrint(&buf, "{{\"type\":\"pointerDown\",\"button\":{d}}}", .{button}) catch return;
+        self.pushPointer(j, true);
+    }
+    fn buttonUp(self: *Actions, button: u8) void {
+        var buf: [64]u8 = undefined;
+        const j = std.fmt.bufPrint(&buf, "{{\"type\":\"pointerUp\",\"button\":{d}}}", .{button}) catch return;
+        self.pushPointer(j, true);
+    }
+
+    /// Move the pointer to the centre of `element`.
+    pub fn moveToElement(self: *Actions, element: *const WebElement) *Actions {
+        self.moveTo(element.id);
+        return self;
+    }
+    /// Left-click. With a non-null element, moves to it first.
+    pub fn click(self: *Actions, element: ?*const WebElement) *Actions {
+        if (element) |e| self.moveTo(e.id);
+        self.buttonDown(0);
+        self.buttonUp(0);
+        return self;
+    }
+    /// Right-click (contextmenu). Moves to `element` first when given.
+    pub fn contextClick(self: *Actions, element: ?*const WebElement) *Actions {
+        if (element) |e| self.moveTo(e.id);
+        self.buttonDown(2);
+        self.buttonUp(2);
+        return self;
+    }
+    /// Double-click. Moves to `element` first when given.
+    pub fn doubleClick(self: *Actions, element: ?*const WebElement) *Actions {
+        if (element) |e| self.moveTo(e.id);
+        self.buttonDown(0);
+        self.buttonUp(0);
+        self.buttonDown(0);
+        self.buttonUp(0);
+        return self;
+    }
+    /// Press and hold the left button (the start of a drag).
+    pub fn clickAndHold(self: *Actions, element: ?*const WebElement) *Actions {
+        if (element) |e| self.moveTo(e.id);
+        self.buttonDown(0);
+        return self;
+    }
+    /// Release the held left button.
+    pub fn release(self: *Actions, element: ?*const WebElement) *Actions {
+        if (element) |e| self.moveTo(e.id);
+        self.buttonUp(0);
+        return self;
+    }
+    /// Drag `source` onto `target` (press at source, move to target, release).
+    pub fn dragAndDrop(self: *Actions, source: *const WebElement, target: *const WebElement) *Actions {
+        self.moveTo(source.id);
+        self.buttonDown(0);
+        self.moveTo(target.id);
+        self.buttonUp(0);
+        return self;
+    }
+    /// Press (and hold) a key on the keyboard device (`key` a single-scalar
+    /// string, e.g. a `Keys` constant) — pair with `keyUp` for a chord.
+    pub fn keyDown(self: *Actions, key: []const u8) *Actions {
+        self.keyEvent("keyDown", key);
+        return self;
+    }
+    /// Release a previously pressed key.
+    pub fn keyUp(self: *Actions, key: []const u8) *Actions {
+        self.keyEvent("keyUp", key);
+        return self;
+    }
+    fn keyEvent(self: *Actions, kind: []const u8, key: []const u8) void {
+        const kj = jsonString(self.a(), key) catch {
+            self.err = true;
+            return;
+        };
+        defer self.a().free(kj);
+        var buf = std.ArrayList(u8).empty;
+        defer buf.deinit(self.a());
+        buf.appendSlice(self.a(), "{\"type\":\"") catch {
+            self.err = true;
+            return;
+        };
+        buf.appendSlice(self.a(), kind) catch {
+            self.err = true;
+            return;
+        };
+        buf.appendSlice(self.a(), "\",\"value\":") catch {
+            self.err = true;
+            return;
+        };
+        buf.appendSlice(self.a(), kj) catch {
+            self.err = true;
+            return;
+        };
+        buf.append(self.a(), '}') catch {
+            self.err = true;
+            return;
+        };
+        self.pushKey(buf.items, true);
+    }
+    /// Type `text` (a keyDown+keyUp per Unicode scalar) on the keyboard device.
+    pub fn sendKeys(self: *Actions, text: []const u8) *Actions {
+        var view = std.unicode.Utf8View.init(text) catch {
+            self.err = true;
+            return self;
+        };
+        var it = view.iterator();
+        while (it.nextCodepointSlice()) |slice| {
+            self.keyEvent("keyDown", slice);
+            self.keyEvent("keyUp", slice);
+        }
+        return self;
+    }
+    /// Insert a pause (ms) on the pointer device.
+    pub fn pauseMs(self: *Actions, duration_ms: i64) *Actions {
+        var buf: [64]u8 = undefined;
+        const j = std.fmt.bufPrint(&buf, "{{\"type\":\"pause\",\"duration\":{d}}}", .{duration_ms}) catch return self;
+        self.pushPointer(j, false);
+        return self;
+    }
+
+    /// The W3C `actions` array body this builder has accumulated, as an owned
+    /// slice (a device sub-array is emitted only when it holds a real action).
+    /// Exposed so a caller (or a test) can inspect the wire shape without a
+    /// browser.
+    pub fn build(self: *Actions) Error![]u8 {
+        if (self.err) return Error.OutOfMemory;
+        var out = std.ArrayList(u8).empty;
+        errdefer out.deinit(self.a());
+        out.append(self.a(), '[') catch return Error.OutOfMemory;
+        var wrote = false;
+        if (self.pointer_has_real) {
+            out.appendSlice(self.a(), "{\"type\":\"pointer\",\"id\":\"mouse\",\"parameters\":{\"pointerType\":\"mouse\"},\"actions\":[") catch return Error.OutOfMemory;
+            out.appendSlice(self.a(), self.pointer.items) catch return Error.OutOfMemory;
+            out.appendSlice(self.a(), "]}") catch return Error.OutOfMemory;
+            wrote = true;
+        }
+        if (self.key_has_real) {
+            if (wrote) out.append(self.a(), ',') catch return Error.OutOfMemory;
+            out.appendSlice(self.a(), "{\"type\":\"key\",\"id\":\"keyboard\",\"actions\":[") catch return Error.OutOfMemory;
+            out.appendSlice(self.a(), self.key.items) catch return Error.OutOfMemory;
+            out.appendSlice(self.a(), "]}") catch return Error.OutOfMemory;
+        }
+        out.append(self.a(), ']') catch return Error.OutOfMemory;
+        return out.toOwnedSlice(self.a()) catch Error.OutOfMemory;
+    }
+
+    /// Post the queued gestures as one `actions` command. A no-op when nothing
+    /// but pauses was queued. Consumes/cleans the builder.
+    pub fn perform(self: *Actions) Error!void {
+        defer self.deinit();
+        if (!self.pointer_has_real and !self.key_has_real) return;
+        const arr = try self.build();
+        defer self.a().free(arr);
+        try self.driver.performActions(arr);
+    }
+};
+
+// ---- Wait: the explicit-wait convenience tier ----
+
+/// The default poll cadence between condition checks (mainstream's 500ms).
+pub const default_poll_ms: u64 = 500;
+
+/// A configured waiter over a driver. Obtain one from `WebDriver.wait`, then
+/// call `until` (or a `waitFor*` helper on `WebDriver`). The poll loop lives
+/// here in the binding — the engine issues single commands and holds no thread,
+/// exactly as the reference waits do. On timeout the wait returns
+/// `error.WebDriver` of kind `.timeout`.
+pub const Wait = struct {
+    driver: *WebDriver,
+    timeout_ms: u64,
+    poll_ms: u64 = default_poll_ms,
+
+    /// Override the poll cadence (default `default_poll_ms`). A zero interval is
+    /// clamped up to the default.
+    pub fn pollEvery(self: Wait, interval_ms: u64) Wait {
+        var w = self;
+        w.poll_ms = if (interval_ms == 0) default_poll_ms else interval_ms;
+        return w;
+    }
+
+    /// Poll `condition(driver, ctx)` until it returns `Ok(true)`; then return.
+    /// A NoSuchElement error from the condition is swallowed and retried (a
+    /// not-yet-present element should wait, not fail), as the mainstream
+    /// `ignored_exceptions` default does; any other error propagates. On
+    /// timeout, `error.WebDriver` of kind `.timeout`.
+    pub fn until(self: Wait, ctx: *anyopaque, condition: *const fn (*WebDriver, *anyopaque) Error!bool) Error!void {
+        return self.poll(ctx, condition, true);
+    }
+
+    /// Poll until `condition` returns `Ok(false)` (or an ignored NoSuchElement,
+    /// which counts as "gone"); then return. On timeout, kind `.timeout`.
+    pub fn untilNot(self: Wait, ctx: *anyopaque, condition: *const fn (*WebDriver, *anyopaque) Error!bool) Error!void {
+        return self.poll(ctx, condition, false);
+    }
+
+    fn poll(self: Wait, ctx: *anyopaque, condition: *const fn (*WebDriver, *anyopaque) Error!bool, want: bool) Error!void {
+        var elapsed: u64 = 0;
+        while (true) {
+            const got: ?bool = condition(self.driver, ctx) catch |e| blk: {
+                if (e == Error.WebDriver) {
+                    if (self.driver.last) |l| {
+                        if (l.kind == .no_such_element) break :blk if (want) @as(?bool, null) else @as(?bool, true);
+                    }
+                }
+                return e;
+            };
+            if (got) |g| {
+                if (g == want) return;
+            }
+            if (elapsed >= self.timeout_ms) {
+                self.driver.setLast(21, self.driver.allocator.dupe(u8, "waited for condition") catch "");
+                return Error.WebDriver;
+            }
+            std.Thread.sleep(self.poll_ms * std.time.ns_per_ms);
+            elapsed += self.poll_ms;
+        }
+    }
+};
 
 test {
     _ = @import("ffi_test.zig");
