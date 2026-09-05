@@ -141,6 +141,7 @@ test('getTitle/getCurrentUrl/getPageSource are async METHODS (not getters)', asy
   assert.strictEqual(typeof d.getAllWindowHandles, 'function')
   assert.strictEqual(typeof d.getWindowHandle, 'function')
   assert.strictEqual(typeof d.takeScreenshot, 'function')
+  assert.strictEqual(typeof d.printPage, 'function')
   assert.strictEqual(typeof d.getCapabilities, 'function')
 })
 

@@ -880,6 +880,13 @@ class WebDriver {
     return this._execute('screenshot')
   }
 
+  // Print the current page to PDF (base64), mainstream driver.printPage(options).
+  // options is the W3C print params object (scale/background/page/margin/…);
+  // {} prints with defaults.
+  async printPage(options = {}) {
+    return this._execute('printPage', options)
+  }
+
   // ---- facades (mainstream; delegate to the flat methods) ----
   manage() {
     return new Options(this)
