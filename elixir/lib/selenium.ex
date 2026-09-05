@@ -221,6 +221,22 @@ defmodule Selenium do
   end
 
   @doc """
+  Whether at least one element matching the locator is present RIGHT NOW — an
+  immediate presence check with no implicit wait. A clean not-found is `false`;
+  a transport failure still propagates as `{:error, _}`.
+  """
+  def exists(h, {strategy, value}), do: exists(h, strategy, value)
+
+  def exists(h, by, value) do
+    case execute(h, "findElement", decode_by(by, value)) do
+      {:ok, _} -> {:ok, true}
+      # code 17 = "no such element" (engine's error_code table): a clean miss.
+      {:error, {17, _}} -> {:ok, false}
+      err -> err
+    end
+  end
+
+  @doc """
   Find one descendant of `element_id` matching a `Selenium.By` locator or a
   `{strategy, value}` tuple (element-scoped `findChildElement`).
   """
@@ -514,6 +530,26 @@ defmodule Selenium do
       perform_actions(h, [
         ptr_seq([ptr_move_origin(source_id), ptr_down(0), ptr_move_origin(target_id), ptr_up(0)])
       ])
+
+  @doc "Press (and hold) a key via the keyboard action device (W3C keyDown)."
+  def key_down(h, key), do: perform_actions(h, [key_seq([key_ev("keyDown", key)])])
+
+  @doc "Release a key held via the keyboard action device (W3C keyUp)."
+  def key_up(h, key), do: perform_actions(h, [key_seq([key_ev("keyUp", key)])])
+
+  @doc """
+  Send a modifier chord to the currently focused element: press each key in
+  `keys` in order, then release them in reverse (Ctrl+A, Ctrl+Shift+T, …).
+  """
+  def chord(h, keys) do
+    downs = Enum.map(keys, &key_ev("keyDown", &1))
+    ups = keys |> Enum.reverse() |> Enum.map(&key_ev("keyUp", &1))
+    perform_actions(h, [key_seq(downs ++ ups)])
+  end
+
+  defp key_seq(actions), do: %{"type" => "key", "id" => "keyboard", "actions" => actions}
+
+  defp key_ev(type, key), do: %{"type" => type, "value" => to_string(key)}
 
   defp ptr_seq(actions) do
     %{
