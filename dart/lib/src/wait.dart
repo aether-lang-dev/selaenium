@@ -45,6 +45,12 @@ class WebDriverWait<D> {
             ? pollFrequency
             : defaultPollFrequency;
 
+  /// A copy of this wait with a different poll [interval] (fluent form, mirrors
+  /// the reference `poll_every`):
+  /// `WebDriverWait(d, t).pollEvery(Duration(milliseconds: 100)).until(...)`.
+  WebDriverWait<D> pollEvery(Duration interval) =>
+      WebDriverWait<D>(_driver, _timeout, pollFrequency: interval);
+
   /// Poll [condition] until it returns a non-null, truthy value; return it.
   /// Throws [TimeoutException] if the deadline passes first. [message] overrides
   /// the default timeout text.
@@ -133,6 +139,16 @@ bool? Function(WebDriver) waitForTitleIs(String title) =>
 /// Condition: the current URL contains [substring].
 bool? Function(WebDriver) waitForUrlContains(String substring) =>
     (driver) => driver.currentUrl.contains(substring) ? true : null;
+
+/// Condition: the current URL equals [url] exactly.
+bool? Function(WebDriver) waitForUrlIs(String url) =>
+    (driver) => driver.currentUrl == url ? true : null;
+
+/// Condition (for [WebDriverWait.until]): the element matching [by] is no
+/// longer present in the DOM. Returns true once it's gone; use with `until`,
+/// the mirror of the reference `wait_until_gone`.
+bool? Function(WebDriver) waitUntilGone(By by) =>
+    (driver) => _findOrNull(driver, by) == null ? true : null;
 
 WebElement? _findOrNull(WebDriver driver, By by) {
   try {

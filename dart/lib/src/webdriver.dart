@@ -175,6 +175,36 @@ class WebElement implements ElementLike {
   Map<String, dynamic> get rect =>
       _exec('getElementRect') as Map<String, dynamic>;
 
+  /// The computed value of the CSS property [name] on this element
+  /// (`getElementValueOfCssProperty`) — e.g. `'display'`, `'color'`,
+  /// `'font-size'`. [valueOfCssProperty] is the classic-Selenium-named alias.
+  String cssValue(String name) =>
+      _exec('getElementValueOfCssProperty', {'name': name}) as String? ?? '';
+
+  /// Classic-Selenium-named alias of [cssValue].
+  String valueOfCssProperty(String name) => cssValue(name);
+
+  /// A PNG screenshot of just this element (`takeElementScreenshot`), returned
+  /// as a base64 string — the element-scoped counterpart to
+  /// [WebDriver.screenshotBase64].
+  String screenshotBase64() =>
+      _exec('takeElementScreenshot') as String? ?? '';
+
+  /// Submit the form this element belongs to. W3C WebDriver removed the
+  /// dedicated `submit` endpoint, so — like the reference binding and modern
+  /// Selenium — this walks up to the enclosing `<form>` and calls
+  /// `requestSubmit()` (falling back to `submit()`) via an injected script.
+  /// Throws (kind [NoSuchElementException]) if the element is not in a form.
+  void submit() {
+    const script = "var e=arguments[0];var f=e.form||e.closest('form');"
+        "if(!f){throw new Error('Element is not within a form');}"
+        "if(f.requestSubmit){f.requestSubmit();}else{f.submit();}";
+    _driver
+        .executeScript(script, [
+      <String, dynamic>{w3cElementKey: id}
+    ]);
+  }
+
   /// Find the first descendant matching [by], scoped to this element (W3C
   /// findElementFromElement). Mirrors [WebDriver.findElement].
   WebElement findElement(By by) {
@@ -191,6 +221,31 @@ class WebElement implements ElementLike {
         .map((e) => WebElement(
             _driver, (e as Map<String, dynamic>)[w3cElementKey] as String))
         .toList();
+  }
+}
+
+/// A frame target for [WebDriver.switchToFrame]: an index among the current
+/// context's child frames, a specific `<iframe>`/`<frame>` [WebElement], or the
+/// top-level context. Mirrors the reference binding's `Frame`.
+class Frame {
+  final dynamic _id; // int index, WebElement, or null (default content)
+  const Frame._(this._id);
+
+  /// The frame at this 0-based index among the current context's child frames.
+  factory Frame.index(int index) => Frame._(index);
+
+  /// The frame whose `<iframe>`/`<frame>` element is [element].
+  factory Frame.element(WebElement element) => Frame._(element);
+
+  /// The top-level browsing context (same as [WebDriver.switchToDefaultContent]).
+  static const Frame defaultContent = Frame._(null);
+
+  /// The W3C `id` value for this frame target: a number, an element-reference
+  /// object, or JSON null.
+  dynamic _idJson() {
+    final target = _id;
+    if (target is WebElement) return {w3cElementKey: target.id};
+    return target; // int index or null
   }
 }
 
@@ -249,6 +304,17 @@ class WebDriver implements DriverLike {
     return WebDriver._create(commandExecutor, caps,
         caPath: caPath, insecure: insecure);
   }
+
+  /// Like [WebDriver.chrome], but names the TLS trust configuration explicitly
+  /// (mirrors the reference `chrome_tls`): pin a private-CA bundle via [caPath],
+  /// or skip verification entirely via [insecure] for a self-signed dev/staging
+  /// Grid. TLS config is applied on the session handle before `newSession`.
+  factory WebDriver.chromeTls(String commandExecutor,
+          {Map<String, dynamic>? options,
+          String? caPath,
+          bool insecure = false}) =>
+      WebDriver.chrome(commandExecutor,
+          options: options, caPath: caPath, insecure: insecure);
 
   factory WebDriver.headlessChrome(String commandExecutor,
           {String? caPath, bool insecure = false}) =>
@@ -342,6 +408,18 @@ class WebDriver implements DriverLike {
         .toList();
   }
 
+  /// The NUMBER of elements a relative-locator query matches, without
+  /// materializing [WebElement] handles — the count-only counterpart to
+  /// [findRelative]. Filters have the same shape as [findRelative].
+  int findRelativeCount(String baseCss, List<Map<String, dynamic>> filters) {
+    final filtersJson = jsonEncode(filters);
+    final result = _withCStr(
+        baseCss,
+        (b) => _withCStr(filtersJson,
+            (f) => _atomResult(Native.instance.findRelative(_handle, b, f))));
+    return (result as List<dynamic>?)?.length ?? 0;
+  }
+
   // ---- navigation ----
   void get(String url) => execute('get', {'url': url});
   String get currentUrl => execute('getCurrentUrl') as String;
@@ -365,6 +443,27 @@ class WebDriver implements DriverLike {
         .toList();
   }
 
+  /// True if at least one element matching [by] is present right now — an
+  /// immediate presence check. A clean element-not-found resolves to false; a
+  /// transport-level failure still throws. Pairs with [WebDriverWait]: use
+  /// [exists] for a snapshot, a wait to block until present.
+  bool exists(By by) {
+    try {
+      findElement(by);
+      return true;
+    } on NoSuchElementException {
+      return false;
+    }
+  }
+
+  /// The active (focused) element (`getActiveElement`) — the one that would
+  /// receive keyboard input, e.g. after a [WebElement.sendKeys] or a
+  /// programmatic focus.
+  WebElement activeElement() {
+    final r = execute('getActiveElement') as Map<String, dynamic>;
+    return WebElement(this, r[w3cElementKey] as String);
+  }
+
   // ---- script ----
   dynamic executeScript(String script, [List<dynamic> args = const []]) =>
       execute('executeScript', {'script': script, 'args': args});
@@ -384,6 +483,39 @@ class WebDriver implements DriverLike {
   dynamic maximizeWindow() => execute('maximizeWindow');
   dynamic minimizeWindow() => execute('minimizeWindow');
   dynamic fullscreenWindow() => execute('fullscreenWindow');
+
+  /// Open a new top-level browsing context (`newWindow`). [typeHint] is `'tab'`
+  /// or `'window'` (a hint the browser may honor or ignore). Returns the new
+  /// window's handle — pass it to [switchToWindow] to focus it. Returns `''`
+  /// only if the remote end sent no handle.
+  String newWindow([String typeHint = 'tab']) {
+    final r = execute('newWindow', {'type': typeHint});
+    return (r is Map<String, dynamic> ? r['handle'] as String? : null) ?? '';
+  }
+
+  /// Close the current window/tab (`close`). Returns the window handles that
+  /// remain; when it empties, the session is gone — switch to a surviving
+  /// handle before issuing further commands. This does NOT end the session
+  /// (use [quit] for that).
+  List<String> closeWindow() =>
+      (execute('close') as List<dynamic>? ?? const []).cast<String>();
+
+  // ---- frames ----
+
+  /// Switch the session's focus to a frame (`switchToFrame`): by
+  /// [Frame.index], by [Frame.element], or [Frame.defaultContent] for the
+  /// top-level context. All subsequent element commands run inside the chosen
+  /// frame until the next frame switch.
+  void switchToFrame(Frame frame) =>
+      execute('switchToFrame', {'id': frame._idJson()});
+
+  /// Switch to the parent of the current frame (`switchToFrameParent`) — one
+  /// level out, unlike [switchToDefaultContent] which jumps to the top.
+  void switchToParentFrame() => execute('switchToFrameParent');
+
+  /// Return focus to the top-level browsing context (`switchToFrame` with a
+  /// null id) — equivalent to `switchToFrame(Frame.defaultContent)`.
+  void switchToDefaultContent() => switchToFrame(Frame.defaultContent);
 
   // ---- cookies ----
   void addCookie(Map<String, dynamic> cookie) =>
@@ -413,6 +545,21 @@ class WebDriver implements DriverLike {
   String get alertText => execute('getAlertText') as String;
   void sendAlertText(String text) => execute('setAlertValue', {'text': text});
 
+  /// True if a user-prompt / alert dialog is currently present (probing it via
+  /// `getAlertText`). A clean "no such alert" resolves to false; a
+  /// transport-level failure still throws. Pairs with [WebDriverWait] for
+  /// "wait until an alert appears".
+  bool alertPresent() {
+    try {
+      execute('getAlertText');
+      return true;
+    } on WebDriverException catch (e) {
+      // 15 == "no such alert" (none open); anything else is a real failure.
+      if (e.code == 15) return false;
+      rethrow;
+    }
+  }
+
   // ---- timeouts ----
   void setTimeouts(Map<String, dynamic> timeouts) =>
       execute('setTimeout', timeouts);
@@ -422,6 +569,12 @@ class WebDriver implements DriverLike {
 
   // ---- screenshots ----
   String screenshotBase64() => execute('screenshot') as String;
+
+  /// Render the current page to a PDF (`printPage`), returned as a base64
+  /// string. [options] is the W3C print params (paper size, margins,
+  /// orientation, scale, `pageRanges`, …); pass null for defaults.
+  String printPdf([Map<String, dynamic>? options]) =>
+      execute('printPage', options ?? const {}) as String? ?? '';
 
   // ---- WebDriver-BiDi ----
 
@@ -534,6 +687,16 @@ class BiDi {
             Native.instance.bidiUnsubscribe(_handle, _id(), c, timeoutMs)));
     return raw.isEmpty ? {} : jsonDecode(raw) as Map<String, dynamic>;
   }
+
+  /// Explicit-timeout spelling of [subscribe] (mirrors the reference
+  /// `subscribe_timeout`); [subscribe] with `timeoutMs:` is equivalent.
+  Map<String, dynamic> subscribeTimeout(List<String> events, int timeoutMs) =>
+      subscribe(events, timeoutMs: timeoutMs);
+
+  /// Explicit-timeout spelling of [unsubscribe] (mirrors the reference
+  /// `unsubscribe_timeout`).
+  Map<String, dynamic> unsubscribeTimeout(List<String> events, int timeoutMs) =>
+      unsubscribe(events, timeoutMs: timeoutMs);
 
   /// Block until an event whose [method] matches arrives, or timeout. Returns
   /// the event map, or null on timeout/close. (Subscribe first.)

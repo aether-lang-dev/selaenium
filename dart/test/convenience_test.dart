@@ -88,6 +88,14 @@ void main() {
       expect(Keys.command, Keys.meta);
     });
 
+    test('chord concatenates keys and NUL-terminates', () {
+      final s = Keys.chord([Keys.control, 'a']);
+      expect(s.codeUnitAt(0), 0xE009); // control
+      expect(s[1], 'a');
+      expect(s.codeUnitAt(s.length - 1), 0xE000); // trailing NUL releases mods
+      expect(Keys.chord(const []), Keys.nul);
+    });
+
     test('the whole catalog is one PUA code unit, U+E000..U+E03D', () {
       for (final k in [
         Keys.nul,
@@ -170,6 +178,22 @@ void main() {
       final w = WebDriverWait<int>(0, const Duration(seconds: 2),
           pollFrequency: const Duration(milliseconds: 10));
       expect(w.untilNot<bool>((_) => (++n) < 3), isTrue);
+    });
+
+    test('pollEvery returns a wait honoring the new interval', () {
+      var n = 0;
+      final w = WebDriverWait<int>(0, const Duration(seconds: 2))
+          .pollEvery(const Duration(milliseconds: 5));
+      final ok = w.until<bool>((_) => (++n) >= 3 ? true : null);
+      expect(ok, isTrue);
+      expect(n, 3);
+    });
+  });
+
+  group('Frame', () {
+    test('factories construct; defaultContent is a const singleton', () {
+      expect(Frame.index(0), isA<Frame>());
+      expect(Frame.defaultContent, same(Frame.defaultContent));
     });
   });
 

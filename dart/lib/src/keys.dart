@@ -82,4 +82,10 @@ class Keys {
 
   static const String meta = '';
   static const String command = '';
+
+  /// The classic `Keys.chord` helper: concatenate [keys] and append [nul] so
+  /// the browser releases every held modifier at the end of the sequence. Send
+  /// the result through [WebElement.sendKeys], e.g.
+  /// `element.sendKeys(Keys.chord([Keys.control, 'a']))` to select-all.
+  static String chord(List<String> keys) => keys.join() + nul;
 }

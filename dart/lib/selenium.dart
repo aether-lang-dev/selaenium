@@ -20,6 +20,7 @@ library;
 export 'src/webdriver.dart'
     show
         By,
+        Frame,
         WebDriver,
         WebElement,
         BiDi,
@@ -49,7 +50,9 @@ export 'src/wait.dart'
         waitForClickable,
         waitForTitleContains,
         waitForTitleIs,
-        waitForUrlContains;
+        waitForUrlContains,
+        waitForUrlIs,
+        waitUntilGone;
 export 'src/select.dart' show Select;
 export 'src/actions.dart' show Actions;
 export 'src/keys.dart' show Keys;
