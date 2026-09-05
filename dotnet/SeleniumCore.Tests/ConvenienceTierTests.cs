@@ -366,6 +366,8 @@ namespace SeleniumCore.Tests
         public bool Selected { get; set; }
         public bool Displayed { get; set; } = true;
         public Rect Rect { get; set; } = new Rect();
+        public System.Drawing.Point Location => new System.Drawing.Point((int)Rect.X, (int)Rect.Y);
+        public System.Drawing.Size Size => new System.Drawing.Size((int)Rect.Width, (int)Rect.Height);
         public int ClickCount { get; private set; }
 
         public Dictionary<string, string?> Attributes { get; } = new();
@@ -375,7 +377,12 @@ namespace SeleniumCore.Tests
         public void Click() => ClickCount++;
         public void Clear() { }
         public void SendKeys(string text) { }
+        public void Submit() { }
         public string? GetAttribute(string name) => Attributes.TryGetValue(name, out var v) ? v : null;
+        public string? GetDomAttribute(string name) => GetAttribute(name);
+        public string? GetDomProperty(string name) => GetAttribute(name);
+        public string GetCssValue(string name) => "";
+        public ISearchContext GetShadowRoot() => throw new NoSuchShadowRootException("stub: no shadow root");
 
         public IWebElement FindElement(By by)
         {
@@ -383,10 +390,11 @@ namespace SeleniumCore.Tests
             return list.Count > 0 ? list[0] : throw new NoSuchElementException("stub: not found", 17);
         }
 
-        public IReadOnlyList<IWebElement> FindElements(By by)
+        public System.Collections.ObjectModel.ReadOnlyCollection<IWebElement> FindElements(By by)
         {
             string key = by.Strategy == "tag name" ? "tag:" + by.Value : by.Value;
-            return ByResults.TryGetValue(key, out var list) ? list : new List<IWebElement>();
+            var list = ByResults.TryGetValue(key, out var l) ? l : new List<IWebElement>();
+            return new System.Collections.ObjectModel.ReadOnlyCollection<IWebElement>(list);
         }
     }
 
@@ -398,10 +406,12 @@ namespace SeleniumCore.Tests
     {
         private static T Nope<T>() => throw new InvalidOperationException("NullDriver: no session");
 
+        public string Url { get => Nope<string>(); set => Nope<int>(); }
         public string CurrentUrl => Nope<string>();
         public string Title => Nope<string>();
         public string PageSource => Nope<string>();
-        public IReadOnlyList<string> WindowHandles => Nope<IReadOnlyList<string>>();
+        public System.Collections.ObjectModel.ReadOnlyCollection<string> WindowHandles =>
+            Nope<System.Collections.ObjectModel.ReadOnlyCollection<string>>();
         public string CurrentWindowHandle => Nope<string>();
         public string SessionId => Nope<string>();
 
@@ -409,13 +419,18 @@ namespace SeleniumCore.Tests
         public void Back() => Nope<int>();
         public void Forward() => Nope<int>();
         public void Refresh() => Nope<int>();
+        public INavigation Navigate() => Nope<INavigation>();
+        public ITargetLocator SwitchTo() => Nope<ITargetLocator>();
+        public IOptions Manage() => Nope<IOptions>();
         public IWebElement FindElement(By by) => Nope<IWebElement>();
-        public IReadOnlyList<IWebElement> FindElements(By by) => Nope<IReadOnlyList<IWebElement>>();
+        public System.Collections.ObjectModel.ReadOnlyCollection<IWebElement> FindElements(By by) =>
+            Nope<System.Collections.ObjectModel.ReadOnlyCollection<IWebElement>>();
         public void SwitchToWindow(string handle) => Nope<int>();
         public JsonElement? ExecuteScript(string script, params object?[] args) => Nope<JsonElement?>();
         public JsonElement? ExecuteAsyncScript(string script, params object?[] args) => Nope<JsonElement?>();
         public void PerformActions(IList<object?> actions) => Nope<int>();
         public void ClearActions() => Nope<int>();
+        public void Close() => Nope<int>();
         public void Quit() { }
         public void Dispose() { }
     }

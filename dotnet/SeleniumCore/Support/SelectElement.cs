@@ -100,11 +100,11 @@ public class SelectElement : IWrapsElement
 
         if (!partialMatch)
         {
-            options = this.WrappedElement.FindElements(By.Xpath(".//option[normalize-space(.) = " + EscapeQuotes(text) + "]"));
+            options = this.WrappedElement.FindElements(By.XPath(".//option[normalize-space(.) = " + EscapeQuotes(text) + "]"));
         }
         else
         {
-            options = this.WrappedElement.FindElements(By.Xpath(".//option[contains(normalize-space(.),  " + EscapeQuotes(text) + ")]"));
+            options = this.WrappedElement.FindElements(By.XPath(".//option[contains(normalize-space(.),  " + EscapeQuotes(text) + ")]"));
         }
 
         foreach (IWebElement option in options)
@@ -128,7 +128,7 @@ public class SelectElement : IWrapsElement
             }
             else
             {
-                candidates = new List<IWebElement>(this.WrappedElement.FindElements(By.Xpath(".//option[contains(., " + EscapeQuotes(substringWithoutSpace) + ")]")));
+                candidates = new List<IWebElement>(this.WrappedElement.FindElements(By.XPath(".//option[contains(., " + EscapeQuotes(substringWithoutSpace) + ")]")));
             }
 
             foreach (IWebElement option in candidates)
@@ -160,7 +160,7 @@ public class SelectElement : IWrapsElement
         StringBuilder builder = new StringBuilder(".//option[@value = ");
         builder.Append(EscapeQuotes(value));
         builder.Append("]");
-        IReadOnlyList<IWebElement> options = this.WrappedElement.FindElements(By.Xpath(builder.ToString()));
+        IReadOnlyList<IWebElement> options = this.WrappedElement.FindElements(By.XPath(builder.ToString()));
 
         bool matched = false;
         foreach (IWebElement option in options)
@@ -226,7 +226,7 @@ public class SelectElement : IWrapsElement
         StringBuilder builder = new StringBuilder(".//option[normalize-space(.) = ");
         builder.Append(EscapeQuotes(text));
         builder.Append("]");
-        IReadOnlyList<IWebElement> options = this.WrappedElement.FindElements(By.Xpath(builder.ToString()));
+        IReadOnlyList<IWebElement> options = this.WrappedElement.FindElements(By.XPath(builder.ToString()));
         foreach (IWebElement option in options)
         {
             SetSelected(option, false);
@@ -252,7 +252,7 @@ public class SelectElement : IWrapsElement
         StringBuilder builder = new StringBuilder(".//option[@value = ");
         builder.Append(EscapeQuotes(value));
         builder.Append("]");
-        IReadOnlyList<IWebElement> options = this.WrappedElement.FindElements(By.Xpath(builder.ToString()));
+        IReadOnlyList<IWebElement> options = this.WrappedElement.FindElements(By.XPath(builder.ToString()));
         foreach (IWebElement option in options)
         {
             SetSelected(option, false);

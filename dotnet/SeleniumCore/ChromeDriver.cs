@@ -10,10 +10,10 @@ namespace OpenQA.Selenium;
 /// <c>goog:chromeOptions</c>-style capabilities. The launched driver process is
 /// stopped on <see cref="RemoteWebDriver.Quit"/> / <see cref="RemoteWebDriver.Dispose"/>.
 /// </summary>
-public sealed class ChromeDriver : RemoteWebDriver
+public class ChromeDriver : RemoteWebDriver
 {
     /// <summary>Launch chromedriver and start a default Chrome session.</summary>
-    public ChromeDriver() : this(null)
+    public ChromeDriver() : this((IDictionary<string, object?>?)null)
     {
     }
 
@@ -25,6 +25,18 @@ public sealed class ChromeDriver : RemoteWebDriver
     /// </summary>
     public ChromeDriver(IDictionary<string, object?>? options)
         : this(EnsureChromeDriver(), options)
+    {
+    }
+
+    /// <summary>
+    /// Launch chromedriver and start a Chrome session from a mainstream
+    /// <see cref="OpenQA.Selenium.Chrome.ChromeOptions"/> (or any
+    /// <see cref="DriverOptions"/>): its <see cref="DriverOptions.ToCapabilities"/>
+    /// supplies the capabilities. This is the Selenium 4.x <c>new ChromeDriver(options)</c>
+    /// entry point.
+    /// </summary>
+    public ChromeDriver(DriverOptions options)
+        : this(EnsureChromeDriver(), (options ?? throw new System.ArgumentNullException(nameof(options))).ToDictionary())
     {
     }
 

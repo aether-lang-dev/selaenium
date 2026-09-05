@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Collections.ObjectModel;
 using System.Linq;
 using System.Text.Json;
 
@@ -20,7 +21,7 @@ namespace OpenQA.Selenium;
 ///
 /// Command results are returned as <see cref="JsonElement"/> (System.Text.Json).
 /// </summary>
-public class RemoteWebDriver : IWebDriver
+public class RemoteWebDriver : IWebDriver, ITakesScreenshot
 {
     internal const string W3CElementKey = "element-6066-11e4-a52e-4f735466cecf";
 
@@ -40,6 +41,25 @@ public class RemoteWebDriver : IWebDriver
     public RemoteWebDriver(string commandExecutor, IDictionary<string, object?> capabilities)
         : this(commandExecutor, capabilities, null, false)
     {
+    }
+
+    /// <summary>Connect to a running remote end and start a session from a mainstream
+    /// <see cref="DriverOptions"/> object (e.g. <c>new ChromeOptions()</c>); its
+    /// <see cref="DriverOptions.ToCapabilities"/> supplies the capabilities. Mirrors
+    /// Selenium 4.x <c>new RemoteWebDriver(uri, options)</c>.</summary>
+    public RemoteWebDriver(string commandExecutor, DriverOptions options)
+        : this(commandExecutor, (options ?? throw new ArgumentNullException(nameof(options))).ToDictionary(), null, false)
+    {
+    }
+
+    /// <summary>A driver with no native session, for subclasses that override
+    /// <see cref="Execute"/> to supply their own transport (used by tests that record
+    /// commands without a browser). The FFI handle stays null; only overridden members
+    /// are safe to call.</summary>
+    protected RemoteWebDriver()
+    {
+        _handle = IntPtr.Zero;
+        _wsUrl = string.Empty;
     }
 
     protected RemoteWebDriver(string commandExecutor, IDictionary<string, object?> capabilities,
@@ -111,7 +131,7 @@ public class RemoteWebDriver : IWebDriver
     /// the decoded <c>value</c> payload (or null). The generic escape hatch for
     /// commands with no dedicated wrapper (alerts, <c>switchToWindow</c>, …) —
     /// e.g. <c>Execute("acceptAlert", null)</c>.</summary>
-    public JsonElement? Execute(string command, IDictionary<string, object?>? parameters)
+    public virtual JsonElement? Execute(string command, IDictionary<string, object?>? parameters)
     {
         string paramsJson = JsonSerializer.Serialize(parameters ?? new Dictionary<string, object?>());
         int rc = NativeMethods.Execute(_handle, command, paramsJson);
@@ -193,11 +213,17 @@ public class RemoteWebDriver : IWebDriver
     {
         3 => new ElementClickInterceptedException(message, code),
         4 => new ElementNotInteractableException(message, code),
+        10 => new InvalidElementStateException(message, code),
         11 => new InvalidSelectorException(message, code),
         13 => new JavaScriptException(message, code),
+        15 => new NoAlertPresentException(message, code),
         17 => new NoSuchElementException(message, code),
+        18 => new NoSuchFrameException(message, code),
+        19 => new NoSuchShadowRootException(message, code),
+        20 => new NoSuchWindowException(message, code),
         21 or 24 => new TimeoutException(message, code),
         23 => new StaleElementReferenceException(message, code),
+        27 => new UnexpectedAlertOpenException(message, code),
         28 => new UnknownCommandException(message, code),
         _ => new WebDriverException(message, code),
     };
@@ -215,12 +241,32 @@ public class RemoteWebDriver : IWebDriver
 
     // ---- navigation ----
     public void Get(string url) => Execute("get", new Dictionary<string, object?> { ["url"] = url });
+
+    /// <summary>The current page URL. Getter reads it; setter navigates
+    /// (mainstream <c>driver.Url = "..."</c>). Same wire calls as
+    /// <see cref="CurrentUrl"/> / <see cref="Get"/>.</summary>
+    public string Url
+    {
+        get => CurrentUrl;
+        set => Get(value);
+    }
+
     public string CurrentUrl => Execute("getCurrentUrl", null)!.Value.GetString()!;
     public string Title => Execute("getTitle", null)!.Value.GetString()!;
     public string PageSource => Execute("getPageSource", null)!.Value.GetString()!;
     public void Back() => Execute("goBack", null);
     public void Forward() => Execute("goForward", null);
     public void Refresh() => Execute("refresh", null);
+
+    // ---- facades (upstream-shaped surface; each backed by the flat methods) ----
+    /// <summary>The navigation facade (<c>Navigate().Back()/Forward()/Refresh()/GoToUrl()</c>).</summary>
+    public INavigation Navigate() => new Navigation(this);
+
+    /// <summary>The focus-switching facade (<c>SwitchTo().Frame()/Window()/Alert()/…</c>).</summary>
+    public ITargetLocator SwitchTo() => new TargetLocator(this);
+
+    /// <summary>The session-management facade (<c>Manage().Cookies/Window/Timeouts()</c>).</summary>
+    public IOptions Manage() => new OptionsImpl(this);
 
     // ---- elements ----
     public IWebElement FindElement(By by)
@@ -229,12 +275,12 @@ public class RemoteWebDriver : IWebDriver
         return new RemoteWebElement(this, result.GetProperty(W3CElementKey).GetString()!);
     }
 
-    public IReadOnlyList<IWebElement> FindElements(By by)
+    public ReadOnlyCollection<IWebElement> FindElements(By by)
     {
         JsonElement result = Execute("findElements", DecodeBy(by.Strategy, by.Value))!.Value;
-        return result.EnumerateArray()
+        return new ReadOnlyCollection<IWebElement>(result.EnumerateArray()
             .Select(e => (IWebElement)new RemoteWebElement(this, e.GetProperty(W3CElementKey).GetString()!))
-            .ToList();
+            .ToList());
     }
 
     // ---- script ----
@@ -242,7 +288,7 @@ public class RemoteWebDriver : IWebDriver
         Execute("executeScript", new Dictionary<string, object?>
         {
             ["script"] = script,
-            ["args"] = new List<object?>(args),
+            ["args"] = WrapScriptArgs(args),
         });
 
     /// <summary>The async script executor: the page calls the injected callback
@@ -251,14 +297,61 @@ public class RemoteWebDriver : IWebDriver
         Execute("executeAsyncScript", new Dictionary<string, object?>
         {
             ["script"] = script,
-            ["args"] = new List<object?>(args),
+            ["args"] = WrapScriptArgs(args),
         });
 
+    /// <summary>Encode executeScript args, turning any <see cref="IWebElement"/> into
+    /// its W3C element-reference object <c>{ element-key: id }</c> so the engine
+    /// forwards a live element handle (mainstream and every other binding do this).
+    /// Lists/dicts are wrapped recursively; scalars pass through.</summary>
+    internal static List<object?> WrapScriptArgs(object?[] args)
+    {
+        var list = new List<object?>(args.Length);
+        foreach (object? a in args)
+        {
+            list.Add(WrapScriptArg(a));
+        }
+        return list;
+    }
+
+    private static object? WrapScriptArg(object? a) => a switch
+    {
+        IWebElement el => new Dictionary<string, object?> { [W3CElementKey] = el.Id },
+        System.Collections.IDictionary dict => WrapDict(dict),
+        System.Collections.IEnumerable seq and not string => WrapSeq(seq),
+        _ => a,
+    };
+
+    private static Dictionary<string, object?> WrapDict(System.Collections.IDictionary dict)
+    {
+        var outp = new Dictionary<string, object?>();
+        foreach (object key in dict.Keys)
+        {
+            outp[key.ToString()!] = WrapScriptArg(dict[key]);
+        }
+        return outp;
+    }
+
+    private static List<object?> WrapSeq(System.Collections.IEnumerable seq)
+    {
+        var outp = new List<object?>();
+        foreach (object? item in seq)
+        {
+            outp.Add(WrapScriptArg(item));
+        }
+        return outp;
+    }
+
     // ---- windows ----
-    public IReadOnlyList<string> WindowHandles =>
-        Execute("getWindowHandles", null)!.Value.EnumerateArray().Select(e => e.GetString()!).ToList();
+    public ReadOnlyCollection<string> WindowHandles =>
+        new ReadOnlyCollection<string>(
+            Execute("getWindowHandles", null)!.Value.EnumerateArray().Select(e => e.GetString()!).ToList());
 
     public string CurrentWindowHandle => Execute("getCurrentWindowHandle", null)!.Value.GetString()!;
+
+    /// <summary>Close the current window/tab (W3C <c>closeWindow</c>). The session
+    /// stays alive if other windows remain; use <see cref="Quit"/> to end it.</summary>
+    public void Close() => Execute("close", null);
 
     public void SwitchToWindow(string handle) =>
         Execute("switchToWindow", new Dictionary<string, object?> { ["handle"] = handle });
@@ -301,6 +394,10 @@ public class RemoteWebDriver : IWebDriver
 
     // ---- screenshots ----
     public string ScreenshotBase64() => Execute("screenshot", null)!.Value.GetString()!;
+
+    /// <summary>Capture a screenshot of the current page as a <see cref="Screenshot"/>
+    /// (mainstream <c>ITakesScreenshot.GetScreenshot()</c>; save/encode via its members).</summary>
+    public Screenshot GetScreenshot() => new Screenshot(ScreenshotBase64());
 
     // ---- lifecycle ----
     public string SessionId => NativeMethods.TakeString(NativeMethods.SessionId(_handle));

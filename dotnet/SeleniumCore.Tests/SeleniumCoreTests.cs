@@ -133,6 +133,44 @@ namespace SeleniumCore.Tests
                     byte[] png = Convert.FromBase64String(d.ScreenshotBase64());
                     (png.Length > 8 && png[1] == 'P' && png[2] == 'N' && png[3] == 'G').ShouldBeTrue();
 
+                    // The upstream-shaped facades drive the same session end to end —
+                    // exactly what a drop-in mainstream Selenium-.NET script writes.
+                    d.Navigate().GoToUrl(baseUrl + "/one");
+                    d.Title.ShouldBe("Page One");
+                    d.Navigate().GoToUrl(new Uri(baseUrl + "/two"));
+                    d.Title.ShouldBe("Page Two");
+                    d.Navigate().Back();
+                    d.Title.ShouldBe("Page One");
+
+                    d.Url = baseUrl + "/two";
+                    d.Url.ShouldBe(baseUrl + "/two");
+                    d.Navigate().Back();
+
+                    // SwitchTo().Window round-trips the current handle.
+                    d.SwitchTo().Window(d.CurrentWindowHandle);
+                    d.SwitchTo().ActiveElement().ShouldNotBeNull();
+
+                    // Manage().Cookies / Window / Timeouts facades.
+                    d.Manage().Cookies.DeleteAllCookies();
+                    d.Manage().Cookies.AddCookie(new OpenQA.Selenium.Cookie("facade", "on"));
+                    d.Manage().Cookies.GetCookieNamed("facade")!.Value.ShouldBe("on");
+                    d.Manage().Cookies.AllCookies.ShouldContain(c => c.Name == "facade");
+                    d.Manage().Cookies.DeleteCookieNamed("facade");
+                    d.Manage().Cookies.GetCookieNamed("facade").ShouldBeNull();
+
+                    d.Manage().Window.Size = new System.Drawing.Size(880, 640);
+                    d.Manage().Window.Size.Width.ShouldBe(880);
+
+                    d.Manage().Timeouts().ImplicitWait = TimeSpan.FromMilliseconds(750);
+                    d.Manage().Timeouts().ImplicitWait.ShouldBe(TimeSpan.FromMilliseconds(750));
+
+                    // ITakesScreenshot.GetScreenshot() → a Screenshot with real PNG bytes.
+                    Screenshot shot = d.GetScreenshot();
+                    (shot.AsByteArray.Length > 8 && shot.AsByteArray[1] == 'P').ShouldBeTrue();
+
+                    // A new IWebElement member: GetCssValue over the wire.
+                    d.FindElement(By.Id("hdr")).GetCssValue("display").ShouldNotBeNullOrEmpty();
+
                     Should.Throw<NoSuchElementException>(() => d.FindElement(By.Id("does-not-exist")));
                 }
                 finally { d.Quit(); }
