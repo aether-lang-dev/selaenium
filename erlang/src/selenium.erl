@@ -13,32 +13,42 @@
 -module(selenium).
 
 -export([
-    chrome/1, chrome/2, chrome/3, headless_chrome/1,
+    chrome/1, chrome/2, chrome/3, chrome_tls/3, headless_chrome/1,
     resolve_driver/1, resolve_driver/2, launch_driver/1, launch_driver/2,
     ensure_driver/1, ensure_driver/2, ensure_driver/3,
     driver_url/1, driver_pid/1, stop_driver/1,
     local_chrome/0, local_chrome/1,
     get/2, current_url/1, title/1, page_source/1, back/1, forward/1, refresh/1,
     find_element/2, find_elements/2, find_element/3, find_elements/3,
-    click/2, send_keys/3, element_text/2, tag_name/2, element_property/3, element_rect/2,
+    exists/2, active_element/1,
+    click/2, send_keys/3, clear/2, submit/2,
+    element_text/2, tag_name/2, element_property/3, get_property/3, element_rect/2,
+    css_value/3, value_of_css_property/3, element_screenshot/2,
     is_displayed/2, is_enabled/2, is_selected/2,
-    get_attribute/3, dom_attribute/3, find_relative/3,
+    get_attribute/3, dom_attribute/3, find_relative/3, find_relative_count/3,
     execute/3,
     wait_for_element/4, wait_for_visible/4, wait_for_clickable/4,
-    wait_until/3, wait_for_title_contains/3, wait_for_url_contains/3,
+    wait_until/3, wait_until/4, wait_until_not/3, poll_every/3,
+    wait_for_title_contains/3, wait_for_url_contains/3,
+    wait_for_title_is/3, wait_for_url_is/3, wait_until_gone/4,
     wait_for_text_contains/4,
     select_by_value/3, select_by_visible_text/3, select_by_index/3,
+    all_selected_options/2, first_selected_option/2, deselect_all/2, is_multiple/2,
     action_click/2, action_double_click/2, action_context_click/2,
     action_move_to/2, action_drag_and_drop/3,
+    action_click_and_hold/2, action_release/1, action_key_down/2, action_key_up/2,
+    action_chord/3,
     execute_script/2, execute_script/3, execute_async_script/2, execute_async_script/3,
     window_handles/1, current_window_handle/1, switch_to_window/2,
+    new_window/1, new_window/2, close_window/1,
+    switch_to_frame/2, switch_to_parent_frame/1, switch_to_default_content/1,
     maximize_window/1, minimize_window/1, fullscreen_window/1,
     set_window_rect/2, get_window_rect/1,
-    accept_alert/1, dismiss_alert/1, alert_text/1, send_alert_text/2,
+    accept_alert/1, dismiss_alert/1, alert_text/1, alert_present/1, send_alert_text/2,
     set_page_load_timeout/2, set_script_timeout/2, implicitly_wait/2,
     add_cookie/2, cookies/1, cookie/2, delete_cookie/2, delete_all_cookies/1,
     perform_actions/2, clear_actions/1,
-    set_timeouts/2, screenshot/1,
+    set_timeouts/2, screenshot/1, print_pdf/1, print_pdf/2,
     session_id/1, quit/1,
     route/1, error_code/1, locator/2,
     bidi_available/1, bidi_subscribe/2, bidi_unsubscribe/2,
@@ -51,6 +61,9 @@
 ]).
 
 -define(W3C_KEY, <<"element-6066-11e4-a52e-4f735466cecf">>).
+%% W3C error codes used for control-flow (no such element / no such alert open).
+-define(ERR_NO_SUCH_ELEMENT, 17).
+-define(ERR_NO_SUCH_ALERT, 15).
 
 %% Per-session BiDi state lives in a named ETS table keyed by the session
 %% handle: {Handle, WsUrl, BidiHandle, NextId}. WsUrl is the negotiated
@@ -74,6 +87,12 @@ chrome(CommandExecutor, Options) when is_map(Options) ->
 chrome(CommandExecutor, Options, TlsOpts) when is_map(Options), is_map(TlsOpts) ->
     Caps = maps:merge(#{<<"browserName">> => <<"chrome">>}, Options),
     new(CommandExecutor, Caps, TlsOpts).
+
+%% Named-for-parity alias of chrome/3 (mirrors the reference's chrome_tls): open
+%% a Chrome session over a TLS Grid with explicit trust config —
+%% TlsOpts = #{ca_path => <<...>>} | #{insecure => true}.
+chrome_tls(CommandExecutor, Options, TlsOpts) when is_map(Options), is_map(TlsOpts) ->
+    chrome(CommandExecutor, Options, TlsOpts).
 
 headless_chrome(CommandExecutor) ->
     Opts0 = #{<<"args">> => [<<"--headless=new">>, <<"--no-sandbox">>,
@@ -238,11 +257,51 @@ send_keys(H, ElementId, Text) ->
     execute(H, <<"sendKeysToElement">>,
             #{<<"id">> => ElementId, <<"text">> => to_bin(Text),
               <<"value">> => [<<C/utf8>> || C <- unicode:characters_to_list(to_bin(Text))]}).
+%% Clear a text/input element (W3C clearElement).
+clear(H, ElementId) -> execute(H, <<"clearElement">>, #{<<"id">> => ElementId}).
 element_text(H, ElementId) -> execute(H, <<"getElementText">>, #{<<"id">> => ElementId}).
 tag_name(H, ElementId) -> execute(H, <<"getElementTagName">>, #{<<"id">> => ElementId}).
 element_property(H, ElementId, Name) ->
     execute(H, <<"getElementProperty">>, #{<<"id">> => ElementId, <<"name">> => to_bin(Name)}).
+%% Mainstream alias of element_property/3 (Selenium's get_property).
+get_property(H, ElementId, Name) -> element_property(H, ElementId, Name).
 element_rect(H, ElementId) -> execute(H, <<"getElementRect">>, #{<<"id">> => ElementId}).
+
+%% A CSS property's computed value on the element (W3C getElementValueOfCssProperty).
+css_value(H, ElementId, Prop) ->
+    execute(H, <<"getElementValueOfCssProperty">>,
+            #{<<"id">> => ElementId, <<"name">> => to_bin(Prop)}).
+%% Mainstream alias for css_value/3 (Selenium's value_of_css_property).
+value_of_css_property(H, ElementId, Prop) -> css_value(H, ElementId, Prop).
+
+%% A PNG screenshot of just this element (takeElementScreenshot), base64.
+element_screenshot(H, ElementId) ->
+    execute(H, <<"takeElementScreenshot">>, #{<<"id">> => ElementId}).
+
+%% Submit the form owning this element. Mirrors the reference: walk to the
+%% element's form and submit it as a real user gesture would (requestSubmit
+%% fires validation + the submit event; submit() is the legacy fallback).
+submit(H, ElementId) ->
+    Script = <<"var e=arguments[0];var f=e.form||e.closest('form');"
+               "if(!f){throw new Error('Element is not within a form');}"
+               "if(f.requestSubmit){f.requestSubmit();}else{f.submit();}">>,
+    execute_script(H, Script, [#{?W3C_KEY => ElementId}]).
+
+%% The element that currently has focus (W3C getActiveElement).
+active_element(H) ->
+    case execute(H, <<"getActiveElement">>, #{}) of
+        {ok, M} when is_map(M) -> {ok, maps:get(?W3C_KEY, M)};
+        Err -> Err
+    end.
+
+%% Whether an element matching the locator is present. {ok, true|false}; a real
+%% error (not "no such element") propagates. Accepts a {Strategy, Value} tuple.
+exists(H, By) ->
+    case find_element(H, By) of
+        {ok, _} -> {ok, true};
+        {error, {?ERR_NO_SUCH_ELEMENT, _}} -> {ok, false};
+        Err -> Err
+    end.
 
 %% ---- atom-backed commands (isDisplayed / getAttribute / relative locators) ----
 %%
@@ -302,6 +361,14 @@ find_relative(H, BaseCss, Filters) ->
         Err -> Err
     end.
 
+%% How many elements the relative locator matches (mirrors the reference's
+%% find_relative_count). {ok, non_neg_integer()} | {error, _}.
+find_relative_count(H, BaseCss, Filters) ->
+    case find_relative(H, BaseCss, Filters) of
+        {ok, Refs} -> {ok, length(Refs)};
+        Err -> Err
+    end.
+
 %% Drain last_value after an atom call, decoding + error-mapping like execute/3.
 %% Returns {ok, DecodedValue} | {error, {Code, Message}}.
 atom_result(H, Rc) ->
@@ -332,6 +399,38 @@ execute_async_script(H, Script, Args) ->
 window_handles(H) -> execute(H, <<"getWindowHandles">>, #{}).
 current_window_handle(H) -> execute(H, <<"getCurrentWindowHandle">>, #{}).
 switch_to_window(H, Handle) -> execute(H, <<"switchToWindow">>, #{<<"handle">> => to_bin(Handle)}).
+
+%% Open a new top-level window/tab (W3C newWindow). TypeHint is <<"tab">> or
+%% <<"window">>. Returns {ok, Handle} — the new context's handle (you still
+%% switch_to_window/2 to drive it).
+new_window(H) -> new_window(H, <<"tab">>).
+new_window(H, TypeHint) ->
+    case execute(H, <<"newWindow">>, #{<<"type">> => to_bin(TypeHint)}) of
+        {ok, M} when is_map(M) -> {ok, maps:get(<<"handle">>, M, <<>>)};
+        Err -> Err
+    end.
+
+%% Close the current window/tab (W3C close). Returns {ok, RemainingHandles};
+%% when it empties, the session is gone.
+close_window(H) -> execute(H, <<"close">>, #{}).
+
+%% ---- frames ----
+%%
+%% switch_to_frame/2 accepts: an index (non_neg_integer), an element id binary
+%% (an <iframe>/<frame> element reference), or the atom `default` / `null` for
+%% the top-level browsing context.
+switch_to_frame(H, default) -> switch_to_frame(H, null);
+switch_to_frame(H, null) -> execute(H, <<"switchToFrame">>, #{<<"id">> => null});
+switch_to_frame(H, Index) when is_integer(Index) ->
+    execute(H, <<"switchToFrame">>, #{<<"id">> => Index});
+switch_to_frame(H, ElementId) when is_binary(ElementId) ->
+    execute(H, <<"switchToFrame">>, #{<<"id">> => #{?W3C_KEY => ElementId}}).
+
+%% One level out from the current frame (W3C switchToFrameParent).
+switch_to_parent_frame(H) -> execute(H, <<"switchToFrameParent">>, #{}).
+
+%% Back to the top-level browsing context (switchToFrame with a null id).
+switch_to_default_content(H) -> switch_to_frame(H, null).
 maximize_window(H) -> execute(H, <<"maximizeWindow">>, #{}).
 minimize_window(H) -> execute(H, <<"minimizeWindow">>, #{}).
 fullscreen_window(H) -> execute(H, <<"fullscreenWindow">>, #{}).
@@ -343,6 +442,15 @@ accept_alert(H) -> execute(H, <<"acceptAlert">>, #{}).
 dismiss_alert(H) -> execute(H, <<"dismissAlert">>, #{}).
 alert_text(H) -> execute(H, <<"getAlertText">>, #{}).
 send_alert_text(H, Text) -> execute(H, <<"setAlertValue">>, #{<<"text">> => to_bin(Text)}).
+
+%% Whether a user-prompt / alert dialog is currently open. {ok, true|false};
+%% code 15 ("no such alert") maps to false, other errors propagate.
+alert_present(H) ->
+    case execute(H, <<"getAlertText">>, #{}) of
+        {ok, _} -> {ok, true};
+        {error, {?ERR_NO_SUCH_ALERT, _}} -> {ok, false};
+        Err -> Err
+    end.
 
 %% ---- cookies ----
 add_cookie(H, Cookie) -> execute(H, <<"addCookie">>, #{<<"cookie">> => Cookie}).
@@ -414,18 +522,39 @@ wait_element_loop(H, By, Value, Pred, Deadline) ->
 %% else {error, timeout}. The predicate closes over the session handle and
 %% re-reads whatever live state it needs each attempt.
 wait_until(H, TimeoutMs, PredFun) when is_function(PredFun, 1) ->
-    Deadline = deadline(TimeoutMs),
-    wait_until_loop(H, PredFun, Deadline).
+    wait_until(H, TimeoutMs, ?WAIT_POLL_MS, PredFun).
 
-wait_until_loop(H, PredFun, Deadline) ->
-    case PredFun(H) of
+%% Same as wait_until/3 but with an explicit poll interval in ms (mirrors the
+%% reference's poll_every on the wait builder). {ok, true} | {error, timeout}.
+wait_until(H, TimeoutMs, PollMs, PredFun) when is_function(PredFun, 1) ->
+    Deadline = deadline(TimeoutMs),
+    wait_until_loop(H, PredFun, Deadline, true, poll_ms(PollMs)).
+
+%% Alias making the poll-interval intent read like the reference: poll_every/3
+%% is wait_until/4 with the interval leading.
+poll_every(H, PollMs, {TimeoutMs, PredFun}) when is_function(PredFun, 1) ->
+    wait_until(H, TimeoutMs, PollMs, PredFun).
+
+%% A non-zero poll interval; 0 (or anything invalid) falls back to the default.
+poll_ms(Ms) when is_integer(Ms), Ms > 0 -> Ms;
+poll_ms(_) -> ?WAIT_POLL_MS.
+
+%% The inverse: poll until PredFun/1 is NOT true (mirrors the reference's
+%% until_not). {ok, true} | {error, timeout}.
+wait_until_not(H, TimeoutMs, PredFun) when is_function(PredFun, 1) ->
+    Deadline = deadline(TimeoutMs),
+    wait_until_loop(H, PredFun, Deadline, false, ?WAIT_POLL_MS).
+
+%% Poll PredFun(H) until it equals Want (true for until, false for until_not).
+wait_until_loop(H, PredFun, Deadline, Want, PollMs) ->
+    case PredFun(H) =:= Want of
         true -> {ok, true};
         _ ->
             case past_deadline(Deadline) of
                 true -> {error, timeout};
                 false ->
-                    timer:sleep(?WAIT_POLL_MS),
-                    wait_until_loop(H, PredFun, Deadline)
+                    timer:sleep(PollMs),
+                    wait_until_loop(H, PredFun, Deadline, Want, PollMs)
             end
     end.
 
@@ -439,6 +568,27 @@ wait_for_url_contains(H, Substr, TimeoutMs) ->
     Want = to_bin(Substr),
     wait_until(H, TimeoutMs, fun(Hd) -> value_contains(current_url(Hd), Want) end).
 
+%% Wait until the page title / current URL EQUALS Want. (classic titleIs / urlIs)
+wait_for_title_is(H, Title, TimeoutMs) ->
+    Want = to_bin(Title),
+    wait_until(H, TimeoutMs, fun(Hd) -> value_equals(title(Hd), Want) end).
+
+wait_for_url_is(H, Url, TimeoutMs) ->
+    Want = to_bin(Url),
+    wait_until(H, TimeoutMs, fun(Hd) -> value_equals(current_url(Hd), Want) end).
+
+%% Wait until no element matches the locator (classic invisibility/staleness by
+%% absence; mirrors the reference's wait_until_gone). {ok, true} | {error,
+%% timeout}. Same (By, Value) arg shape as the wait_for_* family.
+wait_until_gone(H, By, Value, TimeoutMs) ->
+    wait_until_not(H, TimeoutMs,
+                   fun(Hd) ->
+                       case find_element(Hd, By, Value) of
+                           {ok, _} -> true;
+                           _ -> false
+                       end
+                   end).
+
 %% Wait until an element's text contains Substr. {ok, true} | {error, timeout}.
 %% (classic textToBePresentInElement)
 wait_for_text_contains(H, ElementId, Substr, TimeoutMs) ->
@@ -449,6 +599,9 @@ wait_for_text_contains(H, ElementId, Substr, TimeoutMs) ->
 value_contains({ok, V}, Want) when is_binary(V) ->
     binary:match(V, Want) =/= nomatch;
 value_contains(_, _) -> false.
+
+value_equals({ok, V}, Want) when is_binary(V) -> V =:= Want;
+value_equals(_, _) -> false.
 
 %% A monotonic deadline in native time units; past_deadline/1 checks it. Using
 %% erlang:monotonic_time keeps the wait immune to wall-clock changes.
@@ -534,6 +687,53 @@ click_option(H, Opt) ->
             end
     end.
 
+%% All currently-selected <option> ids of a <select>, in document order.
+%% {ok, [ElementId]} | {error, _}. (Selenium Select.all_selected_options)
+all_selected_options(H, SelectId) ->
+    case options_of(H, SelectId) of
+        {ok, Opts} -> {ok, [O || O <- Opts, is_selected(H, O) =:= true]};
+        Err -> Err
+    end.
+
+%% The first selected <option> id. {ok, ElementId} | {error, no_such_option} |
+%% {error, _}. (Select.first_selected_option)
+first_selected_option(H, SelectId) ->
+    case all_selected_options(H, SelectId) of
+        {ok, [First | _]} -> {ok, First};
+        {ok, []} -> {error, no_such_option};
+        Err -> Err
+    end.
+
+%% Whether the <select> allows multiple selection (the `multiple` attribute).
+%% {ok, true|false} | {error, _}. (Select.is_multiple)
+is_multiple(H, SelectId) ->
+    case get_attribute(H, SelectId, <<"multiple">>) of
+        undefined -> {ok, false};
+        false -> {ok, false};
+        {error, _} = Err -> Err;
+        _ -> {ok, true}
+    end.
+
+%% Deselect every selected option — only valid on a multi-select (mirrors the
+%% reference, which errors on a single-select). {ok, true} | {error, _}.
+deselect_all(H, SelectId) ->
+    case is_multiple(H, SelectId) of
+        {ok, true} ->
+            case all_selected_options(H, SelectId) of
+                {ok, Sel} -> deselect_each(H, Sel);
+                Err -> Err
+            end;
+        {ok, false} -> {error, not_a_multi_select};
+        Err -> Err
+    end.
+
+deselect_each(_H, []) -> {ok, true};
+deselect_each(H, [Opt | Rest]) ->
+    case click(H, Opt) of
+        {ok, _} -> deselect_each(H, Rest);
+        Err -> Err
+    end.
+
 %% ---- Actions gestures (high-level convenience over perform_actions) ----
 %%
 %% Compose + send the W3C actions payload for the everyday mouse gestures, built
@@ -563,6 +763,46 @@ action_drag_and_drop(H, SourceId, TargetId) ->
     perform_actions(H, [ptr_seq([ptr_move_origin(SourceId), ptr_down(0),
                                  ptr_move_origin(TargetId), ptr_up(0)])]).
 
+%% Press and HOLD the left button at the element centre (no release) — pair with
+%% action_release/1. (clickAndHold)
+action_click_and_hold(H, ElementId) ->
+    perform_actions(H, [ptr_seq([ptr_move_origin(ElementId), ptr_down(0)])]).
+
+%% Release a held left button at the current pointer position. (release)
+action_release(H) ->
+    perform_actions(H, [ptr_seq([ptr_up(0)])]).
+
+%% Press a key down / release it on the keyboard device, without releasing/
+%% pressing its counterpart — the primitive for modifier-held gestures. Key is a
+%% single-char binary/string or a keys:*() code point.
+action_key_down(H, Key) ->
+    perform_actions(H, [key_seq([key_ev(<<"keyDown">>, Key)])]).
+
+action_key_up(H, Key) ->
+    perform_actions(H, [key_seq([key_ev(<<"keyUp">>, Key)])]).
+
+%% A "chord": hold every key in Keys down (in order), fire the click at
+%% ElementId, then release the keys in reverse — e.g. Ctrl+click, Shift+click.
+%% Mirrors mainstream ActionChains key-chord + a click. Keys is a list of
+%% single-key binaries (text or keys:*() modifiers).
+action_chord(H, Keys, ElementId) ->
+    Downs = [key_ev(<<"keyDown">>, K) || K <- Keys],
+    Ups = [key_ev(<<"keyUp">>, K) || K <- lists:reverse(Keys)],
+    perform_actions(H, [
+        key_seq(Downs),
+        ptr_seq([ptr_move_origin(ElementId), ptr_down(0), ptr_up(0)]),
+        key_seq(Ups)
+    ]).
+
+%% One-device "keyboard" action sequence wrapping the given key action objects.
+key_seq(Actions) ->
+    #{<<"type">> => <<"key">>, <<"id">> => <<"keyboard">>,
+      <<"actions">> => Actions}.
+
+%% A single key action object (keyDown / keyUp) for one key value.
+key_ev(Type, Key) ->
+    #{<<"type">> => Type, <<"value">> => to_bin(Key)}.
+
 %% One-device "mouse" pointer action sequence wrapping the given action objects.
 ptr_seq(Actions) ->
     #{<<"type">> => <<"pointer">>, <<"id">> => <<"mouse">>,
@@ -584,6 +824,11 @@ set_page_load_timeout(H, Ms) -> execute(H, <<"setTimeout">>, #{<<"pageLoad">> =>
 set_script_timeout(H, Ms) -> execute(H, <<"setTimeout">>, #{<<"script">> => Ms}).
 implicitly_wait(H, Ms) -> execute(H, <<"setTimeout">>, #{<<"implicit">> => Ms}).
 screenshot(H) -> execute(H, <<"screenshot">>, #{}).
+
+%% Print the current page to PDF (W3C printPage), base64. print_pdf/2 takes an
+%% options map (page size, margins, orientation, ...) forwarded as the params.
+print_pdf(H) -> print_pdf(H, #{}).
+print_pdf(H, Options) when is_map(Options) -> execute(H, <<"printPage">>, Options).
 
 %% ---- lifecycle ----
 session_id(H) -> selenium_nif:session_id(H).

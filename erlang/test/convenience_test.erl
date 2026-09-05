@@ -65,14 +65,21 @@ fake_nif_src() ->
     "    ets:insert(fake_nif, {calls, Old ++ [{Name, Params}]}),\n"
     "    Q = case ets:lookup(fake_nif, {resp, Name}) of [{_,QL}]->QL; _->[] end,\n"
     "    case Q of\n"
+    "        [{err, Code, Msg} | Tail] ->\n"
+    "            ets:insert(fake_nif, {{resp, Name}, Tail}),\n"
+    "            ets:insert(fake_nif, {value, <<>>}),\n"
+    "            ets:insert(fake_nif, {ecode, Code}),\n"
+    "            ets:insert(fake_nif, {emsg, Msg}), Code;\n"
     "        [Head | Tail] ->\n"
     "            ets:insert(fake_nif, {{resp, Name}, Tail}),\n"
-    "            ets:insert(fake_nif, {value, Head}), 0;\n"
-    "        [] -> ets:insert(fake_nif, {value, <<>>}), 0\n"
+    "            ets:insert(fake_nif, {value, Head}),\n"
+    "            ets:insert(fake_nif, {ecode, 0}), 0;\n"
+    "        [] -> ets:insert(fake_nif, {value, <<>>}),\n"
+    "            ets:insert(fake_nif, {ecode, 0}), 0\n"
     "    end.\n"
     "last_value(_H) -> case ets:lookup(fake_nif, value) of [{value,V}]->V; _-><<>> end.\n"
-    "last_error_code(_H) -> 0.\n"
-    "last_error(_H) -> <<>>.\n"
+    "last_error_code(_H) -> case ets:lookup(fake_nif, ecode) of [{ecode,C}]->C; _->0 end.\n"
+    "last_error(_H) -> case ets:lookup(fake_nif, emsg) of [{emsg,M}]->M; _-><<>> end.\n"
     "by_locator(Strategy, Value) ->\n"
     "    iolist_to_binary([<<\"{\\\"using\\\":\\\"\">>, Strategy,\n"
     "        <<\"\\\",\\\"value\\\":\\\"\">>, Value, <<\"\\\"}\">>]).\n".
@@ -97,6 +104,12 @@ cleanup(_) ->
 script(Name, JsonBin) ->
     Q = case ets:lookup(fake_nif, {resp, Name}) of [{_,L}]->L; _->[] end,
     ets:insert(fake_nif, {{resp, Name}, Q ++ [JsonBin]}).
+
+%% Queue an ERROR response (W3C code + message) for the next execute/3 with this
+%% command name — drives the {error, {Code, Msg}} path in selenium:execute/3.
+script_err(Name, Code, Msg) ->
+    Q = case ets:lookup(fake_nif, {resp, Name}) of [{_,L}]->L; _->[] end,
+    ets:insert(fake_nif, {{resp, Name}, Q ++ [{err, Code, Msg}]}).
 
 %% All recorded {Name, ParamsBin} execute/3 calls, in order.
 calls() ->
@@ -328,6 +341,148 @@ element_predicate_test_() ->
             %% They hit the dedicated W3C endpoints (not a generic execute name).
             ?assert(lists:any(fun({N,_}) -> N =:= <<"isElementEnabled">> end, calls())),
             ?assert(lists:any(fun({N,_}) -> N =:= <<"isElementSelected">> end, calls()))
+        end
+    end}.
+
+%% ---- full-feature-bar additions -----------------------------------------
+
+%% Frame switching: index, element ref, and default/parent.
+frame_switch_test_() ->
+    {setup, fun setup/0, fun cleanup/1, fun(_) ->
+        fun() ->
+            script(<<"switchToFrame">>, <<>>),
+            {ok, _} = selenium:switch_to_frame(0, 2),
+            ?assert(binary:match(last_params(<<"switchToFrame">>), <<"\"id\":2">>) =/= nomatch),
+            script(<<"switchToFrame">>, <<>>),
+            {ok, _} = selenium:switch_to_frame(0, <<"frame-el">>),
+            P = last_params(<<"switchToFrame">>),
+            ?assert(binary:match(P, <<"frame-el">>) =/= nomatch),
+            ?assert(binary:match(P, <<"element-6066-11e4-a52e-4f735466cecf">>) =/= nomatch),
+            script(<<"switchToFrame">>, <<>>),
+            {ok, _} = selenium:switch_to_default_content(0),
+            ?assert(binary:match(last_params(<<"switchToFrame">>), <<"\"id\":null">>) =/= nomatch),
+            script(<<"switchToFrameParent">>, <<>>),
+            {ok, _} = selenium:switch_to_parent_frame(0),
+            ?assert(lists:any(fun({N,_}) -> N =:= <<"switchToFrameParent">> end, calls()))
+        end
+    end}.
+
+%% new_window returns the handle from the {handle: ...} reply; close_window
+%% issues `close`.
+window_lifecycle_test_() ->
+    {setup, fun setup/0, fun cleanup/1, fun(_) ->
+        fun() ->
+            script(<<"newWindow">>, <<"{\"handle\":\"win-2\",\"type\":\"tab\"}">>),
+            ?assertEqual({ok, <<"win-2">>}, selenium:new_window(0, <<"tab">>)),
+            ?assert(binary:match(last_params(<<"newWindow">>), <<"\"type\":\"tab\"">>) =/= nomatch),
+            script(<<"close">>, <<"[\"win-1\"]">>),
+            {ok, _} = selenium:close_window(0),
+            ?assert(lists:any(fun({N,_}) -> N =:= <<"close">> end, calls()))
+        end
+    end}.
+
+%% css_value / active_element / clear / print_pdf hit their W3C endpoints.
+misc_driver_test_() ->
+    {setup, fun setup/0, fun cleanup/1, fun(_) ->
+        fun() ->
+            script(<<"getElementValueOfCssProperty">>, <<"\"rgb(1, 2, 3)\"">>),
+            script(<<"getElementValueOfCssProperty">>, <<"\"rgb(1, 2, 3)\"">>),
+            ?assertEqual({ok, <<"rgb(1, 2, 3)">>}, selenium:css_value(0, <<"e">>, <<"color">>)),
+            ?assertEqual({ok, <<"rgb(1, 2, 3)">>}, selenium:value_of_css_property(0, <<"e">>, <<"color">>)),
+            script(<<"getActiveElement">>, <<"{\"element-6066-11e4-a52e-4f735466cecf\":\"focused\"}">>),
+            ?assertEqual({ok, <<"focused">>}, selenium:active_element(0)),
+            script(<<"clearElement">>, <<>>),
+            {ok, _} = selenium:clear(0, <<"input-1">>),
+            ?assert(binary:match(last_params(<<"clearElement">>), <<"input-1">>) =/= nomatch),
+            script(<<"printPage">>, <<"\"JVBER...\"">>),
+            ?assertEqual({ok, <<"JVBER...">>}, selenium:print_pdf(0))
+        end
+    end}.
+
+%% exists -> true/false; alert_present maps code 15 to false.
+presence_test_() ->
+    {setup, fun setup/0, fun cleanup/1, fun(_) ->
+        fun() ->
+            script(<<"findElement">>, <<"{\"element-6066-11e4-a52e-4f735466cecf\":\"e1\"}">>),
+            ?assertEqual({ok, true}, selenium:exists(0, {css, <<"#a">>})),
+            script_err(<<"findElement">>, 17, <<"no such element">>),
+            ?assertEqual({ok, false}, selenium:exists(0, {css, <<"#missing">>})),
+            script(<<"getAlertText">>, <<"\"hi\"">>),
+            ?assertEqual({ok, true}, selenium:alert_present(0)),
+            script_err(<<"getAlertText">>, 15, <<"no such alert">>),
+            ?assertEqual({ok, false}, selenium:alert_present(0))
+        end
+    end}.
+
+%% Select query helpers: all_selected / first_selected / is_multiple / deselect.
+select_query_test_() ->
+    {setup, fun setup/0, fun cleanup/1, fun(_) ->
+        fun() ->
+            %% all_selected_options: 3 options, middle one selected.
+            script(<<"findChildElements">>, options_json([<<"o1">>, <<"o2">>, <<"o3">>])),
+            script(<<"isElementSelected">>, <<"false">>),
+            script(<<"isElementSelected">>, <<"true">>),
+            script(<<"isElementSelected">>, <<"false">>),
+            ?assertEqual({ok, [<<"o2">>]}, selenium:all_selected_options(0, <<"sel">>)),
+            %% first_selected_option: same scripted shape.
+            script(<<"findChildElements">>, options_json([<<"o1">>, <<"o2">>, <<"o3">>])),
+            script(<<"isElementSelected">>, <<"false">>),
+            script(<<"isElementSelected">>, <<"true">>),
+            script(<<"isElementSelected">>, <<"false">>),
+            ?assertEqual({ok, <<"o2">>}, selenium:first_selected_option(0, <<"sel">>)),
+            %% is_multiple reads the `multiple` attribute (getAttribute atom).
+            script(<<"getAttribute">>, <<"\"true\"">>),
+            ?assertEqual({ok, true}, selenium:is_multiple(0, <<"sel">>))
+        end
+    end}.
+
+%% Keyboard chord: Ctrl held around a click, released after.
+action_chord_test_() ->
+    {setup, fun setup/0, fun cleanup/1, fun(_) ->
+        fun() ->
+            script(<<"actions">>, <<>>),
+            {ok, _} = selenium:action_chord(0, [keys:control()], <<"cell">>),
+            P = last_params(<<"actions">>),
+            %% A keyboard device is present, with a keyDown and a keyUp.
+            ?assert(binary:match(P, <<"\"type\":\"key\"">>) =/= nomatch),
+            ?assert(binary:match(P, <<"\"id\":\"keyboard\"">>) =/= nomatch),
+            ?assert(binary:match(P, <<"\"type\":\"keyDown\"">>) =/= nomatch),
+            ?assert(binary:match(P, <<"\"type\":\"keyUp\"">>) =/= nomatch),
+            %% and a click in the middle.
+            ?assert(binary:match(P, <<"\"type\":\"pointerDown\"">>) =/= nomatch),
+            ?assert(binary:match(P, <<"cell">>) =/= nomatch)
+        end
+    end}.
+
+%% click_and_hold presses without releasing; release lifts button 0.
+action_hold_release_test_() ->
+    {setup, fun setup/0, fun cleanup/1, fun(_) ->
+        fun() ->
+            script(<<"actions">>, <<>>),
+            {ok, _} = selenium:action_click_and_hold(0, <<"knob">>),
+            P1 = last_params(<<"actions">>),
+            ?assertEqual(1, count(P1, <<"\"type\":\"pointerDown\"">>)),
+            ?assertEqual(0, count(P1, <<"\"type\":\"pointerUp\"">>)),
+            script(<<"actions">>, <<>>),
+            {ok, _} = selenium:action_release(0),
+            P2 = last_params(<<"actions">>),
+            ?assertEqual(1, count(P2, <<"\"type\":\"pointerUp\"">>))
+        end
+    end}.
+
+%% wait_until_not returns once the predicate flips false; wait_for_title_is
+%% matches on equality (not substring).
+wait_variants_test_() ->
+    {setup, fun setup/0, fun cleanup/1, fun(_) ->
+        fun() ->
+            %% title equality: first "Loading", then "Ready".
+            script(<<"getTitle">>, <<"\"Loading\"">>),
+            script(<<"getTitle">>, <<"\"Ready\"">>),
+            ?assertEqual({ok, true}, selenium:wait_for_title_is(0, <<"Ready">>, 2000)),
+            %% until_not: element present then gone.
+            script(<<"findElement">>, <<"{\"element-6066-11e4-a52e-4f735466cecf\":\"e\"}">>),
+            script_err(<<"findElement">>, 17, <<"no such element">>),
+            ?assertEqual({ok, true}, selenium:wait_until_gone(0, css, <<"#x">>, 2000))
         end
     end}.
 
