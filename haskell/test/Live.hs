@@ -39,7 +39,9 @@ main = do
   check (locStrategy (byPartialLinkText "L") == "partial link text") "byPartialLinkText"
   check (locStrategy (byXpath "//a") == "xpath") "byXpath -> xpath"
   -- Keys.chord: modifier + text + trailing NULL (U+E000) that releases modifiers.
-  check (keysChord "\xE009" "a" == "\xE009a\xE000") "keysChord ctrl+a shape"
+  -- NB: "\xE009a" would lex as one char U+E009A (Haskell hex escapes are greedy);
+  -- "\&" is the empty-string separator that ends the escape so 'a' stays literal.
+  check (keysChord "\xE009" "a" == "\xE009\&a\xE000") "keysChord ctrl+a shape"
   transport <- try (chrome "http://127.0.0.1:1" "{\"browserName\":\"chrome\"}")
   case transport of
     Left (WebDriverError code _) -> check (code == -1) "transport failure -> code -1"
