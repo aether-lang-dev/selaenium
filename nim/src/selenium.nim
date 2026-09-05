@@ -345,6 +345,33 @@ proc findRelative*(d: WebDriver, baseCss: string,
     for r in refs:
       result.add d.elementFrom(r)
 
+proc findRelativeCount*(d: WebDriver, baseCss: string,
+                        filters: varargs[JsonNode]): int =
+  ## The NUMBER of elements a relative-locator query matches, without
+  ## materializing WebElement handles — the count-only counterpart to
+  ## `findRelative`. Filters have the same shape.
+  var arr = newJArray()
+  for f in filters: arr.add f
+  let rc = selFindRelative(d.handle, baseCss.cstring, ($arr).cstring)
+  let refs = d.atomResult(rc)
+  if refs.kind == JArray: refs.len else: 0
+
+proc exists*(d: WebDriver, by: By): bool =
+  ## True if at least one element matching `by` is present RIGHT NOW — an
+  ## immediate presence check with no implicit wait. A clean not-found resolves
+  ## to false; a transport failure still raises.
+  try:
+    discard d.findElement(by)
+    true
+  except WebDriverError as e:
+    if e.kind == ekNoSuchElement: false
+    else: raise
+
+proc activeElement*(d: WebDriver): WebElement =
+  ## The active (focused) element (getActiveElement) — the element that would
+  ## receive keyboard input, e.g. after `sendKeys` or a programmatic focus.
+  d.elementFrom(d.execute("getActiveElement", newJObject()))
+
 proc elExec(e: WebElement, command: string, params: JsonNode): JsonNode =
   var p = params
   p["id"] = %e.id
@@ -388,6 +415,21 @@ proc getDomAttribute*(e: WebElement, name: string): string =
   ## The literal DOM attribute (W3C getDomAttribute), no property fallback.
   e.elExec("getDomAttribute", %*{"name": name}).getStr
 
+proc cssValue*(e: WebElement, prop: string): string =
+  ## The computed value of the CSS property `prop` on this element
+  ## (getElementValueOfCssProperty) — e.g. "display", "color", "font-size".
+  ## Aliased as `valueOfCssProperty` for the classic Selenium name.
+  e.elExec("getElementValueOfCssProperty", %*{"name": prop}).getStr
+
+proc valueOfCssProperty*(e: WebElement, prop: string): string =
+  ## Classic-Selenium-named alias of `cssValue`.
+  e.cssValue(prop)
+
+proc screenshotBase64*(e: WebElement): string =
+  ## A PNG screenshot of just this element (takeElementScreenshot), base64 —
+  ## the element-scoped counterpart to the driver's `screenshotBase64`.
+  e.elExec("takeElementScreenshot", newJObject()).getStr
+
 proc findElement*(e: WebElement, by: By): WebElement =
   ## Find a single descendant of this element (W3C findChildElement). The search
   ## is scoped to `e`'s subtree, not the whole document.
@@ -412,6 +454,17 @@ proc executeAsyncScript*(d: WebDriver, script: string, args: JsonNode = newJArra
   ## (`arguments[arguments.length - 1]`). Returns the callback value.
   d.execute("executeAsyncScript", %*{"script": script, "args": args})
 
+proc submit*(e: WebElement) =
+  ## Submit the form this element belongs to. W3C WebDriver removed the dedicated
+  ## `submit` endpoint, so — like the reference binding and modern Selenium —
+  ## this walks up to the enclosing <form> and calls requestSubmit() (falling
+  ## back to submit()) via an injected script. Raises if the element is not
+  ## inside a form.
+  const script = "var e=arguments[0];var f=e.form||e.closest('form');" &
+    "if(!f){throw new Error('Element is not within a form');}" &
+    "if(f.requestSubmit){f.requestSubmit();}else{f.submit();}"
+  discard e.driver.executeScript(script, %*[{w3cElementKey: e.id}])
+
 # ---- windows ----
 proc windowHandles*(d: WebDriver): seq[string] =
   for h in d.execute("getWindowHandles", newJObject()): result.add h.getStr
@@ -420,6 +473,20 @@ proc currentWindowHandle*(d: WebDriver): string =
 proc switchToWindow*(d: WebDriver, handle: string) =
   ## Switch the session's top-level browsing context to the window `handle`.
   discard d.execute("switchToWindow", %*{"handle": handle})
+proc newWindow*(d: WebDriver, typeHint = "tab"): string =
+  ## Open a new top-level browsing context (newWindow). `typeHint` is "tab" or
+  ## "window" (a hint the browser may honor or ignore). Returns the new window's
+  ## handle — pass it to `switchToWindow` to focus it. "" only if the remote end
+  ## sent no handle.
+  let v = d.execute("newWindow", %*{"type": typeHint})
+  if v.kind == JObject and v.hasKey("handle"): v["handle"].getStr else: ""
+proc closeWindow*(d: WebDriver): seq[string] =
+  ## Close the current window/tab (close). Returns the window handles that
+  ## remain; when it empties, the session is gone — switch to a surviving handle
+  ## before issuing further commands. Does NOT end the session (use `quit`).
+  let v = d.execute("close", newJObject())
+  if v.kind == JArray:
+    for h in v: result.add h.getStr
 proc setWindowRect*(d: WebDriver, rect: JsonNode): JsonNode = d.execute("setWindowRect", rect)
 proc getWindowRect*(d: WebDriver): JsonNode = d.execute("getWindowRect", newJObject())
 proc maximizeWindow*(d: WebDriver): JsonNode =
@@ -431,6 +498,45 @@ proc minimizeWindow*(d: WebDriver): JsonNode =
 proc fullscreenWindow*(d: WebDriver): JsonNode =
   ## Put the current window into fullscreen. Returns the resulting window rect.
   d.execute("fullscreenWindow", newJObject())
+
+# ---- frames ----
+type
+  FrameKind* = enum
+    ## How a frame is addressed: by index, by <iframe>/<frame> element, or the
+    ## top-level (default) content.
+    fkIndex, fkElement, fkDefault
+  Frame* = object
+    ## The frame to switch focus to. Build with `frameIndex`, `frame(element)`,
+    ## or `defaultFrame`.
+    case kind*: FrameKind
+    of fkIndex: index*: int
+    of fkElement: elementId*: string
+    of fkDefault: discard
+
+proc frameIndex*(index: int): Frame = Frame(kind: fkIndex, index: index)
+proc frame*(element: WebElement): Frame = Frame(kind: fkElement, elementId: element.id)
+proc defaultFrame*(): Frame = Frame(kind: fkDefault)
+
+proc idJson(f: Frame): JsonNode =
+  case f.kind
+  of fkIndex: %f.index
+  of fkElement: %*{w3cElementKey: f.elementId}
+  of fkDefault: newJNull()
+
+proc switchToFrame*(d: WebDriver, frame: Frame) =
+  ## Switch the session's focus to a frame (switchToFrame): by `frameIndex(i)`,
+  ## by `frame(element)`, or `defaultFrame()` for the top-level context. All
+  ## subsequent element commands run inside the chosen frame until the next
+  ## frame switch.
+  discard d.execute("switchToFrame", %*{"id": frame.idJson})
+proc switchToParentFrame*(d: WebDriver) =
+  ## Switch to the parent of the current frame (switchToFrameParent) — one level
+  ## out, unlike `switchToDefaultContent` which jumps to the top.
+  discard d.execute("switchToFrameParent", newJObject())
+proc switchToDefaultContent*(d: WebDriver) =
+  ## Return focus to the top-level browsing context (switchToFrame with a null
+  ## id) — equivalent to `switchToFrame(defaultFrame())`.
+  d.switchToFrame(defaultFrame())
 
 # ---- alerts ----
 proc acceptAlert*(d: WebDriver) =
@@ -445,6 +551,16 @@ proc alertText*(d: WebDriver): string =
 proc sendAlertText*(d: WebDriver, text: string) =
   ## Type `text` into the current prompt dialog's input field.
   discard d.execute("setAlertValue", %*{"text": text})
+proc alertPresent*(d: WebDriver): bool =
+  ## True if a user-prompt / alert dialog is currently present (probing it via
+  ## getAlertText). A clean "no such alert" (code 15) resolves to false; other
+  ## errors propagate.
+  try:
+    discard d.execute("getAlertText", newJObject())
+    true
+  except WebDriverError as e:
+    if e.code == 15: false
+    else: raise
 
 # ---- cookies ----
 proc addCookie*(d: WebDriver, cookie: JsonNode) = discard d.execute("addCookie", %*{"cookie": cookie})
@@ -469,6 +585,11 @@ proc implicitlyWait*(d: WebDriver, ms: int) =
   ## Set the implicit wait (ms): how long `findElement` retries before failing.
   discard d.execute("setTimeout", %*{"implicit": ms})
 proc screenshotBase64*(d: WebDriver): string = d.execute("screenshot", newJObject()).getStr
+proc printPdf*(d: WebDriver, options: JsonNode = newJObject()): string =
+  ## Print the current page to PDF (printPage), returned as a base64 string.
+  ## `options` is the W3C print params (page size, margins, orientation, scale,
+  ## pageRanges, ...); pass an empty object for defaults.
+  d.execute("printPage", options).getStr
 
 # ---- WebDriver-BiDi ----
 
@@ -857,6 +978,13 @@ const Keys* = KeysTable(
 # backSpace/backspace to a single identifier): expose it as its own const.
 const BackSpace* = Keys.backspace
 
+proc chord*(modifier, text: string): string =
+  ## A modifier chord: `modifier` held while `text` is typed, then a trailing
+  ## NULL releases all held modifiers — e.g. `chord(Keys.control, "a")` for
+  ## select-all. The classic `Keys.chord` helper, rendered as a single string
+  ## you pass to `sendKeys`.
+  modifier & text & Keys.null
+
 # ---- explicit waits (WebDriverWait + the common ExpectedConditions) ---------
 #
 # Each wait polls every WAIT_POLL_MS until the condition holds or timeoutMs
@@ -871,12 +999,14 @@ proc raiseTimeout(msg: string) {.noreturn.} =
   raise classify(21, msg)
 
 proc waitUntil*(d: WebDriver, timeoutMs: int,
-                pred: proc (d: WebDriver): bool): bool {.discardable.} =
-  ## Poll `pred(d)` every WAIT_POLL_MS until it returns true; return true. Raises
-  ## a timeout WebDriverError if the budget elapses first. The general escape
-  ## hatch behind every wait* — the predicate re-reads the live DOM each attempt,
-  ## which is what an app that re-renders from a server push needs (click returns
-  ## before the page settles, so poll the state, don't sleep()).
+                pred: proc (d: WebDriver): bool,
+                pollMs = WaitPollMs): bool {.discardable.} =
+  ## Poll `pred(d)` every `pollMs` (default WAIT_POLL_MS) until it returns true;
+  ## return true. Raises a timeout WebDriverError if the budget elapses first.
+  ## The general escape hatch behind every wait* — the predicate re-reads the
+  ## live DOM each attempt, which is what an app that re-renders from a server
+  ## push needs (click returns before the page settles, so poll the state, don't
+  ## sleep()).
   ##
   ##   d.waitUntil(4000, proc (d: WebDriver): bool =
   ##     d.findElement(By.id("status")).text == "Approved")
@@ -884,9 +1014,17 @@ proc waitUntil*(d: WebDriver, timeoutMs: int,
   while true:
     if pred(d): return true
     if waited >= timeoutMs: break
-    sleep(WaitPollMs)
-    waited += WaitPollMs
+    sleep(pollMs)
+    waited += pollMs
   raiseTimeout("timed out after " & $timeoutMs & "ms waiting for condition")
+
+proc waitUntilNot*(d: WebDriver, timeoutMs: int,
+                   pred: proc (d: WebDriver): bool,
+                   pollMs = WaitPollMs): bool {.discardable.} =
+  ## The negation of `waitUntil`: poll `pred(d)` every `pollMs` until it returns
+  ## false; return true. Raises a timeout WebDriverError if it stays true past
+  ## the budget. (mainstream Wait.until_not)
+  d.waitUntil(timeoutMs, proc (d: WebDriver): bool = not pred(d), pollMs)
 
 proc tryFind(d: WebDriver, by: By): WebElement =
   ## findElement that yields a default (empty-id) WebElement instead of raising
@@ -1078,6 +1216,14 @@ proc selectByVisibleText*(s: Select, text: string) =
 proc selectByIndex*(s: Select, index: int) =
   ## Select the option at `index` (0-based). Raises if out of range.
   s.selectMatching(sbIndex, $index)
+
+proc deselectAll*(s: Select) =
+  ## Deselect every selected option (multi-select only). Raises on a
+  ## single-select, mirroring mainstream's NotImplementedError.
+  if not s.isMultiple:
+    raise classify(0, "deselectAll only makes sense on a multi-select")
+  for o in s.options:
+    if o.isSelected: o.click()
 
 # ---- Actions (fluent W3C input builder) -------------------------------------
 #

@@ -155,3 +155,58 @@ suite "element predicates exist":
     check compiles(isEnabled(WebElement()))
     check compiles(isSelected(WebElement()))
     check compiles(isDisplayed(WebElement()))
+
+# ---- full-feature-bar additions (pure / surface, no browser) ----------------
+
+suite "keys chord":
+  test "chord holds the modifier then releases with NULL":
+    let s = chord(Keys.control, "a")
+    check s == Keys.control & "a" & Keys.null
+    # first rune is the modifier, last rune is NULL (release-all)
+    check s.runeAt(0).int == 0xE009        # CONTROL
+    check s.toRunes[^1].int == 0xE000      # NULL
+
+suite "frames":
+  test "frame builders carry the right kind":
+    check frameIndex(2).kind == fkIndex
+    check frameIndex(2).index == 2
+    check frame(WebElement(id: "FID")).kind == fkElement
+    check frame(WebElement(id: "FID")).elementId == "FID"
+    check defaultFrame().kind == fkDefault
+
+  test "frame switching procs are declared on WebDriver":
+    check compiles(switchToFrame(WebDriver(), frameIndex(0)))
+    check compiles(switchToParentFrame(WebDriver()))
+    check compiles(switchToDefaultContent(WebDriver()))
+
+suite "surface completeness":
+  test "driver-level additions are declared":
+    check compiles(activeElement(WebDriver()))
+    check compiles(exists(WebDriver(), By.id("x")))
+    check compiles(alertPresent(WebDriver()))
+    check compiles(newWindow(WebDriver()))
+    check compiles(closeWindow(WebDriver()))
+    check compiles(printPdf(WebDriver()))
+    check compiles(findRelativeCount(WebDriver(), "div"))
+
+  test "element-level additions are declared":
+    check compiles(cssValue(WebElement(), "display"))
+    check compiles(valueOfCssProperty(WebElement(), "display"))
+    check compiles(screenshotBase64(WebElement()))
+    check compiles(submit(WebElement()))
+
+  test "waitUntilNot and pollMs override are declared":
+    check compiles(waitUntilNot(WebDriver(), 0, proc (d: WebDriver): bool = false))
+    check compiles(waitUntil(WebDriver(), 0, proc (d: WebDriver): bool = true, pollMs = 10))
+
+  test "waitUntilNot returns true once the predicate goes false":
+    let d = WebDriver()
+    var calls = 0
+    check d.waitUntilNot(1000, proc (d: WebDriver): bool =
+      inc calls
+      calls < 2)          # true first, false on the 2nd poll
+    check calls == 2
+
+suite "select deselectAll":
+  test "deselectAll is declared on Select":
+    check compiles(deselectAll(Select()))
