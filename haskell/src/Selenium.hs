@@ -981,11 +981,15 @@ jsonBool s = case dropWhile (== ' ') s of
 -- | Pull the element-reference id out of a findElement value JSON string, which
 -- looks like @{"element-6066-...":"<id>"}@. Textual extraction keeps this
 -- dependency-free for the common case.
+-- NB: 'afterInfix' already returns the suffix starting just AFTER the needle, so
+-- we must NOT drop (length needle) again — doing so truncated long ids (Chrome
+-- 138 element ids are ~70 chars, so the double-drop landed mid-id and chromedriver
+-- rejected the malformed reference).
 extractElementId :: String -> Maybe String
 extractElementId v =
   let needle = "\"" ++ w3cElementKey ++ "\":\""
    in if needle `isInfixOf` v
-        then Just (takeWhile (/= '"') (drop (length needle) (afterInfix needle v)))
+        then Just (takeWhile (/= '"') (afterInfix needle v))
         else Nothing
 
 -- | Pull every element-reference id out of a findElements value JSON string
@@ -996,7 +1000,7 @@ extractElementIds = go
     needle = "\"" ++ w3cElementKey ++ "\":\""
     go s
       | needle `isInfixOf` s =
-          let afterKey = drop (length needle) (afterInfix needle s)
+          let afterKey = afterInfix needle s
               (eid, restAfter) = spanId afterKey
            in eid : go restAfter
       | otherwise = []
@@ -1020,7 +1024,7 @@ extractField :: String -> String -> String
 extractField name v =
   let needle = "\"" ++ name ++ "\":\""
    in if needle `isInfixOf` v
-        then takeWhile (/= '"') (drop (length needle) (afterInfix needle v))
+        then takeWhile (/= '"') (afterInfix needle v)
         else ""
 
 -- Return the suffix of @hay@ starting just after the first occurrence of @n@.

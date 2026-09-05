@@ -100,7 +100,8 @@ liveSurface check cdUrl base = do
   forward d
   t4 <- title d
   check (t4 == "Page Two") "after forward"
-  back d
+  -- leave the driver on Page Two for the url/source checks below (an earlier
+  -- stray `back d` here left it on Page One, so those two assertions failed).
 
   -- execute_script (return value comes back as JSON text)
   s1 <- executeScript d "return 6*7;" "[]"
@@ -108,7 +109,7 @@ liveSurface check cdUrl base = do
   s2 <- executeScript d "return arguments[0]+arguments[1];" "[40,2]"
   check (s2 == "42") "script args"
 
-  -- current url / page source
+  -- current url / page source (still on Page Two)
   u <- currentUrl d
   check ("/two" `isInfixOf` u) "currentUrl"
   src <- pageSource d
