@@ -399,6 +399,20 @@ public class RemoteWebDriver : IWebDriver, ITakesScreenshot
     /// (mainstream <c>ITakesScreenshot.GetScreenshot()</c>; save/encode via its members).</summary>
     public Screenshot GetScreenshot() => new Screenshot(ScreenshotBase64());
 
+    /// <summary>Render the current page to a PDF (mainstream <c>WebDriver.Print</c>).
+    /// Issues the W3C print command with <paramref name="printOptions"/> and wraps the
+    /// base64 result in a <see cref="PrintDocument"/>.</summary>
+    public PrintDocument Print(PrintOptions printOptions)
+    {
+        if (printOptions is null)
+        {
+            throw new ArgumentNullException(nameof(printOptions));
+        }
+
+        string base64 = Execute("printPage", printOptions.ToDictionary())!.Value.GetString()!;
+        return new PrintDocument(base64);
+    }
+
     // ---- lifecycle ----
     public string SessionId => NativeMethods.TakeString(NativeMethods.SessionId(_handle));
 

@@ -478,5 +478,32 @@ namespace SeleniumCore.Tests
             OpenQA.Selenium.Chrome.ChromeOptions o = new ChromeOptions();
             o.CapabilityName.ShouldBe("goog:chromeOptions");
         }
+
+        [Fact]
+        public void PrintIssuesPrintPageCommandAndWrapsPdf()
+        {
+            var d = new RecordingDriver();
+            d.SetResponse("printPage", "\"JVBERi0=\"");
+            var options = new PrintOptions
+            {
+                Orientation = PrintOrientation.Landscape,
+                ScaleFactor = 1.5,
+                OutputBackgroundImages = true,
+            };
+            options.AddPageRangeToPrint("1-2");
+
+            PrintDocument pdf = d.Print(options);
+
+            d.Issued("printPage").ShouldBeTrue();
+            var p = d.CallNamed("printPage").Params!;
+            p["orientation"].ShouldBe("landscape");
+            p["scale"].ShouldBe(1.5);
+            p["background"].ShouldBe(true);
+            p.ContainsKey("pageRanges").ShouldBeTrue();
+            // PrintDocument decodes the base64 payload and derives from EncodedFile.
+            pdf.AsBase64EncodedString.ShouldBe("JVBERi0=");
+            System.Text.Encoding.ASCII.GetString(pdf.AsByteArray).ShouldStartWith("%PDF-");
+            pdf.ShouldBeAssignableTo<EncodedFile>();
+        }
     }
 }
