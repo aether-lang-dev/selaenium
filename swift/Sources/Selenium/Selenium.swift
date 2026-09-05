@@ -509,7 +509,7 @@ public final class WebElement {
     /// (`getElementValueOfCssProperty`). `valueOfCssProperty` is the
     /// classic-Selenium-named alias.
     public func cssValue(_ prop: String) throws -> String {
-        try execString("getElementValueOfCssProperty", ["name": prop])
+        try execString("getElementValueOfCssProperty", ["propertyName": prop])
     }
     public func valueOfCssProperty(_ prop: String) throws -> String { try cssValue(prop) }
 

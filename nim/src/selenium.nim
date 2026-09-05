@@ -419,7 +419,7 @@ proc cssValue*(e: WebElement, prop: string): string =
   ## The computed value of the CSS property `prop` on this element
   ## (getElementValueOfCssProperty) — e.g. "display", "color", "font-size".
   ## Aliased as `valueOfCssProperty` for the classic Selenium name.
-  e.elExec("getElementValueOfCssProperty", %*{"name": prop}).getStr
+  e.elExec("getElementValueOfCssProperty", %*{"propertyName": prop}).getStr
 
 proc valueOfCssProperty*(e: WebElement, prop: string): string =
   ## Classic-Selenium-named alias of `cssValue`.

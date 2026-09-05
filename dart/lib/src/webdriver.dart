@@ -179,7 +179,7 @@ class WebElement implements ElementLike {
   /// (`getElementValueOfCssProperty`) — e.g. `'display'`, `'color'`,
   /// `'font-size'`. [valueOfCssProperty] is the classic-Selenium-named alias.
   String cssValue(String name) =>
-      _exec('getElementValueOfCssProperty', {'name': name}) as String? ?? '';
+      _exec('getElementValueOfCssProperty', {'propertyName': name}) as String? ?? '';
 
   /// Classic-Selenium-named alias of [cssValue].
   String valueOfCssProperty(String name) => cssValue(name);

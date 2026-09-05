@@ -540,7 +540,7 @@ rect(e::WebElement)::String = _exec(e, "getElementRect")
 
 # computed CSS property value (getElementValueOfCssProperty).
 css_value(e::WebElement, prop::AbstractString)::String =
-    _as_string(_exec(e, "getElementValueOfCssProperty", Dict("name" => prop)))
+    _as_string(_exec(e, "getElementValueOfCssProperty", Dict("propertyName" => prop)))
 # classic-Selenium-named alias.
 value_of_css_property(e::WebElement, prop::AbstractString)::String = css_value(e, prop)
 

@@ -322,7 +322,7 @@ defmodule Selenium do
   @doc "The computed value of a CSS property (`getElementValueOfCssProperty`)."
   def css_value(h, element_id, prop),
     do:
-      execute(h, "getElementValueOfCssProperty", %{"id" => element_id, "name" => to_string(prop)})
+      execute(h, "getElementValueOfCssProperty", %{"id" => element_id, "propertyName" => to_string(prop)})
 
   @doc "Classic-Selenium-named alias of `css_value/3`."
   def value_of_css_property(h, element_id, prop), do: css_value(h, element_id, prop)

@@ -879,7 +879,7 @@ module Selenium
     # (getElementValueOfCssProperty). Aliased as `value_of_css_property` for
     # parity with the classic Selenium name.
     def css_value(prop : String) : String
-      exec("getElementValueOfCssProperty", {"name" => JSON::Any.new(prop)}).as_s? || ""
+      exec("getElementValueOfCssProperty", {"propertyName" => JSON::Any.new(prop)}).as_s? || ""
     end
 
     # Classic-Selenium-named alias of `css_value`.

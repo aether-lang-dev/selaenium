@@ -1062,7 +1062,7 @@ impl<'a> WebElement<'a> {
     /// [`value_of_css_property`]: WebElement::value_of_css_property
     pub fn css_value(&self, prop: &str) -> Result<String> {
         Ok(self
-            .exec("getElementValueOfCssProperty", json::obj(vec![("name", json::s(prop))]))?
+            .exec("getElementValueOfCssProperty", json::obj(vec![("propertyName", json::s(prop))]))?
             .as_str()
             .unwrap_or("")
             .to_string())

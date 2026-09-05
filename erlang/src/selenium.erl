@@ -270,7 +270,7 @@ element_rect(H, ElementId) -> execute(H, <<"getElementRect">>, #{<<"id">> => Ele
 %% A CSS property's computed value on the element (W3C getElementValueOfCssProperty).
 css_value(H, ElementId, Prop) ->
     execute(H, <<"getElementValueOfCssProperty">>,
-            #{<<"id">> => ElementId, <<"name">> => to_bin(Prop)}).
+            #{<<"id">> => ElementId, <<"propertyName">> => to_bin(Prop)}).
 %% Mainstream alias for css_value/3 (Selenium's value_of_css_property).
 value_of_css_property(H, ElementId, Prop) -> css_value(H, ElementId, Prop).
 

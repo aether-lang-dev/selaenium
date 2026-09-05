@@ -379,7 +379,7 @@ cssValue :: WebDriver -> String -> String -> IO String
 cssValue d eid prop =
   jsonUnquote
     <$> execute d "getElementValueOfCssProperty"
-          ("{\"id\":" ++ jsonStr eid ++ ",\"name\":" ++ jsonStr prop ++ "}")
+          ("{\"id\":" ++ jsonStr eid ++ ",\"propertyName\":" ++ jsonStr prop ++ "}")
 
 -- | Classic-Selenium-named alias of 'cssValue'.
 valueOfCssProperty :: WebDriver -> String -> String -> IO String

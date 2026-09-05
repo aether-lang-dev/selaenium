@@ -814,7 +814,7 @@ pub const WebDriver = struct {
     /// The computed value of a CSS property (`getElementValueOfCssProperty`),
     /// e.g. "display", "color". Owned slice.
     pub fn cssValue(self: *WebDriver, e: *const WebElement, prop: []const u8) Error![]u8 {
-        const extra = try std.fmt.allocPrint(self.allocator, ",\"name\":\"{s}\"", .{prop});
+        const extra = try std.fmt.allocPrint(self.allocator, ",\"propertyName\":\"{s}\"", .{prop});
         defer self.allocator.free(extra);
         return self.elementStringCmd("getElementValueOfCssProperty", e.id, extra);
     }
