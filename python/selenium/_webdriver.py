@@ -400,14 +400,17 @@ class WebDriver:
 
     # ---- timeouts ----
 
-    def set_page_load_timeout(self, ms: int) -> None:
-        self._execute("setTimeout", {"pageLoad": ms})
+    # Timeouts take SECONDS and are sent as milliseconds on the wire — matching
+    # mainstream Selenium-Python exactly (upstream: int(float(t) * 1000)). A
+    # script's implicitly_wait(10) must mean 10 seconds, not 10 ms.
+    def set_page_load_timeout(self, time_to_wait: float) -> None:
+        self._execute("setTimeout", {"pageLoad": int(float(time_to_wait) * 1000)})
 
-    def set_script_timeout(self, ms: int) -> None:
-        self._execute("setTimeout", {"script": ms})
+    def set_script_timeout(self, time_to_wait: float) -> None:
+        self._execute("setTimeout", {"script": int(float(time_to_wait) * 1000)})
 
-    def implicitly_wait(self, ms: int) -> None:
-        self._execute("setTimeout", {"implicit": ms})
+    def implicitly_wait(self, time_to_wait: float) -> None:
+        self._execute("setTimeout", {"implicit": int(float(time_to_wait) * 1000)})
 
     # ---- screenshots ----
 

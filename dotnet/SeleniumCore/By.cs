@@ -36,7 +36,12 @@ public sealed class By
 
     public static By PartialLinkText(string value) => new("partial link text", value);
 
-    public static By Xpath(string value) => new("xpath", value);
+    // Mainstream OpenQA.Selenium spells it XPath (capital P); a script doing
+    // By.XPath(...) must compile. Xpath kept as an alias for existing callers.
+    public static By XPath(string value) => new("xpath", value);
+
+    [Obsolete("Use By.XPath (mainstream capitalization).")]
+    public static By Xpath(string value) => XPath(value);
 
     public override string ToString() => $"By.{Strategy}: {Value}";
 }

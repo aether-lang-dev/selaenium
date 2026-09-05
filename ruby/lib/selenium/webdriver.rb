@@ -373,10 +373,13 @@ module Selenium
     def alert_text = execute('getAlertText')
     def send_alert_text(text) = (execute('setAlertValue', 'text' => text); nil)
 
-    # ---- timeouts (milliseconds) ----
-    def set_page_load_timeout(ms) = (execute('setTimeout', 'pageLoad' => ms); nil)
-    def set_script_timeout(ms) = (execute('setTimeout', 'script' => ms); nil)
-    def implicitly_wait(ms) = (execute('setTimeout', 'implicit' => ms); nil)
+    # ---- timeouts ----
+    # Take SECONDS, send milliseconds on the wire — matching mainstream
+    # Selenium-Ruby exactly (upstream: Integer(seconds * 1000)). A script's
+    # implicitly_wait(10) must mean 10 seconds, not 10 ms.
+    def set_page_load_timeout(seconds) = (execute('setTimeout', 'pageLoad' => Integer(seconds * 1000)); nil)
+    def set_script_timeout(seconds) = (execute('setTimeout', 'script' => Integer(seconds * 1000)); nil)
+    def implicitly_wait(seconds) = (execute('setTimeout', 'implicit' => Integer(seconds * 1000)); nil)
 
     # ---- screenshots ----
     def screenshot_base64 = execute('screenshot')
