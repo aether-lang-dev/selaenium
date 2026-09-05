@@ -26,6 +26,7 @@ aeb(cap) {
             erl_source("src/selenium_nif.erl")
             erl_source("src/selenium.erl")
             erl_source("src/by.erl")
+            erl_source("src/keys.erl")
             app_src("src/selenium_nif.app")
             engine_lib(lib)
             link_engine("selenium_core")

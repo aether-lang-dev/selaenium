@@ -12,6 +12,10 @@
 -define(W3C_KEY, <<"element-6066-11e4-a52e-4f735466cecf">>).
 
 main(_) ->
+    %% No-browser checks of the convenience tier run first (they need no driver):
+    %% key code points + the wait_until timeout contract. The fuller EUnit suite
+    %% (fake-NIF select/action-JSON) lives in test/convenience_test.erl.
+    unit_checks(),
     %% Driver orchestration runs first — it self-spawns a driver via the engine,
     %% independent of any chromedriver on PATH.
     driver_orchestration(),
@@ -220,6 +224,11 @@ run(DriverBin) ->
                       "get_attribute href=~s, find_relative below #hdr=~p)~n",
                       [Href, length(Below)]),
 
+            %% Convenience tier: explicit waits + Select + an action gesture, on
+            %% a page whose content mutates after a delay (so the waits actually
+            %% block) and carries a <select> and a context-menu target.
+            convenience_tier(D),
+
             io:format("PASS: Erlang live surface test green~n")
         after
             selenium:quit(D)
@@ -230,8 +239,92 @@ run(DriverBin) ->
     end,
     halt(0).
 
-%% Public alias so the test can reach the raw execute for getElementRect.
-%% (selenium:execute/3 is not exported; use a thin re-entry.)
+%% No-browser sanity of the convenience tier: the W3C key code points and the
+%% wait_until timeout contract. (The full unit suite with a fake NIF is in
+%% test/convenience_test.erl; these run inline so the wired live node still
+%% asserts the pure logic when chromedriver is absent.)
+unit_checks() ->
+    <<16#E007/utf8>> = keys:enter(),
+    <<16#E004/utf8>> = keys:tab(),
+    <<16#E00C/utf8>> = keys:escape(),
+    <<16#E03D/utf8>> = keys:meta(),
+    true = keys:meta() =:= keys:command(),
+    true = keys:enter() =/= keys:return(),
+    3 = byte_size(keys:enter()),
+    {ok, true} = selenium:wait_until(0, 1000, fun(_) -> true end),
+    {error, timeout} = selenium:wait_until(0, 0, fun(_) -> false end),
+    io:format("  ok: unit (keys code points + wait_until true/timeout)~n").
+
+%% The convenience tier live-exercise: explicit waits (element/text/title),
+%% the Select helper, is_enabled/is_selected, keys, and an action gesture
+%% (context click) — all against one page. A button reveals a hidden paragraph
+%% and swaps the title 400ms later, so wait_for_visible / wait_for_text_contains
+%% / wait_for_title_contains block on real async state rather than passing
+%% instantly.
+convenience_tier(D) ->
+    Html = <<"<!doctype html><title>Waiting</title>"
+             "<button id='reveal' onclick=\"setTimeout(function(){"
+             "document.getElementById('msg').style.display='block';"
+             "document.getElementById('msg').textContent='Approved';"
+             "document.title='Done';},400)\">go</button>"
+             "<p id='msg' style='display:none'>pending</p>"
+             "<select id='country'>"
+             "<option value='es'>Spain</option>"
+             "<option value='fr'>France</option>"
+             "<option value='de'>Germany</option></select>"
+             "<input id='typed' type='text'>"
+             "<div id='ctx' oncontextmenu=\"this.textContent='menu';return false;\">right-me</div>">>,
+    {ok, _} = selenium:get(D, <<"data:text/html,", (uri_pct(Html))/binary>>),
+
+    %% wait_for_element finds a present-immediately node.
+    {ok, Reveal} = selenium:wait_for_element(D, id, <<"reveal">>, 4000),
+    true = selenium:is_enabled(D, Reveal),
+    {ok, _} = selenium:click(D, Reveal),
+
+    %% wait_for_visible blocks until the hidden <p> is revealed (~400ms).
+    {ok, Msg} = selenium:wait_for_visible(D, id, <<"msg">>, 4000),
+    %% wait_for_text_contains blocks until its text becomes "Approved".
+    {ok, true} = selenium:wait_for_text_contains(D, Msg, <<"Approv">>, 4000),
+    %% wait_for_title_contains blocks until the title swaps to "Done".
+    {ok, true} = selenium:wait_for_title_contains(D, <<"Done">>, 4000),
+    %% wait_until with a caller predicate over the same settled state.
+    {ok, true} = selenium:wait_until(D, 4000, fun(H) ->
+        selenium:element_text(H, Msg) =:= {ok, <<"Approved">>}
+    end),
+    %% A predicate that never holds times out cleanly.
+    {error, timeout} = selenium:wait_until(D, 300, fun(_) -> false end),
+    io:format("  ok: waits (element/visible/text/title/until + timeout)~n"),
+
+    %% Select: pick France by value, Germany by visible text, Spain by index;
+    %% is_selected confirms the live <option> state each time.
+    {ok, Sel} = selenium:find_element(D, id, <<"country">>),
+    {ok, OptFr} = selenium:select_by_value(D, Sel, <<"fr">>),
+    true = selenium:is_selected(D, OptFr),
+    {ok, _} = selenium:select_by_visible_text(D, Sel, <<"Germany">>),
+    {ok, DeVal} = selenium:execute_script(D,
+        <<"return arguments[0].value;">>, [#{?W3C_KEY => Sel}]),
+    <<"de">> = DeVal,
+    {ok, _} = selenium:select_by_index(D, Sel, 0),
+    {ok, EsVal} = selenium:execute_script(D,
+        <<"return arguments[0].value;">>, [#{?W3C_KEY => Sel}]),
+    <<"es">> = EsVal,
+    {error, no_such_option} = selenium:select_by_value(D, Sel, <<"nope">>),
+    io:format("  ok: select (by value/text/index + no_such_option)~n"),
+
+    %% Keys: send text + a special key through send_keys as an iolist.
+    {ok, Typed} = selenium:find_element(D, id, <<"typed">>),
+    {ok, _} = selenium:send_keys(D, Typed, [<<"abc">>, keys:tab()]),
+    {ok, TypedVal} = selenium:execute_script(D,
+        <<"return arguments[0].value;">>, [#{?W3C_KEY => Typed}]),
+    <<"abc">> = TypedVal,
+    io:format("  ok: keys (send_keys text + Keys.TAB)~n"),
+
+    %% Action gesture: context-click the div, which swaps its text to "menu".
+    {ok, Ctx} = selenium:find_element(D, id, <<"ctx">>),
+    {ok, _} = selenium:action_context_click(D, Ctx),
+    {ok, true} = selenium:wait_for_text_contains(D, Ctx, <<"menu">>, 3000),
+    {ok, _} = selenium:clear_actions(D),
+    io:format("  ok: action gesture (context_click -> contextmenu handler)~n").
 
 %% Minimal percent-encoding so the HTML rides safely in a data: URL (spaces,
 %% quotes, '#' and the like would otherwise derail the URL parse).

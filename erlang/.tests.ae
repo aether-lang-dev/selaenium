@@ -3,8 +3,12 @@
 // node deps that build and runs the live-surface test with ERL_LIBS pointed at
 // _build (so selenium/selenium_nif + the NIF .so resolve the OTP way) and -pa at
 // the NIF ebin. erlang.eunit's run_main path erlc-compiles test/live_test.erl
-// then runs live_test:main([]). The live test self-skips when chromedriver is
-// absent. Skipped by preflight when erlang is absent (prereq erlang).
+// then runs live_test:main([]). live_test first runs unit_checks (no-browser
+// convenience-tier facts) then the live surface, self-skipping the browser part
+// when chromedriver is absent. The fuller no-browser EUnit suite for the
+// convenience tier (fake-NIF select/wait/action-JSON) is test/convenience_test.erl,
+// runnable via `rebar3 eunit` / `eunit:test(convenience_test)`. Skipped by
+// preflight when erlang is absent (prereq erlang).
 import bldr
 import erlang
 import erlang (test_source, run_main, pa)

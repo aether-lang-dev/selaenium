@@ -21,8 +21,15 @@
     get/2, current_url/1, title/1, page_source/1, back/1, forward/1, refresh/1,
     find_element/2, find_elements/2, find_element/3, find_elements/3,
     click/2, send_keys/3, element_text/2, tag_name/2, element_property/3, element_rect/2,
-    is_displayed/2, get_attribute/3, dom_attribute/3, find_relative/3,
+    is_displayed/2, is_enabled/2, is_selected/2,
+    get_attribute/3, dom_attribute/3, find_relative/3,
     execute/3,
+    wait_for_element/4, wait_for_visible/4, wait_for_clickable/4,
+    wait_until/3, wait_for_title_contains/3, wait_for_url_contains/3,
+    wait_for_text_contains/4,
+    select_by_value/3, select_by_visible_text/3, select_by_index/3,
+    action_click/2, action_double_click/2, action_context_click/2,
+    action_move_to/2, action_drag_and_drop/3,
     execute_script/2, execute_script/3, execute_async_script/2, execute_async_script/3,
     window_handles/1, current_window_handle/1, switch_to_window/2,
     maximize_window/1, minimize_window/1, fullscreen_window/1,
@@ -251,6 +258,23 @@ is_displayed(H, ElementId) ->
         Err -> Err
     end.
 
+%% Whether a form control is enabled (W3C isElementEnabled). A proper wrapper
+%% over the dedicated endpoint rather than a generic execute/3 call. Returns
+%% boolean() | {error, {Code, Msg}} (boolean() to match is_displayed/2).
+is_enabled(H, ElementId) ->
+    case execute(H, <<"isElementEnabled">>, #{<<"id">> => ElementId}) of
+        {ok, V} -> V =:= true;
+        Err -> Err
+    end.
+
+%% Whether an option/checkbox/radio is selected (W3C isElementSelected). Returns
+%% boolean() | {error, {Code, Msg}}.
+is_selected(H, ElementId) ->
+    case execute(H, <<"isElementSelected">>, #{<<"id">> => ElementId}) of
+        {ok, V} -> V =:= true;
+        Err -> Err
+    end.
+
 %% The classic getAttribute(name): property-or-attribute (boolean attrs, live
 %% properties like value/checked), via the shared engine atom. Returns
 %% binary() | undefined (JSON null) | {error, {Code, Msg}}. Use dom_attribute/3
@@ -330,6 +354,229 @@ delete_all_cookies(H) -> execute(H, <<"deleteAllCookies">>, #{}).
 %% ---- actions ----
 perform_actions(H, Actions) -> execute(H, <<"actions">>, #{<<"actions">> => Actions}).
 clear_actions(H) -> execute(H, <<"clearActions">>, #{}).
+
+%% ---- explicit waits ----
+%%
+%% The convenience tier the other bindings carry (mainstream WebDriverWait, the
+%% reference aether/webdriver.ae wait_for_* / wait_until). The poll loop lives
+%% here in Erlang because the engine issues single commands and holds no thread;
+%% each attempt re-reads the live DOM, so a condition that flips as the page
+%% settles is caught without a fixed sleep. Timeouts are milliseconds; the loop
+%% polls every WAIT_POLL_MS and returns {error, timeout} on the deadline.
+
+-define(WAIT_POLL_MS, 500).
+
+%% Wait until an element matching (By, Value) is present; return {ok, ElementId}
+%% or {error, timeout}. By/Value are the same {Strategy, Value} the one-arg
+%% find_element accepts, or a By/Value pair. (classic until.elementLocated)
+wait_for_element(H, By, Value, TimeoutMs) ->
+    wait_element(H, By, Value, TimeoutMs, fun(_, _) -> true end).
+
+%% Wait until the element is present AND displayed. (until.visibilityOfElement)
+wait_for_visible(H, By, Value, TimeoutMs) ->
+    wait_element(H, By, Value, TimeoutMs,
+                 fun(Hd, El) -> is_displayed(Hd, El) =:= true end).
+
+%% Wait until the element is present, displayed AND enabled (clickable).
+wait_for_clickable(H, By, Value, TimeoutMs) ->
+    wait_element(H, By, Value, TimeoutMs,
+                 fun(Hd, El) ->
+                     is_displayed(Hd, El) =:= true andalso is_enabled(Hd, El) =:= true
+                 end).
+
+%% Shared present-then-predicate poll for the element waits.
+wait_element(H, By, Value, TimeoutMs, Pred) ->
+    Deadline = deadline(TimeoutMs),
+    wait_element_loop(H, By, Value, Pred, Deadline).
+
+wait_element_loop(H, By, Value, Pred, Deadline) ->
+    Found = case find_element(H, By, Value) of
+                {ok, El} ->
+                    case Pred(H, El) of
+                        true -> {ok, El};
+                        _ -> false
+                    end;
+                {error, _} -> false
+            end,
+    case Found of
+        {ok, _} = Ok -> Ok;
+        false ->
+            case past_deadline(Deadline) of
+                true -> {error, timeout};
+                false ->
+                    timer:sleep(?WAIT_POLL_MS),
+                    wait_element_loop(H, By, Value, Pred, Deadline)
+            end
+    end.
+
+%% The general escape hatch: poll a caller-supplied predicate fun(Handle) ->
+%% boolean() every WAIT_POLL_MS until it returns true. {ok, true} if it held,
+%% else {error, timeout}. The predicate closes over the session handle and
+%% re-reads whatever live state it needs each attempt.
+wait_until(H, TimeoutMs, PredFun) when is_function(PredFun, 1) ->
+    Deadline = deadline(TimeoutMs),
+    wait_until_loop(H, PredFun, Deadline).
+
+wait_until_loop(H, PredFun, Deadline) ->
+    case PredFun(H) of
+        true -> {ok, true};
+        _ ->
+            case past_deadline(Deadline) of
+                true -> {error, timeout};
+                false ->
+                    timer:sleep(?WAIT_POLL_MS),
+                    wait_until_loop(H, PredFun, Deadline)
+            end
+    end.
+
+%% Wait until the page title / current URL contains Substr. {ok, true} | {error,
+%% timeout}. (classic titleContains / urlContains)
+wait_for_title_contains(H, Substr, TimeoutMs) ->
+    Want = to_bin(Substr),
+    wait_until(H, TimeoutMs, fun(Hd) -> value_contains(title(Hd), Want) end).
+
+wait_for_url_contains(H, Substr, TimeoutMs) ->
+    Want = to_bin(Substr),
+    wait_until(H, TimeoutMs, fun(Hd) -> value_contains(current_url(Hd), Want) end).
+
+%% Wait until an element's text contains Substr. {ok, true} | {error, timeout}.
+%% (classic textToBePresentInElement)
+wait_for_text_contains(H, ElementId, Substr, TimeoutMs) ->
+    Want = to_bin(Substr),
+    wait_until(H, TimeoutMs,
+               fun(Hd) -> value_contains(element_text(Hd, ElementId), Want) end).
+
+value_contains({ok, V}, Want) when is_binary(V) ->
+    binary:match(V, Want) =/= nomatch;
+value_contains(_, _) -> false.
+
+%% A monotonic deadline in native time units; past_deadline/1 checks it. Using
+%% erlang:monotonic_time keeps the wait immune to wall-clock changes.
+deadline(TimeoutMs) ->
+    erlang:monotonic_time(millisecond) + TimeoutMs.
+
+past_deadline(Deadline) ->
+    erlang:monotonic_time(millisecond) > Deadline.
+
+%% ---- Select (native <select> dropdown helper) ----
+%%
+%% Drive a <select> by finding and clicking its <option> children — the same
+%% approach mainstream Selenium's Select uses (and the Python reference
+%% support/select.py). Each takes the <select> element id, matches one option on
+%% value / visible text / index, and clicks it if not already selected. Returns
+%% {ok, ElementId} for the option clicked (or already selected), or {error,
+%% no_such_option} when nothing matches (or {error, {Code, Msg}} on a driver
+%% error). For single-select; on a multi-select each call toggles one option on.
+
+%% Select the option whose value attribute equals Value.
+select_by_value(H, SelectId, Value) ->
+    Want = to_bin(Value),
+    select_option(H, SelectId,
+                  fun(Opt) ->
+                      case get_attribute(H, Opt, <<"value">>) of
+                          V when is_binary(V) -> V =:= Want;
+                          _ -> false
+                      end
+                  end).
+
+%% Select the option whose visible text equals Text.
+select_by_visible_text(H, SelectId, Text) ->
+    Want = to_bin(Text),
+    select_option(H, SelectId,
+                  fun(Opt) ->
+                      case element_text(H, Opt) of
+                          {ok, T} -> T =:= Want;
+                          _ -> false
+                      end
+                  end).
+
+%% Select the option at the given zero-based index.
+select_by_index(H, SelectId, Index) when is_integer(Index) ->
+    case options_of(H, SelectId) of
+        {ok, Opts} when Index >= 0, Index < length(Opts) ->
+            click_option(H, lists:nth(Index + 1, Opts));
+        {ok, _} -> {error, no_such_option};
+        Err -> Err
+    end.
+
+%% The <option> element ids of a <select> — findChildElements scoped to the
+%% select (POST .../element/:id/elements), so the tag-name search stays inside
+%% THIS <select> even when the page has several. Returns {ok, [ElementId]}.
+options_of(H, SelectId) ->
+    Params = maps:put(<<"id">>, SelectId,
+                      decode_by(<<"tag name">>, <<"option">>)),
+    case execute(H, <<"findChildElements">>, Params) of
+        {ok, L} -> {ok, [maps:get(?W3C_KEY, E) || E <- L]};
+        Err -> Err
+    end.
+
+%% Find the first option satisfying Pred and click it (if not already selected).
+select_option(H, SelectId, Pred) ->
+    case options_of(H, SelectId) of
+        {ok, Opts} -> select_first(H, Opts, Pred);
+        Err -> Err
+    end.
+
+select_first(_H, [], _Pred) -> {error, no_such_option};
+select_first(H, [Opt | Rest], Pred) ->
+    case Pred(Opt) of
+        true -> click_option(H, Opt);
+        false -> select_first(H, Rest, Pred)
+    end.
+
+click_option(H, Opt) ->
+    case is_selected(H, Opt) of
+        true -> {ok, Opt};
+        false ->
+            case click(H, Opt) of
+                {ok, _} -> {ok, Opt};
+                Err -> Err
+            end
+    end.
+
+%% ---- Actions gestures (high-level convenience over perform_actions) ----
+%%
+%% Compose + send the W3C actions payload for the everyday mouse gestures, built
+%% on the raw perform_actions/2 seam. Each targets the "mouse" pointer device and
+%% moves to the element centre (origin = the element reference) first.
+
+%% Move to the element centre and click (pointerDown/Up button 0). Same effect as
+%% click/2 but through the input-actions device — the path for hover-then-click.
+action_click(H, ElementId) ->
+    perform_actions(H, [ptr_seq([ptr_move_origin(ElementId), ptr_down(0), ptr_up(0)])]).
+
+%% Double-click at the element centre.
+action_double_click(H, ElementId) ->
+    perform_actions(H, [ptr_seq([ptr_move_origin(ElementId),
+                                 ptr_down(0), ptr_up(0), ptr_down(0), ptr_up(0)])]).
+
+%% Right-click (contextmenu) at the element centre — button 2.
+action_context_click(H, ElementId) ->
+    perform_actions(H, [ptr_seq([ptr_move_origin(ElementId), ptr_down(2), ptr_up(2)])]).
+
+%% Hover: move the pointer to the element centre (no button).
+action_move_to(H, ElementId) ->
+    perform_actions(H, [ptr_seq([ptr_move_origin(ElementId)])]).
+
+%% Drag SourceId onto TargetId (press at source, move to target, release).
+action_drag_and_drop(H, SourceId, TargetId) ->
+    perform_actions(H, [ptr_seq([ptr_move_origin(SourceId), ptr_down(0),
+                                 ptr_move_origin(TargetId), ptr_up(0)])]).
+
+%% One-device "mouse" pointer action sequence wrapping the given action objects.
+ptr_seq(Actions) ->
+    #{<<"type">> => <<"pointer">>, <<"id">> => <<"mouse">>,
+      <<"parameters">> => #{<<"pointerType">> => <<"mouse">>},
+      <<"actions">> => Actions}.
+
+%% pointerMove to an element's centre (origin = the element reference).
+ptr_move_origin(ElementId) ->
+    #{<<"type">> => <<"pointerMove">>, <<"duration">> => 0,
+      <<"x">> => 0, <<"y">> => 0,
+      <<"origin">> => #{?W3C_KEY => ElementId}}.
+
+ptr_down(Button) -> #{<<"type">> => <<"pointerDown">>, <<"button">> => Button}.
+ptr_up(Button) -> #{<<"type">> => <<"pointerUp">>, <<"button">> => Button}.
 
 %% ---- timeouts / screenshots ----
 set_timeouts(H, Timeouts) -> execute(H, <<"setTimeout">>, Timeouts).
