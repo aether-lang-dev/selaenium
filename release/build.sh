@@ -73,9 +73,12 @@ for t in $MATRIX; do
   #   Selenium-Manager module tree embed.ae imports by bare name (resolve/
   #   browser/cft/cache/...) — without it aetherc can't resolve resolve_chrome.
   #   These mirror selenium_core/.build.ae's caps("net,os,fs") + lib("drivermgr").
+  # --extra takes an ABSOLUTE path: ae >=0.638's cross path (--target) no longer
+  # resolves a relative --extra C file from CWD (the native path was forgiving,
+  # which is why this worked pre-0.638). An absolute path builds on every target.
   if ( cd "$ROOT/selenium_core" \
        && ae build --emit=lib --with=net,os,fs --lib drivermgr --size --target="$t" \
-            embed.ae --extra _embed_strdup.c -o "$out" ) >"$log" 2>&1; then
+            embed.ae --extra "$ROOT/selenium_core/_embed_strdup.c" -o "$out" ) >"$log" 2>&1; then
     ( cd "$DIST" && sha256sum "$name" > "$name.sha256" )
     # Windows emits an import library (<dll>.lib) beside the DLL — needed by a
     # consumer that LINKS against the DLL at build time (our FFI bindings dlopen
