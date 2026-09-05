@@ -19,7 +19,8 @@ import java.util.Map;
  * the {@code chrome}/{@code localChrome} static factories remain for callers
  * that already use them.
  */
-public class RemoteWebDriver implements WebDriver, JavascriptExecutor, TakesScreenshot, HasCapabilities {
+public class RemoteWebDriver
+    implements WebDriver, JavascriptExecutor, TakesScreenshot, PrintsPage, HasCapabilities {
 
     static final String W3C_ELEMENT_KEY = "element-6066-11e4-a52e-4f735466cecf";
 
@@ -499,6 +500,14 @@ public class RemoteWebDriver implements WebDriver, JavascriptExecutor, TakesScre
     @Override
     public <X> X getScreenshotAs(OutputType<X> target) throws WebDriverException {
         return target.convertFromBase64Png(screenshotBase64());
+    }
+
+    // ---- print (W3C print-to-PDF) ----
+    @Override
+    public org.openqa.selenium.Pdf print(org.openqa.selenium.print.PrintOptions printOptions)
+            throws WebDriverException {
+        String base64 = (String) execute("printPage", printOptions.toMap());
+        return new org.openqa.selenium.Pdf(base64);
     }
 
     // ---- capabilities ----

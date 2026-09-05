@@ -85,6 +85,35 @@ class AbiSurfaceTest {
     // ---- navigate() facade ----
 
     @Test
+    void printPageIssuesPrintCommandAndWrapsPdf() {
+        RecordingDriver d = new RecordingDriver(Map.of("printPage", "JVBERi0="));
+        org.openqa.selenium.print.PrintOptions opts =
+            new org.openqa.selenium.print.PrintOptions()
+                .setOrientation(org.openqa.selenium.print.PrintOptions.Orientation.LANDSCAPE)
+                .setScale(1.5)
+                .setBackground(true)
+                .setPageRanges("1-2");
+        Pdf pdf = d.print(opts);
+
+        assertTrue(d.sent("printPage"));
+        Map<String, Object> params = d.paramsOf("printPage");
+        assertEquals("landscape", params.get("orientation"));
+        assertEquals(1.5, params.get("scale"));
+        assertEquals(Boolean.TRUE, params.get("background"));
+        assertEquals(List.of("1-2"), params.get("pageRanges"));
+        assertNotNull(params.get("page"));
+        assertNotNull(params.get("margin"));
+        assertEquals("JVBERi0=", pdf.getContent());
+        // Pdf decodes the base64 payload.
+        assertEquals("%PDF-", new String(pdf.getBytes(), java.nio.charset.StandardCharsets.US_ASCII).substring(0, 5));
+    }
+
+    @Test
+    void printsPageInterfaceIsImplemented() {
+        assertInstanceOf(PrintsPage.class, new RecordingDriver());
+    }
+
+    @Test
     void navigateFacadeIssuesHistoryCommands() {
         RecordingDriver d = new RecordingDriver();
         d.navigate().to("https://example.com");
