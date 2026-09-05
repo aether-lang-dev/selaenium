@@ -24,7 +24,7 @@ module Selenium =
         let tagName (value: string) : By = OpenQA.Selenium.By.TagName(value)
         let linkText (value: string) : By = OpenQA.Selenium.By.LinkText(value)
         let partialLinkText (value: string) : By = OpenQA.Selenium.By.PartialLinkText(value)
-        let xpath (value: string) : By = OpenQA.Selenium.By.Xpath(value)
+        let xpath (value: string) : By = OpenQA.Selenium.By.XPath(value)
 
     /// Pure engine helpers (no session) — shared with every binding.
     let route (command: string) : string = RemoteWebDriver.Route(command)
