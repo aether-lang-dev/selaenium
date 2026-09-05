@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Linq;
 using System.Text.Json;
 
 namespace OpenQA.Selenium;
@@ -66,4 +67,22 @@ public class RemoteWebElement : IWebElement
     public bool Selected => Exec("isElementSelected", null)!.Value.GetBoolean();
 
     public Rect Rect => Exec("getElementRect", null)?.Deserialize<Rect>() ?? new Rect();
+
+    /// <summary>The first descendant matching <paramref name="by"/> (W3C
+    /// <c>findChildElement</c>, scoped to this element via the <c>:id</c> path param).</summary>
+    public IWebElement FindElement(By by)
+    {
+        JsonElement result = Exec("findChildElement", RemoteWebDriver.DecodeBy(by.Strategy, by.Value))!.Value;
+        return new RemoteWebElement(_driver, result.GetProperty(RemoteWebDriver.W3CElementKey).GetString()!);
+    }
+
+    /// <summary>All descendants matching <paramref name="by"/> (W3C
+    /// <c>findChildElements</c>, scoped to this element).</summary>
+    public IReadOnlyList<IWebElement> FindElements(By by)
+    {
+        JsonElement result = Exec("findChildElements", RemoteWebDriver.DecodeBy(by.Strategy, by.Value))!.Value;
+        return result.EnumerateArray()
+            .Select(e => (IWebElement)new RemoteWebElement(_driver, e.GetProperty(RemoteWebDriver.W3CElementKey).GetString()!))
+            .ToList();
+    }
 }

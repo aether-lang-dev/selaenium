@@ -50,6 +50,14 @@ public interface IWebDriver : IJavaScriptExecutor, System.IDisposable
 
     void SwitchToWindow(string handle);
 
+    // ---- actions ----
+    /// <summary>Post a raw W3C "actions" payload (the low-level input-source list).
+    /// <see cref="Interactions.Actions"/> builds this list fluently.</summary>
+    void PerformActions(IList<object?> actions);
+
+    /// <summary>Release all input state (W3C <c>clearActions</c>).</summary>
+    void ClearActions();
+
     // ---- lifecycle ----
     string SessionId { get; }
 
@@ -85,4 +93,12 @@ public interface IWebElement
     string? GetAttribute(string name);
 
     Rect Rect { get; }
+
+    /// <summary>Find the first descendant matching <paramref name="by"/> (the
+    /// element-scoped find, W3C <c>findChildElement</c>).</summary>
+    IWebElement FindElement(By by);
+
+    /// <summary>Find all descendants matching <paramref name="by"/> (the
+    /// element-scoped find, W3C <c>findChildElements</c>).</summary>
+    IReadOnlyList<IWebElement> FindElements(By by);
 }

@@ -322,6 +322,71 @@ namespace SeleniumCore.Tests
             }
         }
 
+        // The convenience tier end to end: WebDriverWait, SelectElement, and an
+        // Actions gesture, driven through a real headless-Chrome session over the
+        // engine. Same skip discipline as the other live facts (green without a
+        // browser). Mirrors what a mainstream Selenium-.NET script would write.
+        [SkippableFact]
+        public void ConvenienceTierSurface()
+        {
+            string? driver = Which("chromedriver");
+            Skip.If(driver is null, "chromedriver not on PATH");
+
+            var page = "<!doctype html><title>Convenience</title>"
+                + "<select id='cheese'><option value='ched'>Cheddar</option>"
+                + "<option value='brie'>Brie</option></select>"
+                + "<button id='btn' onclick=\"document.getElementById('out').textContent='clicked'\">go</button>"
+                + "<div id='out'>idle</div>"
+                + "<script>setTimeout(function(){var d=document.createElement('div');"
+                + "d.id='late';d.textContent='here';document.body.appendChild(d);},400);</script>";
+            string url = "data:text/html;charset=utf-8," + Uri.EscapeDataString(page);
+
+            int cdPort = FreePort();
+            var cd = Process.Start(new ProcessStartInfo(driver!, $"--port={cdPort}")
+                { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true })!;
+            try
+            {
+                Skip.IfNot(WaitUp(cdPort, 10000), "chromedriver did not come up");
+
+                var chromeArgs = new List<object?> { "--headless=new", "--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage" };
+                var chromeOpts = new Dictionary<string, object?> { ["args"] = chromeArgs };
+                string? chromeBin = Environment.GetEnvironmentVariable("SEL_CHROME_BINARY");
+                if (!string.IsNullOrEmpty(chromeBin)) chromeOpts["binary"] = chromeBin;
+                var d = RemoteWebDriver.Chrome($"http://127.0.0.1:{cdPort}",
+                    new Dictionary<string, object?> { ["goog:chromeOptions"] = chromeOpts });
+                try
+                {
+                    d.Get(url);
+
+                    // WebDriverWait: the #late div is injected after 400ms; the wait
+                    // polls FindElement (ignoring not-found) until it appears.
+                    var wait = new OpenQA.Selenium.Support.UI.WebDriverWait(d, TimeSpan.FromSeconds(5));
+                    IWebElement late = wait.Until(drv => drv.FindElement(By.Id("late")));
+                    late.Text.ShouldBe("here");
+
+                    // SelectElement: pick an option by visible text, then read it back.
+                    var select = new OpenQA.Selenium.Support.UI.SelectElement(d.FindElement(By.Id("cheese")));
+                    select.SelectByText("Brie");
+                    select.SelectedOption.GetAttribute("value").ShouldBe("brie");
+                    select.SelectByValue("ched");
+                    select.SelectedOption.Text.ShouldBe("Cheddar");
+
+                    // Actions: move to the button and click via the fluent builder.
+                    new OpenQA.Selenium.Interactions.Actions(d)
+                        .MoveToElement(d.FindElement(By.Id("btn")))
+                        .Click()
+                        .Build()
+                        .Perform();
+                    d.FindElement(By.Id("out")).Text.ShouldBe("clicked");
+                }
+                finally { d.Quit(); }
+            }
+            finally
+            {
+                try { cd.Kill(); } catch { /* already gone */ }
+            }
+        }
+
         // --- in-process content server (two pages: /one links to /two) -------
         private static void StartContentServer(int port, System.Threading.CancellationToken ct)
         {

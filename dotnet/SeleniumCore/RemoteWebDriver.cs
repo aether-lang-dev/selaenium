@@ -202,7 +202,7 @@ public class RemoteWebDriver : IWebDriver
         _ => new WebDriverException(message, code),
     };
 
-    private static Dictionary<string, object?> DecodeBy(string by, string value)
+    internal static Dictionary<string, object?> DecodeBy(string by, string value)
     {
         string raw = NativeMethods.TakeString(NativeMethods.ByLocator(by, value));
         using var doc = JsonDocument.Parse(raw);
