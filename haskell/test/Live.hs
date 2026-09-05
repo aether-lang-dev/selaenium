@@ -139,6 +139,20 @@ liveSurface check cdUrl base = do
   c <- getCookie d "k"
   check ("\"v\"" `isInfixOf` c) "cookie roundtrip"
 
+  -- Actions verbs (fluent gestures over performActions): the #btn on Page One
+  -- sets #hdr's text to "clicked" on a real pointer click. doubleClick drives a
+  -- full pointer sequence through the action device.
+  btn <- findElement d (byId "btn")
+  moveToElement d btn
+  doubleClick d btn
+  hdrAfter <- findElement d (byId "hdr") >>= elementText d
+  check (hdrAfter == "clicked") "doubleClick via Actions fired #btn handler"
+  -- key_down/key_up must round-trip through the keyboard action device without
+  -- error (Ctrl press+release, focused on body).
+  keyDown d "\xE009"
+  keyUp d "\xE009"
+  check True "key_down/key_up round-trip (keyboard action device)"
+
   -- alert not present
   ap <- alertPresent d
   check (not ap) "alertPresent False"

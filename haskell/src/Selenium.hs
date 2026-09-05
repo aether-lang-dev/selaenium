@@ -100,6 +100,14 @@ module Selenium
     -- * Actions
   , performActions
   , clearActions
+  , moveToElement
+  , clickAndHold
+  , release
+  , contextClick
+  , doubleClick
+  , dragAndDrop
+  , keyDown
+  , keyUp
     -- * Timeouts
   , setTimeouts
   , setPageLoadTimeout
@@ -609,6 +617,76 @@ performActions d actionsJson = execute_ d "actions" ("{\"actions\":" ++ actionsJ
 
 clearActions :: WebDriver -> IO ()
 clearActions d = execute_ d "clearActions" "{}"
+
+-- ---- high-level Actions verbs (thin builders over 'performActions') ----
+-- The mainstream/Rust-reference gesture verbs. Each composes a one-shot W3C
+-- action sequence and performs it; for multi-step gestures use 'performActions'
+-- with your own array. Pointer verbs move to the element's centre first.
+
+-- A pointer input-source object wrapping the given pointer actions.
+mouseSeq :: String -> String
+mouseSeq acts =
+  "[{\"type\":\"pointer\",\"id\":\"mouse\",\"parameters\":{\"pointerType\":\"mouse\"}"
+    ++ ",\"actions\":" ++ acts ++ "}]"
+
+-- A key input-source object wrapping the given key actions.
+keySeq :: String -> String
+keySeq acts = "[{\"type\":\"key\",\"id\":\"keyboard\",\"actions\":" ++ acts ++ "}]"
+
+moveToOrigin :: String -> String
+moveToOrigin eid =
+  "{\"type\":\"pointerMove\",\"duration\":0,\"x\":0,\"y\":0,\"origin\":{"
+    ++ jsonStr w3cElementKey ++ ":" ++ jsonStr eid ++ "}}"
+
+ptrDown, ptrUp :: Int -> String
+ptrDown b = "{\"type\":\"pointerDown\",\"button\":" ++ show b ++ "}"
+ptrUp b = "{\"type\":\"pointerUp\",\"button\":" ++ show b ++ "}"
+
+-- | Move the mouse to the centre of the element.
+moveToElement :: WebDriver -> String -> IO ()
+moveToElement d eid = performActions d (mouseSeq ("[" ++ moveToOrigin eid ++ "]"))
+
+-- | Press and hold the left button over the element (no release).
+clickAndHold :: WebDriver -> String -> IO ()
+clickAndHold d eid =
+  performActions d (mouseSeq ("[" ++ moveToOrigin eid ++ "," ++ ptrDown 0 ++ "]"))
+
+-- | Release a held left button (pairs with 'clickAndHold').
+release :: WebDriver -> IO ()
+release d = performActions d (mouseSeq ("[" ++ ptrUp 0 ++ "]"))
+
+-- | Right-click (context menu) the element.
+contextClick :: WebDriver -> String -> IO ()
+contextClick d eid =
+  performActions d
+    (mouseSeq ("[" ++ moveToOrigin eid ++ "," ++ ptrDown 2 ++ "," ++ ptrUp 2 ++ "]"))
+
+-- | Double left-click the element.
+doubleClick :: WebDriver -> String -> IO ()
+doubleClick d eid =
+  performActions d
+    (mouseSeq
+       ("[" ++ moveToOrigin eid ++ "," ++ ptrDown 0 ++ "," ++ ptrUp 0
+          ++ "," ++ ptrDown 0 ++ "," ++ ptrUp 0 ++ "]"))
+
+-- | Drag @source@ onto @target@ (press at source, move to target, release).
+dragAndDrop :: WebDriver -> String -> String -> IO ()
+dragAndDrop d source target =
+  performActions d
+    (mouseSeq
+       ("[" ++ moveToOrigin source ++ "," ++ ptrDown 0 ++ ","
+          ++ moveToOrigin target ++ "," ++ ptrUp 0 ++ "]"))
+
+keyEv :: String -> String -> String
+keyEv typ key = "{\"type\":" ++ jsonStr typ ++ ",\"value\":" ++ jsonStr key ++ "}"
+
+-- | Press (and hold) a key via the keyboard action device.
+keyDown :: WebDriver -> String -> IO ()
+keyDown d key = performActions d (keySeq ("[" ++ keyEv "keyDown" key ++ "]"))
+
+-- | Release a key held via the keyboard action device.
+keyUp :: WebDriver -> String -> IO ()
+keyUp d key = performActions d (keySeq ("[" ++ keyEv "keyUp" key ++ "]"))
 
 -- ---- timeouts (all in milliseconds) ----
 

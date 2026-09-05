@@ -177,6 +177,9 @@ public final class WebDriver {
         }
     }
 
+    /// True if this session negotiated a webSocketUrl (BiDi usable).
+    public var bidiAvailable: Bool { !webSocketUrl.isEmpty }
+
     /// Open (once) and return the WebDriver-BiDi channel for this session. Throws
     /// if the session advertised no webSocketUrl or the socket won't connect.
     public func bidi() throws -> BiDi {
@@ -1249,6 +1252,43 @@ public final class BiDi {
     }
     public func setCacheBehavior(_ behavior: String, timeoutMs: Int32 = 30_000) -> String {
         take(aether_sel_embed_bidi_network_set_cache_behavior(handle, newId(), behavior, timeoutMs))
+    }
+
+    // ---- higher-level convenience over the raw verbs ----
+
+    /// Block until an event whose `method` matches arrives (or timeout); returns
+    /// the decoded event, or nil on timeout/close. (Subscribe first.)
+    public func nextEvent(_ method: String, timeoutMs: Int32 = 30_000) -> Any? {
+        let raw = waitEvent(method, timeoutMs: timeoutMs)
+        return raw.isEmpty ? nil : decodeJSON(raw)
+    }
+
+    /// The top-level browsing-context id (anchor for evaluate/navigate), or nil
+    /// when the tree is empty.
+    public func topContext(timeoutMs: Int32 = 30_000) -> String? {
+        let tree = decodeJSON(getTree(timeoutMs: timeoutMs)) as? [String: Any]
+        let result = tree?["result"] as? [String: Any]
+        let contexts = result?["contexts"] as? [[String: Any]]
+        return (contexts?.first?["context"]) as? String
+    }
+
+    /// `script.evaluate` an expression in the top-level realm, returning just the
+    /// unwrapped `.value` of the BiDi-typed result, or nil if not a simple value.
+    public func evaluateValue(_ expr: String, timeoutMs: Int32 = 30_000) -> Any? {
+        guard let ctx = topContext(timeoutMs: timeoutMs) else { return nil }
+        let reply = decodeJSON(scriptEvaluate(expr, contextId: ctx, timeoutMs: timeoutMs)) as? [String: Any]
+        let outer = reply?["result"] as? [String: Any]
+        let inner = outer?["result"] as? [String: Any]
+        return inner?["value"]
+    }
+
+    /// The `network.request` id out of a `network.beforeRequestSent` (or other
+    /// network) event: `params.request.request`.
+    public static func eventRequestId(_ event: Any?) -> String? {
+        let ev = event as? [String: Any]
+        let params = ev?["params"] as? [String: Any]
+        let request = params?["request"] as? [String: Any]
+        return request?["request"] as? String
     }
 }
 
