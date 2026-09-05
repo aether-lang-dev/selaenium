@@ -32,6 +32,23 @@ defmodule Selenium.Native do
   defdelegate route(name), to: :selenium_nif
   defdelegate error_code(w3c_error), to: :selenium_nif
 
+  # ---- TLS knobs (before the first request) ----
+  defdelegate set_ca(handle, ca_path), to: :selenium_nif
+  defdelegate set_insecure(handle, flag), to: :selenium_nif
+
+  # ---- element atoms (engine-run, in-page) ----
+  defdelegate is_displayed(handle, element_id), to: :selenium_nif
+  defdelegate get_attribute(handle, element_id, name), to: :selenium_nif
+  defdelegate find_relative(handle, base_css, filters_json), to: :selenium_nif
+
+  # ---- self-managed driver process (no chromedriver on PATH, no Grid) ----
+  defdelegate resolve_driver(browser, hint), to: :selenium_nif
+  defdelegate launch_driver(driver_path, timeout_ms), to: :selenium_nif
+  defdelegate ensure_driver(browser, hint, timeout_ms), to: :selenium_nif
+  defdelegate driver_url(driver_handle), to: :selenium_nif
+  defdelegate driver_pid(driver_handle), to: :selenium_nif
+  defdelegate stop_driver(driver_handle), to: :selenium_nif
+
   # ---- WebDriver-BiDi (the raw demux primitives; orchestration in Selenium) ----
   defdelegate bidi_open(ws_url), to: :selenium_nif
   defdelegate bidi_close(bidi_handle), to: :selenium_nif
@@ -42,4 +59,41 @@ defmodule Selenium.Native do
   defdelegate bidi_subscribe(bidi_handle, id, events_csv, timeout_ms), to: :selenium_nif
   defdelegate bidi_unsubscribe(bidi_handle, id, events_csv, timeout_ms), to: :selenium_nif
   defdelegate bidi_lost_events(bidi_handle), to: :selenium_nif
+
+  # ---- BiDi network interception (request pausing / mocking) ----
+  defdelegate bidi_network_add_intercept(bidi_handle, id, phases, url_pattern, timeout_ms),
+    to: :selenium_nif
+
+  defdelegate bidi_network_remove_intercept(bidi_handle, id, intercept_id, timeout_ms),
+    to: :selenium_nif
+
+  defdelegate bidi_network_continue_request(bidi_handle, id, request_id, timeout_ms),
+    to: :selenium_nif
+
+  defdelegate bidi_network_fail_request(bidi_handle, id, request_id, timeout_ms),
+    to: :selenium_nif
+
+  defdelegate bidi_network_provide_response(
+                bidi_handle,
+                id,
+                request_id,
+                status,
+                content_type,
+                body,
+                timeout_ms
+              ),
+              to: :selenium_nif
+
+  defdelegate bidi_network_continue_with_auth(
+                bidi_handle,
+                id,
+                request_id,
+                username,
+                password,
+                timeout_ms
+              ),
+              to: :selenium_nif
+
+  defdelegate bidi_network_set_cache_behavior(bidi_handle, id, behavior, timeout_ms),
+    to: :selenium_nif
 end

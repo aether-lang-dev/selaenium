@@ -28,6 +28,104 @@ defmodule SeleniumTest do
     assert {:error, {-1, _}} = Selenium.chrome("http://127.0.0.1:1")
   end
 
+  test "chrome_tls transport failure (TLS knobs applied, no crash)" do
+    assert {:error, {-1, _}} =
+             Selenium.chrome_tls("https://127.0.0.1:1", %{}, %{insecure: true})
+  end
+
+  test "full public surface is exported (ABI parity with the Rust bar)" do
+    # Driver (session) surface added in the full-feature pass.
+    for {f, a} <- [
+          {:chrome_tls, 3},
+          {:resolve_driver, 2},
+          {:launch_driver, 2},
+          {:ensure_driver, 3},
+          {:driver_url, 1},
+          {:driver_pid, 1},
+          {:stop_driver, 1},
+          {:local_chrome, 1},
+          {:active_element, 1},
+          {:execute_async_script, 3},
+          {:switch_to_window, 2},
+          {:maximize_window, 1},
+          {:minimize_window, 1},
+          {:fullscreen_window, 1},
+          {:new_window, 2},
+          {:close_window, 1},
+          {:switch_to_frame, 2},
+          {:switch_to_parent_frame, 1},
+          {:switch_to_default_content, 1},
+          {:accept_alert, 1},
+          {:dismiss_alert, 1},
+          {:alert_text, 1},
+          {:send_alert_text, 2},
+          {:alert_present, 1},
+          {:get_cookies, 1},
+          {:get_cookie, 2},
+          {:find_child_element, 3},
+          {:find_child_elements, 3},
+          {:find_relative, 3},
+          {:find_relative_count, 3},
+          {:clear, 2},
+          {:get_property, 3},
+          {:dom_attribute, 3},
+          {:is_enabled, 2},
+          {:is_selected, 2},
+          {:is_displayed, 2},
+          {:get_attribute, 3},
+          {:css_value, 3},
+          {:value_of_css_property, 3},
+          {:element_screenshot, 2},
+          {:submit, 2},
+          {:action_click, 2},
+          {:click_and_hold, 2},
+          {:release, 1},
+          {:double_click, 2},
+          {:context_click, 2},
+          {:move_to_element, 2},
+          {:drag_and_drop, 3},
+          {:options_of, 2},
+          {:is_multiple, 2},
+          {:all_selected_options, 2},
+          {:first_selected_option, 2},
+          {:deselect_all, 2},
+          {:select_by_value, 3},
+          {:select_by_visible_text, 3},
+          {:select_by_index, 3},
+          {:wait_until, 4},
+          {:wait_for_element, 3},
+          {:wait_for_visible, 3},
+          {:wait_for_clickable, 3},
+          {:wait_until_gone, 3},
+          {:wait_for_title_contains, 3},
+          {:wait_for_title_is, 3},
+          {:wait_for_url_contains, 3},
+          {:wait_for_url_is, 3},
+          {:wait_for_text_contains, 4},
+          {:set_page_load_timeout, 2},
+          {:set_script_timeout, 2},
+          {:implicitly_wait, 2},
+          {:screenshot_base, 1},
+          {:print_pdf, 2},
+          {:bidi_add_intercept, 3},
+          {:bidi_remove_intercept, 2},
+          {:bidi_continue_request, 2},
+          {:bidi_fail_request, 2},
+          {:bidi_provide_response, 5},
+          {:bidi_continue_with_auth, 4},
+          {:bidi_set_cache_behavior, 2},
+          {:bidi_event_request_id, 1}
+        ] do
+      assert function_exported?(Selenium, f, a), "missing Selenium.#{f}/#{a}"
+    end
+  end
+
+  test "bidi_event_request_id extracts params.request.request" do
+    ev = %{"params" => %{"request" => %{"request" => "req-42"}}}
+    assert Selenium.bidi_event_request_id(ev) == "req-42"
+    assert Selenium.bidi_event_request_id(%{}) == nil
+  end
+
   @tag :live
   test "live chrome + surface" do
     case System.find_executable("chromedriver") do
@@ -77,7 +175,9 @@ defmodule SeleniumTest do
             # script shapes
             assert {:ok, 42} = Selenium.execute_script(d, "return 6*7;")
             assert {:ok, "hi"} = Selenium.execute_script(d, "return 'hi';")
-            assert {:ok, 42} = Selenium.execute_script(d, "return arguments[0]+arguments[1];", [40, 2])
+
+            assert {:ok, 42} =
+                     Selenium.execute_script(d, "return arguments[0]+arguments[1];", [40, 2])
 
             # W3C actions
             {:ok, btn} = Selenium.find_element(d, "id", "btn")

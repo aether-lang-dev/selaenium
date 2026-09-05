@@ -29,6 +29,17 @@ defmodule Selenium do
   end
 
   @doc """
+  Start a Chrome session over HTTPS with explicit TLS trust. `tls` is a map:
+  `%{ca_path: "/path/to/ca.pem"}` trusts a private-CA bundle; `%{insecure:
+  true}` skips verification entirely (self-signed dev/staging Grid — trust the
+  host out-of-band). Both land on the handle BEFORE newSession.
+  """
+  def chrome_tls(command_executor, options \\ %{}, tls \\ %{}) do
+    caps = Map.merge(%{"browserName" => "chrome"}, options)
+    new(command_executor, caps, tls)
+  end
+
+  @doc """
   Convenience: a headless Chrome session with the standard launch args.
 
   Honors `SEL_CHROME_BINARY` when set (a box with no system Chrome but a cached
@@ -48,7 +59,7 @@ defmodule Selenium do
     chrome(command_executor, %{"goog:chromeOptions" => chrome_opts})
   end
 
-  defp new(command_executor, caps) do
+  defp new(command_executor, caps, tls \\ %{}) do
     handle = Native.open(to_string(command_executor))
 
     case handle do
@@ -56,6 +67,7 @@ defmodule Selenium do
         {:error, {-1, "failed to open session handle"}}
 
       _ ->
+        apply_tls(handle, tls)
         # Request a BiDi channel so bidi_* works on demand; the remote end
         # returns value.capabilities.webSocketUrl (mirrors erlang/src/selenium.erl).
         bidi_caps = Map.put(caps, "webSocketUrl", true)
@@ -70,6 +82,71 @@ defmodule Selenium do
           err ->
             Native.close(handle) && err
         end
+    end
+  end
+
+  defp apply_tls(handle, tls) do
+    case Map.get(tls, :ca_path) || Map.get(tls, "ca_path") do
+      p when is_binary(p) and p != "" -> Native.set_ca(handle, p)
+      _ -> :ok
+    end
+
+    case Map.get(tls, :insecure) || Map.get(tls, "insecure") do
+      true -> Native.set_insecure(handle, 1)
+      _ -> :ok
+    end
+  end
+
+  # ---- self-managed driver (no chromedriver on PATH, no Grid) ----
+
+  @doc "Resolve the driver binary for `browser` (engine auto-download/cache). Returns the path binary."
+  def resolve_driver(browser, hint \\ ""),
+    do: Native.resolve_driver(to_string(browser), to_string(hint))
+
+  @doc "Launch `driver_path` as a child process. Returns {:ok, driver_handle} | {:error, _}."
+  def launch_driver(driver_path, timeout_ms \\ 15_000) do
+    case Native.launch_driver(to_string(driver_path), timeout_ms) do
+      0 -> {:error, {-1, "driver launch failed"}}
+      dh -> {:ok, dh}
+    end
+  end
+
+  @doc "Resolve + launch the driver for `browser` in one step. Returns {:ok, driver_handle} | {:error, _}."
+  def ensure_driver(browser \\ "chrome", hint \\ "", timeout_ms \\ 15_000) do
+    case Native.ensure_driver(to_string(browser), to_string(hint), timeout_ms) do
+      0 -> {:error, {-1, "driver ensure failed"}}
+      dh -> {:ok, dh}
+    end
+  end
+
+  @doc "The base URL a launched driver is listening on."
+  def driver_url(driver_handle), do: Native.driver_url(driver_handle)
+
+  @doc "The OS process id of a launched driver."
+  def driver_pid(driver_handle), do: Native.driver_pid(driver_handle)
+
+  @doc "Terminate a launched driver process."
+  def stop_driver(driver_handle) do
+    Native.stop_driver(driver_handle)
+    :ok
+  end
+
+  @doc """
+  A Chrome session that spawns its OWN chromedriver via the engine — no driver
+  on PATH, no Grid. Returns `{:ok, handle, driver_handle}`; the caller quits the
+  session (`quit/1`) and stops the driver (`stop_driver/1`). `options` is the
+  caps map.
+  """
+  def local_chrome(options \\ %{}) do
+    case ensure_driver("chrome", "", 15_000) do
+      {:ok, dh} ->
+        case chrome(driver_url(dh), options) do
+          {:ok, handle} -> {:ok, handle, dh}
+          err -> stop_driver(dh) && err
+        end
+
+      err ->
+        err
     end
   end
 
@@ -90,6 +167,22 @@ defmodule Selenium do
         code = Native.last_error_code(handle)
         msg = Native.last_error(handle)
         {:error, {code, msg}}
+    end
+  end
+
+  # Decode a return-code from an engine ATOM call (is_displayed/get_attribute/
+  # find_relative) into {:ok, value} | {:error, {code, msg}}, same convention as
+  # execute/3 but reading the atom's last_value.
+  defp atom_result(handle, rc) do
+    case rc do
+      0 ->
+        case Native.last_value(handle) do
+          "" -> {:ok, nil}
+          raw -> {:ok, decode(raw)}
+        end
+
+      _ ->
+        {:error, {Native.last_error_code(handle), Native.last_error(handle)}}
     end
   end
 
@@ -127,7 +220,66 @@ defmodule Selenium do
     end
   end
 
+  @doc """
+  Find one descendant of `element_id` matching a `Selenium.By` locator or a
+  `{strategy, value}` tuple (element-scoped `findChildElement`).
+  """
+  def find_child_element(h, element_id, {strategy, value}),
+    do: find_child_element(h, element_id, strategy, value)
+
+  def find_child_element(h, element_id, by, value) do
+    params = Map.put(decode_by(by, value), "id", element_id)
+
+    case execute(h, "findChildElement", params) do
+      {:ok, m} -> {:ok, Map.fetch!(m, @w3c_key)}
+      err -> err
+    end
+  end
+
+  @doc "Find all descendants of `element_id` matching the locator (element-scoped `findChildElements`)."
+  def find_child_elements(h, element_id, {strategy, value}),
+    do: find_child_elements(h, element_id, strategy, value)
+
+  def find_child_elements(h, element_id, by, value) do
+    params = Map.put(decode_by(by, value), "id", element_id)
+
+    case execute(h, "findChildElements", params) do
+      {:ok, list} -> {:ok, Enum.map(list, &Map.fetch!(&1, @w3c_key))}
+      err -> err
+    end
+  end
+
+  @doc """
+  Relative locators (`find_relative`): the ids of elements matching `base_css`,
+  filtered/ordered by W3C relative filters (above/below/near/toLeftOf/toRightOf).
+  Returns `{:ok, [element_id]}`.
+  """
+  def find_relative(h, base_css, filters) do
+    case atom_result(h, Native.find_relative(h, to_string(base_css), encode(filters))) do
+      {:ok, nil} -> {:ok, []}
+      {:ok, refs} when is_list(refs) -> {:ok, Enum.map(refs, &Map.fetch!(&1, @w3c_key))}
+      err -> err
+    end
+  end
+
+  @doc "Count of elements matching `base_css` under the relative `filters`."
+  def find_relative_count(h, base_css, filters) do
+    case find_relative(h, base_css, filters) do
+      {:ok, ids} -> {:ok, length(ids)}
+      err -> err
+    end
+  end
+
+  @doc "The active (focused) element id (`getActiveElement`)."
+  def active_element(h) do
+    case execute(h, "getActiveElement") do
+      {:ok, m} -> {:ok, Map.fetch!(m, @w3c_key)}
+      err -> err
+    end
+  end
+
   def click(h, element_id), do: execute(h, "clickElement", %{"id" => element_id})
+  def clear(h, element_id), do: execute(h, "clearElement", %{"id" => element_id})
 
   def send_keys(h, element_id, text) do
     execute(h, "sendKeysToElement", %{
@@ -144,9 +296,81 @@ defmodule Selenium do
   def element_property(h, element_id, name),
     do: execute(h, "getElementProperty", %{"id" => element_id, "name" => to_string(name)})
 
+  @doc "Alias of `element_property/3` matching the classic `get_property` name."
+  def get_property(h, element_id, name), do: element_property(h, element_id, name)
+
+  @doc "The literal DOM attribute (W3C `getDomAttribute`), no property fallback."
+  def dom_attribute(h, element_id, name),
+    do: execute(h, "getDomAttribute", %{"id" => element_id, "name" => to_string(name)})
+
+  @doc "Whether the element is enabled (`isElementEnabled`)."
+  def is_enabled(h, element_id) do
+    case execute(h, "isElementEnabled", %{"id" => element_id}) do
+      {:ok, v} -> {:ok, v == true}
+      err -> err
+    end
+  end
+
+  @doc "Whether the element is selected/checked (`isElementSelected`)."
+  def is_selected(h, element_id) do
+    case execute(h, "isElementSelected", %{"id" => element_id}) do
+      {:ok, v} -> {:ok, v == true}
+      err -> err
+    end
+  end
+
+  @doc "The computed value of a CSS property (`getElementValueOfCssProperty`)."
+  def css_value(h, element_id, prop),
+    do:
+      execute(h, "getElementValueOfCssProperty", %{"id" => element_id, "name" => to_string(prop)})
+
+  @doc "Classic-Selenium-named alias of `css_value/3`."
+  def value_of_css_property(h, element_id, prop), do: css_value(h, element_id, prop)
+
+  @doc "A base64 PNG screenshot of just this element (`takeElementScreenshot`)."
+  def element_screenshot(h, element_id),
+    do: execute(h, "takeElementScreenshot", %{"id" => element_id})
+
+  @doc """
+  Whether the element is shown — the isDisplayed atom (the real visibility
+  algorithm, run in-page by the engine), not a naive style check.
+  """
+  def is_displayed(h, element_id) do
+    case atom_result(h, Native.is_displayed(h, to_string(element_id))) do
+      {:ok, v} -> {:ok, v == true}
+      err -> err
+    end
+  end
+
+  @doc """
+  The classic `getAttribute(name)`: property-or-attribute via the shared engine
+  atom. Returns `{:ok, nil}` when the attribute is absent.
+  """
+  def get_attribute(h, element_id, name) do
+    atom_result(h, Native.get_attribute(h, to_string(element_id), to_string(name)))
+  end
+
+  @doc """
+  Submit the form the element belongs to. W3C removed the `submit` endpoint, so
+  — like the reference binding — this walks up to the enclosing `<form>` and
+  calls `requestSubmit()` (falling back to `submit()`) via an injected script.
+  """
+  def submit(h, element_id) do
+    script =
+      "var e=arguments[0];var f=e.form||e.closest('form');" <>
+        "if(!f){throw new Error('Element is not within a form');}" <>
+        "if(f.requestSubmit){f.requestSubmit();}else{f.submit();}"
+
+    execute_script(h, script, [%{@w3c_key => element_id}])
+  end
+
   # ---- script ----
   def execute_script(h, script, args \\ []),
     do: execute(h, "executeScript", %{"script" => to_string(script), "args" => args})
+
+  @doc "Run an async script; the page signals completion via the injected callback."
+  def execute_async_script(h, script, args \\ []),
+    do: execute(h, "executeAsyncScript", %{"script" => to_string(script), "args" => args})
 
   # ---- windows ----
   def window_handles(h), do: execute(h, "getWindowHandles")
@@ -154,20 +378,378 @@ defmodule Selenium do
   def set_window_rect(h, rect), do: execute(h, "setWindowRect", rect)
   def get_window_rect(h), do: execute(h, "getWindowRect")
 
+  @doc "Switch the session's top-level browsing context to window `handle`."
+  def switch_to_window(h, handle),
+    do: execute(h, "switchToWindow", %{"handle" => to_string(handle)})
+
+  @doc "Maximize the current window. Returns the resulting rect."
+  def maximize_window(h), do: execute(h, "maximizeWindow")
+
+  @doc "Minimize (hide) the current window. Returns the resulting rect."
+  def minimize_window(h), do: execute(h, "minimizeWindow")
+
+  @doc "Put the current window into fullscreen. Returns the resulting rect."
+  def fullscreen_window(h), do: execute(h, "fullscreenWindow")
+
+  @doc """
+  Open a new top-level browsing context (`newWindow`). `type_hint` is `"tab"` or
+  `"window"`. Returns `{:ok, handle}` — pass it to `switch_to_window/2`.
+  """
+  def new_window(h, type_hint \\ "tab") do
+    case execute(h, "newWindow", %{"type" => to_string(type_hint)}) do
+      {:ok, %{"handle" => handle}} -> {:ok, handle}
+      {:ok, _} -> {:ok, ""}
+      err -> err
+    end
+  end
+
+  @doc """
+  Close the current window/tab (`close`). Returns `{:ok, remaining_handles}`;
+  when it empties the session is gone. Does NOT end the session (use `quit/1`).
+  """
+  def close_window(h) do
+    case execute(h, "close") do
+      {:ok, handles} when is_list(handles) -> {:ok, handles}
+      {:ok, _} -> {:ok, []}
+      err -> err
+    end
+  end
+
+  # ---- frames ----
+
+  @doc """
+  Switch focus to a frame (`switchToFrame`): a 0-based integer index, an element
+  id string (the `<iframe>` element), or `:default`/`nil` for the top-level
+  context. Subsequent element commands run inside the chosen frame.
+  """
+  def switch_to_frame(h, index) when is_integer(index),
+    do: execute(h, "switchToFrame", %{"id" => index})
+
+  def switch_to_frame(h, frame) when frame in [:default, nil],
+    do: execute(h, "switchToFrame", %{"id" => nil})
+
+  def switch_to_frame(h, element_id) when is_binary(element_id),
+    do: execute(h, "switchToFrame", %{"id" => %{@w3c_key => element_id}})
+
+  @doc "Switch to the parent of the current frame (one level out)."
+  def switch_to_parent_frame(h), do: execute(h, "switchToFrameParent")
+
+  @doc "Return focus to the top-level browsing context."
+  def switch_to_default_content(h), do: switch_to_frame(h, :default)
+
   # ---- cookies ----
   def add_cookie(h, cookie), do: execute(h, "addCookie", %{"cookie" => cookie})
   def cookies(h), do: execute(h, "getCookies")
   def cookie(h, name), do: execute(h, "getCookie", %{"name" => to_string(name)})
   def delete_cookie(h, name), do: execute(h, "deleteCookie", %{"name" => to_string(name)})
   def delete_all_cookies(h), do: execute(h, "deleteAllCookies")
+  def get_cookies(h), do: cookies(h)
+  def get_cookie(h, name), do: cookie(h, name)
+
+  # ---- alerts ----
+  @doc "Accept (OK) the current user-prompt / alert dialog."
+  def accept_alert(h), do: execute(h, "acceptAlert")
+
+  @doc "Dismiss (Cancel) the current user-prompt / alert dialog."
+  def dismiss_alert(h), do: execute(h, "dismissAlert")
+
+  @doc "The message text of the current dialog."
+  def alert_text(h), do: execute(h, "getAlertText")
+
+  @doc "Type `text` into the current prompt dialog's input field."
+  def send_alert_text(h, text),
+    do:
+      execute(h, "setAlertValue", %{
+        "text" => to_string(text),
+        "value" => String.graphemes(to_string(text))
+      })
+
+  @doc """
+  True if a dialog is present (probing via `getAlertText`). A clean "no such
+  alert" (code 15) resolves to `{:ok, false}`; transport failures propagate.
+  """
+  def alert_present(h) do
+    case execute(h, "getAlertText") do
+      {:ok, _} -> {:ok, true}
+      {:error, {15, _}} -> {:ok, false}
+      err -> err
+    end
+  end
 
   # ---- actions ----
   def perform_actions(h, actions), do: execute(h, "actions", %{"actions" => actions})
   def clear_actions(h), do: execute(h, "clearActions")
 
+  # High-level pointer gestures over perform_actions/2, each targeting the
+  # "mouse" device and moving to the element centre (origin = element ref) first.
+  @doc "Move to the element centre and click through the input-actions device."
+  def action_click(h, element_id),
+    do: perform_actions(h, [ptr_seq([ptr_move_origin(element_id), ptr_down(0), ptr_up(0)])])
+
+  @doc "Alias of `action_click/2` (hover-then-press-and-hold at the element centre)."
+  def click_and_hold(h, element_id),
+    do: perform_actions(h, [ptr_seq([ptr_move_origin(element_id), ptr_down(0)])])
+
+  @doc "Release the currently-held pointer button."
+  def release(h), do: perform_actions(h, [ptr_seq([ptr_up(0)])])
+
+  @doc "Double-click at the element centre."
+  def double_click(h, element_id),
+    do:
+      perform_actions(h, [
+        ptr_seq([ptr_move_origin(element_id), ptr_down(0), ptr_up(0), ptr_down(0), ptr_up(0)])
+      ])
+
+  @doc "Right-click (contextmenu) at the element centre."
+  def context_click(h, element_id),
+    do: perform_actions(h, [ptr_seq([ptr_move_origin(element_id), ptr_down(2), ptr_up(2)])])
+
+  @doc "Hover: move the pointer to the element centre (no button)."
+  def move_to_element(h, element_id),
+    do: perform_actions(h, [ptr_seq([ptr_move_origin(element_id)])])
+
+  @doc "Drag `source_id` onto `target_id` (press at source, move to target, release)."
+  def drag_and_drop(h, source_id, target_id),
+    do:
+      perform_actions(h, [
+        ptr_seq([ptr_move_origin(source_id), ptr_down(0), ptr_move_origin(target_id), ptr_up(0)])
+      ])
+
+  defp ptr_seq(actions) do
+    %{
+      "type" => "pointer",
+      "id" => "mouse",
+      "parameters" => %{"pointerType" => "mouse"},
+      "actions" => actions
+    }
+  end
+
+  defp ptr_move_origin(element_id) do
+    %{
+      "type" => "pointerMove",
+      "duration" => 0,
+      "x" => 0,
+      "y" => 0,
+      "origin" => %{@w3c_key => element_id}
+    }
+  end
+
+  defp ptr_down(button), do: %{"type" => "pointerDown", "button" => button}
+  defp ptr_up(button), do: %{"type" => "pointerUp", "button" => button}
+
+  # ---- Select (a <select> element helper) ----
+
+  @doc "The `<option>` element ids of a `<select>` (scoped `findChildElements`)."
+  def options_of(h, select_id), do: find_child_elements(h, select_id, {:tag_name, "option"})
+
+  @doc "Whether the `<select>` allows multiple selection."
+  def is_multiple(h, select_id) do
+    case get_attribute(h, select_id, "multiple") do
+      {:ok, v} when v in [nil, false] -> {:ok, false}
+      {:ok, _} -> {:ok, true}
+      err -> err
+    end
+  end
+
+  @doc "The `<option>` ids currently selected within `select_id`."
+  def all_selected_options(h, select_id) do
+    with {:ok, opts} <- options_of(h, select_id) do
+      {:ok, Enum.filter(opts, fn o -> match?({:ok, true}, is_selected(h, o)) end)}
+    end
+  end
+
+  @doc "The first selected `<option>` id, or `{:ok, nil}` if none."
+  def first_selected_option(h, select_id) do
+    with {:ok, sel} <- all_selected_options(h, select_id), do: {:ok, List.first(sel)}
+  end
+
+  @doc "Deselect every option of a multi-`<select>` (no-op for single-select already blank)."
+  def deselect_all(h, select_id) do
+    with {:ok, sel} <- all_selected_options(h, select_id) do
+      Enum.reduce_while(sel, {:ok, nil}, fn o, _acc ->
+        case click(h, o) do
+          {:ok, _} = ok -> {:cont, ok}
+          err -> {:halt, err}
+        end
+      end)
+    end
+  end
+
+  @doc "Select the `<option>` whose `value` attribute equals `value`."
+  def select_by_value(h, select_id, value),
+    do: select_option(h, select_id, fn o -> match?({:ok, ^value}, {:ok, opt_value(h, o)}) end)
+
+  @doc "Select the `<option>` whose visible text equals `text`."
+  def select_by_visible_text(h, select_id, text),
+    do: select_option(h, select_id, fn o -> match?({:ok, ^text}, element_text(h, o)) end)
+
+  @doc "Select the `<option>` at the zero-based `index`."
+  def select_by_index(h, select_id, index) when is_integer(index) do
+    with {:ok, opts} <- options_of(h, select_id) do
+      case Enum.at(opts, index) do
+        nil -> {:error, {0, "no such option"}}
+        opt -> click_option(h, opt)
+      end
+    end
+  end
+
+  defp opt_value(h, opt) do
+    case get_attribute(h, opt, "value") do
+      {:ok, v} -> v
+      _ -> nil
+    end
+  end
+
+  defp select_option(h, select_id, pred) do
+    with {:ok, opts} <- options_of(h, select_id) do
+      case Enum.find(opts, pred) do
+        nil -> {:error, {0, "no such option"}}
+        opt -> click_option(h, opt)
+      end
+    end
+  end
+
+  defp click_option(h, opt) do
+    case is_selected(h, opt) do
+      {:ok, true} -> {:ok, opt}
+      {:ok, false} -> with({:ok, _} <- click(h, opt), do: {:ok, opt})
+      err -> err
+    end
+  end
+
+  # ---- waits (poll the driver until a predicate holds or timeout) ----
+
+  @doc """
+  Poll `fun.(handle)` (a 0/1-arity predicate returning truthy) every `poll_every`
+  ms until it holds or `timeout_ms` elapses. Returns `{:ok, value}` (the truthy
+  result) or `{:error, {24, ...}}` on timeout.
+  """
+  def wait_until(h, fun, timeout_ms \\ 10_000, poll_every \\ 200) do
+    deadline = System.monotonic_time(:millisecond) + timeout_ms
+    wait_loop(h, fun, deadline, poll_every)
+  end
+
+  defp wait_loop(h, fun, deadline, poll_every) do
+    case safe_pred(fun, h) do
+      result when result not in [nil, false] ->
+        {:ok, result}
+
+      _ ->
+        if System.monotonic_time(:millisecond) >= deadline do
+          {:error, {24, "wait timed out"}}
+        else
+          Process.sleep(poll_every)
+          wait_loop(h, fun, deadline, poll_every)
+        end
+    end
+  end
+
+  defp safe_pred(fun, h) when is_function(fun, 1), do: fun.(h)
+  defp safe_pred(fun, _h) when is_function(fun, 0), do: fun.()
+
+  @doc "Wait until an element matching the locator is present. Returns `{:ok, element_id}`."
+  def wait_for_element(h, by_or_locator, timeout_ms \\ 10_000) do
+    wait_until(
+      h,
+      fn hd ->
+        case find_element(hd, by_or_locator) do
+          {:ok, id} -> id
+          _ -> false
+        end
+      end,
+      timeout_ms
+    )
+  end
+
+  @doc "Wait until an element matching the locator is displayed. Returns `{:ok, element_id}`."
+  def wait_for_visible(h, by_or_locator, timeout_ms \\ 10_000) do
+    wait_until(
+      h,
+      fn hd ->
+        with {:ok, id} <- find_element(hd, by_or_locator),
+             {:ok, true} <- is_displayed(hd, id) do
+          id
+        else
+          _ -> false
+        end
+      end,
+      timeout_ms
+    )
+  end
+
+  @doc "Wait until an element matching the locator is displayed AND enabled. Returns `{:ok, element_id}`."
+  def wait_for_clickable(h, by_or_locator, timeout_ms \\ 10_000) do
+    wait_until(
+      h,
+      fn hd ->
+        with {:ok, id} <- find_element(hd, by_or_locator),
+             {:ok, true} <- is_displayed(hd, id),
+             {:ok, true} <- is_enabled(hd, id) do
+          id
+        else
+          _ -> false
+        end
+      end,
+      timeout_ms
+    )
+  end
+
+  @doc "Wait until no element matches the locator (element gone/absent)."
+  def wait_until_gone(h, by_or_locator, timeout_ms \\ 10_000) do
+    wait_until(
+      h,
+      fn hd -> match?({:error, {17, _}}, find_element(hd, by_or_locator)) end,
+      timeout_ms
+    )
+  end
+
+  @doc "Wait until the page title contains `substr`."
+  def wait_for_title_contains(h, substr, timeout_ms \\ 10_000),
+    do: wait_until(h, fn hd -> value_contains(title(hd), substr) end, timeout_ms)
+
+  @doc "Wait until the page title equals `want`."
+  def wait_for_title_is(h, want, timeout_ms \\ 10_000),
+    do: wait_until(h, fn hd -> match?({:ok, ^want}, title(hd)) end, timeout_ms)
+
+  @doc "Wait until the current URL contains `substr`."
+  def wait_for_url_contains(h, substr, timeout_ms \\ 10_000),
+    do: wait_until(h, fn hd -> value_contains(current_url(hd), substr) end, timeout_ms)
+
+  @doc "Wait until the current URL equals `want`."
+  def wait_for_url_is(h, want, timeout_ms \\ 10_000),
+    do: wait_until(h, fn hd -> match?({:ok, ^want}, current_url(hd)) end, timeout_ms)
+
+  @doc "Wait until `element_id`'s text contains `substr`."
+  def wait_for_text_contains(h, element_id, substr, timeout_ms \\ 10_000),
+    do:
+      wait_until(h, fn hd -> value_contains(element_text(hd, element_id), substr) end, timeout_ms)
+
+  defp value_contains({:ok, s}, substr) when is_binary(s), do: String.contains?(s, substr)
+  defp value_contains(_, _), do: false
+
   # ---- timeouts / screenshots ----
   def set_timeouts(h, timeouts), do: execute(h, "setTimeout", timeouts)
+
+  @doc "Set the page-load timeout (ms)."
+  def set_page_load_timeout(h, ms), do: execute(h, "setTimeout", %{"pageLoad" => ms})
+
+  @doc "Set the async-script timeout (ms)."
+  def set_script_timeout(h, ms), do: execute(h, "setTimeout", %{"script" => ms})
+
+  @doc "Set the implicit wait (ms): how long `find_element` retries before failing."
+  def implicitly_wait(h, ms), do: execute(h, "setTimeout", %{"implicit" => ms})
+
   def screenshot(h), do: execute(h, "screenshot")
+
+  @doc "Alias of `screenshot/1` (base64 PNG), matching the classic `screenshot_base` name."
+  def screenshot_base(h), do: screenshot(h)
+
+  @doc """
+  Print the current page to PDF (`printPage`), returning a base64 string.
+  `options` is the W3C print-options map (page size, margins, orientation,
+  scale, `pageRanges`, …); pass `%{}` for defaults.
+  """
+  def print_pdf(h, options \\ %{}), do: execute(h, "printPage", options)
 
   # ---- lifecycle ----
   def session_id(h), do: Native.session_id(h)
@@ -253,6 +835,121 @@ defmodule Selenium do
       err -> err
     end
   end
+
+  # ---- WebDriver-BiDi network interception ----
+  # Dedicated NIF entry points (own request id per call). `request_id` comes from
+  # a network event via `bidi_event_request_id/1`.
+
+  @doc """
+  Intercept requests matching `url_pattern` (`""` intercepts all) at `phases`
+  (default `"beforeRequestSent"`). Returns `{:ok, intercept_id}`.
+  """
+  def bidi_add_intercept(h, url_pattern, phases \\ "beforeRequestSent") do
+    with_bidi(h, fn bh ->
+      reply =
+        decode(
+          Native.bidi_network_add_intercept(
+            bh,
+            bidi_next_id(h),
+            to_string(phases),
+            to_string(url_pattern),
+            10_000
+          )
+        )
+
+      case reply do
+        %{"result" => %{"intercept" => ic}} -> {:ok, ic}
+        _ -> {:error, {0, "no intercept id"}}
+      end
+    end)
+  end
+
+  @doc "Remove a previously-added network intercept."
+  def bidi_remove_intercept(h, intercept_id) do
+    with_bidi(h, fn bh ->
+      {:ok,
+       decode(
+         Native.bidi_network_remove_intercept(
+           bh,
+           bidi_next_id(h),
+           to_string(intercept_id),
+           10_000
+         )
+       )}
+    end)
+  end
+
+  @doc "Let a paused request proceed (`network.continueRequest`)."
+  def bidi_continue_request(h, request_id) do
+    with_bidi(h, fn bh ->
+      {:ok,
+       decode(
+         Native.bidi_network_continue_request(bh, bidi_next_id(h), to_string(request_id), 10_000)
+       )}
+    end)
+  end
+
+  @doc "Fail a paused request (`network.failRequest`)."
+  def bidi_fail_request(h, request_id) do
+    with_bidi(h, fn bh ->
+      {:ok,
+       decode(
+         Native.bidi_network_fail_request(bh, bidi_next_id(h), to_string(request_id), 10_000)
+       )}
+    end)
+  end
+
+  @doc """
+  Fulfill a paused request with a MOCK response (never hits the network).
+  Defaults to status 200, no content-type, empty body.
+  """
+  def bidi_provide_response(h, request_id, status \\ 200, content_type \\ "", body \\ "") do
+    with_bidi(h, fn bh ->
+      {:ok,
+       decode(
+         Native.bidi_network_provide_response(
+           bh,
+           bidi_next_id(h),
+           to_string(request_id),
+           status,
+           to_string(content_type),
+           to_string(body),
+           10_000
+         )
+       )}
+    end)
+  end
+
+  @doc "Answer a paused authRequired with credentials (`network.continueWithAuth`)."
+  def bidi_continue_with_auth(h, request_id, username, password) do
+    with_bidi(h, fn bh ->
+      {:ok,
+       decode(
+         Native.bidi_network_continue_with_auth(
+           bh,
+           bidi_next_id(h),
+           to_string(request_id),
+           to_string(username),
+           to_string(password),
+           10_000
+         )
+       )}
+    end)
+  end
+
+  @doc "Disable (\"bypass\") or restore (\"default\") the session HTTP cache."
+  def bidi_set_cache_behavior(h, behavior \\ "bypass") do
+    with_bidi(h, fn bh ->
+      {:ok,
+       decode(
+         Native.bidi_network_set_cache_behavior(bh, bidi_next_id(h), to_string(behavior), 10_000)
+       )}
+    end)
+  end
+
+  @doc "The network.request id out of a network event: params.request.request."
+  def bidi_event_request_id(%{"params" => %{"request" => %{"request" => rid}}}), do: rid
+  def bidi_event_request_id(_), do: nil
 
   defp bidi_await_reply(_bh, _id, timeout_ms, _step, waited, method) when waited >= timeout_ms,
     do: {:error, {24, "BiDi command timed out: #{method}"}}
