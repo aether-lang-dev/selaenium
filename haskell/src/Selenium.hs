@@ -9,6 +9,10 @@
 -- like), and command results come back as the raw JSON string of the response
 -- @value@ — keeping the binding dependency-light (base + bytestring only). The
 -- engine is the source of truth for every wire shape.
+--
+-- Element commands take the opaque W3C element id string ('findElement'
+-- returns) as their first argument, mirroring the reference bindings' one-arg
+-- @findElement@ + element-scoped verbs.
 module Selenium
   ( WebDriver
   , WebDriverError (..)
@@ -23,26 +27,108 @@ module Selenium
   , byLinkText
   , byPartialLinkText
   , byXpath
+    -- * Session lifecycle
   , chrome
   , headlessChrome
   , execute
-  , get
-  , title
-  , back
-  , forward
-  , findElement
-  , elementClick
-  , elementText
-  , executeScript
   , sessionId
   , quit
+    -- * Navigation
+  , get
+  , currentUrl
+  , title
+  , pageSource
+  , back
+  , forward
+  , refresh
+    -- * Elements
+  , findElement
+  , findElements
+  , findChildElement
+  , findChildElements
+  , activeElement
+  , exists
+  , elementClick
+  , elementClear
+  , elementSendKeys
+  , elementText
+  , elementTagName
+  , elementIsEnabled
+  , elementIsSelected
+  , elementRect
+  , getDomAttribute
+  , getProperty
+  , cssValue
+  , valueOfCssProperty
+  , elementScreenshot
+  , submit
+    -- * Script
+  , executeScript
+  , executeAsyncScript
+    -- * Windows
+  , windowHandles
+  , currentWindowHandle
+  , switchToWindow
+  , newWindow
+  , closeWindow
+  , getWindowRect
+  , setWindowRect
+  , maximizeWindow
+  , minimizeWindow
+  , fullscreenWindow
+    -- * Frames
+  , Frame (..)
+  , switchToFrame
+  , switchToParentFrame
+  , switchToDefaultContent
+    -- * Alerts
+  , acceptAlert
+  , dismissAlert
+  , alertText
+  , sendAlertText
+  , alertPresent
+    -- * Cookies
+  , addCookie
+  , getCookies
+  , getCookie
+  , deleteCookie
+  , deleteAllCookies
+    -- * Actions
+  , performActions
+  , clearActions
+    -- * Timeouts
+  , setTimeouts
+  , setPageLoadTimeout
+  , setScriptTimeout
+  , implicitlyWait
+    -- * Screenshots / print
+  , screenshotBase64
+  , printPdf
+    -- * Select helper
+  , selectByVisibleText
+  , selectByValue
+  , selectByIndex
+  , selectedOptions
+  , firstSelectedOption
+  , deselectAll
+    -- * Waits
+  , waitUntil
+  , waitForElement
+  , waitForTitleIs
+  , waitForTitleContains
+  , waitForUrlIs
+  , waitForUrlContains
+  , waitUntilGone
+    -- * Pure engine helpers
   , route
   , errorCode
   , locator
+  , keysChord
   ) where
 
-import Control.Exception (Exception, throwIO)
-import Data.List (isInfixOf)
+import Control.Concurrent (threadDelay)
+import Control.Exception (Exception, throwIO, try)
+import Data.List (isInfixOf, isPrefixOf)
 import Foreign.Ptr (Ptr, nullPtr)
 import System.Environment (lookupEnv)
 
@@ -109,6 +195,12 @@ errorCode = N.selErrorCode
 locator :: By -> String -> IO String
 locator by value = N.selByLocator (byString by) value
 
+-- | Build a modifier chord string (e.g. @keysChord "\xE009" "a"@ for Ctrl+A):
+-- the modifier, the text, then a trailing NULL key that releases held
+-- modifiers — mirroring @Keys.chord@ in the reference bindings.
+keysChord :: String -> String -> String
+keysChord modifier text = modifier ++ text ++ "\xE000"
+
 -- ---- session lifecycle ----
 
 -- | Start a Chrome session. @capsJson@ is the alwaysMatch capabilities object
@@ -150,19 +242,32 @@ execute (WebDriver h) command paramsJson = do
         else throwIO (WebDriverError code msg)
     else N.selLastValue h
 
+-- | @execute@ for commands whose response value we don't need — discards it.
+execute_ :: WebDriver -> String -> String -> IO ()
+execute_ d command paramsJson = execute d command paramsJson >> pure ()
+
 -- ---- navigation ----
 
 get :: WebDriver -> String -> IO ()
-get d url = execute d "get" ("{\"url\":" ++ jsonStr url ++ "}") >> pure ()
+get d url = execute_ d "get" ("{\"url\":" ++ jsonStr url ++ "}")
+
+currentUrl :: WebDriver -> IO String
+currentUrl d = jsonUnquote <$> execute d "getCurrentUrl" "{}"
 
 title :: WebDriver -> IO String
 title d = jsonUnquote <$> execute d "getTitle" "{}"
 
+pageSource :: WebDriver -> IO String
+pageSource d = jsonUnquote <$> execute d "getPageSource" "{}"
+
 back :: WebDriver -> IO ()
-back d = execute d "goBack" "{}" >> pure ()
+back d = execute_ d "goBack" "{}"
 
 forward :: WebDriver -> IO ()
-forward d = execute d "goForward" "{}" >> pure ()
+forward d = execute_ d "goForward" "{}"
+
+refresh :: WebDriver -> IO ()
+refresh d = execute_ d "refresh" "{}"
 
 -- ---- elements ----
 
@@ -180,11 +285,123 @@ findElement d (Locator strategy value) = do
     Just eid -> pure eid
     Nothing -> throwIO (WebDriverError 17 "element reference key missing")
 
+-- | Find all elements matching a 'Locator'. Returns the list of element ids
+-- (possibly empty).
+findElements :: WebDriver -> Locator -> IO [String]
+findElements d (Locator strategy value) = do
+  loc <- N.selByLocator strategy value
+  v <- execute d "findElements" loc
+  pure (extractElementIds v)
+
+-- | Find one descendant of @eid@ matching a 'Locator' (element-scoped
+-- @findChildElement@).
+findChildElement :: WebDriver -> String -> Locator -> IO String
+findChildElement d eid (Locator strategy value) = do
+  loc <- N.selByLocator strategy value
+  -- The engine's findChildElement route takes the parent id plus the locator's
+  -- using/value; merge the parent id into the locator object.
+  v <- execute d "findChildElement" (mergeId eid loc)
+  case extractElementId v of
+    Just cid -> pure cid
+    Nothing -> throwIO (WebDriverError 17 "element reference key missing")
+
+-- | Find all descendants of @eid@ matching a 'Locator' (element-scoped
+-- @findChildElements@).
+findChildElements :: WebDriver -> String -> Locator -> IO [String]
+findChildElements d eid (Locator strategy value) = do
+  loc <- N.selByLocator strategy value
+  v <- execute d "findChildElements" (mergeId eid loc)
+  pure (extractElementIds v)
+
+-- | The active (focused) element id (@getActiveElement@).
+activeElement :: WebDriver -> IO String
+activeElement d = do
+  v <- execute d "getActiveElement" "{}"
+  case extractElementId v of
+    Just eid -> pure eid
+    Nothing -> throwIO (WebDriverError 17 "element reference key missing")
+
+-- | True if at least one element matching the locator is present right now — an
+-- immediate presence check. A clean not-found resolves to @False@; a
+-- transport-level failure still throws.
+exists :: WebDriver -> Locator -> IO Bool
+exists d loc = do
+  r <- try (findElement d loc)
+  case r of
+    Right _ -> pure True
+    Left e@(WebDriverError code _)
+      | code == 17 -> pure False
+      | otherwise -> throwIO e
+
 elementClick :: WebDriver -> String -> IO ()
-elementClick d eid = execute d "clickElement" ("{\"id\":" ++ jsonStr eid ++ "}") >> pure ()
+elementClick d eid = execute_ d "clickElement" ("{\"id\":" ++ jsonStr eid ++ "}")
+
+elementClear :: WebDriver -> String -> IO ()
+elementClear d eid = execute_ d "clearElement" ("{\"id\":" ++ jsonStr eid ++ "}")
+
+-- | Type @text@ into the element. Sends both the whole string and the
+-- character array the W3C @value@ field expects.
+elementSendKeys :: WebDriver -> String -> String -> IO ()
+elementSendKeys d eid text =
+  execute_ d "sendKeysToElement"
+    ("{\"id\":" ++ jsonStr eid ++ ",\"text\":" ++ jsonStr text
+      ++ ",\"value\":" ++ jsonCharArray text ++ "}")
 
 elementText :: WebDriver -> String -> IO String
 elementText d eid = jsonUnquote <$> execute d "getElementText" ("{\"id\":" ++ jsonStr eid ++ "}")
+
+elementTagName :: WebDriver -> String -> IO String
+elementTagName d eid = jsonUnquote <$> execute d "getElementTagName" ("{\"id\":" ++ jsonStr eid ++ "}")
+
+elementIsEnabled :: WebDriver -> String -> IO Bool
+elementIsEnabled d eid = jsonBool <$> execute d "isElementEnabled" ("{\"id\":" ++ jsonStr eid ++ "}")
+
+elementIsSelected :: WebDriver -> String -> IO Bool
+elementIsSelected d eid = jsonBool <$> execute d "isElementSelected" ("{\"id\":" ++ jsonStr eid ++ "}")
+
+-- | The element's bounding rect as the raw JSON string @{x,y,width,height}@.
+elementRect :: WebDriver -> String -> IO String
+elementRect d eid = execute d "getElementRect" ("{\"id\":" ++ jsonStr eid ++ "}")
+
+-- | The literal DOM attribute (W3C @getDomAttribute@), no property fallback.
+-- Returns the raw JSON value (a quoted string or @null@).
+getDomAttribute :: WebDriver -> String -> String -> IO String
+getDomAttribute d eid name =
+  execute d "getDomAttribute" ("{\"id\":" ++ jsonStr eid ++ ",\"name\":" ++ jsonStr name ++ "}")
+
+-- | The element's JS property (@getElementProperty@) as the raw JSON value.
+getProperty :: WebDriver -> String -> String -> IO String
+getProperty d eid name =
+  execute d "getElementProperty" ("{\"id\":" ++ jsonStr eid ++ ",\"name\":" ++ jsonStr name ++ "}")
+
+-- | The computed value of a CSS property (@getElementValueOfCssProperty@).
+cssValue :: WebDriver -> String -> String -> IO String
+cssValue d eid prop =
+  jsonUnquote
+    <$> execute d "getElementValueOfCssProperty"
+          ("{\"id\":" ++ jsonStr eid ++ ",\"name\":" ++ jsonStr prop ++ "}")
+
+-- | Classic-Selenium-named alias of 'cssValue'.
+valueOfCssProperty :: WebDriver -> String -> String -> IO String
+valueOfCssProperty = cssValue
+
+-- | A base64 PNG screenshot of just this element (@takeElementScreenshot@).
+elementScreenshot :: WebDriver -> String -> IO String
+elementScreenshot d eid =
+  jsonUnquote <$> execute d "takeElementScreenshot" ("{\"id\":" ++ jsonStr eid ++ "}")
+
+-- | Submit the form the element belongs to. W3C removed the dedicated @submit@
+-- endpoint, so — like the reference binding and modern Selenium — this walks up
+-- to the enclosing @<form>@ and calls @requestSubmit()@ (falling back to
+-- @submit()@) via an injected script. Throws (code 13/other) if not in a form.
+submit :: WebDriver -> String -> IO ()
+submit d eid =
+  let script =
+        "var e=arguments[0];var f=e.form||e.closest('form');"
+          ++ "if(!f){throw new Error('Element is not within a form');}"
+          ++ "if(f.requestSubmit){f.requestSubmit();}else{f.submit();}"
+      arg = "{" ++ jsonStr w3cElementKey ++ ":" ++ jsonStr eid ++ "}"
+   in executeScript d script ("[" ++ arg ++ "]") >> pure ()
 
 -- ---- script ----
 
@@ -192,6 +409,275 @@ elementText d eid = jsonUnquote <$> execute d "getElementText" ("{\"id\":" ++ js
 executeScript :: WebDriver -> String -> String -> IO String
 executeScript d script argsJson =
   execute d "executeScript" ("{\"script\":" ++ jsonStr script ++ ",\"args\":" ++ argsJson ++ "}")
+
+-- | Run an async script: the page signals completion via the injected callback
+-- (@arguments[arguments.length - 1]@). Returns the callback value.
+executeAsyncScript :: WebDriver -> String -> String -> IO String
+executeAsyncScript d script argsJson =
+  execute d "executeAsyncScript" ("{\"script\":" ++ jsonStr script ++ ",\"args\":" ++ argsJson ++ "}")
+
+-- ---- windows ----
+
+windowHandles :: WebDriver -> IO [String]
+windowHandles d = extractStrings <$> execute d "getWindowHandles" "{}"
+
+currentWindowHandle :: WebDriver -> IO String
+currentWindowHandle d = jsonUnquote <$> execute d "getCurrentWindowHandle" "{}"
+
+switchToWindow :: WebDriver -> String -> IO ()
+switchToWindow d handle = execute_ d "switchToWindow" ("{\"handle\":" ++ jsonStr handle ++ "}")
+
+-- | Open a new top-level browsing context. @typeHint@ is @"tab"@ or @"window"@.
+-- Returns the new window's handle (@""@ if the remote end sent none).
+newWindow :: WebDriver -> String -> IO String
+newWindow d typeHint = do
+  v <- execute d "newWindow" ("{\"type\":" ++ jsonStr typeHint ++ "}")
+  pure (extractField "handle" v)
+
+-- | Close the current window/tab. Returns the remaining window handles.
+closeWindow :: WebDriver -> IO [String]
+closeWindow d = extractStrings <$> execute d "close" "{}"
+
+getWindowRect :: WebDriver -> IO String
+getWindowRect d = execute d "getWindowRect" "{}"
+
+-- | Set the window rect. @rectJson@ is a @{x,y,width,height}@ JSON object.
+setWindowRect :: WebDriver -> String -> IO String
+setWindowRect d rectJson = execute d "setWindowRect" rectJson
+
+maximizeWindow :: WebDriver -> IO String
+maximizeWindow d = execute d "maximizeWindow" "{}"
+
+minimizeWindow :: WebDriver -> IO String
+minimizeWindow d = execute d "minimizeWindow" "{}"
+
+fullscreenWindow :: WebDriver -> IO String
+fullscreenWindow d = execute d "fullscreenWindow" "{}"
+
+-- ---- frames ----
+
+-- | A frame target for 'switchToFrame': by 0-based index, by @<iframe>@ element
+-- id, or the top-level context.
+data Frame = FrameIndex Int | FrameElement String | FrameDefault
+
+frameIdJson :: Frame -> String
+frameIdJson (FrameIndex i) = show i
+frameIdJson (FrameElement eid) = "{" ++ jsonStr w3cElementKey ++ ":" ++ jsonStr eid ++ "}"
+frameIdJson FrameDefault = "null"
+
+-- | Switch focus to a frame. All subsequent element commands run inside the
+-- chosen frame until the next frame switch.
+switchToFrame :: WebDriver -> Frame -> IO ()
+switchToFrame d frame = execute_ d "switchToFrame" ("{\"id\":" ++ frameIdJson frame ++ "}")
+
+-- | Switch to the parent of the current frame (one level out).
+switchToParentFrame :: WebDriver -> IO ()
+switchToParentFrame d = execute_ d "switchToFrameParent" "{}"
+
+-- | Return focus to the top-level browsing context.
+switchToDefaultContent :: WebDriver -> IO ()
+switchToDefaultContent d = switchToFrame d FrameDefault
+
+-- ---- alerts ----
+
+acceptAlert :: WebDriver -> IO ()
+acceptAlert d = execute_ d "acceptAlert" "{}"
+
+dismissAlert :: WebDriver -> IO ()
+dismissAlert d = execute_ d "dismissAlert" "{}"
+
+alertText :: WebDriver -> IO String
+alertText d = jsonUnquote <$> execute d "getAlertText" "{}"
+
+-- | Type @text@ into the current prompt dialog's input field.
+sendAlertText :: WebDriver -> String -> IO ()
+sendAlertText d text =
+  execute_ d "setAlertValue" ("{\"text\":" ++ jsonStr text ++ ",\"value\":" ++ jsonCharArray text ++ "}")
+
+-- | True if a user-prompt / alert dialog is currently present (probed via
+-- @getAlertText@). A clean "no such alert" (code 15) resolves to @False@; a
+-- transport-level failure still throws.
+alertPresent :: WebDriver -> IO Bool
+alertPresent d = do
+  r <- try (execute d "getAlertText" "{}")
+  case r of
+    Right _ -> pure True
+    Left e@(WebDriverError code _)
+      | code == 15 -> pure False
+      | otherwise -> throwIO e
+
+-- ---- cookies ----
+
+-- | Add a cookie. @cookieJson@ is a cookie object as a JSON string
+-- (@{"name":...,"value":...}@ + optional fields).
+addCookie :: WebDriver -> String -> IO ()
+addCookie d cookieJson = execute_ d "addCookie" ("{\"cookie\":" ++ cookieJson ++ "}")
+
+getCookies :: WebDriver -> IO String
+getCookies d = execute d "getCookies" "{}"
+
+getCookie :: WebDriver -> String -> IO String
+getCookie d name = execute d "getCookie" ("{\"name\":" ++ jsonStr name ++ "}")
+
+deleteCookie :: WebDriver -> String -> IO ()
+deleteCookie d name = execute_ d "deleteCookie" ("{\"name\":" ++ jsonStr name ++ "}")
+
+deleteAllCookies :: WebDriver -> IO ()
+deleteAllCookies d = execute_ d "deleteAllCookies" "{}"
+
+-- ---- actions ----
+
+-- | Post a W3C @actions@ sequence. @actionsJson@ is the JSON array string of
+-- input-source objects (pointer/key/wheel virtual devices).
+performActions :: WebDriver -> String -> IO ()
+performActions d actionsJson = execute_ d "actions" ("{\"actions\":" ++ actionsJson ++ "}")
+
+clearActions :: WebDriver -> IO ()
+clearActions d = execute_ d "clearActions" "{}"
+
+-- ---- timeouts (all in milliseconds) ----
+
+-- | Set timeouts from a raw @{implicit,pageLoad,script}@ JSON object.
+setTimeouts :: WebDriver -> String -> IO ()
+setTimeouts d timeoutsJson = execute_ d "setTimeout" timeoutsJson
+
+setPageLoadTimeout :: WebDriver -> Int -> IO ()
+setPageLoadTimeout d ms = execute_ d "setTimeout" ("{\"pageLoad\":" ++ show ms ++ "}")
+
+setScriptTimeout :: WebDriver -> Int -> IO ()
+setScriptTimeout d ms = execute_ d "setTimeout" ("{\"script\":" ++ show ms ++ "}")
+
+implicitlyWait :: WebDriver -> Int -> IO ()
+implicitlyWait d ms = execute_ d "setTimeout" ("{\"implicit\":" ++ show ms ++ "}")
+
+-- ---- screenshots / print ----
+
+screenshotBase64 :: WebDriver -> IO String
+screenshotBase64 d = jsonUnquote <$> execute d "screenshot" "{}"
+
+-- | Print the current page to PDF (@printPage@), returning base64. @optionsJson@
+-- is the W3C print-options object, or @"{}"@ for defaults.
+printPdf :: WebDriver -> String -> IO String
+printPdf d optionsJson = jsonUnquote <$> execute d "printPage" optionsJson
+
+-- ---- Select helper ----
+-- Drives a <select> by finding + clicking its <option> children, the same way
+-- mainstream Selenium's Select does (W3C has no dedicated select endpoint).
+
+-- | All @<option>@ children of the @<select>@ element @eid@, in document order.
+selectOptions :: WebDriver -> String -> IO [String]
+selectOptions d eid = findChildElements d eid (byTagName "option")
+
+-- | Select the option whose visible text equals @text@. Throws (code 17) if
+-- none matches.
+selectByVisibleText :: WebDriver -> String -> String -> IO ()
+selectByVisibleText d eid text = do
+  opts <- selectOptions d eid
+  chooseBy d opts text elementText
+
+-- | Select the option whose @value@ attribute equals @value@. Throws (code 17)
+-- if none matches.
+selectByValue :: WebDriver -> String -> String -> IO ()
+selectByValue d eid value = do
+  opts <- selectOptions d eid
+  chooseBy d opts value (\drv o -> jsonUnquote <$> getDomAttribute drv o "value")
+
+-- | Select the option at @index@ (0-based, document order). Throws (code 17) if
+-- out of range.
+selectByIndex :: WebDriver -> String -> Int -> IO ()
+selectByIndex d eid index = do
+  opts <- selectOptions d eid
+  if index < 0 || index >= length opts
+    then throwIO (WebDriverError 17 ("no option at index " ++ show index))
+    else selectOption d (opts !! index)
+
+-- | The option ids currently selected within the @<select>@ @eid@.
+selectedOptions :: WebDriver -> String -> IO [String]
+selectedOptions d eid = do
+  opts <- selectOptions d eid
+  filterM (elementIsSelected d) opts
+
+-- | The first selected option id. Throws (code 17) if none is selected.
+firstSelectedOption :: WebDriver -> String -> IO String
+firstSelectedOption d eid = do
+  sel <- selectedOptions d eid
+  case sel of
+    (o : _) -> pure o
+    [] -> throwIO (WebDriverError 17 "no option is selected")
+
+-- | Deselect every selected option (multi-select). On a single-select this is a
+-- no-op after clicking would just re-toggle; callers should use it only on a
+-- @<select multiple>@.
+deselectAll :: WebDriver -> String -> IO ()
+deselectAll d eid = do
+  opts <- selectOptions d eid
+  mapM_ (\o -> do s <- elementIsSelected d o; if s then elementClick d o else pure ()) opts
+
+-- Click an option only if not already selected (a second click on a selected
+-- single-select is a no-op; on a multi-select it would toggle off).
+selectOption :: WebDriver -> String -> IO ()
+selectOption d o = do
+  s <- elementIsSelected d o
+  if s then pure () else elementClick d o
+
+-- First option whose projected field equals @want@, then select it.
+chooseBy :: WebDriver -> [String] -> String -> (WebDriver -> String -> IO String) -> IO ()
+chooseBy _ [] want _ = throwIO (WebDriverError 17 ("no option matching " ++ show want))
+chooseBy d (o : os) want project = do
+  v <- project d o
+  if v == want then selectOption d o else chooseBy d os want project
+
+-- ---- waits ----
+-- The poll loop lives here in the binding — the engine issues single commands
+-- and holds no thread, exactly as the reference aether/webdriver.ae waits do.
+
+pollIntervalMicros :: Int
+pollIntervalMicros = 500 * 1000 -- 500ms, mainstream default
+
+-- | Poll @cond driver@ until it returns @True@ or @timeoutMs@ elapses. Throws
+-- 'WebDriverError' 21 (timeout) if the deadline passes. A code-17 (no such
+-- element) error from @cond@ is swallowed and retried.
+waitUntil :: WebDriver -> Int -> (WebDriver -> IO Bool) -> IO ()
+waitUntil d timeoutMs cond = go (max 0 timeoutMs)
+  where
+    go remaining = do
+      r <- try (cond d)
+      settled <- case r of
+        Right True -> pure True
+        Right False -> pure False
+        Left e@(WebDriverError code _)
+          | code == 17 -> pure False
+          | otherwise -> throwIO e
+      if settled
+        then pure ()
+        else
+          if remaining <= 0
+            then throwIO (WebDriverError 21 ("waited " ++ show timeoutMs ++ "ms for condition"))
+            else do
+              threadDelay pollIntervalMicros
+              go (remaining - 500)
+
+-- | Block until an element matching the locator is present; return its id.
+waitForElement :: WebDriver -> Locator -> Int -> IO String
+waitForElement d loc timeoutMs = do
+  waitUntil d timeoutMs (\drv -> exists drv loc)
+  findElement d loc
+
+waitForTitleIs :: WebDriver -> String -> Int -> IO ()
+waitForTitleIs d want timeoutMs = waitUntil d timeoutMs (\drv -> (== want) <$> title drv)
+
+waitForTitleContains :: WebDriver -> String -> Int -> IO ()
+waitForTitleContains d sub timeoutMs = waitUntil d timeoutMs (\drv -> isInfixOf sub <$> title drv)
+
+waitForUrlIs :: WebDriver -> String -> Int -> IO ()
+waitForUrlIs d want timeoutMs = waitUntil d timeoutMs (\drv -> (== want) <$> currentUrl drv)
+
+waitForUrlContains :: WebDriver -> String -> Int -> IO ()
+waitForUrlContains d sub timeoutMs = waitUntil d timeoutMs (\drv -> isInfixOf sub <$> currentUrl drv)
+
+-- | Block until NO element matches the locator (it is absent/removed).
+waitUntilGone :: WebDriver -> Locator -> Int -> IO ()
+waitUntilGone d loc timeoutMs = waitUntil d timeoutMs (\drv -> not <$> exists drv loc)
 
 -- ---- lifecycle ----
 
@@ -205,6 +691,23 @@ quit d@(WebDriver h) = do
 
 -- ---- tiny string helpers (dependency-free) ----
 
+-- | A dependency-free @mapMaybe (filter)@ over an IO predicate.
+filterM :: (a -> IO Bool) -> [a] -> IO [a]
+filterM _ [] = pure []
+filterM p (x : xs) = do
+  keep <- p x
+  rest <- filterM p xs
+  pure (if keep then x : rest else rest)
+
+-- | Merge an element @id@ into a locator JSON object (@{"using":..,"value":..}@)
+-- so the engine's findChildElement route sees the parent id. The locator JSON
+-- always starts with @{@; splice the id field in right after it.
+mergeId :: String -> String -> String
+mergeId eid loc =
+  case loc of
+    ('{' : rest) -> "{\"id\":" ++ jsonStr eid ++ "," ++ rest
+    _ -> loc
+
 -- | JSON-encode a string (quote + escape " and \\).
 jsonStr :: String -> String
 jsonStr s = '"' : concatMap esc s ++ "\""
@@ -212,6 +715,15 @@ jsonStr s = '"' : concatMap esc s ++ "\""
     esc '"' = "\\\""
     esc '\\' = "\\\\"
     esc c = [c]
+
+-- | Encode a string as a JSON array of single-character strings — the shape the
+-- W3C @value@ field of sendKeys/setAlertValue expects.
+jsonCharArray :: String -> String
+jsonCharArray s = "[" ++ intercalate "," (map (\c -> jsonStr [c]) s) ++ "]"
+  where
+    intercalate _ [] = ""
+    intercalate _ [x] = x
+    intercalate sep (x : xs) = x ++ sep ++ intercalate sep xs
 
 -- | Strip surrounding quotes from a JSON string value (best-effort, for simple
 -- scalar results like a title). Non-strings pass through unchanged.
@@ -223,6 +735,12 @@ jsonUnquote ('"' : rest) = unesc (init rest)
     unesc (c : cs) = c : unesc cs
 jsonUnquote other = other
 
+-- | Interpret a JSON scalar as a boolean: @true@ is True, everything else False.
+jsonBool :: String -> Bool
+jsonBool s = case dropWhile (== ' ') s of
+  ('t' : _) -> True
+  _ -> False
+
 -- | Pull the element-reference id out of a findElement value JSON string, which
 -- looks like @{"element-6066-...":"<id>"}@. Textual extraction keeps this
 -- dependency-free for the common case.
@@ -232,11 +750,47 @@ extractElementId v =
    in if needle `isInfixOf` v
         then Just (takeWhile (/= '"') (drop (length needle) (afterInfix needle v)))
         else Nothing
+
+-- | Pull every element-reference id out of a findElements value JSON string
+-- (an array of @{"element-6066-...":"<id>"}@ objects).
+extractElementIds :: String -> [String]
+extractElementIds = go
   where
-    afterInfix n hay = go hay
-      where
-        go [] = []
-        go s@(_ : t)
-          | n `isPrefixOf'` s = drop (length n) s
-          | otherwise = go t
-    isPrefixOf' pfx str = take (length pfx) str == pfx
+    needle = "\"" ++ w3cElementKey ++ "\":\""
+    go s
+      | needle `isInfixOf` s =
+          let afterKey = drop (length needle) (afterInfix needle s)
+              (eid, restAfter) = spanId afterKey
+           in eid : go restAfter
+      | otherwise = []
+    spanId s = let e = takeWhile (/= '"') s in (e, drop (length e) s)
+
+-- | Pull every JSON string element out of a top-level string array (e.g. window
+-- handles): grab the contents of each @"..."@ pair.
+extractStrings :: String -> [String]
+extractStrings = go
+  where
+    go s = case dropWhile (/= '"') s of
+      ('"' : rest) ->
+        let (str, after) = spanStr rest
+         in str : go after
+      _ -> []
+    spanStr s = let e = takeWhile (/= '"') s in (e, drop 1 (drop (length e) s))
+
+-- | The quoted string value of a top-level JSON field @name@ (e.g. the
+-- @"handle"@ of a newWindow reply), or @""@ if absent.
+extractField :: String -> String -> String
+extractField name v =
+  let needle = "\"" ++ name ++ "\":\""
+   in if needle `isInfixOf` v
+        then takeWhile (/= '"') (drop (length needle) (afterInfix needle v))
+        else ""
+
+-- Return the suffix of @hay@ starting just after the first occurrence of @n@.
+afterInfix :: String -> String -> String
+afterInfix n hay = go hay
+  where
+    go [] = []
+    go s@(_ : t)
+      | n `isPrefixOf` s = drop (length n) s
+      | otherwise = go t
