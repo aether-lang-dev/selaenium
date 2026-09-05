@@ -232,10 +232,20 @@ fn live_chrome_surface() {
     assert!(d.exists(By::id("fr")).unwrap(), "iframe present");
     assert!(!d.exists(By::id("nope")).unwrap(), "absent element -> false");
 
-    // css_value / value_of_css_property on the styled header.
+    // css_value / value_of_css_property on the styled header. Chrome renders the
+    // computed color as either "rgb(1, 2, 3)" (older) or "rgba(1, 2, 3, 1)" (138+),
+    // so accept the channel triple rather than pinning one browser's format.
     let hdr = d.find_element(By::id("hdr")).unwrap();
-    assert_eq!(hdr.css_value("color").unwrap(), "rgb(1, 2, 3)");
-    assert_eq!(hdr.value_of_css_property("color").unwrap(), "rgb(1, 2, 3)");
+    let color = hdr.css_value("color").unwrap();
+    assert!(
+        color == "rgb(1, 2, 3)" || color == "rgba(1, 2, 3, 1)",
+        "css color was {color:?}"
+    );
+    let color2 = hdr.value_of_css_property("color").unwrap();
+    assert!(
+        color2 == "rgb(1, 2, 3)" || color2 == "rgba(1, 2, 3, 1)",
+        "value_of_css_property color was {color2:?}"
+    );
 
     // element screenshot -> a PNG distinct from the full-page shot.
     let el_shot = hdr.screenshot_base64().unwrap();
