@@ -13,7 +13,7 @@ use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use selenium::{json, BidiEvent, By, ErrorKind, Json, WebDriver};
+use selenium::{json, BidiEvent, By, ErrorKind, Frame, Json, WebDriver};
 
 const PAGE_ONE: &str = concat!(
     "<!doctype html><title>Page One</title><h1 id=\"hdr\">One</h1>",
@@ -21,6 +21,16 @@ const PAGE_ONE: &str = concat!(
     "<button id=\"btn\" onclick=\"document.getElementById('hdr').textContent='clicked'\">b</button>"
 );
 const PAGE_TWO: &str = "<!doctype html><title>Page Two</title><h1 id=\"hdr\">Two</h1>";
+// A page hosting an iframe (its document is /two, whose h1#hdr reads "Two") plus
+// a form whose text input can be submitted. Exercises frame switching, css_value,
+// element screenshot, and WebElement::submit.
+const PAGE_FRAMES: &str = concat!(
+    "<!doctype html><title>Frames</title>",
+    "<h1 id=\"hdr\" style=\"color: rgb(1, 2, 3)\">Frames</h1>",
+    "<iframe id=\"fr\" src=\"/two\"></iframe>",
+    "<form id=\"f\" action=\"/two\" method=\"get\">",
+    "<input id=\"in\" name=\"q\" value=\"hi\"></form>"
+);
 
 fn which(cmd: &str) -> Option<String> {
     let path = std::env::var("PATH").ok()?;
@@ -83,7 +93,13 @@ fn handle_conn(mut stream: TcpStream) {
         }
     }
     let path = request_line.split_whitespace().nth(1).unwrap_or("/");
-    let body = if path.starts_with("/two") { PAGE_TWO } else { PAGE_ONE };
+    let body = if path.starts_with("/two") {
+        PAGE_TWO
+    } else if path.starts_with("/frames") {
+        PAGE_FRAMES
+    } else {
+        PAGE_ONE
+    };
     let response = format!(
         "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
         body.len(),
@@ -206,6 +222,62 @@ fn live_chrome_surface() {
     // negative path
     let err = d.find_element(By::id("does-not-exist")).unwrap_err();
     assert_eq!(err.kind, ErrorKind::NoSuchElement);
+
+    // ---- newer surface: frames, css_value, element screenshot, submit,
+    //      new_window/close_window, print_pdf, exists ----
+    d.get(&format!("{base}/frames")).unwrap();
+    assert_eq!(d.title().unwrap(), "Frames");
+
+    // exists(): immediate presence check, no error to match on.
+    assert!(d.exists(By::id("fr")).unwrap(), "iframe present");
+    assert!(!d.exists(By::id("nope")).unwrap(), "absent element -> false");
+
+    // css_value / value_of_css_property on the styled header.
+    let hdr = d.find_element(By::id("hdr")).unwrap();
+    assert_eq!(hdr.css_value("color").unwrap(), "rgb(1, 2, 3)");
+    assert_eq!(hdr.value_of_css_property("color").unwrap(), "rgb(1, 2, 3)");
+
+    // element screenshot -> a PNG distinct from the full-page shot.
+    let el_shot = hdr.screenshot_base64().unwrap();
+    let el_raw = base64_decode(&el_shot);
+    assert!(el_raw.len() > 8 && &el_raw[1..4] == b"PNG", "element screenshot is not a PNG");
+
+    // frame switching: by element, then default content, then by index.
+    let frame_el = d.find_element(By::id("fr")).unwrap();
+    d.switch_to_frame(Frame::from(&frame_el)).unwrap();
+    // inside /two now: its h1#hdr reads "Two".
+    assert_eq!(d.find_element(By::id("hdr")).unwrap().text().unwrap(), "Two");
+    d.switch_to_default_content().unwrap();
+    assert_eq!(d.find_element(By::id("hdr")).unwrap().text().unwrap(), "Frames");
+    d.switch_to_frame(Frame::Index(0)).unwrap();
+    assert_eq!(d.find_element(By::id("hdr")).unwrap().text().unwrap(), "Two");
+    d.switch_to_parent_frame().unwrap();
+    assert_eq!(d.find_element(By::id("hdr")).unwrap().text().unwrap(), "Frames");
+
+    // submit(): the form GETs /two, navigating there.
+    d.find_element(By::id("in")).unwrap().submit().unwrap();
+    assert_eq!(d.title().unwrap(), "Page Two");
+
+    // new_window / switch / close_window.
+    d.get(&format!("{base}/one")).unwrap();
+    let before = d.window_handles().unwrap();
+    let new_handle = d.new_window("tab").unwrap();
+    assert!(!new_handle.is_empty(), "newWindow returned a handle");
+    let after = d.window_handles().unwrap();
+    assert_eq!(after.len(), before.len() + 1, "one more window");
+    d.switch_to_window(&new_handle).unwrap();
+    assert_eq!(d.current_window_handle().unwrap(), new_handle);
+    let remaining = d.close_window().unwrap();
+    assert_eq!(remaining.len(), before.len(), "back to the original count");
+    d.switch_to_window(&before[0]).unwrap();
+
+    // print_pdf -> a base64 PDF (%PDF- header once decoded).
+    let pdf = d.print_pdf(None).unwrap();
+    let pdf_raw = base64_decode(&pdf);
+    assert!(pdf_raw.len() > 5 && &pdf_raw[0..5] == b"%PDF-", "print_pdf is not a PDF");
+
+    // alert_present(): none open here.
+    assert!(!d.alert_present().unwrap(), "no alert on this page");
 
     d.quit().unwrap();
     stop.store(true, Ordering::Relaxed);

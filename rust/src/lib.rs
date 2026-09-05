@@ -272,6 +272,51 @@ impl By {
     }
 }
 
+// ---- Frame ----
+
+/// A frame target for [`WebDriver::switch_to_frame`]. The W3C `switchToFrame`
+/// command's `id` may be an unsigned index, a frame element reference, or `null`
+/// (return to the top-level context) — this enum makes those three shapes
+/// explicit rather than overloading one stringly-typed argument.
+///
+/// ```no_run
+/// # use selenium::{WebDriver, By, Frame};
+/// # let d = WebDriver::headless_chrome("http://127.0.0.1:9515").unwrap();
+/// d.switch_to_frame(Frame::Index(0)).unwrap();
+/// // or, by the frame's <iframe> element:
+/// let f = d.find_element(By::css("iframe")).unwrap();
+/// d.switch_to_frame(Frame::from(&f)).unwrap();
+/// d.switch_to_default_content().unwrap();
+/// ```
+#[derive(Debug, Clone)]
+pub enum Frame {
+    /// The frame at this 0-based index among the current context's child frames.
+    Index(u16),
+    /// The frame whose `<iframe>`/`<frame>` element has this W3C element id.
+    Element(String),
+    /// The top-level browsing context (equivalent to
+    /// [`WebDriver::switch_to_default_content`]).
+    Default,
+}
+
+impl Frame {
+    /// The W3C `id` value for this frame target: a number, an element-reference
+    /// object, or JSON null.
+    fn id_json(&self) -> Json {
+        match self {
+            Frame::Index(i) => json::n(*i as f64),
+            Frame::Element(id) => json::obj(vec![(W3C_ELEMENT_KEY, json::s(id))]),
+            Frame::Default => Json::Null,
+        }
+    }
+}
+
+impl<'a> From<&WebElement<'a>> for Frame {
+    fn from(e: &WebElement<'a>) -> Frame {
+        Frame::Element(e.id().to_string())
+    }
+}
+
 // ---- pure engine helpers (no session) ----
 
 /// The "METHOD PATH" route for a command name, or "" if unknown.
@@ -478,6 +523,18 @@ impl WebDriver {
         refs.iter().map(|r| self.element_from(r)).collect()
     }
 
+    /// The NUMBER of elements a relative-locator query matches, without
+    /// materializing [`WebElement`] handles — the count-only counterpart to
+    /// [`find_relative`](WebDriver::find_relative) (mirrors the reference
+    /// `find_relative_count`). Filters have the same shape as `find_relative`.
+    pub fn find_relative_count(&self, base_css: &str, filters: &[Json]) -> Result<usize> {
+        let base = cstr(base_css);
+        let fj = cstr(&Json::Arr(filters.to_vec()).encode());
+        let rc = unsafe { aether_sel_embed_find_relative(self.handle, base.as_ptr(), fj.as_ptr()) };
+        let result = self.atom_result(rc)?;
+        Ok(result.as_array().map(|a| a.len()).unwrap_or(0))
+    }
+
     // ---- navigation ----
     pub fn get(&self, url: &str) -> Result<()> {
         self.execute("get", json::obj(vec![("url", json::s(url))]))?;
@@ -523,6 +580,31 @@ impl WebDriver {
         Ok(WebElement { driver: self, id: id.to_string() })
     }
 
+    /// True if at least one element matching `by` is present RIGHT NOW — an
+    /// immediate presence check with no implicit wait. Spells the intent "is
+    /// this here?" distinctly from [`find_element`], whose `NoSuchElement` error
+    /// you would otherwise match on. Pairs with the [`wait`](crate::wait) module:
+    /// use `exists` for a snapshot, [`Wait`] to block until present.
+    ///
+    /// A transport-level failure still surfaces as `Err`; only a clean
+    /// element-not-found resolves to `Ok(false)`.
+    ///
+    /// [`find_element`]: WebDriver::find_element
+    pub fn exists(&self, by: By) -> Result<bool> {
+        match self.find_element(by) {
+            Ok(_) => Ok(true),
+            Err(e) if e.kind == ErrorKind::NoSuchElement => Ok(false),
+            Err(e) => Err(e),
+        }
+    }
+
+    /// The active (focused) element (`getActiveElement`) — the element that would
+    /// receive keyboard input, e.g. after a `send_keys` or a programmatic focus.
+    pub fn active_element(&self) -> Result<WebElement> {
+        let result = self.execute("getActiveElement", json::obj(vec![]))?;
+        self.element_from(&result)
+    }
+
     // ---- script ----
     pub fn execute_script(&self, script: &str, args: Vec<Json>) -> Result<Json> {
         self.execute("executeScript", json::obj(vec![("script", json::s(script)), ("args", Json::Arr(args))]))
@@ -565,6 +647,54 @@ impl WebDriver {
         self.execute("fullscreenWindow", json::obj(vec![]))
     }
 
+    /// Open a new top-level browsing context (`newWindow`). `type_hint` is
+    /// `"tab"` or `"window"` (a hint the browser may honor or ignore). Returns
+    /// the new window's handle — pass it to [`switch_to_window`] to focus it.
+    /// Returns `""` only if the remote end sent no handle.
+    ///
+    /// [`switch_to_window`]: WebDriver::switch_to_window
+    pub fn new_window(&self, type_hint: &str) -> Result<String> {
+        let v = self.execute("newWindow", json::obj(vec![("type", json::s(type_hint))]))?;
+        Ok(v.get("handle").and_then(|h| h.as_str()).unwrap_or("").to_string())
+    }
+
+    /// Close the current window/tab (`close`). Returns the window handles that
+    /// remain; when it empties, the session is gone — switch to a surviving
+    /// handle before issuing further commands. Note this does NOT end the
+    /// session (use [`quit`] for that).
+    ///
+    /// [`quit`]: WebDriver::quit
+    pub fn close_window(&self) -> Result<Vec<String>> {
+        let v = self.execute("close", json::obj(vec![]))?;
+        Ok(v.as_array().cloned().unwrap_or_default().iter().filter_map(|e| e.as_str().map(String::from)).collect())
+    }
+
+    // ---- frames ----
+
+    /// Switch the session's focus to a frame (`switchToFrame`): by
+    /// [`Frame::Index`], by [`Frame::Element`] (or `Frame::from(&webelement)`),
+    /// or [`Frame::Default`] for the top-level context. All subsequent element
+    /// commands run inside the chosen frame until the next frame switch.
+    pub fn switch_to_frame(&self, frame: Frame) -> Result<()> {
+        self.execute("switchToFrame", json::obj(vec![("id", frame.id_json())]))?;
+        Ok(())
+    }
+
+    /// Switch to the parent of the current frame (`switchToFrameParent`) — one
+    /// level out, unlike [`switch_to_default_content`] which jumps to the top.
+    ///
+    /// [`switch_to_default_content`]: WebDriver::switch_to_default_content
+    pub fn switch_to_parent_frame(&self) -> Result<()> {
+        self.execute("switchToFrameParent", json::obj(vec![]))?;
+        Ok(())
+    }
+
+    /// Return focus to the top-level browsing context (`switchToFrame` with a
+    /// null id) — equivalent to `switch_to_frame(Frame::Default)`.
+    pub fn switch_to_default_content(&self) -> Result<()> {
+        self.switch_to_frame(Frame::Default)
+    }
+
     // ---- alerts ----
     /// Accept (OK) the current user-prompt / alert dialog.
     pub fn accept_alert(&self) -> Result<()> {
@@ -584,6 +714,19 @@ impl WebDriver {
     pub fn send_alert_text(&self, text: &str) -> Result<()> {
         self.execute("setAlertValue", json::obj(vec![("text", json::s(text))]))?;
         Ok(())
+    }
+    /// True if a user-prompt / alert dialog is currently present (probing it via
+    /// `getAlertText`). A clean "no such alert" resolves to `Ok(false)`; a
+    /// transport-level failure still surfaces as `Err`. Pairs with
+    /// [`Wait`](crate::Wait) for the "block until an alert appears" case.
+    pub fn alert_present(&self) -> Result<bool> {
+        match self.execute("getAlertText", json::obj(vec![])) {
+            Ok(_) => Ok(true),
+            // 15 = "no such alert" (none open). Other codes (e.g. 28 unknown
+            // command) are real failures and propagate.
+            Err(e) if e.code == 15 => Ok(false),
+            Err(e) => Err(e),
+        }
     }
 
     // ---- cookies ----
@@ -650,6 +793,23 @@ impl WebDriver {
     // ---- screenshots ----
     pub fn screenshot_base64(&self) -> Result<String> {
         Ok(self.execute("screenshot", json::obj(vec![]))?.as_str().unwrap_or("").to_string())
+    }
+
+    /// Print the current page to PDF (`printPage`), returning the PDF as a
+    /// base64 string. `options` is the W3C print-options object (page size,
+    /// margins, orientation, scale, `pageRanges`, …); pass [`None`] for defaults.
+    ///
+    /// ```no_run
+    /// # use selenium::WebDriver;
+    /// # let d = WebDriver::headless_chrome("http://127.0.0.1:9515").unwrap();
+    /// let pdf_b64 = d.print_pdf(None).unwrap();
+    /// ```
+    pub fn print_pdf(&self, options: Option<Json>) -> Result<String> {
+        let params = match options {
+            Some(o @ Json::Obj(_)) => o,
+            _ => json::obj(vec![]),
+        };
+        Ok(self.execute("printPage", params)?.as_str().unwrap_or("").to_string())
     }
 
     // ---- lifecycle ----
@@ -892,6 +1052,48 @@ impl<'a> WebElement<'a> {
     }
     pub fn rect(&self) -> Result<Json> {
         self.exec("getElementRect", json::obj(vec![]))
+    }
+
+    /// The computed value of the CSS property `prop` on this element
+    /// (`getElementValueOfCssProperty`) — e.g. `"display"`, `"color"`,
+    /// `"font-size"`. Aliased as [`value_of_css_property`] for parity with the
+    /// classic Selenium name.
+    ///
+    /// [`value_of_css_property`]: WebElement::value_of_css_property
+    pub fn css_value(&self, prop: &str) -> Result<String> {
+        Ok(self
+            .exec("getElementValueOfCssProperty", json::obj(vec![("name", json::s(prop))]))?
+            .as_str()
+            .unwrap_or("")
+            .to_string())
+    }
+
+    /// Classic-Selenium-named alias of [`css_value`](WebElement::css_value).
+    pub fn value_of_css_property(&self, prop: &str) -> Result<String> {
+        self.css_value(prop)
+    }
+
+    /// A PNG screenshot of just this element (`takeElementScreenshot`), returned
+    /// as a base64 string — the element-scoped counterpart to
+    /// [`WebDriver::screenshot_base64`].
+    pub fn screenshot_base64(&self) -> Result<String> {
+        Ok(self.exec("takeElementScreenshot", json::obj(vec![]))?.as_str().unwrap_or("").to_string())
+    }
+
+    /// Submit the form this element belongs to. W3C WebDriver removed the
+    /// dedicated `submit` endpoint, so — like the reference binding and modern
+    /// Selenium — this walks up to the enclosing `<form>` and calls
+    /// `requestSubmit()` (falling back to `submit()`) via an injected script.
+    /// Errors (kind `NoSuchElement`) if the element is not inside a form.
+    pub fn submit(&self) -> Result<()> {
+        // arguments[0] is this element; find its owning form and submit it the
+        // way a real user gesture would (requestSubmit fires validation + the
+        // submit event; submit() is the legacy fallback for older engines).
+        const SCRIPT: &str = "var e=arguments[0];var f=e.form||e.closest('form');\
+if(!f){throw new Error('Element is not within a form');}\
+if(f.requestSubmit){f.requestSubmit();}else{f.submit();}";
+        let arg = json::obj(vec![(W3C_ELEMENT_KEY, json::s(&self.id))]);
+        self.driver.execute_script(SCRIPT, vec![arg]).map(|_| ())
     }
 
     /// Find one descendant of this element matching `by` (element-scoped
@@ -1259,5 +1461,46 @@ impl Drop for BiDi {
             unsafe { aether_sel_embed_bidi_close(self.handle) };
             self.handle = std::ptr::null_mut();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // The switchToFrame `id` payload is the one piece of new pure logic worth
+    // pinning without a browser: the three W3C shapes (index number, element
+    // reference object, JSON null) must encode exactly, since the engine passes
+    // the `id` value straight into the /frame request body.
+
+    #[test]
+    fn frame_index_encodes_as_a_bare_number() {
+        let body = json::obj(vec![("id", Frame::Index(2).id_json())]);
+        assert_eq!(body.encode(), "{\"id\":2}");
+    }
+
+    #[test]
+    fn frame_default_encodes_as_null() {
+        let body = json::obj(vec![("id", Frame::Default.id_json())]);
+        assert_eq!(body.encode(), "{\"id\":null}");
+    }
+
+    #[test]
+    fn frame_element_encodes_as_the_w3c_element_ref() {
+        let body = json::obj(vec![("id", Frame::Element("FID".into()).id_json())]);
+        // The `id` value is the element-reference object, not a bare string.
+        let encoded = body.encode();
+        assert!(encoded.contains(&format!("\"{W3C_ELEMENT_KEY}\":\"FID\"")), "{encoded}");
+        assert!(encoded.starts_with("{\"id\":{"), "id must be an object: {encoded}");
+    }
+
+    #[test]
+    fn frame_from_element_ref_carries_the_id() {
+        // Frame::from(&WebElement) captures the element id without a driver call.
+        // (Construct a bare WebElement id via the enum directly — the From impl
+        // just moves the id string, which we assert through id_json.)
+        let f = Frame::Element("abc123".into());
+        let encoded = json::obj(vec![("id", f.id_json())]).encode();
+        assert!(encoded.contains("abc123"));
     }
 }
