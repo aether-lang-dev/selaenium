@@ -59,8 +59,35 @@ public final class By {
         return new By("xpath", value);
     }
 
+    /**
+     * Find the first element in {@code context} matching this locator (upstream
+     * {@code by.findElement(driver)} form). Delegates to
+     * {@link SearchContext#findElement(By)}.
+     */
+    public WebElement findElement(SearchContext context) {
+        return context.findElement(this);
+    }
+
+    /**
+     * Find all elements in {@code context} matching this locator (upstream
+     * {@code by.findElements(driver)} form).
+     */
+    public java.util.List<WebElement> findElements(SearchContext context) {
+        return context.findElements(this);
+    }
+
     @Override
     public String toString() {
         return "By." + strategy + ": " + value;
+    }
+
+    @Override
+    public boolean equals(Object o) {
+        return (o instanceof By) && this.toString().equals(o.toString());
+    }
+
+    @Override
+    public int hashCode() {
+        return toString().hashCode();
     }
 }

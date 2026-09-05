@@ -1,6 +1,7 @@
-import org.seleniumhq.aether.By;
-import org.seleniumhq.aether.WebDriver;
-import org.seleniumhq.aether.WebDriverError;
+import org.openqa.selenium.By;
+import org.openqa.selenium.RemoteWebDriver;
+import org.openqa.selenium.WebDriverException;
+import org.openqa.selenium.WebDriver;
 
 import java.io.File;
 import java.net.Socket;
@@ -26,19 +27,19 @@ public class ConsumerExample {
     }
 
     static void modeFfi() {
-        if (!WebDriver.route("get").equals("POST /session/:sessionId/url")) {
+        if (!RemoteWebDriver.route("get").equals("POST /session/:sessionId/url")) {
             fail("route mismatch");
         }
-        if (WebDriver.errorCode("no such element") != 17) {
+        if (RemoteWebDriver.errorCode("no such element") != 17) {
             fail("errorCode mismatch");
         }
-        if (!WebDriver.locator(By.ID, "main").contains("*[id=")) {
+        if (!RemoteWebDriver.locator("id", "main").contains("*[id=")) {
             fail("locator mismatch");
         }
         boolean threw = false;
         try {
-            WebDriver.chrome("http://127.0.0.1:1", null);
-        } catch (WebDriverError e) {
+            RemoteWebDriver.chrome("http://127.0.0.1:1", null);
+        } catch (WebDriverException e) {
             threw = e.code() == -1;
         }
         if (!threw) {
@@ -53,7 +54,7 @@ public class ConsumerExample {
         }
         // The bundled .so is a jar resource; if it weren't present, the first
         // native call would fail to load. This call forces the load.
-        if (!WebDriver.route("newSession").equals("POST /session")) {
+        if (!RemoteWebDriver.route("newSession").equals("POST /session")) {
             fail("route mismatch (bundled .so did not load)");
         }
         System.out.println("consumer(discovery): OK — zero-config bundled-.so (jar resource) discovery works");
@@ -78,15 +79,15 @@ public class ConsumerExample {
                 System.out.println("consumer(live): SKIPPED — chromedriver did not come up");
                 return;
             }
-            WebDriver d = WebDriver.headlessChrome("http://127.0.0.1:" + port);
+            WebDriver d = RemoteWebDriver.headlessChrome("http://127.0.0.1:" + port);
             try {
                 String html = "<!doctype html><title>Installed</title><h1 id=\"h\">Hi</h1>";
                 d.get("data:text/html;charset=utf-8," + java.net.URLEncoder.encode(html, java.nio.charset.StandardCharsets.UTF_8)
                         .replace("+", "%20"));
-                if (!d.title().equals("Installed")) {
-                    fail("title=" + d.title());
+                if (!d.getTitle().equals("Installed")) {
+                    fail("title=" + d.getTitle());
                 }
-                if (!d.findElement(By.ID, "h").text().equals("Hi")) {
+                if (!d.findElement(By.id("h")).getText().equals("Hi")) {
                     fail("text mismatch");
                 }
                 System.out.println("consumer(live): OK — installed jar drove real headless Chrome");

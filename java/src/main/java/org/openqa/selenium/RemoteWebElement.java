@@ -1,5 +1,6 @@
 package org.openqa.selenium;
 
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -39,10 +40,46 @@ public final class RemoteWebElement implements WebElement {
         exec("clearElement", null);
     }
 
+    /**
+     * Type into the element. Variadic (mainstream): accepts multiple strings and
+     * {@link Keys} constants, joined into one keystroke sequence. W3C expects
+     * {@code {"text": full, "value": [chars...]}} — send both for broad driver
+     * compatibility.
+     */
     @Override
-    public void sendKeys(String text) {
-        List<Object> chars = text.chars().mapToObj(c -> String.valueOf((char) c)).map(Object.class::cast).toList();
+    public void sendKeys(CharSequence... keysToSend) {
+        StringBuilder joined = new StringBuilder();
+        for (CharSequence cs : keysToSend) {
+            joined.append(cs);
+        }
+        String text = joined.toString();
+        List<Object> chars = new ArrayList<>();
+        text.codePoints().forEach(cp -> chars.add(new String(Character.toChars(cp))));
         exec("sendKeysToElement", Map.of("text", text, "value", chars));
+    }
+
+    /**
+     * Submit the form containing this element (mainstream: walks up to the
+     * enclosing {@code <form>} and dispatches submit, in-page).
+     */
+    @Override
+    public void submit() {
+        String script =
+                "/* submitForm */var form = arguments[0];\n"
+                + "while (form.nodeName != \"FORM\" && form.parentNode) {\n"
+                + "  form = form.parentNode;\n"
+                + "}\n"
+                + "if (!form) { throw Error('Unable to find containing form element'); }\n"
+                + "if (!form.ownerDocument) { throw Error('Unable to find owning document'); }\n"
+                + "var e = form.ownerDocument.createEvent('Event');\n"
+                + "e.initEvent('submit', true, true);\n"
+                + "if (form.dispatchEvent(e)) { HTMLFormElement.prototype.submit.call(form) }\n";
+        try {
+            driver.executeScript(script, this);
+        } catch (JavascriptException e) {
+            throw new WebDriverException(
+                    "To submit an element, it must be nested inside a form element", 0);
+        }
     }
 
     @Override
@@ -53,6 +90,16 @@ public final class RemoteWebElement implements WebElement {
     @Override
     public String getTagName() {
         return (String) exec("getElementTagName", null);
+    }
+
+    @Override
+    public String getAriaRole() {
+        return (String) exec("getAriaRole", null);
+    }
+
+    @Override
+    public String getAccessibleName() {
+        return (String) exec("getAccessibleName", null);
     }
 
     /**
@@ -70,19 +117,29 @@ public final class RemoteWebElement implements WebElement {
      * {@link #getDomAttribute(String)} for the raw W3C DOM attribute.
      */
     @Override
-    public Object getAttribute(String name) {
-        return driver.atomResult(Native.getAttribute(driver.handle(), id, name));
+    public String getAttribute(String name) {
+        return asString(driver.atomResult(Native.getAttribute(driver.handle(), id, name)));
     }
 
     /** The literal DOM attribute (W3C getDomAttribute), no property fallback. */
     @Override
-    public Object getDomAttribute(String name) {
-        return exec("getDomAttribute", Map.of("name", name));
+    public String getDomAttribute(String name) {
+        return asString(exec("getDomAttribute", Map.of("name", name)));
+    }
+
+    @Override
+    public String getDomProperty(String name) {
+        return asString(exec("getElementProperty", Map.of("name", name)));
     }
 
     @Override
     public Object getProperty(String name) {
         return exec("getElementProperty", Map.of("name", name));
+    }
+
+    @Override
+    public String getCssValue(String propertyName) {
+        return asString(exec("getElementValueOfCssProperty", Map.of("propertyName", propertyName)));
     }
 
     @Override
@@ -99,6 +156,46 @@ public final class RemoteWebElement implements WebElement {
     @SuppressWarnings("unchecked")
     public Map<String, Object> rect() {
         return (Map<String, Object>) exec("getElementRect", null);
+    }
+
+    @Override
+    public Rectangle getRect() {
+        return RemoteWebDriver.toRectangle(rect());
+    }
+
+    @Override
+    public Point getLocation() {
+        Map<String, Object> r = rect();
+        return new Point(RemoteWebDriver.intOf(r.get("x")), RemoteWebDriver.intOf(r.get("y")));
+    }
+
+    @Override
+    public Dimension getSize() {
+        Map<String, Object> r = rect();
+        return new Dimension(
+                RemoteWebDriver.intOf(r.get("width")), RemoteWebDriver.intOf(r.get("height")));
+    }
+
+    /** Per-element screenshot (upstream TakesScreenshot on an element). */
+    @Override
+    public <X> X getScreenshotAs(OutputType<X> target) throws WebDriverException {
+        String base64 = (String) exec("takeElementScreenshot", null);
+        return target.convertFromBase64Png(base64);
+    }
+
+    /** The element's shadow root as a {@link SearchContext} (upstream). */
+    @Override
+    @SuppressWarnings("unchecked")
+    public SearchContext getShadowRoot() {
+        Object result = exec("getElementShadowRoot", null);
+        if (result instanceof Map<?, ?> m) {
+            Object ref = ((Map<String, Object>) m).get("shadow-6066-11e4-a52e-4f735466cecf");
+            if (ref == null) {
+                ref = ((Map<String, Object>) m).get(RemoteWebDriver.W3C_ELEMENT_KEY);
+            }
+            return new RemoteWebElement(driver, String.valueOf(ref));
+        }
+        throw new WebDriverException("element has no shadow root", 0);
     }
 
     // ---- element-scoped finders (search within this element's subtree) ----
@@ -122,5 +219,24 @@ public final class RemoteWebElement implements WebElement {
         return result.stream()
                 .map(e -> (WebElement) new RemoteWebElement(driver, (String) ((Map<String, Object>) e).get(RemoteWebDriver.W3C_ELEMENT_KEY)))
                 .toList();
+    }
+
+    private static String asString(Object v) {
+        return v == null ? null : (v instanceof String s ? s : String.valueOf(v));
+    }
+
+    @Override
+    public boolean equals(Object o) {
+        return (o instanceof RemoteWebElement other) && other.id.equals(this.id);
+    }
+
+    @Override
+    public int hashCode() {
+        return id.hashCode();
+    }
+
+    @Override
+    public String toString() {
+        return "RemoteWebElement[id=" + id + "]";
     }
 }

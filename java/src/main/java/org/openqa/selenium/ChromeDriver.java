@@ -26,6 +26,16 @@ public class ChromeDriver extends RemoteWebDriver {
         super(ensureChromeDriver(), withChrome(options), null, false);
     }
 
+    /**
+     * Launch chromedriver and start a Chrome session configured by an upstream
+     * {@link org.openqa.selenium.chrome.ChromeOptions} (or any
+     * {@link org.openqa.selenium.Capabilities}). Mirrors Selenium 4.x's
+     * {@code new ChromeDriver(chromeOptions)}.
+     */
+    public ChromeDriver(org.openqa.selenium.Capabilities options) {
+        super(ensureChromeDriver(), withChrome(new java.util.HashMap<>(options.asMap())), null, false);
+    }
+
     private static DriverProcess ensureChromeDriver() {
         DriverProcess proc = ensureDriver("chrome");
         if (proc == null) {

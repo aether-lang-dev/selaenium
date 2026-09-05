@@ -1,6 +1,7 @@
 package org.openqa.selenium;
 
 import java.lang.foreign.MemorySegment;
+import java.time.Duration;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -18,7 +19,7 @@ import java.util.Map;
  * the {@code chrome}/{@code localChrome} static factories remain for callers
  * that already use them.
  */
-public class RemoteWebDriver implements WebDriver {
+public class RemoteWebDriver implements WebDriver, JavascriptExecutor, TakesScreenshot, HasCapabilities {
 
     static final String W3C_ELEMENT_KEY = "element-6066-11e4-a52e-4f735466cecf";
 
@@ -29,6 +30,8 @@ public class RemoteWebDriver implements WebDriver {
     private BiDi bidi;
     // A driver process this session owns (set by localChrome); stopped on quit().
     private DriverProcess ownedDriver;
+    // The capabilities the remote end returned (for getCapabilities()).
+    private Capabilities negotiatedCaps = new ImmutableCapabilities();
 
     /**
      * Connect to a running remote end at {@code commandExecutor} (a WebDriver
@@ -38,6 +41,15 @@ public class RemoteWebDriver implements WebDriver {
      */
     public RemoteWebDriver(String commandExecutor, Map<String, Object> capabilities) {
         this(commandExecutor, capabilities, null, false);
+    }
+
+    /**
+     * Connect to a running remote end and start a session with an upstream
+     * {@link Capabilities} object (e.g. {@link org.openqa.selenium.chrome.ChromeOptions}).
+     * Mirrors Selenium 4.x {@code new RemoteWebDriver(url, capabilities)}.
+     */
+    public RemoteWebDriver(String commandExecutor, Capabilities capabilities) {
+        this(commandExecutor, new HashMap<>(capabilities.asMap()), null, false);
     }
 
     @SuppressWarnings("unchecked")
@@ -63,6 +75,7 @@ public class RemoteWebDriver implements WebDriver {
         Object result = execute("newSession", Map.of("capabilities", Map.of("alwaysMatch", caps)));
         // value.capabilities.webSocketUrl — the BiDi endpoint for this session.
         if (result instanceof Map<?, ?> m && m.get("capabilities") instanceof Map<?, ?> c) {
+            this.negotiatedCaps = new ImmutableCapabilities((Map<String, Object>) c);
             Object ws = ((Map<String, Object>) c).get("webSocketUrl");
             if (ws instanceof String s) {
                 this.wsUrl = s;
@@ -79,6 +92,14 @@ public class RemoteWebDriver implements WebDriver {
                               String caPath, boolean insecure) {
         this(ownedDriver.url(), capabilities, caPath, insecure);
         this.ownedDriver = ownedDriver;
+    }
+
+    /**
+     * A session that opens NO native handle and runs NO {@code newSession} — for
+     * subclasses (e.g. tests) that override {@link #execute(String, Map)} to
+     * record or fake commands. Not for production use.
+     */
+    protected RemoteWebDriver() {
     }
 
     /** Pin an explicit native library path (wins over env/bundled discovery). */
@@ -340,6 +361,17 @@ public class RemoteWebDriver implements WebDriver {
         return (String) execute("getCurrentWindowHandle", null);
     }
 
+    // ---- windows (upstream facade forms) ----
+    @Override
+    public java.util.Set<String> getWindowHandles() {
+        return new java.util.LinkedHashSet<>(windowHandles());
+    }
+
+    @Override
+    public String getWindowHandle() {
+        return currentWindowHandle();
+    }
+
     @Override
     public void switchToWindow(String handle) {
         execute("switchToWindow", Map.of("handle", handle));
@@ -463,6 +495,344 @@ public class RemoteWebDriver implements WebDriver {
         return (String) execute("screenshot", null);
     }
 
+    /** Capture the current window as a screenshot in the given {@link OutputType} (upstream). */
+    @Override
+    public <X> X getScreenshotAs(OutputType<X> target) throws WebDriverException {
+        return target.convertFromBase64Png(screenshotBase64());
+    }
+
+    // ---- capabilities ----
+    @Override
+    public Capabilities getCapabilities() {
+        return negotiatedCaps;
+    }
+
+    // ---- upstream facades (navigate / switchTo / manage) ----
+
+    @Override
+    public Navigation navigate() {
+        return new RemoteNavigation();
+    }
+
+    @Override
+    public TargetLocator switchTo() {
+        return new RemoteTargetLocator();
+    }
+
+    @Override
+    public Options manage() {
+        return new RemoteOptions();
+    }
+
+    // ---- facade implementations (each routes through execute()) ----
+
+    private final class RemoteNavigation implements Navigation {
+        @Override
+        public void back() {
+            RemoteWebDriver.this.back();
+        }
+
+        @Override
+        public void forward() {
+            RemoteWebDriver.this.forward();
+        }
+
+        @Override
+        public void to(String url) {
+            get(url);
+        }
+
+        @Override
+        public void to(java.net.URL url) {
+            get(url.toString());
+        }
+
+        @Override
+        public void refresh() {
+            RemoteWebDriver.this.refresh();
+        }
+    }
+
+    private final class RemoteTargetLocator implements TargetLocator {
+        @Override
+        public WebDriver frame(int index) {
+            execute("switchToFrame", frameParams((Object) index));
+            return RemoteWebDriver.this;
+        }
+
+        @Override
+        public WebDriver frame(String nameOrId) {
+            WebElement frame;
+            try {
+                frame = findElement(By.id(nameOrId));
+            } catch (NoSuchElementException e) {
+                try {
+                    frame = findElement(By.name(nameOrId));
+                } catch (NoSuchElementException e2) {
+                    throw new NoSuchFrameException("no frame with name or id " + nameOrId, 18);
+                }
+            }
+            return frame(frame);
+        }
+
+        @Override
+        public WebDriver frame(WebElement frameElement) {
+            execute("switchToFrame",
+                    frameParams(Map.of(W3C_ELEMENT_KEY, ((RemoteWebElement) frameElement).id())));
+            return RemoteWebDriver.this;
+        }
+
+        @Override
+        public WebDriver parentFrame() {
+            execute("switchToFrameParent", null);
+            return RemoteWebDriver.this;
+        }
+
+        @Override
+        public WebDriver window(String nameOrHandle) {
+            switchToWindow(nameOrHandle);
+            return RemoteWebDriver.this;
+        }
+
+        @Override
+        @SuppressWarnings("unchecked")
+        public WebDriver newWindow(WindowType typeHint) {
+            Object value = execute("newWindow", Map.of("type", typeHint.toString()));
+            if (value instanceof Map<?, ?> m) {
+                switchToWindow((String) ((Map<String, Object>) m).get("handle"));
+            }
+            return RemoteWebDriver.this;
+        }
+
+        @Override
+        public WebDriver defaultContent() {
+            Map<String, Object> params = new HashMap<>();
+            params.put("id", null);
+            execute("switchToFrame", params);
+            return RemoteWebDriver.this;
+        }
+
+        @Override
+        @SuppressWarnings("unchecked")
+        public WebElement activeElement() {
+            Map<String, Object> result = (Map<String, Object>) execute("getActiveElement", null);
+            return new RemoteWebElement(RemoteWebDriver.this, (String) result.get(W3C_ELEMENT_KEY));
+        }
+
+        @Override
+        public Alert alert() {
+            Alert alert = new RemoteAlert();
+            alert.getText(); // eager touch — mainstream raises here if none present
+            return alert;
+        }
+
+        private Map<String, Object> frameParams(Object id) {
+            Map<String, Object> params = new HashMap<>();
+            params.put("id", id);
+            return params;
+        }
+    }
+
+    private final class RemoteAlert implements Alert {
+        @Override
+        public void dismiss() {
+            dismissAlert();
+        }
+
+        @Override
+        public void accept() {
+            acceptAlert();
+        }
+
+        @Override
+        public String getText() {
+            return alertText();
+        }
+
+        @Override
+        public void sendKeys(String keysToSend) {
+            sendAlertText(keysToSend);
+        }
+    }
+
+    private final class RemoteOptions implements Options {
+        @Override
+        public void addCookie(Cookie cookie) {
+            RemoteWebDriver.this.addCookie(cookieToMap(cookie));
+        }
+
+        @Override
+        public void deleteCookieNamed(String name) {
+            RemoteWebDriver.this.deleteCookie(name);
+        }
+
+        @Override
+        public void deleteCookie(Cookie cookie) {
+            RemoteWebDriver.this.deleteCookie(cookie.getName());
+        }
+
+        @Override
+        public void deleteAllCookies() {
+            RemoteWebDriver.this.deleteAllCookies();
+        }
+
+        @Override
+        public java.util.Set<Cookie> getCookies() {
+            java.util.Set<Cookie> out = new java.util.LinkedHashSet<>();
+            for (Map<String, Object> raw : RemoteWebDriver.this.getCookies()) {
+                out.add(mapToCookie(raw));
+            }
+            return out;
+        }
+
+        @Override
+        public Cookie getCookieNamed(String name) {
+            Map<String, Object> raw = RemoteWebDriver.this.getCookie(name);
+            return raw == null ? null : mapToCookie(raw);
+        }
+
+        @Override
+        public Timeouts timeouts() {
+            return new RemoteTimeouts();
+        }
+
+        @Override
+        public Window window() {
+            return new RemoteWindow();
+        }
+    }
+
+    private final class RemoteTimeouts implements Timeouts {
+        private Duration implicit = Duration.ZERO;
+        private Duration script = Duration.ofSeconds(30);
+        private Duration pageLoad = Duration.ofMinutes(5);
+
+        @Override
+        public Timeouts implicitlyWait(Duration duration) {
+            implicit = duration;
+            execute("setTimeout", Map.of("implicit", duration.toMillis()));
+            return this;
+        }
+
+        @Override
+        public Duration getImplicitWaitTimeout() {
+            return implicit;
+        }
+
+        @Override
+        public Timeouts scriptTimeout(Duration duration) {
+            script = duration;
+            execute("setTimeout", Map.of("script", duration.toMillis()));
+            return this;
+        }
+
+        @Override
+        public Duration getScriptTimeout() {
+            return script;
+        }
+
+        @Override
+        public Timeouts pageLoadTimeout(Duration duration) {
+            pageLoad = duration;
+            execute("setTimeout", Map.of("pageLoad", duration.toMillis()));
+            return this;
+        }
+
+        @Override
+        public Duration getPageLoadTimeout() {
+            return pageLoad;
+        }
+    }
+
+    private final class RemoteWindow implements Window {
+        @Override
+        public Dimension getSize() {
+            Map<String, Object> r = getWindowRect();
+            return new Dimension(intOf(r.get("width")), intOf(r.get("height")));
+        }
+
+        @Override
+        public void setSize(Dimension targetSize) {
+            setWindowRect(Map.of("width", targetSize.width, "height", targetSize.height));
+        }
+
+        @Override
+        public Point getPosition() {
+            Map<String, Object> r = getWindowRect();
+            return new Point(intOf(r.get("x")), intOf(r.get("y")));
+        }
+
+        @Override
+        public void setPosition(Point targetPosition) {
+            setWindowRect(Map.of("x", targetPosition.x, "y", targetPosition.y));
+        }
+
+        @Override
+        public void maximize() {
+            maximizeWindow();
+        }
+
+        @Override
+        public void minimize() {
+            minimizeWindow();
+        }
+
+        @Override
+        public void fullscreen() {
+            fullscreenWindow();
+        }
+    }
+
+    // ---- Cookie <-> map marshalling for the manage() facade ----
+
+    private static Map<String, Object> cookieToMap(Cookie cookie) {
+        Map<String, Object> m = new HashMap<>();
+        m.put("name", cookie.getName());
+        m.put("value", cookie.getValue());
+        if (cookie.getPath() != null) {
+            m.put("path", cookie.getPath());
+        }
+        if (cookie.getDomain() != null) {
+            m.put("domain", cookie.getDomain());
+        }
+        if (cookie.getExpiry() != null) {
+            m.put("expiry", cookie.getExpiry().getTime() / 1000);
+        }
+        m.put("secure", cookie.isSecure());
+        m.put("httpOnly", cookie.isHttpOnly());
+        if (cookie.getSameSite() != null) {
+            m.put("sameSite", cookie.getSameSite());
+        }
+        return m;
+    }
+
+    private static Cookie mapToCookie(Map<String, Object> m) {
+        String name = (String) m.get("name");
+        String value = (String) m.get("value");
+        String domain = (String) m.get("domain");
+        String path = (String) m.get("path");
+        java.util.Date expiry = null;
+        Object exp = m.get("expiry");
+        if (exp instanceof Number n) {
+            expiry = new java.util.Date(n.longValue() * 1000L);
+        }
+        boolean secure = Boolean.TRUE.equals(m.get("secure"));
+        boolean httpOnly = Boolean.TRUE.equals(m.get("httpOnly"));
+        String sameSite = (String) m.get("sameSite");
+        return new Cookie(name, value, domain, path, expiry, secure, httpOnly, sameSite);
+    }
+
+    // ---- geometry helpers shared with RemoteWebElement ----
+
+    static int intOf(Object v) {
+        return v instanceof Number n ? (int) Math.round(n.doubleValue()) : 0;
+    }
+
+    static Rectangle toRectangle(Map<String, Object> r) {
+        return new Rectangle(
+                intOf(r.get("x")), intOf(r.get("y")), intOf(r.get("height")), intOf(r.get("width")));
+    }
+
     // ---- WebDriver-BiDi ----
 
     /**
@@ -500,6 +870,12 @@ public class RemoteWebDriver implements WebDriver {
     @Override
     public String sessionId() {
         return Native.sessionId(handle);
+    }
+
+    /** Close the current window (upstream; distinct from {@link #quit()}). */
+    @Override
+    public void close() {
+        execute("close", null);
     }
 
     @Override
