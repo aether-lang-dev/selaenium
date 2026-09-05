@@ -66,8 +66,47 @@ class Select:
             if o.is_selected():
                 o.click()
 
+    def deselect_by_value(self, value: str) -> None:
+        """Deselect all options whose value attribute equals ``value``
+        (multi-select only)."""
+        if not self.is_multiple:
+            raise NotImplementedError("You may only deselect options of a multi-select")
+        matched = False
+        for o in self.options:
+            if o.get_attribute("value") == value:
+                self._deselect(o)
+                matched = True
+        if not matched:
+            raise NoSuchElementException(f"Could not locate option with value: {value!r}")
+
+    def deselect_by_index(self, index: int) -> None:
+        """Deselect the option at ``index`` (multi-select only)."""
+        if not self.is_multiple:
+            raise NotImplementedError("You may only deselect options of a multi-select")
+        for o in self.options:
+            if o.get_attribute("index") == str(index):
+                self._deselect(o)
+                return
+        raise NoSuchElementException(f"Could not locate element with index {index}")
+
+    def deselect_by_visible_text(self, text: str) -> None:
+        """Deselect all options with the given visible ``text`` (multi-select only)."""
+        if not self.is_multiple:
+            raise NotImplementedError("You may only deselect options of a multi-select")
+        matched = False
+        for o in self.options:
+            if o.text == text:
+                self._deselect(o)
+                matched = True
+        if not matched:
+            raise NoSuchElementException(f"Could not locate element with visible text: {text!r}")
+
     def _select(self, option: WebElement) -> None:
         if not option.is_selected():
+            option.click()
+
+    def _deselect(self, option: WebElement) -> None:
+        if option.is_selected():
             option.click()
 
 

@@ -34,51 +34,173 @@ class By:
 
 
 class WebDriverException(Exception):
-    """Base for all remote-end errors, matching the Selenium/W3C error taxonomy."""
+    """Base for all remote-end errors, matching the Selenium/W3C error taxonomy.
 
-    def __init__(self, msg: str = "", code: int = 0):
+    Signature mirrors mainstream Selenium (``msg``, ``screen``, ``stacktrace``) so
+    an unmodified upstream script constructs and inspects these the same way. This
+    binding additionally records the engine's integer ``code`` (also exposed as
+    ``w3c_code``) — the seam passes it as the ``code`` keyword.
+    """
+
+    def __init__(self, msg=None, screen=None, stacktrace=None, code: int = 0):
         super().__init__(msg)
+        self.msg = msg
+        self.screen = screen
+        self.stacktrace = stacktrace
         self.w3c_code = code
+
+    def __str__(self) -> str:
+        exception_msg = f"Message: {self.msg}\n"
+        if self.screen:
+            exception_msg += "Screenshot: available via screen\n"
+        if self.stacktrace:
+            stacktrace = "\n".join(self.stacktrace)
+            exception_msg += f"Stacktrace:\n{stacktrace}"
+        return exception_msg
+
+
+# ---- W3C / Selenium exception taxonomy (upstream selenium.common.exceptions) ----
+# Base classes and hierarchy match mainstream so `except NoSuchFrameException` and
+# the broader `except InvalidSwitchToTargetException` both behave identically.
+
+
+class InvalidSwitchToTargetException(WebDriverException):
+    """Frame or window target to be switched doesn't exist."""
+
+
+class NoSuchWindowException(InvalidSwitchToTargetException):
+    """Window target to be switched doesn't exist."""
+
+
+class NoSuchFrameException(InvalidSwitchToTargetException):
+    """Frame target to be switched doesn't exist."""
 
 
 class NoSuchElementException(WebDriverException):
     pass
 
 
+class NoSuchAttributeException(WebDriverException):
+    """The attribute of element could not be found."""
+
+
+class NoSuchShadowRootException(WebDriverException):
+    """The element does not have a shadow root attached."""
+
+
 class StaleElementReferenceException(WebDriverException):
     pass
 
 
-class ElementClickInterceptedException(WebDriverException):
-    pass
+class InvalidElementStateException(WebDriverException):
+    """A command could not be completed because the element is in an invalid state."""
 
 
-class ElementNotInteractableException(WebDriverException):
-    pass
+class UnexpectedAlertPresentException(WebDriverException):
+    """An unexpected alert has appeared."""
+
+    def __init__(self, msg=None, screen=None, stacktrace=None, alert_text=None, code: int = 0):
+        super().__init__(msg, screen, stacktrace, code)
+        self.alert_text = alert_text
+
+    def __str__(self) -> str:
+        return f"Alert Text: {self.alert_text}\n{super().__str__()}"
 
 
-class InvalidSelectorException(WebDriverException):
-    pass
+class NoAlertPresentException(WebDriverException):
+    """Switching to an alert that is not present."""
 
 
-class NoSuchWindowException(WebDriverException):
-    pass
+class ElementNotVisibleException(InvalidElementStateException):
+    """The element is present on the DOM but not visible."""
 
 
-class NoSuchFrameException(WebDriverException):
-    pass
+class ElementNotInteractableException(InvalidElementStateException):
+    """Element interactions will hit another element due to paint order."""
+
+
+class ElementNotSelectableException(InvalidElementStateException):
+    """Trying to select an unselectable element."""
+
+
+class InvalidCookieDomainException(WebDriverException):
+    """Adding a cookie under a different domain."""
+
+
+class UnableToSetCookieException(WebDriverException):
+    """A driver failed to set a cookie."""
 
 
 class TimeoutException(WebDriverException):
     pass
 
 
+class MoveTargetOutOfBoundsException(WebDriverException):
+    """The move() target is out of document bounds."""
+
+
+class UnexpectedTagNameException(WebDriverException):
+    """A support class did not get an expected web element."""
+
+
+class InvalidSelectorException(WebDriverException):
+    pass
+
+
+class ImeNotAvailableException(WebDriverException):
+    """IME support is not available."""
+
+
+class ImeActivationFailedException(WebDriverException):
+    """Activating an IME engine failed."""
+
+
+class InvalidArgumentException(WebDriverException):
+    """The arguments passed to a command are invalid or malformed."""
+
+
 class JavascriptException(WebDriverException):
     pass
 
 
+class NoSuchCookieException(WebDriverException):
+    """No cookie matching the given path name was found."""
+
+
+class ScreenshotException(WebDriverException):
+    """A screen capture was made impossible."""
+
+
+class ElementClickInterceptedException(WebDriverException):
+    pass
+
+
+class InsecureCertificateException(WebDriverException):
+    """The user agent hit a certificate warning."""
+
+
+class InvalidCoordinatesException(WebDriverException):
+    """The coordinates provided to an interaction are invalid."""
+
+
+class InvalidSessionIdException(WebDriverException):
+    """The given session id is not in the list of active sessions."""
+
+
 class SessionNotCreatedException(WebDriverException):
     pass
+
+
+class UnknownMethodException(WebDriverException):
+    """The command matched a known URL but no method for that URL."""
+
+
+class NoSuchDriverException(WebDriverException):
+    """Driver is not specified and cannot be located."""
+
+
+class DetachedShadowRootException(WebDriverException):
+    """The referenced shadow root is no longer attached to the DOM."""
 
 
 class UnknownCommandException(WebDriverException):
@@ -105,7 +227,7 @@ _CODE_TO_EXC = {
 
 def _raise_for(code: int, message: str) -> None:
     exc = _CODE_TO_EXC.get(code, WebDriverException)
-    raise exc(message, code)
+    raise exc(message, code=code)
 
 
 class WebElement:
@@ -131,10 +253,34 @@ class WebElement:
     def clear(self) -> None:
         self._exec("clearElement")
 
-    def send_keys(self, text: str) -> None:
-        # W3C expects {"text": full, "value": [chars...]} — send both for
-        # broad driver compatibility.
-        self._exec("sendKeysToElement", {"text": text, "value": list(text)})
+    def send_keys(self, *value: str) -> None:
+        """Type into the element. Variadic (mainstream): accepts multiple strings
+        and :class:`Keys` constants, joined into one keystroke sequence. W3C
+        expects {"text": full, "value": [chars...]} — send both for broad driver
+        compatibility."""
+        chars = _keys_to_typing(value)
+        self._exec("sendKeysToElement", {"text": "".join(chars), "value": chars})
+
+    def submit(self) -> None:
+        """Submit the form containing this element (mainstream: walks up to the
+        enclosing <form> and dispatches submit, in-page)."""
+        script = (
+            "/* submitForm */var form = arguments[0];\n"
+            'while (form.nodeName != "FORM" && form.parentNode) {\n'
+            "  form = form.parentNode;\n"
+            "}\n"
+            "if (!form) { throw Error('Unable to find containing form element'); }\n"
+            "if (!form.ownerDocument) { throw Error('Unable to find owning document'); }\n"
+            "var e = form.ownerDocument.createEvent('Event');\n"
+            "e.initEvent('submit', true, true);\n"
+            "if (form.dispatchEvent(e)) { HTMLFormElement.prototype.submit.call(form) }\n"
+        )
+        try:
+            self._driver.execute_script(script, self)
+        except JavascriptException as exc:
+            raise WebDriverException(
+                "To submit an element, it must be nested inside a form element"
+            ) from exc
 
     @property
     def text(self) -> str:
@@ -143,6 +289,16 @@ class WebElement:
     @property
     def tag_name(self) -> str:
         return self._exec("getElementTagName")
+
+    @property
+    def aria_role(self) -> str:
+        """The computed ARIA role of the element."""
+        return self._exec("getAriaRole")
+
+    @property
+    def accessible_name(self) -> str:
+        """The computed accessible name of the element."""
+        return self._exec("getAccessibleName")
 
     def is_displayed(self) -> bool:
         """Whether the element is shown (the isDisplayed atom, run in-page by the
@@ -175,16 +331,49 @@ class WebElement:
     def rect(self) -> dict:
         return self._exec("getElementRect")
 
+    @property
+    def location(self) -> dict:
+        """The element's {"x","y"} position in the renderable canvas."""
+        r = self._exec("getElementRect")
+        return {"x": r["x"], "y": r["y"]}
+
+    @property
+    def size(self) -> dict:
+        """The element's {"height","width"}."""
+        r = self._exec("getElementRect")
+        return {"height": r["height"], "width": r["width"]}
+
+    @property
     def screenshot_as_base64(self) -> str:
+        """A base64-encoded PNG screenshot of this element (mainstream: property)."""
         return self._exec("takeElementScreenshot")
 
-    def find_element(self, by: str, value: str) -> "WebElement":
+    @property
+    def screenshot_as_png(self) -> bytes:
+        """This element's screenshot as raw PNG bytes."""
+        import base64
+        return base64.b64decode(self.screenshot_as_base64.encode("ascii"))
+
+    def screenshot(self, filename) -> bool:
+        """Save this element's PNG screenshot to ``filename``. Returns False on
+        an OSError writing the file, else True."""
+        png = self.screenshot_as_png
+        try:
+            with open(filename, "wb") as f:
+                f.write(png)
+        except OSError:
+            return False
+        finally:
+            del png
+        return True
+
+    def find_element(self, by: str = By.ID, value: str | None = None) -> "WebElement":
         loc = _decode_by(by, value)
         loc["id"] = self._id
         result = self._driver._execute("findChildElement", loc)
         return WebElement(self._driver, result[_W3C_ELEMENT_KEY])
 
-    def find_elements(self, by: str, value: str) -> list["WebElement"]:
+    def find_elements(self, by: str = By.ID, value: str | None = None) -> list["WebElement"]:
         loc = _decode_by(by, value)
         loc["id"] = self._id
         result = self._driver._execute("findChildElements", loc)
@@ -195,6 +384,32 @@ class WebElement:
 
     def __repr__(self):
         return f"<WebElement id={self._id!r}>"
+
+
+def _wrap_args(args):
+    """Serialize execute_script args, encoding any WebElement as its W3C
+    element-reference object so the engine forwards a live element handle."""
+    def enc(a):
+        if isinstance(a, WebElement):
+            return {_W3C_ELEMENT_KEY: a.id}
+        if isinstance(a, (list, tuple)):
+            return [enc(x) for x in a]
+        if isinstance(a, dict):
+            return {k: enc(v) for k, v in a.items()}
+        return a
+    return [enc(a) for a in args]
+
+
+def _keys_to_typing(value) -> list[str]:
+    """Flatten send_keys args into a list of single characters — the mainstream
+    ``keys_to_typing``: strings splat into chars, ints/floats stringify."""
+    chars: list[str] = []
+    for val in value:
+        if isinstance(val, (int, float)):
+            chars.extend(str(val))
+        else:
+            chars.extend(val)
+    return chars
 
 
 def _decode_by(by: str, value: str) -> dict:
@@ -227,11 +442,21 @@ class WebDriver:
         result = self._execute("newSession", payload)
         # value.capabilities.webSocketUrl — the BiDi endpoint for this session.
         self._ws_url = ""
+        self._caps: dict = {}
         if isinstance(result, dict):
-            self._ws_url = (result.get("capabilities") or {}).get("webSocketUrl", "") or ""
+            self._caps = result.get("capabilities") or {}
+            self._ws_url = self._caps.get("webSocketUrl", "") or ""
         self._bidi: "BiDi | None" = None
+        self._switch_to = SwitchTo(self)
 
     # ---- the FFI seam ----
+
+    def execute(self, driver_command: str, params: dict | None = None) -> Any:
+        """Issue a W3C command by name and return its parsed value — mainstream's
+        documented low-level entrypoint. Public alias of the FFI seam
+        :meth:`_execute` (the engine already unwraps the ``{"value": ...}``
+        envelope, so this returns the value directly)."""
+        return self._execute(driver_command, params)
 
     def _execute(self, command: str, params: dict | None = None) -> Any:
         params_json = json.dumps(params or {})
@@ -243,7 +468,7 @@ class WebDriver:
             message = _native.take_string(_native.last_error(self._handle))
             if rc == -1 and code == 0:
                 # transport-level failure
-                raise WebDriverException(message or "transport failure", -1)
+                raise WebDriverException(message or "transport failure", code=-1)
             _raise_for(code, message)
         raw = _native.take_string(_native.last_value(self._handle))
         if raw == "":
@@ -258,7 +483,7 @@ class WebDriver:
             code = _native.last_error_code(self._handle)
             message = _native.take_string(_native.last_error(self._handle))
             if rc == -1 and code == 0:
-                raise WebDriverException(message or "transport failure", -1)
+                raise WebDriverException(message or "transport failure", code=-1)
             _raise_for(code, message)
         raw = _native.take_string(_native.last_value(self._handle))
         return None if raw == "" else json.loads(raw)
@@ -313,21 +538,21 @@ class WebDriver:
 
     # ---- elements ----
 
-    def find_element(self, by: str, value: str) -> WebElement:
+    def find_element(self, by: str = By.ID, value: str | None = None) -> WebElement:
         result = self._execute("findElement", _decode_by(by, value))
         return WebElement(self, result[_W3C_ELEMENT_KEY])
 
-    def find_elements(self, by: str, value: str) -> list[WebElement]:
+    def find_elements(self, by: str = By.ID, value: str | None = None) -> list[WebElement]:
         result = self._execute("findElements", _decode_by(by, value))
         return [WebElement(self, e[_W3C_ELEMENT_KEY]) for e in result]
 
     # ---- script ----
 
     def execute_script(self, script: str, *args) -> Any:
-        return self._execute("executeScript", {"script": script, "args": list(args)})
+        return self._execute("executeScript", {"script": script, "args": _wrap_args(args)})
 
     def execute_async_script(self, script: str, *args) -> Any:
-        return self._execute("executeAsyncScript", {"script": script, "args": list(args)})
+        return self._execute("executeAsyncScript", {"script": script, "args": _wrap_args(args)})
 
     # ---- windows ----
 
@@ -365,6 +590,35 @@ class WebDriver:
         if height is not None:
             rect["height"] = height
         return self._execute("setWindowRect", rect)
+
+    def set_window_size(self, width, height) -> None:
+        """Set the current window's size (mainstream convenience over set_window_rect)."""
+        self.set_window_rect(width=int(width), height=int(height))
+
+    def get_window_size(self) -> dict:
+        """The current window's {"width","height"}."""
+        r = self.get_window_rect()
+        return {k: r[k] for k in ("width", "height")}
+
+    def set_window_position(self, x, y) -> dict:
+        """Set the current window's top-left position."""
+        return self.set_window_rect(x=int(x), y=int(y))
+
+    def get_window_position(self) -> dict:
+        """The current window's {"x","y"} top-left position."""
+        r = self.get_window_rect()
+        return {k: r[k] for k in ("x", "y")}
+
+    # ---- switch_to facade ----
+
+    @property
+    def switch_to(self) -> "SwitchTo":
+        """The mainstream focus-switching facade:
+        ``driver.switch_to.window(h)`` / ``.frame(ref)`` / ``.parent_frame()`` /
+        ``.default_content()`` / ``.new_window("tab")`` / ``.active_element`` /
+        ``.alert``. The flat ``switch_to_window`` / ``accept_alert`` methods stay
+        available for existing callers."""
+        return self._switch_to
 
     # ---- cookies ----
 
@@ -412,10 +666,59 @@ class WebDriver:
     def implicitly_wait(self, time_to_wait: float) -> None:
         self._execute("setTimeout", {"implicit": int(float(time_to_wait) * 1000)})
 
-    # ---- screenshots ----
+    # ---- screenshots / print ----
 
     def get_screenshot_as_base64(self) -> str:
         return self._execute("screenshot")
+
+    def get_screenshot_as_png(self) -> bytes:
+        """The current window's screenshot as raw PNG bytes."""
+        import base64
+        return base64.b64decode(self.get_screenshot_as_base64().encode("ascii"))
+
+    def get_screenshot_as_file(self, filename) -> bool:
+        """Save a PNG screenshot of the current window to ``filename``. Returns
+        False on an OSError writing the file, else True."""
+        png = self.get_screenshot_as_png()
+        try:
+            with open(filename, "wb") as f:
+                f.write(png)
+        except OSError:
+            return False
+        finally:
+            del png
+        return True
+
+    def save_screenshot(self, filename) -> bool:
+        """Alias of :meth:`get_screenshot_as_file` (mainstream)."""
+        return self.get_screenshot_as_file(filename)
+
+    def print_page(self, print_options=None) -> str:
+        """Render the current page to a PDF, returned base64-encoded.
+        ``print_options`` may be a mapping (or an object with ``to_dict()``) of
+        the W3C print parameters."""
+        options: dict = {}
+        if print_options is not None:
+            options = print_options.to_dict() if hasattr(print_options, "to_dict") else dict(print_options)
+        return self._execute("printPage", options)
+
+    # ---- session metadata ----
+
+    @property
+    def name(self) -> str:
+        """The browserName of the underlying browser for this session."""
+        caps = self._caps or {}
+        if "browserName" in caps:
+            return caps["browserName"]
+        raise KeyError("browserName not specified in session capabilities")
+
+    @property
+    def capabilities(self) -> dict:
+        """The session capabilities the remote end returned."""
+        return self._caps
+
+    def __repr__(self) -> str:
+        return f'<{type(self).__module__}.{type(self).__name__} (session="{self.session_id}")>'
 
     # ---- lifecycle ----
 
@@ -437,11 +740,11 @@ class WebDriver:
         if self._bidi is None:
             if not self._ws_url:
                 raise WebDriverException(
-                    "BiDi not available: the session negotiated no webSocketUrl", 0
+                    "BiDi not available: the session negotiated no webSocketUrl", code=0
                 )
             handle = _native.bidi_open(_native.encode(self._ws_url))
             if not handle:
-                raise WebDriverException("BiDi channel failed to open", -1)
+                raise WebDriverException("BiDi channel failed to open", code=-1)
             self._bidi = BiDi(handle)
         return self._bidi
 
@@ -473,6 +776,91 @@ class WebDriver:
 
     def __exit__(self, *exc):
         self.quit()
+
+
+class SwitchTo:
+    """The mainstream focus-switching facade reached via ``driver.switch_to``.
+
+    Each method issues the matching W3C command through this binding's engine
+    seam. The flat driver methods (``switch_to_window``, ``accept_alert``, …)
+    remain the underlying calls, so both styles coexist."""
+
+    def __init__(self, driver: "WebDriver"):
+        import weakref
+        self._driver = weakref.proxy(driver)
+
+    @property
+    def active_element(self) -> "WebElement":
+        """The element with focus (or BODY if nothing has focus)."""
+        result = self._driver._execute("getActiveElement")
+        return WebElement(self._driver, result[_W3C_ELEMENT_KEY])
+
+    @property
+    def alert(self) -> "Alert":
+        """The open alert/confirm/prompt. Touches its text (raising
+        NoAlertPresentException-style errors if none is present), as mainstream."""
+        alert = Alert(self._driver)
+        _ = alert.text
+        return alert
+
+    def default_content(self) -> None:
+        """Switch focus back to the top-level document."""
+        self._driver._execute("switchToFrame", {"id": None})
+
+    def frame(self, frame_reference) -> None:
+        """Switch to a frame by index, name/id (looked up as element), or a
+        frame WebElement."""
+        if isinstance(frame_reference, str):
+            try:
+                frame_reference = self._driver.find_element(By.ID, frame_reference)
+            except NoSuchElementException:
+                try:
+                    frame_reference = self._driver.find_element(By.NAME, frame_reference)
+                except NoSuchElementException as exc:
+                    raise NoSuchFrameException(frame_reference) from exc
+        if isinstance(frame_reference, WebElement):
+            frame_reference = {_W3C_ELEMENT_KEY: frame_reference.id}
+        self._driver._execute("switchToFrame", {"id": frame_reference})
+
+    def new_window(self, type_hint: str = "tab") -> None:
+        """Open and switch to a new top-level context ("tab" or "window")."""
+        value = self._driver._execute("newWindow", {"type": type_hint})
+        self._driver._execute("switchToWindow", {"handle": value["handle"]})
+
+    def parent_frame(self) -> None:
+        """Switch to the parent of the current frame."""
+        self._driver._execute("switchToFrameParent")
+
+    def window(self, window_name: str) -> None:
+        """Switch to the window/tab with the given handle."""
+        self._driver._execute("switchToWindow", {"handle": window_name})
+
+
+class Alert:
+    """A JavaScript alert/confirm/prompt handle, reached via
+    ``driver.switch_to.alert``. Mirrors mainstream ``selenium...common.alert.Alert``."""
+
+    def __init__(self, driver: "WebDriver"):
+        self.driver = driver
+
+    @property
+    def text(self) -> str:
+        """The alert's message text."""
+        return self.driver._execute("getAlertText")
+
+    def dismiss(self) -> None:
+        """Dismiss (cancel) the alert."""
+        self.driver._execute("dismissAlert")
+
+    def accept(self) -> None:
+        """Accept (OK) the alert."""
+        self.driver._execute("acceptAlert")
+
+    def send_keys(self, keysToSend: str) -> None:
+        """Type into a prompt's input field."""
+        self.driver._execute(
+            "setAlertValue", {"text": keysToSend, "value": list(keysToSend)}
+        )
 
 
 class BidiEvent:
@@ -546,7 +934,7 @@ class BiDi:
         # send + pump until this id's reply arrives (the engine's convenience).
         cid = self._id()
         if _native.bidi_send(self._handle, cid, _native.encode(method), _native.encode(params_json)) != 0:
-            raise WebDriverException(f"BiDi send failed: {method}", -1)
+            raise WebDriverException(f"BiDi send failed: {method}", code=-1)
         waited, step = 0, 50
         while waited < timeout_ms:
             reply = _native.take_string(_native.bidi_poll_reply(self._handle, cid))
@@ -555,7 +943,7 @@ class BiDi:
             if _native.bidi_pump(self._handle, step) < 0:
                 break
             waited += step
-        raise TimeoutException(f"BiDi command timed out: {method}", 0)
+        raise TimeoutException(f"BiDi command timed out: {method}", code=0)
 
     # ---- typed convenience commands ----
 
@@ -576,7 +964,7 @@ class BiDi:
         execute_script — real realms, promise-awaiting, structured value types."""
         ctx = context or self.top_context(timeout_ms)
         if not ctx:
-            raise WebDriverException("no browsing context for script.evaluate", 0)
+            raise WebDriverException("no browsing context for script.evaluate", code=0)
         raw = _native.take_string(
             _native.bidi_script_evaluate(self._handle, self._id(),
                                          _native.encode(expression), _native.encode(ctx), timeout_ms)
@@ -594,7 +982,7 @@ class BiDi:
         """browsingContext.navigate a context to url (wait: complete)."""
         ctx = context or self.top_context(timeout_ms)
         if not ctx:
-            raise WebDriverException("no browsing context for navigate", 0)
+            raise WebDriverException("no browsing context for navigate", code=0)
         raw = _native.take_string(
             _native.bidi_navigate(self._handle, self._id(),
                                   _native.encode(ctx), _native.encode(url), timeout_ms)
@@ -689,19 +1077,30 @@ class BiDi:
             self._handle = None
 
 
-def Chrome(command_executor: str | None = None, options: dict | None = None,
+def _options_to_caps(options) -> dict:
+    """Normalize a Chrome ``options`` argument to a capabilities dict. Accepts a
+    mainstream ``ChromeOptions`` object (any object exposing ``to_capabilities``)
+    or a raw capabilities dict (back-compat), or None."""
+    if options is None:
+        return {}
+    if hasattr(options, "to_capabilities"):
+        return dict(options.to_capabilities())
+    return dict(options)
+
+
+def Chrome(command_executor: str | None = None, options=None,
            ca_path: str | None = None, insecure: bool = False) -> WebDriver:
     """A Chrome session, matching ``webdriver.Chrome()`` in Selenium 4.x.
 
     With no ``command_executor`` the engine resolves and launches its own
     chromedriver (no driver on PATH, no Grid) — a :class:`LocalChrome`. Pass a
-    URL to drive an already-running chromedriver instead. ``options`` is a raw
-    capabilities dict merged under ``browserName: chrome``."""
+    URL to drive an already-running chromedriver instead. ``options`` may be a
+    mainstream :class:`ChromeOptions` object (``.to_capabilities()`` is applied)
+    or a raw capabilities dict (back-compat), merged under ``browserName: chrome``."""
     if command_executor is None:
         return LocalChrome(options=options, ca_path=ca_path, insecure=insecure)
     caps = {"browserName": "chrome"}
-    if options:
-        caps.update(options)
+    caps.update(_options_to_caps(options))
     return WebDriver(command_executor, caps, ca_path=ca_path, insecure=insecure)
 
 
@@ -775,15 +1174,14 @@ class LocalChrome(WebDriver):
     Returns nothing special if the driver can't be resolved: raises
     :class:`WebDriverException`."""
 
-    def __init__(self, options: dict | None = None, hint: str = "", timeout_ms: int = 15000,
+    def __init__(self, options=None, hint: str = "", timeout_ms: int = 15000,
                  ca_path: str | None = None, insecure: bool = False):
         proc = ensure_driver("chrome", hint, timeout_ms)
         if proc is None:
-            raise WebDriverException("could not resolve/launch chromedriver", -1)
+            raise WebDriverException("could not resolve/launch chromedriver", code=-1)
         self._proc = proc
         caps = {"browserName": "chrome"}
-        if options:
-            caps.update(options)
+        caps.update(_options_to_caps(options))
         super().__init__(proc.url, caps, ca_path=ca_path, insecure=insecure)
 
     def quit(self) -> None:

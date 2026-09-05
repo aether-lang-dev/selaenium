@@ -16,6 +16,8 @@ from .._webdriver import (
     DriverProcess,
     WebDriver,
     WebElement,
+    SwitchTo,
+    Alert,
     resolve_driver,
     launch_driver,
     ensure_driver,
@@ -24,6 +26,7 @@ from .._native import configure as configure_native_lib
 from .common.by import By
 from .common.keys import Keys
 from .common.action_chains import ActionChains
+from .chrome.options import Options as ChromeOptions
 from .support.wait import WebDriverWait
 from .support.select import Select
 from .support import expected_conditions
@@ -37,9 +40,12 @@ __all__ = [
     "DriverProcess",
     "WebDriver",
     "WebElement",
+    "SwitchTo",
+    "Alert",
     "By",
     "Keys",
     "ActionChains",
+    "ChromeOptions",
     "WebDriverWait",
     "Select",
     "expected_conditions",
