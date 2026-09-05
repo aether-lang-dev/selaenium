@@ -22,6 +22,11 @@ from .._webdriver import (
 )
 from .._native import configure as configure_native_lib
 from .common.by import By
+from .common.keys import Keys
+from .common.action_chains import ActionChains
+from .support.wait import WebDriverWait
+from .support.select import Select
+from .support import expected_conditions
 
 __all__ = [
     "BiDi",
@@ -33,6 +38,11 @@ __all__ = [
     "WebDriver",
     "WebElement",
     "By",
+    "Keys",
+    "ActionChains",
+    "WebDriverWait",
+    "Select",
+    "expected_conditions",
     "resolve_driver",
     "launch_driver",
     "ensure_driver",
