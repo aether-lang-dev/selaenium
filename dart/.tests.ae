@@ -1,11 +1,12 @@
 // Dart binding tests (dart:ffi). The loader honors SELENIUM_CORE_LIB, injected
 // here from the engine's shared_lib artifact. dart.test() resolves deps
 // (pub_get_first, offline against the local pub cache) then runs `dart test`
-// over the FFI facts (ffi_test) + the live-Chrome smoke+surface (live_test).
-// The live test spawns its own out-of-process content server (dart:ffi is
-// synchronous, so an in-isolate server would deadlock) + chromedriver, and
-// self-skips when chromedriver is absent. Skipped by preflight when dart is
-// absent (prereq dart).
+// over the FFI facts (ffi_test), the no-browser convenience-tier unit tests
+// (convenience_test: Keys/WebDriverWait/Select/Actions against fakes), and the
+// live-Chrome smoke+surface (live_test). The live test spawns its own
+// out-of-process content server (dart:ffi is synchronous, so an in-isolate
+// server would deadlock) + chromedriver, and self-skips when chromedriver is
+// absent. Skipped by preflight when dart is absent (prereq dart).
 import bldr
 import dart
 
@@ -18,7 +19,7 @@ aeb(cap) {
             env("SELENIUM_CORE_LIB", lib)
             pub_get_first("1")
             offline("1")
-            test_path("test/ffi_test.dart test/live_test.dart")
+            test_path("test/ffi_test.dart test/convenience_test.dart test/live_test.dart")
         }
     }
 }

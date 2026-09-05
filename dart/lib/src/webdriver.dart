@@ -8,6 +8,7 @@ import 'dart:ffi' as ffi;
 
 import 'package:ffi/ffi.dart' as pkgffi;
 
+import 'actions.dart';
 import 'native.dart';
 
 const String w3cElementKey = 'element-6066-11e4-a52e-4f735466cecf';
@@ -95,20 +96,44 @@ T _withCStr<T>(String s, T Function(ffi.Pointer<pkgffi.Utf8>) fn) {
 }
 
 // ---- pure engine helpers ----
-String route(String command) =>
-    _withCStr(command, (c) => Native.instance.takeString(Native.instance.route(c)));
+String route(String command) => _withCStr(
+    command, (c) => Native.instance.takeString(Native.instance.route(c)));
 
 int errorCode(String w3cError) =>
     _withCStr(w3cError, (c) => Native.instance.errorCode(c));
 
 String locator(String by, String value) => _withCStr(
-    by, (b) => _withCStr(value, (v) => Native.instance.takeString(Native.instance.byLocator(b, v))));
+    by,
+    (b) => _withCStr(value,
+        (v) => Native.instance.takeString(Native.instance.byLocator(b, v))));
 
 Map<String, dynamic> _decodeBy(By by) =>
     jsonDecode(locator(by.strategy, by.value)) as Map<String, dynamic>;
 
-class WebElement {
+/// The element operations the convenience tier ([Select], [Actions]) relies on.
+/// [WebElement] implements it; a test fake can too, so those helpers are
+/// unit-testable without a live browser.
+abstract class ElementLike {
+  String get id;
+  String get text;
+  String get tagName;
+  bool isDisplayed();
+  bool isEnabled();
+  bool isSelected();
+  void click();
+  dynamic getAttribute(String name);
+  List<ElementLike> findElements(By by);
+}
+
+/// The driver operations [Actions.perform] and [WebDriverWait] rely on.
+/// [WebDriver] implements it; a test fake can too.
+abstract class DriverLike {
+  void performActions(List<dynamic> actions);
+}
+
+class WebElement implements ElementLike {
   final WebDriver _driver;
+  @override
   final String id;
   WebElement(this._driver, this.id);
 
@@ -117,31 +142,59 @@ class WebElement {
     return _driver.execute(command, p);
   }
 
+  @override
   void click() => _exec('clickElement');
   void clear() => _exec('clearElement');
   void sendKeys(String text) =>
       _exec('sendKeysToElement', {'text': text, 'value': text.split('')});
+  @override
   String get text => _exec('getElementText') as String;
+  @override
   String get tagName => _exec('getElementTagName') as String;
 
   /// Whether the element is shown (the isDisplayed atom, run in-page by the
   /// engine — the visibility algorithm, not a naive style check).
+  @override
   bool isDisplayed() => _driver._atomIsDisplayed(id) == true;
 
   /// The classic getAttribute(name): property-or-attribute (boolean attrs,
   /// live properties like value/checked), via the shared engine atom. Use
   /// [getDomAttribute] for the raw W3C DOM attribute.
+  @override
   dynamic getAttribute(String name) => _driver._atomGetAttribute(id, name);
 
   /// The literal DOM attribute (W3C getDomAttribute), no property fallback.
-  dynamic getDomAttribute(String name) => _exec('getDomAttribute', {'name': name});
-  dynamic getProperty(String name) => _exec('getElementProperty', {'name': name});
+  dynamic getDomAttribute(String name) =>
+      _exec('getDomAttribute', {'name': name});
+  dynamic getProperty(String name) =>
+      _exec('getElementProperty', {'name': name});
+  @override
   bool isEnabled() => _exec('isElementEnabled') == true;
+  @override
   bool isSelected() => _exec('isElementSelected') == true;
-  Map<String, dynamic> get rect => _exec('getElementRect') as Map<String, dynamic>;
+  Map<String, dynamic> get rect =>
+      _exec('getElementRect') as Map<String, dynamic>;
+
+  /// Find the first descendant matching [by], scoped to this element (W3C
+  /// findElementFromElement). Mirrors [WebDriver.findElement].
+  WebElement findElement(By by) {
+    final r = _exec('findChildElement', _decodeBy(by)) as Map<String, dynamic>;
+    return WebElement(_driver, r[w3cElementKey] as String);
+  }
+
+  /// Find all descendants matching [by], scoped to this element (W3C
+  /// findElementsFromElement). Mirrors [WebDriver.findElements].
+  @override
+  List<WebElement> findElements(By by) {
+    final r = _exec('findChildElements', _decodeBy(by)) as List<dynamic>;
+    return r
+        .map((e) => WebElement(
+            _driver, (e as Map<String, dynamic>)[w3cElementKey] as String))
+        .toList();
+  }
 }
 
-class WebDriver {
+class WebDriver implements DriverLike {
   ffi.Pointer<ffi.Void> _handle;
 
   // The BiDi endpoint negotiated at newSession (webSocketUrl), and the channel
@@ -224,13 +277,17 @@ class WebDriver {
   // ---- the FFI seam ----
   dynamic execute(String command, [Map<String, dynamic>? params]) {
     final paramsJson = jsonEncode(params ?? {});
-    final rc = _withCStr(command,
-        (c) => _withCStr(paramsJson, (p) => Native.instance.execute(_handle, c, p)));
+    final rc = _withCStr(
+        command,
+        (c) => _withCStr(
+            paramsJson, (p) => Native.instance.execute(_handle, c, p)));
     if (rc != 0) {
       final code = Native.instance.lastErrorCode(_handle);
-      final message = Native.instance.takeString(Native.instance.lastError(_handle));
+      final message =
+          Native.instance.takeString(Native.instance.lastError(_handle));
       if (rc == -1 && code == 0) {
-        throw WebDriverException(message.isEmpty ? 'transport failure' : message, -1);
+        throw WebDriverException(
+            message.isEmpty ? 'transport failure' : message, -1);
       }
       throw _classify(code, message);
     }
@@ -246,9 +303,11 @@ class WebDriver {
   dynamic _atomResult(int rc) {
     if (rc != 0) {
       final code = Native.instance.lastErrorCode(_handle);
-      final message = Native.instance.takeString(Native.instance.lastError(_handle));
+      final message =
+          Native.instance.takeString(Native.instance.lastError(_handle));
       if (rc == -1 && code == 0) {
-        throw WebDriverException(message.isEmpty ? 'transport failure' : message, -1);
+        throw WebDriverException(
+            message.isEmpty ? 'transport failure' : message, -1);
       }
       throw _classify(code, message);
     }
@@ -257,19 +316,20 @@ class WebDriver {
     return jsonDecode(raw);
   }
 
-  dynamic _atomIsDisplayed(String elementId) => _withCStr(elementId,
-      (e) => _atomResult(Native.instance.isDisplayed(_handle, e)));
+  dynamic _atomIsDisplayed(String elementId) => _withCStr(
+      elementId, (e) => _atomResult(Native.instance.isDisplayed(_handle, e)));
 
   dynamic _atomGetAttribute(String elementId, String name) => _withCStr(
       elementId,
-      (e) => _withCStr(
-          name, (n) => _atomResult(Native.instance.getAttributeAtom(_handle, e, n))));
+      (e) => _withCStr(name,
+          (n) => _atomResult(Native.instance.getAttributeAtom(_handle, e, n))));
 
   /// Relative locators: elements matching [baseCss] filtered by spatial relation
   /// to anchors, nearest first. Each filter is a map
   /// `{"kind": "above"|"below"|"left"|"right"|"near", "sel": "<css>"}`
   /// (`near` also accepts `"dist"`). Returns a list of [WebElement].
-  List<WebElement> findRelative(String baseCss, List<Map<String, dynamic>> filters) {
+  List<WebElement> findRelative(
+      String baseCss, List<Map<String, dynamic>> filters) {
     final filtersJson = jsonEncode(filters);
     final result = _withCStr(
         baseCss,
@@ -277,7 +337,8 @@ class WebDriver {
             (f) => _atomResult(Native.instance.findRelative(_handle, b, f))));
     final refs = (result as List<dynamic>?) ?? const [];
     return refs
-        .map((e) => WebElement(this, (e as Map<String, dynamic>)[w3cElementKey] as String))
+        .map((e) => WebElement(
+            this, (e as Map<String, dynamic>)[w3cElementKey] as String))
         .toList();
   }
 
@@ -299,7 +360,8 @@ class WebDriver {
   List<WebElement> findElements(By by) {
     final r = execute('findElements', _decodeBy(by)) as List<dynamic>;
     return r
-        .map((e) => WebElement(this, (e as Map<String, dynamic>)[w3cElementKey] as String))
+        .map((e) => WebElement(
+            this, (e as Map<String, dynamic>)[w3cElementKey] as String))
         .toList();
   }
 
@@ -314,23 +376,36 @@ class WebDriver {
   List<String> get windowHandles =>
       (execute('getWindowHandles') as List<dynamic>).cast<String>();
   String get currentWindowHandle => execute('getCurrentWindowHandle') as String;
-  void switchToWindow(String handle) => execute('switchToWindow', {'handle': handle});
-  dynamic setWindowRect(Map<String, dynamic> rect) => execute('setWindowRect', rect);
+  void switchToWindow(String handle) =>
+      execute('switchToWindow', {'handle': handle});
+  dynamic setWindowRect(Map<String, dynamic> rect) =>
+      execute('setWindowRect', rect);
   dynamic getWindowRect() => execute('getWindowRect');
   dynamic maximizeWindow() => execute('maximizeWindow');
   dynamic minimizeWindow() => execute('minimizeWindow');
   dynamic fullscreenWindow() => execute('fullscreenWindow');
 
   // ---- cookies ----
-  void addCookie(Map<String, dynamic> cookie) => execute('addCookie', {'cookie': cookie});
+  void addCookie(Map<String, dynamic> cookie) =>
+      execute('addCookie', {'cookie': cookie});
   dynamic getCookies() => execute('getCookies');
   dynamic getCookie(String name) => execute('getCookie', {'name': name});
   void deleteCookie(String name) => execute('deleteCookie', {'name': name});
   void deleteAllCookies() => execute('deleteAllCookies');
 
   // ---- actions ----
-  void performActions(List<dynamic> actions) => execute('actions', {'actions': actions});
+  @override
+  void performActions(List<dynamic> actions) =>
+      execute('actions', {'actions': actions});
   void clearActions() => execute('clearActions');
+
+  /// A fresh fluent [Actions] builder bound to this session. Chain gestures and
+  /// call `.perform()`:
+  ///
+  /// ```dart
+  /// driver.actions().moveToElement(menu).click(item).perform();
+  /// ```
+  Actions actions() => Actions(this);
 
   // ---- alerts ----
   void acceptAlert() => execute('acceptAlert');
@@ -339,7 +414,8 @@ class WebDriver {
   void sendAlertText(String text) => execute('setAlertValue', {'text': text});
 
   // ---- timeouts ----
-  void setTimeouts(Map<String, dynamic> timeouts) => execute('setTimeout', timeouts);
+  void setTimeouts(Map<String, dynamic> timeouts) =>
+      execute('setTimeout', timeouts);
   void setPageLoadTimeout(int ms) => execute('setTimeout', {'pageLoad': ms});
   void setScriptTimeout(int ms) => execute('setTimeout', {'script': ms});
   void implicitlyWait(int ms) => execute('setTimeout', {'implicit': ms});
@@ -378,7 +454,8 @@ class WebDriver {
   bool get bidiAvailable => _wsUrl.isNotEmpty;
 
   // ---- lifecycle ----
-  String get sessionId => Native.instance.takeString(Native.instance.sessionId(_handle));
+  String get sessionId =>
+      Native.instance.takeString(Native.instance.sessionId(_handle));
 
   void quit() {
     try {
@@ -441,7 +518,8 @@ class BiDi {
   /// [nextEvent]).
   Map<String, dynamic> subscribe(List<String> events, {int timeoutMs = 10000}) {
     final csv = events.join(',');
-    final raw = _withCStr(csv,
+    final raw = _withCStr(
+        csv,
         (c) => Native.instance.takeString(
             Native.instance.bidiSubscribe(_handle, _id(), c, timeoutMs)));
     return raw.isEmpty ? {} : jsonDecode(raw) as Map<String, dynamic>;
@@ -450,7 +528,8 @@ class BiDi {
   Map<String, dynamic> unsubscribe(List<String> events,
       {int timeoutMs = 10000}) {
     final csv = events.join(',');
-    final raw = _withCStr(csv,
+    final raw = _withCStr(
+        csv,
         (c) => Native.instance.takeString(
             Native.instance.bidiUnsubscribe(_handle, _id(), c, timeoutMs)));
     return raw.isEmpty ? {} : jsonDecode(raw) as Map<String, dynamic>;
@@ -459,9 +538,10 @@ class BiDi {
   /// Block until an event whose [method] matches arrives, or timeout. Returns
   /// the event map, or null on timeout/close. (Subscribe first.)
   Map<String, dynamic>? nextEvent(String method, {int timeoutMs = 5000}) {
-    final raw = _withCStr(method,
-        (m) => Native.instance.takeString(
-            Native.instance.bidiWaitEvent(_handle, m, timeoutMs)));
+    final raw = _withCStr(
+        method,
+        (m) => Native.instance
+            .takeString(Native.instance.bidiWaitEvent(_handle, m, timeoutMs)));
     return raw.isEmpty ? null : jsonDecode(raw) as Map<String, dynamic>;
   }
 
@@ -483,8 +563,8 @@ class BiDi {
     var waited = 0;
     const step = 50;
     while (waited < timeoutMs) {
-      final reply =
-          Native.instance.takeString(Native.instance.bidiPollReply(_handle, cid));
+      final reply = Native.instance
+          .takeString(Native.instance.bidiPollReply(_handle, cid));
       if (reply.isNotEmpty) return jsonDecode(reply) as Map<String, dynamic>;
       if (Native.instance.bidiPump(_handle, step) < 0) break;
       waited += step;
@@ -505,7 +585,8 @@ class BiDi {
   /// null if the session has no context yet.
   String? topContext({int timeoutMs = 10000}) {
     final result = getTree(timeoutMs: timeoutMs)['result'];
-    final contexts = (result is Map<String, dynamic> ? result['contexts'] : null);
+    final contexts =
+        (result is Map<String, dynamic> ? result['contexts'] : null);
     if (contexts is List && contexts.isNotEmpty) {
       final first = contexts.first;
       if (first is Map<String, dynamic>) return first['context'] as String?;
@@ -550,8 +631,8 @@ class BiDi {
         ctx,
         (c) => _withCStr(
             url,
-            (u) => Native.instance.takeString(
-                Native.instance.bidiNavigate(_handle, _id(), c, u, timeoutMs))));
+            (u) => Native.instance.takeString(Native.instance
+                .bidiNavigate(_handle, _id(), c, u, timeoutMs))));
     return raw.isEmpty ? {} : jsonDecode(raw) as Map<String, dynamic>;
   }
 
@@ -573,7 +654,9 @@ class BiDi {
                 .bidiNetworkAddIntercept(_handle, _id(), ph, up, timeoutMs))));
     final reply = raw.isEmpty ? {} : jsonDecode(raw) as Map<String, dynamic>;
     final result = reply['result'];
-    return result is Map<String, dynamic> ? result['intercept'] as String? : null;
+    return result is Map<String, dynamic>
+        ? result['intercept'] as String?
+        : null;
   }
 
   Map<String, dynamic> removeIntercept(String interceptId,
@@ -621,8 +704,8 @@ class BiDi {
             contentType,
             (ct) => _withCStr(
                 body,
-                (b) => Native.instance.takeString(
-                    Native.instance.bidiNetworkProvideResponse(
+                (b) => Native.instance.takeString(Native.instance
+                    .bidiNetworkProvideResponse(
                         _handle, _id(), r, status, ct, b, timeoutMs)))));
     return raw.isEmpty ? {} : jsonDecode(raw) as Map<String, dynamic>;
   }
@@ -640,8 +723,8 @@ class BiDi {
             username,
             (u) => _withCStr(
                 password,
-                (p) => Native.instance.takeString(
-                    Native.instance.bidiNetworkContinueWithAuth(
+                (p) => Native.instance.takeString(Native.instance
+                    .bidiNetworkContinueWithAuth(
                         _handle, _id(), r, u, p, timeoutMs)))));
     return raw.isEmpty ? {} : jsonDecode(raw) as Map<String, dynamic>;
   }
@@ -662,7 +745,9 @@ class BiDi {
   static String? eventRequestId(Map<String, dynamic> event) {
     final params = event['params'];
     final request = (params is Map<String, dynamic> ? params['request'] : null);
-    return request is Map<String, dynamic> ? request['request'] as String? : null;
+    return request is Map<String, dynamic>
+        ? request['request'] as String?
+        : null;
   }
 
   /// How many events the bounded queue has dropped since the last call (then

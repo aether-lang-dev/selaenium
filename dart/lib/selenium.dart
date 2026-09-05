@@ -37,3 +37,19 @@ export 'src/webdriver.dart'
         route,
         errorCode,
         locator;
+
+// The convenience tier: explicit waits, <select> helper, fluent actions, and
+// the W3C key constants — the everyday ergonomics over the raw W3C seam.
+export 'src/wait.dart'
+    show
+        WebDriverWait,
+        defaultPollFrequency,
+        waitForElement,
+        waitForVisible,
+        waitForClickable,
+        waitForTitleContains,
+        waitForTitleIs,
+        waitForUrlContains;
+export 'src/select.dart' show Select;
+export 'src/actions.dart' show Actions;
+export 'src/keys.dart' show Keys;

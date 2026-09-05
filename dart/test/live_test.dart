@@ -100,12 +100,12 @@ void main() {
         expect(d.executeScript('return 6*7;'), 42);
         expect(d.executeScript("return 'hi';"), 'hi');
         expect(d.executeScript('return [1,2,3];'), [1, 2, 3]);
-        expect(d.executeScript('return arguments[0]+arguments[1];', [40, 2]), 42);
+        expect(
+            d.executeScript('return arguments[0]+arguments[1];', [40, 2]), 42);
 
         // timeout setter + async script: the async callback is arguments[last].
         d.setScriptTimeout(10000);
-        expect(
-            d.executeAsyncScript('arguments[arguments.length-1](42);'), 42);
+        expect(d.executeAsyncScript('arguments[arguments.length-1](42);'), 42);
 
         // W3C actions: pointer click on the button.
         final rect = d.findElement(By.id('btn')).rect;
@@ -200,7 +200,8 @@ void main() {
     // (offline + empty cache). Deliberately does NOT consult PATH.
     final path = resolveDriver(browser: 'chrome');
     if (path.isEmpty) {
-      markTestSkipped('engine cannot resolve a chromedriver (offline, no cache)');
+      markTestSkipped(
+          'engine cannot resolve a chromedriver (offline, no cache)');
       return;
     }
     expect(File(path).existsSync(), isTrue,
@@ -233,6 +234,86 @@ void main() {
       d.quit();
     }
   }, timeout: const Timeout(Duration(seconds: 120)));
+
+  test('live convenience tier: wait + Select + Actions', () async {
+    final driverBin = which('chromedriver');
+    if (driverBin == null) {
+      markTestSkipped('chromedriver not on PATH');
+      return;
+    }
+
+    // Out-of-process content server (FFI is synchronous — an in-isolate server
+    // would deadlock behind a blocking d.get()).
+    final server = await Process.start(
+        Platform.resolvedExecutable, ['run', 'test/content_server.dart']);
+    final portLine = await server.stdout
+        .transform(utf8.decoder)
+        .transform(const LineSplitter())
+        .firstWhere((l) => l.startsWith('PORT '));
+    final webPort = int.parse(portLine.substring(5).trim());
+    final base = 'http://127.0.0.1:$webPort';
+
+    final cdPort = await freePort();
+    final cd = await Process.start(driverBin, ['--port=$cdPort']);
+    try {
+      if (!await waitUp(cdPort, const Duration(seconds: 10))) {
+        markTestSkipped('chromedriver did not come up');
+        return;
+      }
+
+      final d = WebDriver.headlessChrome('http://127.0.0.1:$cdPort');
+      try {
+        d.get('$base/form');
+
+        // WebDriverWait: the #late div is populated 700ms after load; poll for
+        // it rather than sleeping. until() returns the element once visible.
+        final late = WebDriverWait(d, const Duration(seconds: 5))
+            .until(waitForVisible(By.id('late')));
+        expect(late.text, 'ready');
+
+        // A title/url condition helper.
+        expect(
+            WebDriverWait(d, const Duration(seconds: 2))
+                .until(waitForTitleContains('Form')),
+            isTrue);
+
+        // Select: pick Blue by value / text / index; the page mirrors the
+        // chosen value into #picked via a change listener.
+        final sel = Select(d.findElement(By.id('color')));
+        expect(sel.isMultiple, isFalse);
+        expect(sel.options, hasLength(3));
+
+        sel.selectByValue('b');
+        expect(d.findElement(By.id('color')).getAttribute('value'), 'b');
+        expect(sel.firstSelectedOption.text, 'Blue');
+        expect(d.findElement(By.id('picked')).text, 'b');
+
+        sel.selectByVisibleText('Green');
+        expect(d.findElement(By.id('color')).getAttribute('value'), 'g');
+
+        sel.selectByIndex(0);
+        expect(d.findElement(By.id('color')).getAttribute('value'), 'r');
+
+        // Actions: a context-click gesture on the button, driven through the
+        // fluent builder (moveToElement + contextClick under the hood). The
+        // page writes 'ctx' into #picked from its oncontextmenu handler.
+        final ctx = d.findElement(By.id('ctx'));
+        d.actions().contextClick(ctx).perform();
+        expect(
+            WebDriverWait(d, const Duration(seconds: 3)).until((drv) {
+              final t = drv.findElement(By.id('picked')).text;
+              return t == 'ctx' ? t : null;
+            }),
+            'ctx');
+        d.clearActions();
+      } finally {
+        d.quit();
+      }
+    } finally {
+      cd.kill();
+      server.kill();
+    }
+  }, timeout: const Timeout(Duration(seconds: 90)));
 
   test('live chrome + bidi', () async {
     final driverBin = which('chromedriver');
@@ -273,8 +354,7 @@ void main() {
         d.executeScript("console.log('bidi-hello');");
 
         // the event streams over the BiDi channel
-        final ev =
-            d.bidi.nextEvent(BidiEvent.logEntryAdded, timeoutMs: 8000);
+        final ev = d.bidi.nextEvent(BidiEvent.logEntryAdded, timeoutMs: 8000);
         expect(ev, isNotNull);
         expect(ev!['method'], BidiEvent.logEntryAdded);
         expect(jsonEncode(ev), contains('bidi-hello'));
@@ -293,8 +373,7 @@ void main() {
         d.bidi.subscribe([BidiEvent.beforeRequestSent]);
         final ic = d.bidi.addIntercept(urlPattern: '');
         expect(ic, isNotNull);
-        d.executeScript(
-            "fetch('https://example.com/blocked').catch(()=>{});");
+        d.executeScript("fetch('https://example.com/blocked').catch(()=>{});");
         final netEv =
             d.bidi.nextEvent(BidiEvent.beforeRequestSent, timeoutMs: 8000);
         expect(netEv, isNotNull);
