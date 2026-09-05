@@ -880,12 +880,12 @@ public final class Actions {
     }
 
     @discardableResult
-    public func keyDown(_ key value: String) -> Actions {
+    public func keyDown(_ value: String) -> Actions {
         key.append(keyEvent("keyDown", value)); syncLengths(); return self
     }
 
     @discardableResult
-    public func keyUp(_ key value: String) -> Actions {
+    public func keyUp(_ value: String) -> Actions {
         key.append(keyEvent("keyUp", value)); syncLengths(); return self
     }
 
