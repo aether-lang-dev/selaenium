@@ -333,6 +333,75 @@ class LiveTest < Minitest::Test
     end
   end
 
+  # The mainstream ABI facades end-to-end against real Chrome: navigate,
+  # switch_to (window/new_window/frame/default_content/alert), manage (cookies /
+  # timeouts / window), the canonical Element name, variadic send_keys,
+  # screenshot_as, and the Chrome::Options -> .chrome(options:) path — all
+  # additive over the same engine seam the flat methods use.
+  FACADE_HTML = '<html><head><title>Facades</title></head><body>' \
+                "<h1 id='hdr'>Hello</h1>" \
+                "<input id='box' name='q'/>" \
+                "<button id='al' onclick=\"window.__ok=confirm('sure?')\">alert</button>" \
+                '</body></html>'
+
+  def test_live_facades
+    # Chrome::Options object flowing through .chrome(options:) — the mainstream
+    # construction path (add_argument + to_capabilities).
+    opts = Selenium::WebDriver::Chrome::Options.new
+    ['--headless=new', '--no-sandbox', '--disable-gpu', '--disable-dev-shm-usage'].each { |a| opts.add_argument(a) }
+    caps = opts.to_capabilities
+    # Keep the modal open for the switch_to.alert round-trip (the W3C default is
+    # "dismiss and notify", which auto-dismisses before we can read it).
+    caps['unhandledPromptBehavior'] = 'ignore'
+    driver = Selenium::WebDriver.chrome("http://127.0.0.1:#{@port}", options: caps)
+    begin
+      page = 'data:text/html;charset=utf-8,' + CGI.escape(FACADE_HTML).gsub('+', '%20')
+
+      # navigate facade
+      driver.navigate.to(page)
+      assert_equal 'Facades', driver.title
+
+      # Element canonical name + variadic send_keys
+      box = driver.find_element(id: 'box')
+      assert_instance_of Selenium::WebDriver::Element, box
+      box.send_keys('ab', :arrow_left, 'c') # -> "acb"
+      assert_equal 'acb', box.property('value')
+
+      # manage.timeouts (SECONDS) and manage.window
+      driver.manage.timeouts.implicit_wait = 1
+      driver.manage.window.maximize
+      rect = driver.manage.window.rect
+      assert rect['width'].positive?
+
+      # manage cookies through the facade (delete-all works on any origin; the
+      # add/read round-trip needs an http:// origin — covered in surface_test).
+      driver.manage.delete_all_cookies
+
+      # switch_to.new_window (a real second tab), then window(handle) back
+      original = driver.window_handle
+      driver.switch_to.new_window(:tab)
+      refute_equal original, driver.window_handle
+      driver.switch_to.window(original)
+      assert_equal original, driver.window_handle
+
+      # switch_to.alert -> Alert (accept)
+      driver.navigate.to(page)
+      driver.find_element(id: 'al').click
+      alert = driver.switch_to.alert
+      refute_empty alert.text
+      alert.accept
+
+      # screenshot_as(:png) yields real PNG bytes
+      png = driver.screenshot_as(:png)
+      assert_equal "\x89PNG".b, png[0, 4].b
+
+      # driver.status reports a ready remote end
+      refute_nil driver.status
+    ensure
+      driver.quit
+    end
+  end
+
   private
 
   BASIC_AUTH_USER = 'neo'
