@@ -19,7 +19,7 @@
 ## The int-not-long trap: use `cint` for every C int; Nim's `int` is
 ## pointer-sized (== C long on LP64), a 4-vs-8-byte mismatch.
 
-import std/[os, json, strutils]
+import std/[os, json, strutils, sequtils, unicode]
 
 const
   srcDir = currentSourcePath().parentDir()
@@ -237,7 +237,7 @@ type
 
   WebElement* = object
     driver: WebDriver
-    id: string
+    id*: string  ## the W3C element reference; also the Actions/Select origin key
 
 proc `=destroy`(d: typeof(WebDriver()[])) =
   if d.handle != nil:
@@ -367,6 +367,16 @@ proc isDisplayed*(e: WebElement): bool =
   ## engine — the real visibility algorithm, not a naive style check).
   e.driver.atomResult(selIsDisplayed(e.driver.handle, e.id.cstring)).getBool
 
+proc isEnabled*(e: WebElement): bool =
+  ## Whether the element is enabled (W3C isElementEnabled) — false for a disabled
+  ## form control. The clickable-wait predicate builds on this.
+  e.elExec("isElementEnabled", newJObject()).getBool
+
+proc isSelected*(e: WebElement): bool =
+  ## Whether the element is selected (W3C isElementSelected) — a checked
+  ## checkbox/radio, or a chosen <option>. `Select` uses this to read state.
+  e.elExec("isElementSelected", newJObject()).getBool
+
 proc getAttribute*(e: WebElement, name: string): JsonNode =
   ## The classic getAttribute(name): property-or-attribute (boolean attrs, live
   ## properties like value/checked), via the shared engine atom. Returns a JSON
@@ -377,6 +387,21 @@ proc getAttribute*(e: WebElement, name: string): JsonNode =
 proc getDomAttribute*(e: WebElement, name: string): string =
   ## The literal DOM attribute (W3C getDomAttribute), no property fallback.
   e.elExec("getDomAttribute", %*{"name": name}).getStr
+
+proc findElement*(e: WebElement, by: By): WebElement =
+  ## Find a single descendant of this element (W3C findChildElement). The search
+  ## is scoped to `e`'s subtree, not the whole document.
+  var params = decodeBy(by)
+  params["id"] = %e.id
+  e.driver.elementFrom(e.driver.execute("findChildElement", params))
+
+proc findElements*(e: WebElement, by: By): seq[WebElement] =
+  ## Find all descendants of this element matching `by` (W3C findChildElements),
+  ## scoped to `e`'s subtree. Empty seq if none.
+  var params = decodeBy(by)
+  params["id"] = %e.id
+  for child in e.driver.execute("findChildElements", params):
+    result.add e.driver.elementFrom(child)
 
 # ---- script ----
 proc executeScript*(d: WebDriver, script: string, args: JsonNode = newJArray()): JsonNode =
@@ -767,6 +792,424 @@ proc quit*(lc: LocalChrome) =
     lc.driver.quit()
   finally:
     lc.proc0.stop()
+
+# ============================================================================
+# Convenience tier — the idiomatic sugar over the thin command surface above.
+# None of it adds protocol; each helper composes the primitive procs (find,
+# click, executeScript, performActions, title/currentUrl, is* predicates). The
+# semantics mirror the reference native binding (aether/webdriver.ae) and the
+# Python support/common modules, spelled the Nim way (camelCase procs, a fluent
+# ref-object Actions builder, a Keys enum-free const block).
+# ============================================================================
+
+# ---- Keys (W3C Unicode private-use code points, spec §17.4.2) ---------------
+#
+# The non-text keys, as the exact PUA code points the protocol defines
+# (U+E000..U+E03D). Send them through sendKeys / an Actions key gesture just as
+# mainstream Selenium's Keys does; the engine forwards them unchanged.
+#
+#   d.findElement(By.id("q")).sendKeys("selenium" & Keys.Enter)
+
+type KeysTable* = object
+  ## The key-constant table type. There is exactly one value — the `Keys` const
+  ## below — so callers write `Keys.enter`, `Keys.tab`, ... The aliases
+  ## (arrowLeft, command, backSpace, leftShift...) are fields sharing a value.
+  null*, cancel*, help*, backspace*: string
+  tab*, clear*, `return`*, enter*: string
+  shift*, leftShift*, control*, leftControl*, alt*, leftAlt*: string
+  pause*, escape*, space*: string
+  pageUp*, pageDown*, `end`*, home*: string
+  left*, arrowLeft*, up*, arrowUp*: string
+  right*, arrowRight*, down*, arrowDown*: string
+  insert*, delete*, semicolon*, equals*: string
+  numpad0*, numpad1*, numpad2*, numpad3*, numpad4*: string
+  numpad5*, numpad6*, numpad7*, numpad8*, numpad9*: string
+  multiply*, add*, separator*, subtract*, decimal*, divide*: string
+  f1*, f2*, f3*, f4*, f5*, f6*, f7*, f8*, f9*, f10*, f11*, f12*: string
+  meta*, command*: string
+
+const Keys* = KeysTable(
+  null: "\uE000", cancel: "\uE001", help: "\uE002",
+  backspace: "\uE003",
+  tab: "\uE004", clear: "\uE005", `return`: "\uE006", enter: "\uE007",
+  shift: "\uE008", leftShift: "\uE008",
+  control: "\uE009", leftControl: "\uE009",
+  alt: "\uE00A", leftAlt: "\uE00A",
+  pause: "\uE00B", escape: "\uE00C", space: "\uE00D",
+  pageUp: "\uE00E", pageDown: "\uE00F", `end`: "\uE010", home: "\uE011",
+  left: "\uE012", arrowLeft: "\uE012",
+  up: "\uE013", arrowUp: "\uE013",
+  right: "\uE014", arrowRight: "\uE014",
+  down: "\uE015", arrowDown: "\uE015",
+  insert: "\uE016", delete: "\uE017",
+  semicolon: "\uE018", equals: "\uE019",
+  numpad0: "\uE01A", numpad1: "\uE01B", numpad2: "\uE01C", numpad3: "\uE01D",
+  numpad4: "\uE01E", numpad5: "\uE01F", numpad6: "\uE020", numpad7: "\uE021",
+  numpad8: "\uE022", numpad9: "\uE023",
+  multiply: "\uE024", add: "\uE025", separator: "\uE026",
+  subtract: "\uE027", decimal: "\uE028", divide: "\uE029",
+  f1: "\uE031", f2: "\uE032", f3: "\uE033", f4: "\uE034",
+  f5: "\uE035", f6: "\uE036", f7: "\uE037", f8: "\uE038",
+  f9: "\uE039", f10: "\uE03A", f11: "\uE03B", f12: "\uE03C",
+  meta: "\uE03D", command: "\uE03D")
+
+# The one mainstream alias that can't be a distinct field (Nim folds
+# backSpace/backspace to a single identifier): expose it as its own const.
+const BackSpace* = Keys.backspace
+
+# ---- explicit waits (WebDriverWait + the common ExpectedConditions) ---------
+#
+# Each wait polls every WAIT_POLL_MS until the condition holds or timeoutMs
+# elapses, then raises WebDriverError(ekTimeout). The loop lives here in Nim —
+# the engine issues single commands and holds no thread — exactly as the
+# reference aether/webdriver.ae waits do. Poll cadence is 500ms, mainstream's
+# default.
+
+const WaitPollMs* = 500
+
+proc raiseTimeout(msg: string) {.noreturn.} =
+  raise classify(21, msg)
+
+proc waitUntil*(d: WebDriver, timeoutMs: int,
+                pred: proc (d: WebDriver): bool): bool {.discardable.} =
+  ## Poll `pred(d)` every WAIT_POLL_MS until it returns true; return true. Raises
+  ## a timeout WebDriverError if the budget elapses first. The general escape
+  ## hatch behind every wait* — the predicate re-reads the live DOM each attempt,
+  ## which is what an app that re-renders from a server push needs (click returns
+  ## before the page settles, so poll the state, don't sleep()).
+  ##
+  ##   d.waitUntil(4000, proc (d: WebDriver): bool =
+  ##     d.findElement(By.id("status")).text == "Approved")
+  var waited = 0
+  while true:
+    if pred(d): return true
+    if waited >= timeoutMs: break
+    sleep(WaitPollMs)
+    waited += WaitPollMs
+  raiseTimeout("timed out after " & $timeoutMs & "ms waiting for condition")
+
+proc tryFind(d: WebDriver, by: By): WebElement =
+  ## findElement that yields a default (empty-id) WebElement instead of raising
+  ## when absent — the polling primitive under the element waits.
+  try:
+    result = d.findElement(by)
+  except WebDriverError as e:
+    if e.kind == ekNoSuchElement:
+      return WebElement(driver: d, id: "")
+    raise
+
+proc waitForElement*(d: WebDriver, by: By, timeoutMs: int): WebElement =
+  ## Wait until an element matching `by` is present in the DOM; return it, or
+  ## raise a timeout WebDriverError. (mainstream until.elementLocated)
+  var waited = 0
+  while true:
+    let el = d.tryFind(by)
+    if el.id.len > 0: return el
+    if waited >= timeoutMs: break
+    sleep(WaitPollMs)
+    waited += WaitPollMs
+  raiseTimeout("timed out after " & $timeoutMs & "ms waiting for " &
+    by.strategy & "=" & by.value)
+
+proc waitForVisible*(d: WebDriver, by: By, timeoutMs: int): WebElement =
+  ## Wait until the element is present AND displayed; return it or raise on
+  ## timeout. (mainstream until.elementIsVisible, folded with elementLocated)
+  var waited = 0
+  while true:
+    let el = d.tryFind(by)
+    if el.id.len > 0:
+      try:
+        if el.isDisplayed: return el
+      except WebDriverError as e:
+        if e.kind != ekStaleElementReference: raise
+    if waited >= timeoutMs: break
+    sleep(WaitPollMs)
+    waited += WaitPollMs
+  raiseTimeout("timed out after " & $timeoutMs & "ms waiting for visible " &
+    by.strategy & "=" & by.value)
+
+proc waitForClickable*(d: WebDriver, by: By, timeoutMs: int): WebElement =
+  ## Wait until the element is present, displayed AND enabled (clickable); return
+  ## it or raise on timeout.
+  var waited = 0
+  while true:
+    let el = d.tryFind(by)
+    if el.id.len > 0:
+      try:
+        if el.isDisplayed and el.isEnabled: return el
+      except WebDriverError as e:
+        if e.kind != ekStaleElementReference: raise
+    if waited >= timeoutMs: break
+    sleep(WaitPollMs)
+    waited += WaitPollMs
+  raiseTimeout("timed out after " & $timeoutMs & "ms waiting for clickable " &
+    by.strategy & "=" & by.value)
+
+proc waitUntilGone*(d: WebDriver, by: By, timeoutMs: int): bool {.discardable.} =
+  ## Wait until NO element matches `by` (it's absent/removed); return true, or
+  ## raise on timeout. (mainstream stalenessOf, by locator)
+  d.waitUntil(timeoutMs, proc (d: WebDriver): bool = d.tryFind(by).id.len == 0)
+
+proc waitForTitleIs*(d: WebDriver, want: string, timeoutMs: int): bool {.discardable.} =
+  ## Wait until the page title equals `want`; return true or raise on timeout.
+  d.waitUntil(timeoutMs, proc (d: WebDriver): bool = d.title == want)
+
+proc waitForTitleContains*(d: WebDriver, substr: string, timeoutMs: int): bool {.discardable.} =
+  ## Wait until the page title contains `substr`; return true or raise on timeout.
+  d.waitUntil(timeoutMs, proc (d: WebDriver): bool = d.title.contains(substr))
+
+proc waitForUrlIs*(d: WebDriver, want: string, timeoutMs: int): bool {.discardable.} =
+  ## Wait until the current URL equals `want`; return true or raise on timeout.
+  d.waitUntil(timeoutMs, proc (d: WebDriver): bool = d.currentUrl == want)
+
+proc waitForUrlContains*(d: WebDriver, substr: string, timeoutMs: int): bool {.discardable.} =
+  ## Wait until the current URL contains `substr`; return true or raise on timeout.
+  d.waitUntil(timeoutMs, proc (d: WebDriver): bool = d.currentUrl.contains(substr))
+
+proc waitForTextIs*(d: WebDriver, el: WebElement, want: string,
+                    timeoutMs: int): bool {.discardable.} =
+  ## Wait until `el`'s text equals `want`; return true or raise on timeout.
+  d.waitUntil(timeoutMs, proc (d: WebDriver): bool = el.text == want)
+
+proc waitForTextContains*(d: WebDriver, el: WebElement, substr: string,
+                          timeoutMs: int): bool {.discardable.} =
+  ## Wait until `el`'s text contains `substr`; return true or raise on timeout.
+  d.waitUntil(timeoutMs, proc (d: WebDriver): bool = el.text.contains(substr))
+
+# ---- Select (native <select> dropdown helper) -------------------------------
+#
+# Wraps a <select> WebElement and drives it by its <option> children — the same
+# approach mainstream's Select uses. Mirrors the Python support/select surface.
+#
+#   Select(d.findElement(By.id("country"))).selectByVisibleText("Spain")
+
+type Select* = object
+  ## A <select> dropdown wrapper. Construct with `newSelect(element)`.
+  element*: WebElement
+  isMultiple*: bool
+
+proc newSelect*(element: WebElement): Select =
+  ## Wrap a <select> element. Raises WebDriverError if `element` is not a
+  ## <select>. Reads the `multiple` attribute to know single vs multi-select.
+  let tag = element.tagName.toLowerAscii
+  if tag != "select":
+    raise classify(11, "Select only works on <select> elements, not <" & tag & ">")
+  result.element = element
+  let multi = element.getAttribute("multiple")
+  result.isMultiple = multi.kind == JString and multi.getStr.len > 0 and
+    multi.getStr != "false"
+
+proc options*(s: Select): seq[WebElement] =
+  ## Every <option> child of the wrapped <select>, in document order.
+  s.element.findElements(By.tagName("option"))
+
+proc allSelectedOptions*(s: Select): seq[WebElement] =
+  ## The currently-selected options (one for a single-select).
+  for o in s.options:
+    if o.isSelected: result.add o
+
+proc firstSelectedOption*(s: Select): WebElement =
+  ## The first selected option; raises WebDriverError if none is selected.
+  for o in s.options:
+    if o.isSelected: return o
+  raise classify(17, "no option is selected")
+
+type
+  SelectBy* = enum
+    ## How a `Select` matches an option: by its `value` attribute, its displayed
+    ## text, or its position.
+    sbValue, sbText, sbIndex
+
+  OptionData* = object
+    ## The plain data a Select match needs from one <option>: its `value`
+    ## attribute and its displayed text. The pure matcher works over these, so
+    ## the selection logic is testable without a browser.
+    value*, text*: string
+
+proc firstMatchIndex*(opts: openArray[OptionData], by: SelectBy, key: string): int =
+  ## The index of the first option matching `key` under strategy `by`, or -1 if
+  ## none (or `key` isn't a valid index for sbIndex). The pure core of the
+  ## selectBy* procs.
+  case by
+  of sbValue:
+    for i, o in opts:
+      if o.value == key: return i
+  of sbText:
+    for i, o in opts:
+      if o.text == key: return i
+  of sbIndex:
+    try:
+      let idx = parseInt(key)
+      if idx >= 0 and idx < opts.len: return idx
+    except ValueError:
+      discard
+  -1
+
+proc selectOption(s: Select, o: WebElement) =
+  if not o.isSelected: o.click()
+
+proc optionData(o: WebElement): OptionData =
+  let v = o.getAttribute("value")
+  OptionData(value: (if v.kind == JString: v.getStr else: ""), text: o.text)
+
+proc selectMatching(s: Select, by: SelectBy, key: string) =
+  let opts = s.options
+  var data = newSeq[OptionData](opts.len)
+  for i, o in opts:
+    data[i] = o.optionData
+  let hit = firstMatchIndex(data, by, key)
+  if hit < 0:
+    let what =
+      case by
+      of sbValue: "value " & key
+      of sbText: "visible text " & key
+      of sbIndex: "index " & key
+    raise classify(17, "no option with " & what)
+  s.selectOption(opts[hit])
+
+proc selectByValue*(s: Select, value: string) =
+  ## Select the option whose `value` attribute equals `value`. Raises if none.
+  s.selectMatching(sbValue, value)
+
+proc selectByVisibleText*(s: Select, text: string) =
+  ## Select the option whose displayed text equals `text`. Raises if none.
+  s.selectMatching(sbText, text)
+
+proc selectByIndex*(s: Select, index: int) =
+  ## Select the option at `index` (0-based). Raises if out of range.
+  s.selectMatching(sbIndex, $index)
+
+# ---- Actions (fluent W3C input builder) -------------------------------------
+#
+# Queue gestures with chained calls, then `.perform()`. Each call appends to the
+# pointer/key virtual-device sequences; perform() posts the whole thing in one
+# `actions` command. Same wire shape the reference action_* helpers emit.
+#
+#   d.actions.moveToElement(menu).click(item).perform()
+#   d.actions.keyDown(Keys.Control).sendKeys("a").keyUp(Keys.Control).perform()
+
+type Actions* = ref object
+  ## A fluent action-chain builder, obtained from `d.actions`.
+  driver: WebDriver
+  pointer: seq[JsonNode]
+  keyActions: seq[JsonNode]
+
+proc actions*(d: WebDriver): Actions =
+  ## A fresh action-chain builder for this driver.
+  Actions(driver: d, pointer: @[], keyActions: @[])
+
+proc syncLengths(a: Actions) =
+  ## W3C requires every device's action list to be the same length; pad the
+  ## shorter with zero-duration pauses so ticks stay aligned across devices.
+  let n = max(a.pointer.len, a.keyActions.len)
+  while a.pointer.len < n:
+    a.pointer.add %*{"type": "pause", "duration": 0}
+  while a.keyActions.len < n:
+    a.keyActions.add %*{"type": "pause", "duration": 0}
+
+proc moveToElement*(a: Actions, el: WebElement): Actions {.discardable.} =
+  ## Move the pointer to the centre of `el`.
+  a.pointer.add %*{
+    "type": "pointerMove", "duration": 100, "x": 0, "y": 0,
+    "origin": {w3cElementKey: el.id}}
+  a.syncLengths()
+  a
+
+proc click*(a: Actions, el: WebElement): Actions {.discardable.} =
+  ## Move to `el` (if given) and left-click.
+  a.moveToElement(el)
+  a.pointer.add %*{"type": "pointerDown", "button": 0}
+  a.pointer.add %*{"type": "pointerUp", "button": 0}
+  a.syncLengths()
+  a
+
+proc click*(a: Actions): Actions {.discardable.} =
+  ## Left-click at the current pointer position (no move).
+  a.pointer.add %*{"type": "pointerDown", "button": 0}
+  a.pointer.add %*{"type": "pointerUp", "button": 0}
+  a.syncLengths()
+  a
+
+proc contextClick*(a: Actions, el: WebElement): Actions {.discardable.} =
+  ## Move to `el` and right-click (contextmenu).
+  a.moveToElement(el)
+  a.pointer.add %*{"type": "pointerDown", "button": 2}
+  a.pointer.add %*{"type": "pointerUp", "button": 2}
+  a.syncLengths()
+  a
+
+proc doubleClick*(a: Actions, el: WebElement): Actions {.discardable.} =
+  ## Move to `el` and double-click.
+  a.moveToElement(el)
+  for _ in 0 ..< 2:
+    a.pointer.add %*{"type": "pointerDown", "button": 0}
+    a.pointer.add %*{"type": "pointerUp", "button": 0}
+  a.syncLengths()
+  a
+
+proc clickAndHold*(a: Actions, el: WebElement): Actions {.discardable.} =
+  ## Move to `el` and press (and hold) the left button — the drag start.
+  a.moveToElement(el)
+  a.pointer.add %*{"type": "pointerDown", "button": 0}
+  a.syncLengths()
+  a
+
+proc release*(a: Actions): Actions {.discardable.} =
+  ## Release the left button at the current position — the drag end.
+  a.pointer.add %*{"type": "pointerUp", "button": 0}
+  a.syncLengths()
+  a
+
+proc dragAndDrop*(a: Actions, source, target: WebElement): Actions {.discardable.} =
+  ## Press at `source`, move to `target`, release.
+  a.clickAndHold(source)
+  a.moveToElement(target)
+  a.release()
+  a
+
+proc keyDown*(a: Actions, key: string): Actions {.discardable.} =
+  ## Press (and hold) a key — a modifier (Keys.Control) or any character.
+  a.keyActions.add %*{"type": "keyDown", "value": key}
+  a.syncLengths()
+  a
+
+proc keyUp*(a: Actions, key: string): Actions {.discardable.} =
+  ## Release a previously pressed key.
+  a.keyActions.add %*{"type": "keyUp", "value": key}
+  a.syncLengths()
+  a
+
+proc sendKeys*(a: Actions, text: string): Actions {.discardable.} =
+  ## Type `text`, one keyDown/keyUp pair per character (Runes, so a PUA key
+  ## constant counts as one).
+  for r in text.runes:
+    let ch = $r
+    a.keyActions.add %*{"type": "keyDown", "value": ch}
+    a.keyActions.add %*{"type": "keyUp", "value": ch}
+  a.syncLengths()
+  a
+
+proc build*(a: Actions): JsonNode =
+  ## The W3C actions array this chain would post (the value of the top-level
+  ## "actions" key). Exposed for inspection/testing; perform() sends it.
+  result = newJArray()
+  if a.pointer.anyIt(it["type"].getStr != "pause"):
+    var seqJson = newJArray()
+    for act in a.pointer: seqJson.add act
+    result.add %*{
+      "type": "pointer", "id": "mouse",
+      "parameters": {"pointerType": "mouse"},
+      "actions": seqJson}
+  if a.keyActions.anyIt(it["type"].getStr != "pause"):
+    var seqJson = newJArray()
+    for act in a.keyActions: seqJson.add act
+    result.add %*{"type": "key", "id": "keyboard", "actions": seqJson}
+
+proc perform*(a: Actions) =
+  ## Post the queued gestures in one `actions` command.
+  let built = a.build()
+  if built.len > 0:
+    a.driver.performActions(built)
 
 # Re-export for tests that want strutils.contains etc.
 export strutils, json

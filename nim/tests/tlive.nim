@@ -11,6 +11,17 @@ const
     "<a id=\"go\" href=\"/two\">to two</a>" &
     "<button id=\"btn\" onclick=\"document.getElementById('hdr').textContent='clicked'\">b</button>"
   pageTwo = "<!doctype html><title>Page Two</title><h1 id=\"hdr\">Two</h1>"
+  # A form page for the convenience-tier live test: a <select>, a text input,
+  # a button that reveals a hidden node after a short delay (for the waits), and
+  # a right-click target that records a contextmenu.
+  pageForm = "<!doctype html><title>Form Page</title>" &
+    "<select id=\"country\"><option value=\"us\">United States</option>" &
+    "<option value=\"es\">Spain</option><option value=\"fr\">France</option></select>" &
+    "<input id=\"txt\">" &
+    "<button id=\"reveal\" onclick=\"setTimeout(function(){" &
+    "var p=document.createElement('p');p.id='late';p.textContent='here';" &
+    "document.body.appendChild(p);},400)\">reveal</button>" &
+    "<div id=\"ctx\" oncontextmenu=\"this.textContent='ctx';return false;\">rc</div>"
 
 var serverStop = false
 
@@ -47,7 +58,10 @@ proc contentServer(port: Port) {.thread.} =
       break
     try:
       let req = client.recvLine(timeout = 2000)
-      let body = if req.contains("/two"): pageTwo else: pageOne
+      let body =
+        if req.contains("/two"): pageTwo
+        elif req.contains("/form"): pageForm
+        else: pageOne
       client.send("HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\n" &
                   "Content-Length: " & $body.len & "\r\nConnection: close\r\n\r\n" & body)
     except CatchableError:
@@ -161,6 +175,41 @@ proc main() =
       doAssert d.findElement(By.id("hdr")).text == "clicked"
       d.clearActions()
       echo "  ok: W3C actions"
+
+      # convenience tier: explicit waits + Select + Actions gesture, all against
+      # real Chrome. waitForVisible blocks for a node that appears after a
+      # setTimeout; Select drives the <select> by value/text/index and reads
+      # back the state via isSelected; an Actions chain right-clicks a target and
+      # types into the input through the key device.
+      d.get(base & "/form")
+      # Select by value / visible text / index, verified through isSelected.
+      let sel = newSelect(d.findElement(By.id("country")))
+      doAssert not sel.isMultiple
+      sel.selectByValue("es")
+      doAssert sel.firstSelectedOption.getAttribute("value").getStr == "es"
+      sel.selectByVisibleText("France")
+      doAssert sel.firstSelectedOption.text == "France"
+      sel.selectByIndex(0)
+      doAssert sel.firstSelectedOption.getAttribute("value").getStr == "us"
+      echo "  ok: Select (byValue / byVisibleText / byIndex)"
+
+      # Actions: right-click the ctx div (records "ctx"), and type into the input
+      # via the key device (moveToElement to focus, then sendKeys).
+      d.actions.contextClick(d.findElement(By.id("ctx"))).perform()
+      doAssert d.findElement(By.id("ctx")).text == "ctx"
+      d.actions.click(d.findElement(By.id("txt"))).sendKeys("hi" & Keys.enter).perform()
+      doAssert d.findElement(By.id("txt")).getAttribute("value").getStr.contains("hi")
+      echo "  ok: Actions (contextClick + click + sendKeys via key device)"
+
+      # Explicit wait: the reveal button appends #late after ~400ms; waitForVisible
+      # must block until it's present + displayed, then return it.
+      d.findElement(By.id("reveal")).click()
+      let late = d.waitForVisible(By.id("late"), 4000)
+      doAssert late.text == "here"
+      # waitUntil with a custom predicate re-reads the live DOM each poll.
+      doAssert d.waitUntil(2000, proc (d: WebDriver): bool =
+        d.findElement(By.id("late")).text == "here")
+      echo "  ok: waits (waitForVisible + waitUntil)"
 
       # screenshot -> PNG
       let raw = decode(d.screenshotBase64())
