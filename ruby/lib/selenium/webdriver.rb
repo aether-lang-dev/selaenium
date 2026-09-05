@@ -89,6 +89,10 @@ module Selenium
     class JavascriptError < WebDriverError; end
     class UnknownCommandError < WebDriverError; end
     class SessionNotCreatedError < WebDriverError; end
+    # Raised by the convenience tier (Select/Keys) when an operation isn't valid
+    # for the element/key at hand — authentic Selenium spells this
+    # Error::UnsupportedOperationError.
+    class UnsupportedOperationError < WebDriverError; end
 
     # Authentic Selenium nests exceptions under Selenium::WebDriver::Error with
     # the *Exception suffix (WebDriverException, NoSuchElementException, ...).
@@ -108,6 +112,7 @@ module Selenium
       JavascriptError              = ::Selenium::WebDriver::JavascriptError
       UnknownCommandError          = ::Selenium::WebDriver::UnknownCommandError
       SessionNotCreatedError       = ::Selenium::WebDriver::SessionNotCreatedError
+      UnsupportedOperationError    = ::Selenium::WebDriver::UnsupportedOperationError
     end
 
     # Engine integer error codes -> exception class (see core error_code()).
@@ -353,6 +358,14 @@ module Selenium
     # ---- W3C actions ----
     def perform_actions(actions) = (execute('actions', 'actions' => actions); nil)
     def clear_actions = (execute('clearActions'); nil)
+
+    # A fluent action builder bound to this session — authentic Selenium
+    # +driver.action.move_to(el).click.perform+. Queues pointer/key gestures and
+    # posts them as one W3C actions sequence via {#perform_actions}. See
+    # {Selenium::WebDriver::ActionBuilder}.
+    def action(async: false)
+      ActionBuilder.new(self, async: async)
+    end
 
     # ---- alerts ----
     def accept_alert = (execute('acceptAlert'); nil)
@@ -769,3 +782,8 @@ module Selenium
   end
   end
 end
+
+# The convenience tier (Wait / Select / Keys / ActionBuilder) — loaded after the
+# core classes above so it can reference WebElement / Driver / the exception
+# classes at definition time.
+require_relative 'webdriver/support'

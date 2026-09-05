@@ -1,7 +1,8 @@
 // Ruby binding tests (Fiddle, minitest). The loader honors SELENIUM_CORE_LIB,
-// injected from the engine's shared_lib artifact. Three minitest specs: the
-// no-browser FFI facts (ffi_test) + the live-Chrome smoke (live_test) and broad
-// surface (surface_test), which skip cleanly when chromedriver is absent.
+// injected from the engine's shared_lib artifact. Four minitest specs: the
+// no-browser FFI facts (ffi_test) and convenience-tier unit test
+// (convenience_test) + the live-Chrome smoke (live_test) and broad surface
+// (surface_test), which skip cleanly when chromedriver is absent.
 // Ruby 3.4 unbundled minitest/base64/webrick from the stdlib, so the Gemfile
 // declares them and ruby.install() resolves them into .aeb/bundle; minitest()
 // then runs `bundle exec ruby` so the specs see the bundled gems.
@@ -17,6 +18,7 @@ aeb(cap) {
         ruby.install()
         ruby.minitest() {
             minitest_file("spec/ffi_test.rb")
+            minitest_file("spec/convenience_test.rb")
             minitest_file("spec/live_test.rb")
             minitest_file("spec/surface_test.rb")
             env("SELENIUM_CORE_LIB", lib)

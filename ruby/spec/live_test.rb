@@ -273,6 +273,66 @@ class LiveTest < Minitest::Test
     end
   end
 
+  # The convenience tier end-to-end against real Chrome: an explicit Wait, a
+  # Support::Select over a <select>, and an Actions pointer gesture — the three
+  # additions exercised through the same engine seam the rest of the binding uses.
+  CONV_HTML = '<html><head><title>Convenience</title></head><body>' \
+              "<select id='color'>" \
+              "<option value='r'>Red</option>" \
+              "<option value='g'>Green</option>" \
+              "<option value='b'>Blue</option>" \
+              '</select>' \
+              "<button id='btn' onclick=\"document.getElementById('out').textContent='clicked'\">Go</button>" \
+              "<span id='out'>idle</span>" \
+              '<script>' \
+              "setTimeout(function(){var d=document.createElement('div');" \
+              "d.id='later';d.textContent='ready';document.body.appendChild(d);}, 400);" \
+              '</script>' \
+              '</body></html>'
+
+  def test_live_convenience_tier
+    driver = Selenium::WebDriver.headless_chrome("http://127.0.0.1:#{@port}")
+    begin
+      page = 'data:text/html;charset=utf-8,' + CGI.escape(CONV_HTML).gsub('+', '%20')
+      driver.get(page)
+
+      # Wait: the #later div is injected 400ms after load — poll until it appears.
+      wait = Selenium::WebDriver::Wait.new(timeout: 5, interval: 0.1)
+      later = wait.until { driver.find_element(id: 'later') }
+      assert_equal 'ready', later.text
+
+      # Wait raises TimeoutError when the condition never holds.
+      quick = Selenium::WebDriver::Wait.new(timeout: 0.3, interval: 0.05)
+      assert_raises(Selenium::WebDriver::TimeoutError) do
+        quick.until { driver.find_elements(id: 'never-ever').first }
+      end
+
+      # Select: drive the <select> by text / value / index; read back the choice.
+      select = Selenium::WebDriver::Support::Select.new(driver.find_element(id: 'color'))
+      refute select.multiple?
+
+      select.select_by(:text, 'Green')
+      assert_equal 'Green', select.first_selected_option.text
+      assert_equal 'g', select.first_selected_option.attribute('value')
+
+      select.select_by(:value, 'b')
+      assert_equal 'Blue', select.first_selected_option.text
+
+      select.select_by(:index, 0)
+      assert_equal 'Red', select.first_selected_option.text
+
+      assert_raises(Selenium::WebDriver::NoSuchElementError) { select.select_by(:text, 'Purple') }
+
+      # Actions: a pointer click gesture on the button, built as a W3C actions
+      # sequence and posted through driver.action.perform.
+      btn = driver.find_element(id: 'btn')
+      driver.action.click(btn).perform
+      assert_equal 'clicked', driver.find_element(id: 'out').text
+    ensure
+      driver.quit
+    end
+  end
+
   private
 
   BASIC_AUTH_USER = 'neo'
