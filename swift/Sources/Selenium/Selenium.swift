@@ -132,6 +132,12 @@ public func locator(_ by: By) -> String {
 
 public final class WebDriver {
     let handle: UnsafeMutableRawPointer
+    // The BiDi endpoint advertised by newSession (webSocketUrl), "" if none.
+    private(set) public var webSocketUrl: String = ""
+    // Retains an engine-launched driver process so it outlives the session.
+    var driverProcess: DriverProcess?
+    // Lazily-opened BiDi channel (never opened by a classic script).
+    private var _bidi: BiDi?
 
     /// Open a session bound to a remote-end URL (e.g. a chromedriver or Grid URL).
     /// No network I/O until `execute("newSession", …)`.
@@ -154,9 +160,33 @@ public final class WebDriver {
         var caps: [String: Any] = options ?? [:]
         caps["browserName"] = "chrome"
         let d = WebDriver(commandExecutor: url)
-        let payload: [String: Any] = ["capabilities": ["alwaysMatch": caps]]
-        _ = try d.execute("newSession", encodeJSON(payload))
+        try d.startSession(caps)
         return d
+    }
+
+    // Request a BiDi channel (webSocketUrl:true) at newSession and capture the
+    // advertised endpoint. The socket itself opens lazily via bidi().
+    private func startSession(_ caps: [String: Any]) throws {
+        var match = caps
+        match["webSocketUrl"] = true
+        let raw = try execute("newSession", encodeJSON(["capabilities": ["alwaysMatch": match]]))
+        if let obj = decodeJSON(raw) as? [String: Any] {
+            // Some remote ends nest capabilities; accept either shape.
+            let caps = (obj["capabilities"] as? [String: Any]) ?? obj
+            self.webSocketUrl = (caps["webSocketUrl"] as? String) ?? ""
+        }
+    }
+
+    /// Open (once) and return the WebDriver-BiDi channel for this session. Throws
+    /// if the session advertised no webSocketUrl or the socket won't connect.
+    public func bidi() throws -> BiDi {
+        if let b = _bidi { return b }
+        guard !webSocketUrl.isEmpty else {
+            throw WebDriverError(message: "session has no BiDi webSocketUrl", code: -1)
+        }
+        let b = try BiDi(wsUrl: webSocketUrl)
+        _bidi = b
+        return b
     }
 
     /// Convenience: headless-Chrome launch args baked in.
@@ -201,6 +231,78 @@ public final class WebDriver {
     // Issue a command and coerce its value to Bool (false when absent/non-bool).
     func execBool(_ name: String, _ params: [String: Any] = [:]) throws -> Bool {
         (try exec(name, params)) as? Bool ?? false
+    }
+
+    // ---- atom-backed commands (dedicated engine symbols, no W3C route) ----
+    // Drain the atom rc the same way execute() does: last_value on success, a
+    // typed WebDriverError otherwise.
+    private func drainAtom(_ rc: Int32) throws -> Any? {
+        if rc != 0 {
+            let msg = take(aether_sel_embed_last_error(handle))
+            let code = aether_sel_embed_last_error_code(handle)
+            throw WebDriverError(message: msg, code: rc == -1 && code == 0 ? -1 : code)
+        }
+        return decodeJSON(take(aether_sel_embed_last_value(handle)))
+    }
+
+    // Run an atom (isDisplayed / getAttribute / getText / …) against an element.
+    // extraJSON is a JSON array of extra args ("[]"/"" for none).
+    @discardableResult
+    func executeAtom(_ atomName: String, _ elemId: String, _ extraJSON: String = "") throws -> Any? {
+        try drainAtom(aether_sel_embed_execute_atom(handle, atomName, elemId, extraJSON))
+    }
+
+    func atomIsDisplayed(_ elemId: String) throws -> Bool {
+        (try drainAtom(aether_sel_embed_is_displayed(handle, elemId))) as? Bool ?? false
+    }
+
+    func atomGetAttribute(_ elemId: String, _ name: String) throws -> String? {
+        let v = try drainAtom(aether_sel_embed_get_attribute(handle, elemId, name))
+        if v == nil || v is NSNull { return nil }
+        if let s = v as? String { return s }
+        if let b = v as? Bool { return b ? "true" : "false" }
+        if let n = v as? NSNumber { return n.stringValue }
+        return nil
+    }
+
+    // ---- relative locators (findElementsRelative atom) ----
+    // baseSel is a CSS anchor; filters is a JSON array of {kind, sel[, dist]} with
+    // kind in above/below/left/right/near. Returns matching elements, nearest first.
+    public func findRelative(_ baseSel: String, _ filters: [[String: Any]]) throws -> [WebElement] {
+        let rc = aether_sel_embed_find_relative(handle, baseSel, encodeJSON(filters))
+        let v = try drainAtom(rc) as? [[String: Any]] ?? []
+        return v.compactMap { ref in
+            (ref[WebElement.w3cElementKey] as? String).map { WebElement(driver: self, id: $0) }
+        }
+    }
+
+    public func findRelativeCount(_ baseSel: String, _ filters: [[String: Any]]) throws -> Int {
+        try findRelative(baseSel, filters).count
+    }
+
+    // ---- TLS trust config (call before the first execute / newSession) ----
+    /// Pin the peer certificate against a private CA file ("" reverts to the
+    /// system store). For a Grid served over HTTPS with its own CA.
+    public func setCa(_ caPath: String) { aether_sel_embed_set_ca(handle, caPath) }
+    /// Skip TLS verification (self-signed dev/staging Grid). `on` true to skip.
+    public func setInsecure(_ on: Bool) { aether_sel_embed_set_insecure(handle, on ? 1 : 0) }
+
+    /// Start a Chrome session over an https:// Grid with TLS trust configured
+    /// before newSession. `caPath` pins a private CA; `insecure` skips verification.
+    @discardableResult
+    public static func chromeTls(
+        commandExecutor url: String,
+        options: [String: Any]? = nil,
+        caPath: String? = nil,
+        insecure: Bool = false
+    ) throws -> WebDriver {
+        var caps: [String: Any] = options ?? [:]
+        caps["browserName"] = "chrome"
+        let d = WebDriver(commandExecutor: url)
+        if let ca = caPath { d.setCa(ca) }
+        if insecure { d.setInsecure(true) }
+        try d.startSession(caps)
+        return d
     }
 
     // ---- navigation ----
@@ -485,24 +587,16 @@ public final class WebElement {
         try exec("getElementProperty", ["name": name])
     }
 
-    /// The classic getAttribute(name): property-or-attribute semantics. The
-    /// engine's dedicated getAttribute atom symbol isn't in the Swift C header, so
-    /// this mirrors it with an injected script that prefers a live property and
-    /// falls back to the DOM attribute — the same result for the common cases
-    /// (value/checked/href/id/class…). Returns nil when both are absent.
+    /// The classic getAttribute(name): property-or-attribute semantics, via the
+    /// engine's dedicated getAttribute atom (the ONE shared atom source, not a
+    /// per-binding script). Returns nil when the attribute is absent.
     public func getAttribute(_ name: String) throws -> String? {
-        let script = """
-        var e=arguments[0],n=arguments[1];\
-        var p=e[n];if(p!==undefined&&p!==null&&typeof p!=='object')return ''+p;\
-        var a=e.getAttribute(n);return a===null?null:a;
-        """
-        let arg: [String: Any] = [WebElement.w3cElementKey: id]
-        let v = try driver.executeScript(script, [arg])
-        if v == nil || v is NSNull { return nil }
-        if let s = v as? String { return s }
-        if let b = v as? Bool { return b ? "true" : "false" }
-        if let n = v as? NSNumber { return n.stringValue }
-        return nil
+        try driver.atomGetAttribute(id, name)
+    }
+
+    /// Is this element displayed? Uses the engine's dedicated isDisplayed atom.
+    public func isDisplayed() throws -> Bool {
+        try driver.atomIsDisplayed(id)
     }
 
     /// The computed value of the CSS property `prop` on this element
@@ -927,8 +1021,6 @@ public final class Wait {
     }
 
     /// Block until an element matching `by` is present AND displayed; return it.
-    /// (Uses the getAttribute-style visibility not available here as an atom, so
-    /// this checks presence + a scripted visibility probe.)
     public func forVisible(_ by: By) throws -> WebElement {
         try pollElement { _ in
             guard let el = try self.tryFind(by) else { return nil }
@@ -966,38 +1058,202 @@ public final class Wait {
         try until { try $0.currentURL().contains(substr) }
     }
 
-    // Visibility probe: the isDisplayed atom's dedicated engine symbol is not in
-    // the Swift C header, so use the W3C visibility check via an injected script
-    // (offsetParent/getClientRects heuristic), matching what the atom computes for
-    // the common cases.
+    // Visibility probe via the engine's dedicated isDisplayed atom (the shared
+    // atom source, identical to element.isDisplayed()).
     private func isDisplayed(_ el: WebElement) throws -> Bool {
-        let script = """
-        var e=arguments[0];\
-        if(!e)return false;\
-        var s=window.getComputedStyle(e);\
-        if(s.display==='none'||s.visibility==='hidden'||parseFloat(s.opacity)===0)return false;\
-        return !!(e.offsetWidth||e.offsetHeight||e.getClientRects().length);
-        """
-        let arg: [String: Any] = [WebElement.w3cElementKey: el.id]
-        return (try driver.executeScript(script, [arg])) as? Bool ?? false
+        try driver.atomIsDisplayed(el.id)
     }
 }
 
-// ---- freestyle limitations (features gated by the C header, not implemented) --
+// ---- driver-process orchestration ---------------------------------------------
 //
-// The CSeleniumCore header (selenium_core.h) declares only the GENERIC seam, so
-// the following mainstream/Rust-reference features — which require DEDICATED
-// engine symbols — are intentionally OMITTED from this binding rather than faked:
+// Spawn, reach, and reap the driver process (chromedriver/…) so the binding need
+// not shell out itself. Lifecycle: ensureDriver → .url → WebDriver(commandExecutor:)
+// → … → close → stop. `DriverProcess.deinit` reaps automatically.
+
+/// A driver process (chromedriver/geckodriver/…) launched by the engine. Owns the
+/// opaque driver handle; the process is killed + reaped on `stop()` / deinit.
+public final class DriverProcess {
+    let handle: UnsafeMutableRawPointer?
+
+    init(handle: UnsafeMutableRawPointer?) { self.handle = handle }
+
+    /// resolve + launch a driver for `browser` ("chrome"/"firefox"/…). Returns nil
+    /// when no driver could be started (the binding's cue to SKIP a live test).
+    public static func ensure(_ browser: String = "chrome",
+                              hint: String = "",
+                              timeoutMs: Int32 = 10_000) -> DriverProcess? {
+        guard let h = aether_sel_embed_ensure_driver(browser, hint, timeoutMs) else { return nil }
+        return DriverProcess(handle: h)
+    }
+
+    /// Launch an explicit driver binary on a free port. nil if it never came up.
+    public static func launch(_ driverPath: String, timeoutMs: Int32 = 10_000) -> DriverProcess? {
+        guard let h = aether_sel_embed_launch_driver(driverPath, timeoutMs) else { return nil }
+        return DriverProcess(handle: h)
+    }
+
+    /// The "http://127.0.0.1:<port>" to pass to `WebDriver(commandExecutor:)`.
+    public var url: String { take(aether_sel_embed_driver_url(handle)) }
+    /// The driver's spawn token / pid (diagnostics). -1 if the handle is null.
+    public var pid: Int32 { aether_sel_embed_driver_pid(handle) }
+
+    /// Kill + reap the driver process. Idempotent; also runs on deinit.
+    public func stop() { aether_sel_embed_stop_driver(handle) }
+    deinit { aether_sel_embed_stop_driver(handle) }
+}
+
+/// Resolve the driver binary path for `browser` (v1: the conventional driver on
+/// PATH). Empty when none is found.
+public func resolveDriver(_ browser: String = "chrome", hint: String = "") -> String {
+    take(aether_sel_embed_resolve_driver(browser, hint))
+}
+
+/// A self-provisioned browser binary path for `browser` (downloads Chrome-for-
+/// Testing on first call if no system Chrome), or "" when a system browser exists.
+public func browserBinary(_ browser: String = "chrome", hint: String = "") -> String {
+    take(aether_sel_embed_browser_binary(browser, hint))
+}
+
+extension WebDriver {
+    /// Engine-managed local Chrome: resolve+launch a chromedriver, open a session
+    /// against it, and keep the driver process alive for the session's lifetime.
+    /// Returns nil when no driver could be started (SKIP-a-live-test cue).
+    @discardableResult
+    public static func localChrome(options: [String: Any]? = nil,
+                                   headless: Bool = false,
+                                   timeoutMs: Int32 = 10_000) throws -> WebDriver? {
+        guard let proc = DriverProcess.ensure("chrome", timeoutMs: timeoutMs) else { return nil }
+        var opts: [String: Any] = options ?? [:]
+        if headless {
+            var chromeOpts = (opts["goog:chromeOptions"] as? [String: Any]) ?? [:]
+            var args = (chromeOpts["args"] as? [String]) ?? []
+            args.append(contentsOf: ["--headless=new", "--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage"])
+            chromeOpts["args"] = args
+            opts["goog:chromeOptions"] = chromeOpts
+        }
+        let d = try chrome(commandExecutor: proc.url, options: opts)
+        d.driverProcess = proc // retain so the driver outlives the session
+        return d
+    }
+}
+
+// ---- WebDriver-BiDi (central demux, non-blocking poll) ------------------------
 //
-//   * TLS trust config: set_ca / set_insecure (chrome_tls, caPath, insecure)
-//   * atom-backed element.isDisplayed / element.getAttribute — approximated here
-//     via injected scripts (WebElement.getAttribute, Wait visibility probe)
-//   * relative locators: find_relative / find_relative_count
-//   * in-binding driver orchestration: resolve_driver / launch_driver /
-//     ensure_driver / local_chrome (and DriverProcess)
-//   * the WebDriver-BiDi channel and all bidi_* verbs (subscribe, script.evaluate,
-//     network interception, etc.)
-//
-// Adding any of these means first widening selenium_core.h to declare the
-// matching aether_sel_embed_* symbols (an engine-surface change, out of scope for
-// a binding-only pass).
+// The multiplexed BiDi transport over the session's webSocketUrl. The engine owns
+// the ONE demux (single reader → id-keyed reply table + bounded event queue); the
+// binding drives the wait (pump / fd) then drains replies+events. Open a channel
+// from a session whose newSession requested webSocketUrl:true (WebDriver.chrome
+// does), reading `driver.webSocketUrl`.
+
+/// A WebDriver-BiDi channel. Strings returned are the raw reply/event JSON.
+public final class BiDi {
+    let handle: UnsafeMutableRawPointer
+    private var nextId: Int32 = 0
+
+    /// Open a channel to a session's webSocketUrl. Throws on connect failure.
+    public init(wsUrl: String) throws {
+        guard let h = aether_sel_embed_bidi_open(wsUrl) else {
+            throw WebDriverError(message: "BiDi connect failed: \(wsUrl)", code: -1)
+        }
+        self.handle = h
+    }
+    deinit { aether_sel_embed_bidi_close(handle) }
+
+    public func close() { aether_sel_embed_bidi_close(handle) }
+
+    /// The readable socket fd, for a native event loop. Readiness is a HINT; on
+    /// wake always drain via `pump(0)` until it returns 0.
+    public var fd: Int32 { aether_sel_embed_bidi_fd(handle) }
+
+    /// Advance the demux one step (read ≤1 frame, route it). 1 routed / 0 timed
+    /// out / -1 closed.
+    @discardableResult
+    public func pump(timeoutMs: Int32 = 0) -> Int32 { aether_sel_embed_bidi_pump(handle, timeoutMs) }
+
+    /// How many events the bounded queue dropped since the last check (then resets).
+    public var lostEvents: Int32 { aether_sel_embed_bidi_lost_events(handle) }
+
+    private func newId() -> Int32 { nextId += 1; return nextId }
+
+    /// Send one command with a caller-managed id. Returns the id (poll its reply).
+    @discardableResult
+    public func send(_ method: String, _ params: [String: Any] = [:]) -> Int32 {
+        let id = newId()
+        _ = aether_sel_embed_bidi_send(handle, id, method, encodeJSON(params))
+        return id
+    }
+
+    /// The reply JSON for a command id if it has arrived (consumes it), else "".
+    public func pollReply(_ id: Int32) -> String { take(aether_sel_embed_bidi_poll_reply(handle, id)) }
+    /// The next queued event JSON (dequeues), or "".
+    public func pollEvent() -> String { take(aether_sel_embed_bidi_poll_event(handle)) }
+    /// Drop a pending-reply slot so a late reply is discarded.
+    public func cancel(_ id: Int32) { aether_sel_embed_bidi_cancel(handle, id) }
+
+    /// Send `method` and pump until its reply arrives (or timeout). Returns the
+    /// reply JSON, "" on timeout/close.
+    public func command(_ method: String, _ params: [String: Any] = [:], timeoutMs: Int32 = 30_000) -> String {
+        let id = send(method, params)
+        var remaining = timeoutMs
+        while remaining > 0 {
+            let step: Int32 = min(remaining, 250)
+            let r = aether_sel_embed_bidi_pump(handle, step)
+            let reply = pollReply(id)
+            if !reply.isEmpty { return reply }
+            if r == -1 { break }
+            remaining -= step
+        }
+        cancel(id)
+        return ""
+    }
+
+    // ---- convenience verbs (thin wrappers, caller-managed ids) ----
+    public func subscribe(_ eventsCsv: String, timeoutMs: Int32 = 30_000) -> String {
+        take(aether_sel_embed_bidi_subscribe(handle, newId(), eventsCsv, timeoutMs))
+    }
+    public func unsubscribe(_ eventsCsv: String, timeoutMs: Int32 = 30_000) -> String {
+        take(aether_sel_embed_bidi_unsubscribe(handle, newId(), eventsCsv, timeoutMs))
+    }
+    public func waitEvent(_ method: String, timeoutMs: Int32 = 30_000) -> String {
+        take(aether_sel_embed_bidi_wait_event(handle, method, timeoutMs))
+    }
+    public func getTree(timeoutMs: Int32 = 30_000) -> String {
+        take(aether_sel_embed_bidi_get_tree(handle, newId(), timeoutMs))
+    }
+    public func scriptEvaluate(_ expression: String, contextId: String, timeoutMs: Int32 = 30_000) -> String {
+        take(aether_sel_embed_bidi_script_evaluate(handle, newId(), expression, contextId, timeoutMs))
+    }
+    public func navigate(contextId: String, url: String, timeoutMs: Int32 = 30_000) -> String {
+        take(aether_sel_embed_bidi_navigate(handle, newId(), contextId, url, timeoutMs))
+    }
+
+    // ---- network interception ----
+    public func addIntercept(phasesCsv: String, urlPattern: String = "", timeoutMs: Int32 = 30_000) -> String {
+        take(aether_sel_embed_bidi_network_add_intercept(handle, newId(), phasesCsv, urlPattern, timeoutMs))
+    }
+    public func removeIntercept(_ interceptId: String, timeoutMs: Int32 = 30_000) -> String {
+        take(aether_sel_embed_bidi_network_remove_intercept(handle, newId(), interceptId, timeoutMs))
+    }
+    public func continueRequest(_ requestId: String, timeoutMs: Int32 = 30_000) -> String {
+        take(aether_sel_embed_bidi_network_continue_request(handle, newId(), requestId, timeoutMs))
+    }
+    public func failRequest(_ requestId: String, timeoutMs: Int32 = 30_000) -> String {
+        take(aether_sel_embed_bidi_network_fail_request(handle, newId(), requestId, timeoutMs))
+    }
+    public func provideResponse(_ requestId: String, status: Int32, contentType: String = "", body: String = "", timeoutMs: Int32 = 30_000) -> String {
+        take(aether_sel_embed_bidi_network_provide_response(handle, newId(), requestId, status, contentType, body, timeoutMs))
+    }
+    public func continueWithAuth(_ requestId: String, username: String, password: String, timeoutMs: Int32 = 30_000) -> String {
+        take(aether_sel_embed_bidi_network_continue_with_auth(handle, newId(), requestId, username, password, timeoutMs))
+    }
+    public func setCacheBehavior(_ behavior: String, timeoutMs: Int32 = 30_000) -> String {
+        take(aether_sel_embed_bidi_network_set_cache_behavior(handle, newId(), behavior, timeoutMs))
+    }
+}
+
+// The Swift binding now covers the full Rust-reference feature bar: the C header
+// (selenium_core.h) declares every aether_sel_embed_* symbol the engine exports,
+// so nothing is faked or deferred — atom-backed isDisplayed/getAttribute, relative
+// locators, TLS trust config, driver orchestration, and the entire WebDriver-BiDi
+// surface are all first-class.

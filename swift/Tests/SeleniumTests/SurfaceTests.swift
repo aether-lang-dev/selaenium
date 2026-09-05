@@ -135,4 +135,50 @@ final class SurfaceTests: XCTestCase {
         XCTAssertEqual(By.xpath("//a").strategy, "xpath")
         XCTAssertEqual(By.cssSelector("a.b").strategy, "css selector")
     }
+
+    // ---- newly-completed FFI surface: reachability without a live session ----
+    // These pin that the widened C header + wrappers compile and are callable.
+    // (They hit the engine only through pure helpers or a dead endpoint, so no
+    // chromedriver is needed.)
+
+    func testResolveDriverIsReachable() {
+        // resolveDriver returns "" when no chromedriver is on PATH; either way it
+        // must not crash — proves aether_sel_embed_resolve_driver links.
+        let path = resolveDriver("chrome")
+        XCTAssertNotNil(path as String?)
+    }
+
+    func testDriverProcessEnsureSkipCleanlyWithoutDriver() {
+        // ensure returns nil (no driver) or a live process; both are valid. This
+        // proves ensure_driver / stop_driver link and the optional flows.
+        if let proc = DriverProcess.ensure("chrome", timeoutMs: 500) {
+            XCTAssertFalse(proc.url.isEmpty)
+            proc.stop()
+        }
+    }
+
+    func testTlsAccessorsLinkAndAreNoOpBeforeSession() {
+        // set_ca / set_insecure must link and be safe to call pre-session.
+        let d = WebDriver(commandExecutor: "http://127.0.0.1:1")
+        d.setCa("")          // "" reverts to system store
+        d.setInsecure(false)
+        XCTAssertTrue(d.webSocketUrl.isEmpty, "no BiDi endpoint until newSession")
+    }
+
+    func testBidiWithoutSessionThrows() {
+        // A session that never ran newSession has no webSocketUrl → bidi() throws
+        // the typed error rather than dereferencing a null channel.
+        let d = WebDriver(commandExecutor: "http://127.0.0.1:1")
+        XCTAssertThrowsError(try d.bidi()) { err in
+            XCTAssertTrue(err is WebDriverError)
+        }
+    }
+
+    func testBidiOpenFailsClean() {
+        // Opening a channel to a dead ws URL throws (connect failure), proving
+        // bidi_open links and null is turned into a typed error.
+        XCTAssertThrowsError(try BiDi(wsUrl: "ws://127.0.0.1:1/session")) { err in
+            XCTAssertTrue(err is WebDriverError)
+        }
+    }
 }

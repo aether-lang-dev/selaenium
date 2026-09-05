@@ -58,10 +58,14 @@ module Selenium
   , elementRect
   , getDomAttribute
   , getProperty
+  , getAttribute
+  , isDisplayed
   , cssValue
   , valueOfCssProperty
   , elementScreenshot
   , submit
+  , findRelative
+  , findRelativeCount
     -- * Script
   , executeScript
   , executeAsyncScript
@@ -119,6 +123,43 @@ module Selenium
   , waitForUrlIs
   , waitForUrlContains
   , waitUntilGone
+    -- * TLS trust config
+  , setCa
+  , setInsecure
+    -- * Driver-process orchestration
+  , DriverProcess
+  , resolveDriver
+  , browserBinary
+  , ensureDriver
+  , launchDriver
+  , driverUrl
+  , driverPid
+  , stopDriver
+    -- * WebDriver-BiDi
+  , BiDi
+  , bidiOpen
+  , bidiClose
+  , bidiSend
+  , bidiPump
+  , bidiFd
+  , bidiPollReply
+  , bidiPollEvent
+  , bidiLostEvents
+  , bidiCancel
+  , bidiCommand
+  , bidiSubscribe
+  , bidiUnsubscribe
+  , bidiWaitEvent
+  , bidiGetTree
+  , bidiScriptEvaluate
+  , bidiNavigate
+  , bidiAddIntercept
+  , bidiRemoveIntercept
+  , bidiContinueRequest
+  , bidiFailRequest
+  , bidiProvideResponse
+  , bidiContinueWithAuth
+  , bidiSetCacheBehavior
     -- * Pure engine helpers
   , route
   , errorCode
@@ -373,6 +414,40 @@ getDomAttribute d eid name =
 getProperty :: WebDriver -> String -> String -> IO String
 getProperty d eid name =
   execute d "getElementProperty" ("{\"id\":" ++ jsonStr eid ++ ",\"name\":" ++ jsonStr name ++ "}")
+
+-- Drain an atom/relative rc (0 ok) the same way 'execute' drains a command rc:
+-- the last_value JSON on success, a thrown 'WebDriverError' otherwise.
+drainRc :: WebDriver -> Int -> IO String
+drainRc (WebDriver h) rc
+  | rc /= 0 = do
+      code <- N.selLastErrorCode h
+      msg <- N.selLastError h
+      if rc == (-1) && code == 0
+        then throwIO (WebDriverError (-1) (if null msg then "transport failure" else msg))
+        else throwIO (WebDriverError code msg)
+  | otherwise = N.selLastValue h
+
+-- | The classic @getAttribute(name)@ (property-or-attribute semantics), via the
+-- engine's dedicated @getAttribute@ atom (the ONE shared atom source). Returns
+-- the raw JSON value (a quoted string or @null@).
+getAttribute :: WebDriver -> String -> String -> IO String
+getAttribute d@(WebDriver h) eid name = N.selGetAttribute h eid name >>= drainRc d
+
+-- | Is the element displayed? Uses the engine's dedicated @isDisplayed@ atom.
+isDisplayed :: WebDriver -> String -> IO Bool
+isDisplayed d@(WebDriver h) eid = jsonBool <$> (N.selIsDisplayed h eid >>= drainRc d)
+
+-- | Relative locators (@findElementsRelative@ atom): CSS candidates matching
+-- @baseSel@, filtered by spatial relations. @filtersJson@ is a JSON array of
+-- @{kind, sel[, dist]}@ with kind in above\/below\/left\/right\/near. Returns the
+-- matching element-reference ids (nearest anchor first).
+findRelative :: WebDriver -> String -> String -> IO [String]
+findRelative d@(WebDriver h) baseSel filtersJson =
+  extractElementIds <$> (N.selFindRelative h baseSel filtersJson >>= drainRc d)
+
+-- | The number of elements matching a relative-locator query.
+findRelativeCount :: WebDriver -> String -> String -> IO Int
+findRelativeCount d baseSel filtersJson = length <$> findRelative d baseSel filtersJson
 
 -- | The computed value of a CSS property (@getElementValueOfCssProperty@).
 cssValue :: WebDriver -> String -> String -> IO String
@@ -688,6 +763,168 @@ quit :: WebDriver -> IO ()
 quit d@(WebDriver h) = do
   _ <- execute d "quit" "{}"
   N.selClose h
+
+-- ---- TLS trust config (call before the first execute / newSession) ----
+
+-- | Pin the peer certificate against a private CA file (@""@ reverts to the
+-- system store). For a Grid served over HTTPS with its own CA.
+setCa :: WebDriver -> String -> IO ()
+setCa (WebDriver h) caPath = N.selSetCa h caPath
+
+-- | Skip TLS verification (self-signed dev\/staging Grid). @True@ to skip.
+setInsecure :: WebDriver -> Bool -> IO ()
+setInsecure (WebDriver h) on = N.selSetInsecure h on
+
+-- ---- driver-process orchestration ----
+
+-- | A driver process (chromedriver\/geckodriver\/…) launched by the engine. Owns
+-- the opaque driver handle; call 'stopDriver' to kill + reap it.
+newtype DriverProcess = DriverProcess (Ptr ())
+
+-- | Resolve the driver binary path for @browser@ (v1: the conventional driver on
+-- PATH). @""@ when none is found. @hint@ is a reserved opts\/JSON string.
+resolveDriver :: String -> String -> IO String
+resolveDriver = N.selResolveDriver
+
+-- | A self-provisioned browser binary path for @browser@ (downloads Chrome-for-
+-- Testing on first call if no system Chrome), or @""@ when a system browser exists.
+browserBinary :: String -> String -> IO String
+browserBinary = N.selBrowserBinary
+
+-- | resolve + launch a driver for @browser@. @Nothing@ when no driver could be
+-- started (the caller's cue to SKIP a live test).
+ensureDriver :: String -> String -> Int -> IO (Maybe DriverProcess)
+ensureDriver browser hint timeoutMs = do
+  p <- N.selEnsureDriver browser hint timeoutMs
+  pure (if p == nullPtr then Nothing else Just (DriverProcess p))
+
+-- | Launch an explicit driver binary on a free port. @Nothing@ if it never came up.
+launchDriver :: String -> Int -> IO (Maybe DriverProcess)
+launchDriver path timeoutMs = do
+  p <- N.selLaunchDriver path timeoutMs
+  pure (if p == nullPtr then Nothing else Just (DriverProcess p))
+
+-- | The @http:\/\/127.0.0.1:\<port\>@ to pass to 'chrome'\/'headlessChrome'.
+driverUrl :: DriverProcess -> IO String
+driverUrl (DriverProcess p) = N.selDriverUrl p
+
+-- | The driver's spawn token \/ pid (diagnostics). -1 if the handle is null.
+driverPid :: DriverProcess -> IO Int
+driverPid (DriverProcess p) = N.selDriverPid p
+
+-- | Kill + reap the driver process. NULL-safe.
+stopDriver :: DriverProcess -> IO ()
+stopDriver (DriverProcess p) = N.selStopDriver p
+
+-- ---- WebDriver-BiDi (central demux, non-blocking poll) ----
+--
+-- The multiplexed BiDi transport over a session's webSocketUrl. The engine owns
+-- the ONE demux; the caller drives the wait (pump\/fd) then drains replies+events.
+-- Open a channel from a session whose newSession requested @webSocketUrl:true@
+-- (the caps object), reading the returned value's webSocketUrl.
+
+-- | A WebDriver-BiDi channel. Strings returned are the raw reply\/event JSON.
+newtype BiDi = BiDi (Ptr ())
+
+-- | Open a channel to a session's @webSocketUrl@. Throws on connect failure.
+bidiOpen :: String -> IO BiDi
+bidiOpen wsUrl = do
+  p <- N.selBidiOpen wsUrl
+  if p == nullPtr
+    then throwIO (WebDriverError (-1) ("BiDi connect failed: " ++ wsUrl))
+    else pure (BiDi p)
+
+bidiClose :: BiDi -> IO ()
+bidiClose (BiDi p) = N.selBidiClose p
+
+-- | Send one command with a caller-managed id. Returns 0 sent \/ -1 error.
+bidiSend :: BiDi -> Int -> String -> String -> IO Int
+bidiSend (BiDi p) cid method params = N.selBidiSend p cid method params
+
+-- | Advance the demux one step (read ≤1 frame, route it). 1 routed \/ 0 timed
+-- out \/ -1 closed.
+bidiPump :: BiDi -> Int -> IO Int
+bidiPump (BiDi p) timeoutMs = N.selBidiPump p timeoutMs
+
+-- | The readable socket fd, for a native event loop. Readiness is a HINT; on wake
+-- always drain via @bidiPump b 0@ until it returns 0.
+bidiFd :: BiDi -> IO Int
+bidiFd (BiDi p) = N.selBidiFd p
+
+-- | The reply JSON for a command id if it has arrived (consumes it), else @""@.
+bidiPollReply :: BiDi -> Int -> IO String
+bidiPollReply (BiDi p) cid = N.selBidiPollReply p cid
+
+-- | The next queued event JSON (dequeues), or @""@.
+bidiPollEvent :: BiDi -> IO String
+bidiPollEvent (BiDi p) = N.selBidiPollEvent p
+
+-- | How many events the bounded queue dropped since the last check (then resets).
+bidiLostEvents :: BiDi -> IO Int
+bidiLostEvents (BiDi p) = N.selBidiLostEvents p
+
+-- | Drop a pending-reply slot so a late reply is discarded.
+bidiCancel :: BiDi -> Int -> IO ()
+bidiCancel (BiDi p) cid = N.selBidiCancel p cid
+
+-- | Send @method@ with @cid@ then pump until its reply arrives (or @timeoutMs@).
+-- Returns the reply JSON, or @""@ on timeout\/close.
+bidiCommand :: BiDi -> Int -> String -> String -> Int -> IO String
+bidiCommand b cid method params timeoutMs = do
+  _ <- bidiSend b cid method params
+  loop timeoutMs
+  where
+    loop remaining
+      | remaining <= 0 = bidiCancel b cid >> pure ""
+      | otherwise = do
+          let step = min remaining 250
+          r <- bidiPump b step
+          reply <- bidiPollReply b cid
+          if not (null reply)
+            then pure reply
+            else if r == (-1) then pure "" else loop (remaining - step)
+
+bidiSubscribe :: BiDi -> Int -> String -> Int -> IO String
+bidiSubscribe (BiDi p) cid events timeoutMs = N.selBidiSubscribe p cid events timeoutMs
+
+bidiUnsubscribe :: BiDi -> Int -> String -> Int -> IO String
+bidiUnsubscribe (BiDi p) cid events timeoutMs = N.selBidiUnsubscribe p cid events timeoutMs
+
+bidiWaitEvent :: BiDi -> String -> Int -> IO String
+bidiWaitEvent (BiDi p) method timeoutMs = N.selBidiWaitEvent p method timeoutMs
+
+bidiGetTree :: BiDi -> Int -> Int -> IO String
+bidiGetTree (BiDi p) cid timeoutMs = N.selBidiGetTree p cid timeoutMs
+
+bidiScriptEvaluate :: BiDi -> Int -> String -> String -> Int -> IO String
+bidiScriptEvaluate (BiDi p) cid expr ctx timeoutMs = N.selBidiScriptEvaluate p cid expr ctx timeoutMs
+
+bidiNavigate :: BiDi -> Int -> String -> String -> Int -> IO String
+bidiNavigate (BiDi p) cid ctx url timeoutMs = N.selBidiNavigate p cid ctx url timeoutMs
+
+-- BiDi network interception
+bidiAddIntercept :: BiDi -> Int -> String -> String -> Int -> IO String
+bidiAddIntercept (BiDi p) cid phases urlPat timeoutMs = N.selBidiNetAddIntercept p cid phases urlPat timeoutMs
+
+bidiRemoveIntercept :: BiDi -> Int -> String -> Int -> IO String
+bidiRemoveIntercept (BiDi p) cid interceptId timeoutMs = N.selBidiNetRemoveIntercept p cid interceptId timeoutMs
+
+bidiContinueRequest :: BiDi -> Int -> String -> Int -> IO String
+bidiContinueRequest (BiDi p) cid reqId timeoutMs = N.selBidiNetContinueRequest p cid reqId timeoutMs
+
+bidiFailRequest :: BiDi -> Int -> String -> Int -> IO String
+bidiFailRequest (BiDi p) cid reqId timeoutMs = N.selBidiNetFailRequest p cid reqId timeoutMs
+
+bidiProvideResponse :: BiDi -> Int -> String -> Int -> String -> String -> Int -> IO String
+bidiProvideResponse (BiDi p) cid reqId status ct body timeoutMs =
+  N.selBidiNetProvideResponse p cid reqId status ct body timeoutMs
+
+bidiContinueWithAuth :: BiDi -> Int -> String -> String -> String -> Int -> IO String
+bidiContinueWithAuth (BiDi p) cid reqId user pass timeoutMs =
+  N.selBidiNetContinueWithAuth p cid reqId user pass timeoutMs
+
+bidiSetCacheBehavior :: BiDi -> Int -> String -> Int -> IO String
+bidiSetCacheBehavior (BiDi p) cid behavior timeoutMs = N.selBidiNetSetCacheBehavior p cid behavior timeoutMs
 
 -- ---- tiny string helpers (dependency-free) ----
 

@@ -45,6 +45,23 @@ main = do
     Left (WebDriverError code _) -> check (code == -1) "transport failure -> code -1"
     Right _ -> check False "transport failure"
 
+  -- ---- newly-completed FFI surface: link + safe-without-a-session ----
+  -- resolveDriver must link and return (possibly "") without crashing.
+  drv <- resolveDriver "chrome" ""
+  check (drv == drv) "resolveDriver links (no crash)"
+  -- ensureDriver returns Nothing (no driver here) or Just; both are valid — this
+  -- exercises ensure_driver / stop_driver and the Maybe flow.
+  mproc <- ensureDriver "chrome" "" 500
+  case mproc of
+    Nothing -> check True "ensureDriver Nothing (no driver) — clean skip"
+    Just p  -> do u <- driverUrl p; check (not (null u)) "ensureDriver url"; stopDriver p
+  -- bidiOpen to a dead ws URL throws (connect failure) rather than returning a
+  -- null channel — proves bidi_open links and null becomes a typed error.
+  bidiTry <- try (bidiOpen "ws://127.0.0.1:1/session")
+  case bidiTry of
+    Left (WebDriverError _ _) -> check True "bidiOpen dead url -> WebDriverError"
+    Right ch -> do bidiClose ch; check False "bidiOpen should have failed"
+
   -- ---- live surface ----
   mcd <- lookupEnv "SEL_CHROMEDRIVER_URL"
   mbase <- lookupEnv "SEL_BASE_URL"
