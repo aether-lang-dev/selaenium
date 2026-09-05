@@ -21,11 +21,11 @@ cd "$ROOT"
 die() { printf 'publish: %s\n' "$*" >&2; exit 1; }
 have() { command -v "$1" >/dev/null 2>&1; }
 
-TAG=""; NO_BUILD=0; GH_FLAGS=()
+TAG=""; NO_BUILD=0; IS_DRAFT=0; GH_FLAGS=()
 for a in "$@"; do
   case "$a" in
     --no-build) NO_BUILD=1 ;;
-    --draft)    GH_FLAGS+=(--draft) ;;
+    --draft)    IS_DRAFT=1; GH_FLAGS+=(--draft) ;;
     --prerelease) GH_FLAGS+=(--prerelease) ;;
     -*)         die "unknown flag: $a" ;;
     *)          [ -z "$TAG" ] && TAG="$a" || die "unexpected arg: $a" ;;
@@ -89,21 +89,38 @@ gh release create "$TAG" "${GH_FLAGS[@]}" \
 
 printf 'publish: done — %s\n' "$(gh release view "$TAG" --json url -q .url 2>/dev/null || echo "$TAG created")"
 
-# Self-check the SOURCE-consumer path: `ae add <repo>@<tag>` must resolve, i.e.
-# the tag is pushed and checks out. A draft release still creates the tag, so
-# this works for --draft too. Hard gate — a release that FFI consumers can use
-# but source consumers (e.g. datastar-aether via `ae add`) cannot is not "done".
-# Skip only if `ae` is absent (can't check) — say so loudly rather than pass.
+# Self-check the SOURCE-consumer path: `ae add <repo>@<tag>` must land the tree
+# AT THE BUILT COMMIT. Two things make a naive check lie:
+#   1. A DRAFT release does NOT push its git tag (GitHub holds it until publish),
+#      so `ae add @<tag>` cannot resolve yet — skip with a clear note rather than
+#      fail a draft for a tag that intentionally isn't public.
+#   2. `ae add` clones then `git checkout <tag> || true` and can FALL BACK to a
+#      cached/default checkout on a miss, exiting 0. So checking exit status is
+#      not enough — verify the resolved commit equals the one we built.
+# Hard gate for a real (non-draft) release; a miss means FFI consumers can use
+# it but source consumers (e.g. datastar-aether) cannot pin it.
 REPO_SLUG="github.com/$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null || echo aether-lang-dev/selaenium)"
-if have ae; then
-  printf 'publish: verifying source path — ae add %s@%s …\n' "$REPO_SLUG" "$TAG"
+if [ "$IS_DRAFT" = "1" ]; then
+  printf 'publish: draft — tag %s is NOT pushed until you publish the draft, so the\n' "$TAG"
+  printf 'publish:         ae-add source path cannot be verified yet. After publishing:\n'
+  printf 'publish:           ae add %s@%s   (should check out %s)\n' "$REPO_SLUG" "$TAG" "${COMMIT:0:9}"
+elif have ae; then
+  printf 'publish: verifying source path — ae add %s@%s must land %s …\n' "$REPO_SLUG" "$TAG" "${COMMIT:0:9}"
   probe="$(mktemp -d)"; trap 'rm -rf "$probe"' EXIT
+  # Start from a clean package cache for THIS repo so a stale prior clone cannot
+  # mask a miss (the exact false pass this gate is meant to catch).
+  rm -rf "${AETHER_HOME:-$HOME/.aether}/packages/$REPO_SLUG"
   ( cd "$probe" && ae init _probe >/dev/null 2>&1 && cd _probe 2>/dev/null || cd "$probe"
-    ae add "$REPO_SLUG@$TAG" ) >/dev/null 2>&1 \
-    && printf 'publish: OK — ae add resolves %s@%s (source consumers can pin this release)\n' "$REPO_SLUG" "$TAG" \
-    || die "SOURCE-PATH GATE FAILED — 'ae add $REPO_SLUG@$TAG' did not resolve. The
-       binaries are published but a source consumer (e.g. datastar-aether) cannot
-       pin this tag. Check the tag pushed: git ls-remote --tags origin '$TAG'"
+    ae add "$REPO_SLUG@$TAG" ) >/dev/null 2>&1 || true
+  pkg="${AETHER_HOME:-$HOME/.aether}/packages/$REPO_SLUG"
+  got="$(git -C "$pkg" rev-parse HEAD 2>/dev/null || echo none)"
+  if [ "$got" = "$COMMIT" ]; then
+    printf 'publish: OK — ae add %s@%s checks out %s (source consumers can pin this release)\n' "$REPO_SLUG" "$TAG" "${COMMIT:0:9}"
+  else
+    die "SOURCE-PATH GATE FAILED — 'ae add $REPO_SLUG@$TAG' landed ${got:0:9}, not the
+       built commit ${COMMIT:0:9}. The binaries are published but a source consumer
+       (e.g. datastar-aether) would get different code. Check: git ls-remote --tags origin '$TAG'"
+  fi
 else
   printf 'publish: WARNING — ae not on PATH; could NOT verify the ae-add source path for %s\n' "$TAG"
 fi
