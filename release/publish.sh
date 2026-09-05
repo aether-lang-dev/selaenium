@@ -114,12 +114,46 @@ elif have ae; then
     ae add "$REPO_SLUG@$TAG" ) >/dev/null 2>&1 || true
   pkg="${AETHER_HOME:-$HOME/.aether}/packages/$REPO_SLUG"
   got="$(git -C "$pkg" rev-parse HEAD 2>/dev/null || echo none)"
-  if [ "$got" = "$COMMIT" ]; then
-    printf 'publish: OK — ae add %s@%s checks out %s (source consumers can pin this release)\n' "$REPO_SLUG" "$TAG" "${COMMIT:0:9}"
-  else
+  if [ "$got" != "$COMMIT" ]; then
     die "SOURCE-PATH GATE FAILED — 'ae add $REPO_SLUG@$TAG' landed ${got:0:9}, not the
        built commit ${COMMIT:0:9}. The binaries are published but a source consumer
        (e.g. datastar-aether) would get different code. Check: git ls-remote --tags origin '$TAG'"
+  fi
+  printf 'publish: OK — ae add %s@%s checks out %s (source consumers can pin this release)\n' "$REPO_SLUG" "$TAG" "${COMMIT:0:9}"
+
+  # Manifest-resolution gate: with an aether.toml [package] modules declaration,
+  # a consumer imports with NO --lib. Prove that against the JUST-TAGGED package.
+  # Needs ae >= 0.637.0 ([dependencies] onto the search path); older ae cannot
+  # test it, so skip-with-note rather than fail. `[patch]` points at the package
+  # we already resolved above, so this checks the tagged tree's own aether.toml.
+  ae_ver="$(ae --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
+  ae_ge_637="$(printf '%s\n0.637.0\n' "$ae_ver" | sort -V | tail -1)"
+  if [ ! -f "$pkg/aether.toml" ]; then
+    printf 'publish: note — %s has no aether.toml; ae-add consumers still need --lib (no module export)\n' "$TAG"
+  elif [ "$ae_ge_637" = "$ae_ver" ] && [ -n "$ae_ver" ]; then
+    mp="$(mktemp -d)"
+    ( cd "$mp" && ae init _mres >/dev/null 2>&1 && cd _mres 2>/dev/null || cd "$mp"
+      # declare the dep and patch it to the resolved package, then import with no --lib
+      cat > aether.toml <<TOML
+[package]
+name = "_mres"
+[dependencies]
+"${REPO_SLUG#github.com/}" = "${TAG#v}"
+[patch]
+"${REPO_SLUG#github.com/}" = "$pkg"
+[[bin]]
+name = "_mres"
+path = "main.ae"
+TOML
+      printf 'import webdriver\nmain() { }\n' > main.ae
+      ae build main.ae -o _mres.out ) >/dev/null 2>&1 \
+      && printf 'publish: OK — import webdriver resolves from %s with NO --lib (aether.toml modules work)\n' "$TAG" \
+      || { rm -rf "$mp"; die "MANIFEST GATE FAILED — $TAG ships an aether.toml but 'import webdriver'
+       does NOT resolve from it without --lib. Check its [package] modules line against
+       the tree; see docs/module-system-design.md in the aether repo."; }
+    rm -rf "$mp"
+  else
+    printf 'publish: note — ae %s < 0.637.0; cannot verify aether.toml module resolution (needs [dependencies] support)\n' "${ae_ver:-unknown}"
   fi
 else
   printf 'publish: WARNING — ae not on PATH; could NOT verify the ae-add source path for %s\n' "$TAG"

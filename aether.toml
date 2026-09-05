@@ -1,0 +1,31 @@
+[package]
+name = "selaenium"
+version = "0.2.1"
+
+# What a consumer gets from `ae add github.com/aether-lang-dev/selaenium`
+# (ae >= 0.637.0, which resolves [dependencies] onto the module search path —
+# no --lib, no path knowledge on the consumer's side). See the aether repo's
+# docs/module-system-design.md, "Dependencies resolve onto the search path".
+#
+# Each entry names an IMPORTABLE MODULE; what actually joins the search path is
+# that module's PARENT directory (because a search-path dir "D" means "D holds
+# modules", i.e. D/<name>.ae). So the three entries below exist to put three
+# directories on the path:
+#
+#   aether/webdriver              -> aether/                  => import webdriver
+#   selenium_core/selenium_core   -> selenium_core/           => import selenium_core, selenium_bidi, driver, atoms, ...
+#   selenium_core/drivermgr/resolve -> selenium_core/drivermgr/ => import resolve, browser, drivercache, cft, gecko, ...
+#
+# The specific module named in each entry is arbitrary — any module in the
+# target directory would do; `webdriver`, `selenium_core` and `resolve` are just
+# the ones picked to name the directory. What is NOT arbitrary is the DEPTH:
+# the binding imports the FLAT names that live INSIDE selenium_core/ and
+# selenium_core/drivermgr/, so an entry has to reach a module inside each of
+# those dirs (`selenium_core` alone would only put the package root on the path,
+# and `selenium_core/drivermgr` would resolve `import drivermgr`, not the
+# `import resolve`/`browser`/... that webdriver.ae actually uses).
+#
+# FFI consumers (Java/Go/Ruby/...) do NOT use this — they dlopen the prebuilt
+# libselenium_core.* from a GitHub release via the C ABI. This declaration is
+# only for source consumers that compile the .ae graph in-process.
+modules = "aether/webdriver, selenium_core/selenium_core, selenium_core/drivermgr/resolve"
