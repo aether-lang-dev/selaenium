@@ -515,6 +515,111 @@ fn driver_orchestration() {
     d.quit().unwrap();
 }
 
+/// A LIVE exercise of the convenience tier (waits + Select + an Actions gesture)
+/// against real headless Chrome: a page whose button reveals a hidden panel after
+/// a short delay (so an explicit wait has something real to poll), a native
+/// `<select>` dropdown, and a click driven through the Actions builder. Mirrors
+/// the `live_chrome_surface` fixture (own chromedriver on an ephemeral port,
+/// self-skip if chromedriver absent, a data: URL for a real document).
+#[test]
+fn live_convenience_tier() {
+    use std::time::Duration;
+    use selenium::{By, Keys, Select};
+
+    let Some(driver_bin) = which("chromedriver") else {
+        eprintln!("SKIPPED: chromedriver not on PATH");
+        return;
+    };
+
+    let cd_port = free_port();
+    let cd = Command::new(&driver_bin)
+        .arg(format!("--port={cd_port}"))
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("spawn chromedriver");
+    let _guard = DriverGuard(cd);
+
+    if !wait_up(cd_port, Duration::from_secs(10)) {
+        eprintln!("SKIPPED: chromedriver did not come up");
+        return;
+    }
+
+    let d = WebDriver::headless_chrome(&format!("http://127.0.0.1:{cd_port}")).expect("new session");
+
+    // A page with: a native <select>, a button that (250ms later) reveals a
+    // hidden #panel via JS, and a text input the Actions builder types into.
+    d.get(concat!(
+        "data:text/html,<!doctype html><title>convenience</title>",
+        "<select id='sel'>",
+        "<option value='ar'>Argentina</option>",
+        "<option value='es'>Spain</option>",
+        "<option value='se'>Sweden</option>",
+        "</select>",
+        "<button id='reveal' onclick=\"setTimeout(function(){",
+        "var p=document.createElement('p');p.id='panel';p.textContent='Ready';",
+        "document.body.appendChild(p);},250)\">reveal</button>",
+        "<input id='box'>"
+    ))
+    .unwrap();
+
+    // ---- Select: pick the right option three ways ----
+    let sel = d.find_element(By::id("sel")).unwrap();
+    let select = Select::new(&sel).unwrap();
+    assert!(!select.is_multiple(), "single-select");
+
+    select.select_by_visible_text("Spain").unwrap();
+    assert_eq!(select.first_selected_option().unwrap().get_attribute("value").unwrap().as_deref(), Some("es"));
+
+    select.select_by_value("se").unwrap();
+    assert_eq!(select.first_selected_option().unwrap().text().unwrap(), "Sweden");
+
+    select.select_by_index(0).unwrap();
+    assert_eq!(select.first_selected_option().unwrap().text().unwrap(), "Argentina");
+
+    // A miss must be a NoSuchElement-kind error.
+    assert_eq!(
+        select.select_by_value("zz").unwrap_err().kind,
+        ErrorKind::NoSuchElement
+    );
+
+    // ---- Actions: click the reveal button through the input-actions device ----
+    let reveal = d.find_element(By::id("reveal")).unwrap();
+    d.actions().click(Some(&reveal)).perform().unwrap();
+
+    // ---- Wait: block until the delayed #panel appears, then read it ----
+    let panel = d.wait_for_element(By::id("panel"), Duration::from_secs(5)).unwrap();
+    assert_eq!(panel.text().unwrap(), "Ready");
+
+    // The predicate-form wait returns as soon as the condition holds.
+    d.wait(Duration::from_secs(5))
+        .until(|drv| Ok(drv.find_element(By::id("panel")).map(|_| true).unwrap_or(false)))
+        .unwrap();
+
+    // A wait that can never hold must fail with a Timeout-kind error (short
+    // budget so the test stays fast).
+    let timed_out = d
+        .wait(Duration::from_millis(300))
+        .until(|drv| Ok(drv.title().unwrap_or_default() == "never"))
+        .unwrap_err();
+    assert_eq!(timed_out.kind, ErrorKind::Timeout);
+
+    // ---- Actions key gesture: type into the input via the keyboard device ----
+    let box_el = d.find_element(By::id("box")).unwrap();
+    d.actions()
+        .click(Some(&box_el))
+        .send_keys("hi")
+        .key_down(Keys::SHIFT)
+        .send_keys("x")
+        .key_up(Keys::SHIFT)
+        .perform()
+        .unwrap();
+    let typed = box_el.get_attribute("value").unwrap().unwrap_or_default();
+    assert_eq!(typed, "hiX", "actions send_keys + shift chord typed {typed:?}");
+
+    d.quit().unwrap();
+}
+
 /// Minimal std-only base64 decoder (screenshot PNG check only).
 fn base64_decode(s: &str) -> Vec<u8> {
     const T: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";

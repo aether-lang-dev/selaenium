@@ -20,6 +20,15 @@ use std::ffi::{c_char, c_int, c_void, CStr, CString};
 pub mod json;
 pub use json::Json;
 
+pub mod actions;
+pub mod keys;
+pub mod select;
+pub mod wait;
+pub use actions::Actions;
+pub use keys::Keys;
+pub use select::Select;
+pub use wait::Wait;
+
 // ---- the C ABI (aether_sel_embed_*), linked at build time ----
 type Handle = *mut c_void;
 
@@ -288,7 +297,7 @@ fn decode_by(by: &By) -> Json {
     json::parse(&locator(by.strategy, &by.value)).unwrap_or(Json::Null)
 }
 
-const W3C_ELEMENT_KEY: &str = "element-6066-11e4-a52e-4f735466cecf";
+pub(crate) const W3C_ELEMENT_KEY: &str = "element-6066-11e4-a52e-4f735466cecf";
 
 // ---- TLS ----
 
@@ -598,6 +607,14 @@ impl WebDriver {
     }
 
     // ---- actions ----
+
+    /// Start a fluent [`Actions`] builder bound to this driver: queue pointer /
+    /// key gestures, then `.perform()`. See the [`actions`](crate::actions)
+    /// module.
+    pub fn actions(&self) -> Actions<'_> {
+        Actions::new(self)
+    }
+
     pub fn perform_actions(&self, actions: Vec<Json>) -> Result<()> {
         self.execute("actions", json::obj(vec![("actions", Json::Arr(actions))]))?;
         Ok(())
@@ -875,6 +892,22 @@ impl<'a> WebElement<'a> {
     }
     pub fn rect(&self) -> Result<Json> {
         self.exec("getElementRect", json::obj(vec![]))
+    }
+
+    /// Find one descendant of this element matching `by` (element-scoped
+    /// `findChildElement`). The returned element is tied to the same driver
+    /// borrow as this one.
+    pub fn find_element(&self, by: By) -> Result<WebElement<'a>> {
+        let result = self.exec("findChildElement", decode_by(&by))?;
+        self.driver.element_from(&result)
+    }
+
+    /// Find all descendants of this element matching `by` (element-scoped
+    /// `findChildElements`). Used by [`Select`] to enumerate `<option>` children.
+    pub fn find_elements(&self, by: By) -> Result<Vec<WebElement<'a>>> {
+        let result = self.exec("findChildElements", decode_by(&by))?;
+        let arr = result.as_array().cloned().unwrap_or_default();
+        arr.iter().map(|e| self.driver.element_from(e)).collect()
     }
 }
 
