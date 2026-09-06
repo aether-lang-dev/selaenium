@@ -6,7 +6,7 @@
 # The engine is pure Aether; `ae build --target=<triple>` cross-compiles via zig
 # cc, no per-OS runner. Output name: libselenium_core-<tag>-<os>-<arch>.<ext>
 # (.so linux / .dylib macos / .dll windows). Alongside each: <artifact>.sha256,
-# and a combined release/dist/SHA256SUMS.
+# and a combined release/dist/SHA256SUMS.txt.
 #
 # Usage:
 #   release/build.sh                    # core matrix (linux+macos amd64/arm64)
@@ -97,17 +97,42 @@ for t in $MATRIX; do
   fi
 done
 
+# ---- the multi-platform Java jars ----
+# The 3 jars (lean / per-platform / standalone) are a distinct deliverable from the
+# raw engine libs: aeb cross-builds the native matrix (with size()) and cross-packages
+# them here. Build via aeb, then stage each jar into DIST with its own .sha256 so it
+# rides the same release + manifest. Skipped (with a note) if no JDK/aeb — the engine
+# libs still ship. Set RELEASE_NO_JARS=1 to skip explicitly.
+if [ "${RELEASE_NO_JARS:-0}" != "1" ] && have aeb; then
+  say "building the Java jars (crossbuild + package) …"
+  # aeb resolves node labels repo-root-relative, so run it from ROOT with relative paths.
+  if ( cd "$ROOT" && aeb selenium_core/.crossbuild.ae java/.package.ae ) >"$DIST/.jars.log" 2>&1; then
+    jdir="$ROOT/target/package/java"
+    for j in "$jdir"/selenium-client.jar "$jdir"/selenium-client-standalone.jar "$jdir"/selenium-client-"$(uname -s | tr 'A-Z' 'a-z' | sed 's/darwin/macos/;s/.*linux.*/linux/')-$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')".jar; do
+      [ -f "$j" ] || continue
+      cp "$j" "$DIST/"
+      ( cd "$DIST" && sha256sum "$(basename "$j")" > "$(basename "$j").sha256" )
+      say "  jar: $(basename "$j") ($(du -h "$j" | cut -f1)) staged + .sha256"
+    done
+    rm -f "$DIST/.jars.log"
+  else
+    say "SKIP jars — aeb build failed (engine libs still ship); see $DIST/.jars.log"
+  fi
+elif [ "${RELEASE_NO_JARS:-0}" != "1" ]; then
+  say "SKIP jars — aeb not on PATH (engine libs still ship)"
+fi
+
 # A combined checksum manifest over every artifact (not the .sha256 sidecars).
-( cd "$DIST" && sha256sum ./*.so ./*.dylib ./*.dll ./*.dll.lib 2>/dev/null > SHA256SUMS || true )
+# Named SHA256SUMS.txt so a browser renders it inline (no forced download).
+( cd "$DIST" && sha256sum ./*.so ./*.dylib ./*.dll ./*.dll.lib ./*.jar 2>/dev/null > SHA256SUMS.txt || true )
 
 echo
-say "built $built artifact(s) into release/dist/ ($failed failed)"
+say "built $built engine artifact(s) into release/dist/ ($failed failed)"
 if [ "$built" -gt 0 ]; then
   echo
-  ( cd "$DIST" && ls -1 ./*."${ext:-so}" >/dev/null 2>&1; \
-    for f in *.so *.dylib *.dll; do [ -f "$f" ] && printf '  %s  %s\n' "$(cut -c1-16 "$f.sha256")…" "$f"; done ) 2>/dev/null
+  ( cd "$DIST" && for f in *.so *.dylib *.dll *.jar; do [ -f "$f" ] && printf '  %s  %s\n' "$(cut -c1-16 "$f.sha256")…" "$f"; done ) 2>/dev/null
   echo
-  say "each artifact has a .sha256; SHA256SUMS lists them all."
+  say "each artifact has a .sha256; SHA256SUMS.txt lists them all."
   say "next: attest on real hardware — run the binding suite against a given"
   say "      artifact on its target box and record 'sha256 X passed' (see release/README.md)."
 fi

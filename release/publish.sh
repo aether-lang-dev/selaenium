@@ -10,7 +10,7 @@
 #   release/publish.sh v1.2.3 --no-build    # use whatever is already in release/dist
 #
 # Steps: ensure artifacts for <tag> exist (build them unless --no-build), then
-# `gh release create <tag>` with every artifact, its .sha256, and SHA256SUMS.
+# `gh release create <tag>` with every artifact, its .sha256, and SHA256SUMS.txt.
 set -uo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -62,16 +62,18 @@ fi
 # dist yields an empty list rather than bogus filenames.
 shopt -s nullglob
 bins=( "$DIST"/*.so "$DIST"/*.dylib "$DIST"/*.dll "$DIST"/*.dll.lib )
+jars=( "$DIST"/*.jar )
 sums=( "$DIST"/*.sha256 )
-manifest=( "$DIST"/SHA256SUMS )   # nullglob: empty if it doesn't exist
+manifest=( "$DIST"/SHA256SUMS.txt )   # nullglob: empty if it doesn't exist
 shopt -u nullglob
 [ "${#bins[@]}" -gt 0 ] || die "no engine artifacts in release/dist — run release/build.sh (or drop --no-build)"
-assets=( "${bins[@]}" "${sums[@]}" "${manifest[@]}" )
+assets=( "${bins[@]}" "${jars[@]}" "${sums[@]}" "${manifest[@]}" )
 # Count only the loadable libraries (not the Windows .dll.lib import stubs) for
 # the "N platform artifacts" note.
 nbin=0; for f in "${bins[@]}"; do case "$f" in *.dll.lib) ;; *) nbin=$((nbin+1)) ;; esac; done
 
-notes="Cross-built \`libselenium_core\` engine, ${nbin} platform artifact(s), each with a \`.sha256\` (and a combined \`SHA256SUMS\`).
+njar=${#jars[@]}
+notes="Cross-built \`libselenium_core\` engine, ${nbin} platform artifact(s), plus ${njar} Java jar(s) (lean \`selenium-client.jar\`, per-platform, and the all-in-one \`selenium-client-standalone.jar\`) — each with a \`.sha256\` (and a combined \`SHA256SUMS.txt\`).
 
 Built from a single Linux host via \`ae build --target\` — see \`release/README.md\` for the build-here / attest-on-hardware model and the per-artifact coverage caveats (local \`http://\` works everywhere; BiDi \`ws://\`/\`wss://\` is covered; remote HTTPS-Grid needs the Tier-2 TLS helper)."
 
