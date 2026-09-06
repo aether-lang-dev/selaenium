@@ -1,4 +1,4 @@
-// Java consumer package (the jar) — MULTI-PLATFORM. Builds selenium-core.jar as a
+// Java consumer package (the jar) — MULTI-PLATFORM. Builds selenium-client.jar as a
 // downstream user receives it: the compiled binding classes PLUS the engine native
 // for EVERY supported OS+arch, each bundled INSIDE the jar at the resource
 // /native/<os>-<arch>/libselenium_core.<ext>. Native.locate() reads os.name+os.arch
@@ -28,7 +28,7 @@ aeb(cap) {
         libdir_raw, _direrr = bldr._sh_capture(string.concat("dirname '", string.concat(one, "'")))
         libdir = string.trim(libdir_raw)
         java.package_jar() {
-            jar_name("selenium-core.jar")
+            jar_name("selenium-client.jar")
             release("22")
             native_resource(string.concat(libdir, "/libselenium_core-linux-amd64.so"),
                             "native/linux-amd64/libselenium_core.so")
