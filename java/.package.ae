@@ -1,29 +1,38 @@
-// Java consumer package — builds TWO jars from the compiled binding classes:
+// Java consumer package — builds THREE jars from the compiled binding classes:
 //
-//   selenium-client.jar             LEAN: classes only. The engine native is
-//                                   supplied by the consumer out-of-band —
-//                                   Native.locate() resolves it via
-//                                   SELENIUM_CORE_LIB (or the OS loader path /
-//                                   LD_LIBRARY_PATH). Point it at one of the raw
-//                                   release .so/.dll/.dylib assets. The Maven-
-//                                   idiomatic "bring your own native" artifact.
+//   selenium-client.jar             LEAN: classes only. The consumer supplies the
+//                                   engine native out-of-band — Native.locate()
+//                                   resolves it via SELENIUM_CORE_LIB or the OS
+//                                   loader path, pointing at one of the raw release
+//                                   .so/.dll/.dylib assets. The Maven-idiomatic
+//                                   "bring your own native" artifact.
 //
-//   selenium-client-standalone.jar  FAT: classes PLUS the engine native for
-//                                   EVERY supported OS+arch, each bundled at the
-//                                   resource /native/<os>-<arch>/libselenium_core.<ext>.
+//   selenium-client-<os>-<arch>.jar SINGLE-PLATFORM: classes + JUST the build
+//                                   host's native (this box's os-arch, e.g.
+//                                   selenium-client-linux-amd64.jar). The small
+//                                   "I only deploy where I build" classifier jar
+//                                   (the Netty/os-maven-plugin convention).
+//
+//   selenium-client-standalone.jar  FAT: classes + the native for EVERY supported
+//                                   OS+arch, each bundled at the resource
+//                                   /native/<os>-<arch>/libselenium_core.<ext>.
 //                                   Native.locate() reads os.name+os.arch and
 //                                   extracts the matching one at load — ONE jar
-//                                   serves linux/macos/windows on amd64/arm64,
-//                                   zero config (the Bytedeco outcome, achieved in
-//                                   aeb: one Linux agent cross-compiles the matrix
-//                                   via zig and cross-packages here).
+//                                   serves linux/macos/windows x amd64/arm64, zero
+//                                   config (the Bytedeco outcome, in aeb: one Linux
+//                                   agent cross-compiles the matrix via zig and
+//                                   cross-packages here).
 //
-// The 6 natives come from selenium_core/.crossbuild.ae (aether.shared_lib per
-// target). FreeBSD is a documented follow-up (asks/multi-platform-jar.md); the
-// loader already maps freebsd-* paths, so it's a drop-in later.
+// The 6 natives come from selenium_core/.crossbuild.ae, which builds them with
+// aether.shared_lib size() — the same --size (size-optimize + strip) that
+// release/build.sh uses — so each is ~0.8MB (not the ~3.7MB unstripped debug
+// build). No post-strip needed here.
 //
-// aeb java.package_jar() supports repeated native_resource(<abs src>, <dest>) and
-// two calls emit two jars, so no aeb grammar change was needed. Needs a JDK >= 22
+// FreeBSD is a documented follow-up (asks/multi-platform-jar.md); the loader
+// already maps freebsd-* paths, so it's a drop-in later.
+//
+// java.package_jar() takes repeated native_resource(<abs src>, <dest>) and three
+// calls emit three jars, so no aeb grammar change was needed. Needs a JDK >= 22
 // (FFM); skipped by preflight when absent (prereq jdk:22).
 import bldr
 import aether
@@ -34,20 +43,37 @@ aeb(cap) {
     bldr.build() {
         prereq("jdk:22")
         dep("selenium_core/.crossbuild.ae")
+
         // The crossbuild node emits all 6 libs into its target-dir's lib/. Its
         // shared_lib edge points at ONE of them; take its directory as the lib dir.
         one = string.trim(dep_artifact("selenium_core/.crossbuild.ae", "shared_lib"))
         libdir_raw, _direrr = bldr._sh_capture(string.concat("dirname '", string.concat(one, "'")))
         libdir = string.trim(libdir_raw)
 
-        // LEAN jar: classes only (no native_resource). Consumer supplies the
-        // native via SELENIUM_CORE_LIB / the OS loader path.
+        // Host os-arch token (matches crossbuild/release naming: linux-amd64,
+        // macos-arm64, …) for the single-platform jar's name + which native.
+        host_raw, _herr = bldr._sh_capture("echo \"$(uname -s | tr 'A-Z' 'a-z' | sed 's/darwin/macos/;s/.*linux.*/linux/;s/.*freebsd.*/freebsd/')-$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')\"")
+        host = string.trim(host_raw)
+        host_ext_raw, _eerr = bldr._sh_capture(string.concat(string.concat("case ", host), " in macos-*) echo dylib;; windows-*) echo dll;; *) echo so;; esac"))
+        host_ext = string.trim(host_ext_raw)
+        host_src = string.concat(string.concat(libdir, "/libselenium_core-"), string.concat(host, string.concat(".", host_ext)))
+        host_dest = string.concat(string.concat("native/", host), string.concat("/libselenium_core.", host_ext))
+
+        // LEAN jar: classes only. Consumer supplies the native.
         java.package_jar() {
             jar_name("selenium-client.jar")
             release("22")
         }
 
-        // FAT jar: classes + the full 6-platform native matrix baked in.
+        // SINGLE-PLATFORM jar: classes + just the build host's native, at its own
+        // /native/<os>-<arch>/ path (the loader picks it there on this platform).
+        java.package_jar() {
+            jar_name(string.concat("selenium-client-", string.concat(host, ".jar")))
+            release("22")
+            native_resource(host_src, host_dest)
+        }
+
+        // FAT jar: classes + the full 6-platform native matrix.
         java.package_jar() {
             jar_name("selenium-client-standalone.jar")
             release("22")

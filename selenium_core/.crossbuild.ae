@@ -13,6 +13,12 @@
 // caps/lib/extra_source mirror .build.ae (net,os,fs + drivermgr + _embed_strdup.c).
 // extra_source takes an ABSOLUTE path — ae>=0.638 cross-build (--target) no longer
 // resolves a relative --extra C path from this node's dir.
+//
+// size() threads `ae build --size` (size-optimize + strip) into each cross build,
+// so the emitted libs are ~0.8MB, not the ~3.7MB unstripped-debug default — this
+// is what keeps the fat java jar small (~2MB not ~4MB). REQUIRES aeb >= v0.296
+// (the aether.shared_lib size() setter); on older aeb size() is unknown and the
+// build errors. Bump ci/versions.env AEB_REF to v0.296 once released.
 import bldr
 import aether
 
@@ -24,6 +30,7 @@ aeb(cap) {
             source("embed.ae")
             lib("drivermgr")
             caps("net,os,fs")
+            size()
             extra_source(strdup_c)
             target("x86_64-linux")
             output("libselenium_core-linux-amd64.so")
@@ -32,6 +39,7 @@ aeb(cap) {
             source("embed.ae")
             lib("drivermgr")
             caps("net,os,fs")
+            size()
             extra_source(strdup_c)
             target("aarch64-linux")
             output("libselenium_core-linux-arm64.so")
@@ -40,6 +48,7 @@ aeb(cap) {
             source("embed.ae")
             lib("drivermgr")
             caps("net,os,fs")
+            size()
             extra_source(strdup_c)
             target("x86_64-macos")
             output("libselenium_core-macos-amd64.dylib")
@@ -48,6 +57,7 @@ aeb(cap) {
             source("embed.ae")
             lib("drivermgr")
             caps("net,os,fs")
+            size()
             extra_source(strdup_c)
             target("aarch64-macos")
             output("libselenium_core-macos-arm64.dylib")
@@ -56,6 +66,7 @@ aeb(cap) {
             source("embed.ae")
             lib("drivermgr")
             caps("net,os,fs")
+            size()
             extra_source(strdup_c)
             target("x86_64-windows")
             output("libselenium_core-windows-amd64.dll")
@@ -64,6 +75,7 @@ aeb(cap) {
             source("embed.ae")
             lib("drivermgr")
             caps("net,os,fs")
+            size()
             extra_source(strdup_c)
             target("aarch64-windows")
             output("libselenium_core-windows-arm64.dll")
