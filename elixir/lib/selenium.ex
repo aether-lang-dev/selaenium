@@ -141,8 +141,13 @@ defmodule Selenium do
     case ensure_driver("chrome", "", 15_000) do
       {:ok, dh} ->
         case chrome(driver_url(dh), options) do
-          {:ok, handle} -> {:ok, handle, dh}
-          err -> stop_driver(dh) && err
+          {:ok, handle} ->
+            {:ok, handle, dh}
+
+          err ->
+            # newSession failed: reap the driver we just spawned, then surface err.
+            stop_driver(dh)
+            err
         end
 
       err ->
