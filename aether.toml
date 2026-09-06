@@ -1,6 +1,6 @@
 [package]
 name = "selaenium"
-version = "0.5.0"
+version = "0.6.0"
 
 # What a consumer gets from `ae add github.com/aether-lang-dev/selaenium`
 # (ae >= 0.637.0, which resolves [dependencies] onto the module search path —
