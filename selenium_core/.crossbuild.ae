@@ -1,0 +1,72 @@
+// Cross-build the engine for the desktop release matrix from ONE host (Linux),
+// via aeb's aether.shared_lib(target=...) which drives `ae build --target=<triple>`
+// (aether's bundled zig-cc backend — no per-OS runner, no target hardware). This
+// is the aeb-native equivalent of release/build.sh's matrix: each block emits one
+// libselenium_core-<os>-<arch>.<ext> so java/.package.ae can bundle all of them
+// into ONE multi-platform jar.
+//
+// Matrix (6 that cross-build clean from Linux): linux/macos/windows x amd64/arm64.
+// FreeBSD is a documented follow-up (freebsd-amd64 needs a build-flag fix for the
+// drivermgr `resolve` module path; freebsd-arm64 needs a sysroot) — see
+// asks/multi-platform-jar.md.
+//
+// caps/lib/extra_source mirror .build.ae (net,os,fs + drivermgr + _embed_strdup.c).
+// extra_source takes an ABSOLUTE path — ae>=0.638 cross-build (--target) no longer
+// resolves a relative --extra C path from this node's dir.
+import bldr
+import aether
+
+aeb(cap) {
+    bldr.build() {
+        strdup_c = string.concat(bldr.source_dir(builder_context()), "/_embed_strdup.c")
+
+        aether.shared_lib() {
+            source("embed.ae")
+            lib("drivermgr")
+            caps("net,os,fs")
+            extra_source(strdup_c)
+            target("x86_64-linux")
+            output("libselenium_core-linux-amd64.so")
+        }
+        aether.shared_lib() {
+            source("embed.ae")
+            lib("drivermgr")
+            caps("net,os,fs")
+            extra_source(strdup_c)
+            target("aarch64-linux")
+            output("libselenium_core-linux-arm64.so")
+        }
+        aether.shared_lib() {
+            source("embed.ae")
+            lib("drivermgr")
+            caps("net,os,fs")
+            extra_source(strdup_c)
+            target("x86_64-macos")
+            output("libselenium_core-macos-amd64.dylib")
+        }
+        aether.shared_lib() {
+            source("embed.ae")
+            lib("drivermgr")
+            caps("net,os,fs")
+            extra_source(strdup_c)
+            target("aarch64-macos")
+            output("libselenium_core-macos-arm64.dylib")
+        }
+        aether.shared_lib() {
+            source("embed.ae")
+            lib("drivermgr")
+            caps("net,os,fs")
+            extra_source(strdup_c)
+            target("x86_64-windows")
+            output("libselenium_core-windows-amd64.dll")
+        }
+        aether.shared_lib() {
+            source("embed.ae")
+            lib("drivermgr")
+            caps("net,os,fs")
+            extra_source(strdup_c)
+            target("aarch64-windows")
+            output("libselenium_core-windows-arm64.dll")
+        }
+    }
+}

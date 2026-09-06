@@ -71,22 +71,30 @@ final class Native {
             throw new WebDriverException("SELENIUM_CORE_LIB points at a missing file: " + override, -1);
         }
         String lib = fileName();
-        // Bundled as a classpath resource inside the jar: /native/<libname>.
-        // A packaged consumer gets exactly this — extract it to a temp file.
-        try (java.io.InputStream in = Native.class.getResourceAsStream("/native/" + lib)) {
-            if (in != null) {
-                Path tmp = Files.createTempFile("libselenium_core", suffix(lib));
-                tmp.toFile().deleteOnExit();
-                Files.copy(in, tmp, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
-                return tmp;
+        // Bundled as a classpath resource inside the jar. A multi-platform jar
+        // stages each native under /native/<os>-<arch>/<libname> (matching
+        // release/build.sh's os-arch tokens), so one jar serves every OS+arch —
+        // try that first. A single-platform (dev) jar bundles /native/<libname>;
+        // fall back to it so the flat layout still works.
+        String archDir = osArch();
+        for (String resource : new String[] {"/native/" + archDir + "/" + lib, "/native/" + lib}) {
+            try (java.io.InputStream in = Native.class.getResourceAsStream(resource)) {
+                if (in != null) {
+                    Path tmp = Files.createTempFile("libselenium_core", suffix(lib));
+                    tmp.toFile().deleteOnExit();
+                    Files.copy(in, tmp, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                    return tmp;
+                }
+            } catch (java.io.IOException e) {
+                throw new WebDriverException("failed to extract bundled native library: " + e.getMessage(), -1);
             }
-        } catch (java.io.IOException e) {
-            throw new WebDriverException("failed to extract bundled native library: " + e.getMessage(), -1);
         }
-        // Bundled next to the classes: java/native/<libname> (dev-tree layout).
-        Path bundled = Path.of("native", lib);
-        if (Files.exists(bundled)) {
-            return bundled.toAbsolutePath();
+        // Bundled next to the classes (dev-tree layout): native/<os>-<arch>/<lib>
+        // then native/<lib>.
+        for (Path bundled : new Path[] {Path.of("native", archDir, lib), Path.of("native", lib)}) {
+            if (Files.exists(bundled)) {
+                return bundled.toAbsolutePath();
+            }
         }
         // Let the OS loader try the bare name (LD_LIBRARY_PATH / system paths).
         return Path.of(lib);
@@ -106,6 +114,35 @@ final class Native {
             return "libselenium_core.dylib";
         }
         return "libselenium_core.so";
+    }
+
+    /**
+     * The {@code <os>-<arch>} token for the running platform, matching the names
+     * {@code release/build.sh} stamps into the jar's {@code /native/<os>-<arch>/}
+     * resource dirs — e.g. {@code linux-amd64}, {@code macos-arm64}.
+     */
+    private static String osArch() {
+        String osName = System.getProperty("os.name", "").toLowerCase();
+        String os;
+        if (osName.contains("win")) {
+            os = "windows";
+        } else if (osName.contains("mac") || osName.contains("darwin")) {
+            os = "macos";
+        } else if (osName.contains("freebsd")) {
+            os = "freebsd";
+        } else {
+            os = "linux";
+        }
+        String archName = System.getProperty("os.arch", "").toLowerCase();
+        String arch;
+        if (archName.equals("aarch64") || archName.equals("arm64")) {
+            arch = "arm64";
+        } else if (archName.equals("x86_64") || archName.equals("amd64")) {
+            arch = "amd64";
+        } else {
+            arch = archName;
+        }
+        return os + "-" + arch;
     }
 
     private static MethodHandle down(String symbol, FunctionDescriptor descriptor) {

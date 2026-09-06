@@ -1,23 +1,47 @@
-// Java consumer package (the jar). Builds selenium-core.jar as a downstream user
-// receives it: the compiled binding classes PLUS the engine .so bundled INSIDE
-// the jar as the resource /native/libselenium_core.so (Native.locate() extracts
-// it to a temp file at load). java.package_jar compiles src/main/java, bundles
-// the .so via native_resource, jars it, and publishes the "jar" edge for the
-// consumer-install proof (java/.example.ae). Needs a JDK >= 22 (FFM); skipped by
-// preflight when absent (prereq jdk:22).
+// Java consumer package (the jar) — MULTI-PLATFORM. Builds selenium-core.jar as a
+// downstream user receives it: the compiled binding classes PLUS the engine native
+// for EVERY supported OS+arch, each bundled INSIDE the jar at the resource
+// /native/<os>-<arch>/libselenium_core.<ext>. Native.locate() reads os.name+os.arch
+// and extracts the matching one to a temp file at load — so ONE jar serves linux,
+// macos and windows on amd64/arm64, zero config (the Bytedeco outcome, achieved in
+// aeb: one Linux agent cross-compiles the matrix via zig and cross-packages here).
+//
+// The 6 natives come from selenium_core/.crossbuild.ae (aether.shared_lib per
+// target). FreeBSD is a documented follow-up (asks/multi-platform-jar.md); the
+// loader already maps freebsd-* paths, so it's a drop-in later.
+//
+// aeb java.package_jar() supports repeated native_resource(<abs src>, <dest>), so
+// no aeb grammar change was needed. Needs a JDK >= 22 (FFM); skipped by preflight
+// when absent (prereq jdk:22).
 import bldr
+import aether
 import java
 import java (jar_name, native_resource, release)
 
 aeb(cap) {
     bldr.build() {
         prereq("jdk:22")
-        dep("selenium_core/.build.ae")
-        lib = dep_artifact("selenium_core/.build.ae", "shared_lib")
+        dep("selenium_core/.crossbuild.ae")
+        // The crossbuild node emits all 6 libs into its target-dir's lib/. Its
+        // shared_lib edge points at ONE of them; take its directory as the lib dir.
+        one = string.trim(dep_artifact("selenium_core/.crossbuild.ae", "shared_lib"))
+        libdir_raw, _direrr = bldr._sh_capture(string.concat("dirname '", string.concat(one, "'")))
+        libdir = string.trim(libdir_raw)
         java.package_jar() {
             jar_name("selenium-core.jar")
             release("22")
-            native_resource(lib, "native/libselenium_core.so")
+            native_resource(string.concat(libdir, "/libselenium_core-linux-amd64.so"),
+                            "native/linux-amd64/libselenium_core.so")
+            native_resource(string.concat(libdir, "/libselenium_core-linux-arm64.so"),
+                            "native/linux-arm64/libselenium_core.so")
+            native_resource(string.concat(libdir, "/libselenium_core-macos-amd64.dylib"),
+                            "native/macos-amd64/libselenium_core.dylib")
+            native_resource(string.concat(libdir, "/libselenium_core-macos-arm64.dylib"),
+                            "native/macos-arm64/libselenium_core.dylib")
+            native_resource(string.concat(libdir, "/libselenium_core-windows-amd64.dll"),
+                            "native/windows-amd64/selenium_core.dll")
+            native_resource(string.concat(libdir, "/libselenium_core-windows-arm64.dll"),
+                            "native/windows-arm64/selenium_core.dll")
         }
     }
 }
