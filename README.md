@@ -11,17 +11,24 @@ lives once, every language re-glues to it over a C ABI.
 
 The engine and bindings build with `aeb`, which needs the Aether toolchain
 (`ae`) — and `aeb`'s installer needs an `ae` to target, so they install in that
-order. The shared [`aebboot.sh`](https://github.com/aether-lang-dev/aeb/blob/main/aebboot.sh)
-helper does both from a bare clone (binary-first, source fallback); it fetches
-the pinned Aether via Aether's own [`get.sh`](https://github.com/aether-lang-dev/aether/blob/main/get.sh).
-Pins live in [`ci/versions.env`](ci/versions.env) — keep the one-liner's numbers
-in step with it.
+order. aeb's [`get.sh`](https://github.com/aether-lang-dev/aeb/blob/main/get.sh)
+ensures both from a bare clone: binary-first per platform (source fallback), and
+it fetches the pinned Aether via Aether's own `get.sh`. Aether compiles to C, so
+the only prerequisites for a source fallback are a C compiler and GNU make. Pins
+live in [`ci/versions.env`](ci/versions.env) — keep the one-liner's numbers in
+step with it.
 
-```sh
-# Source the shared bootstrap, then ensure ae (>= AE_PIN) and aeb, pinned:
-. <(curl -fsSL https://raw.githubusercontent.com/aether-lang-dev/aeb/main/aebboot.sh)
-AE_PIN=0.645.0 AEB_FETCH=v0.297 aeb_bootstrap
+Source `get.sh` (it's a library when sourced with `.`), then run `aeb_bootstrap`
+with your pins — this installs a pinned `ae` (>= `AE_PIN`) THEN a pinned `aeb`,
+into `~/.local` (no sudo; `PREFIX=` to override):
+
+```bash
+. <(curl -fsSL https://raw.githubusercontent.com/aether-lang-dev/aeb/main/get.sh)
+AE_PIN=0.645.0 AEB_REF=v0.297 aeb_bootstrap
 ```
+
+(`<(…)` is bash/zsh. On a POSIX `sh`/dash: `t=$(mktemp); curl -fsSL …/get.sh -o "$t"; . "$t"`
+then the `aeb_bootstrap` line.)
 
 Then build the engine (the one thing every binding needs) and, for a given
 language, its binding + tests:
@@ -29,15 +36,6 @@ language, its binding + tests:
 ```sh
 aeb selenium_core/.build.ae        # the pure-Aether engine -> libselenium_core.so
 aeb selenium_core/.build.ae python/.tests.ae   # + a binding (needs that language's toolchain)
-```
-
-Prefer to install the toolchains by hand? Two curls, same no-sudo `~/.local`
-prefix (`PREFIX=` to override) — Aether compiles to C, so the only prerequisites
-are a C compiler and GNU make:
-
-```sh
-curl -fsSL https://raw.githubusercontent.com/aether-lang-dev/aether/main/get.sh    | sh -s -- v0.645.0
-curl -fsSL https://raw.githubusercontent.com/aether-lang-dev/aeb/main/install.sh   | sh   # AEB_REF=v0.297 to pin
 ```
 
 ## The one rule
