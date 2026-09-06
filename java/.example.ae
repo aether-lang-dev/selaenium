@@ -1,4 +1,6 @@
-// Java consumer-install proof: prove the packaged jar compiles + runs a consumer
+// Java consumer-install proof: prove the packaged FAT jar
+// (selenium-client-standalone.jar — the "jar" artifact edge from .package.ae, its
+// last package_jar) compiles + runs a consumer
 // from a CLEAN environment for a third party. java.consumer_example copies the
 // dep's jar into a bare dir, compiles ConsumerExample against ONLY the jar (no
 // src/ exposure), asserts the engine native shipped as the arch-qualified
