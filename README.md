@@ -18,17 +18,21 @@ the only prerequisites for a source fallback are a C compiler and GNU make. Pins
 live in [`ci/versions.env`](ci/versions.env) — keep the one-liner's numbers in
 step with it.
 
-Source `get.sh` (it's a library when sourced with `.`), then run `aeb_bootstrap`
-with your pins — this installs a pinned `ae` (>= `AE_PIN`) THEN a pinned `aeb`,
-into `~/.local` (no sudo; `PREFIX=` to override):
+One line installs a pinned `ae` (>= `AE_PIN`) THEN a pinned `aeb`, into
+`~/.local` (no sudo; `PREFIX=` to override):
 
-```bash
-. <(curl -fsSL https://raw.githubusercontent.com/aether-lang-dev/aeb/main/get.sh)
-AE_PIN=0.645.0 AEB_REF=v0.297 aeb_bootstrap
+```sh
+curl -fsSL https://raw.githubusercontent.com/aether-lang-dev/aeb/main/get.sh \
+  | AE_PIN=0.645.0 AEB_REF=v0.297 sh
 ```
 
-(`<(…)` is bash/zsh. On a POSIX `sh`/dash: `t=$(mktemp); curl -fsSL …/get.sh -o "$t"; . "$t"`
-then the `aeb_bootstrap` line.)
+`get.sh` is also a sourceable library — a CI step can source it (set
+`AEBGET_SOURCE_ONLY=1` so sourcing only *defines* the functions) then drive it:
+
+```bash
+AEBGET_SOURCE_ONLY=1 . <(curl -fsSL https://raw.githubusercontent.com/aether-lang-dev/aeb/main/get.sh)
+AE_PIN=0.645.0 AEB_REF=v0.297 aeb_bootstrap
+```
 
 Then build the engine (the one thing every binding needs) and, for a given
 language, its binding + tests:
