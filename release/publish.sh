@@ -73,7 +73,22 @@ assets=( "${bins[@]}" "${jars[@]}" "${sums[@]}" "${manifest[@]}" )
 nbin=0; for f in "${bins[@]}"; do case "$f" in *.dll.lib) ;; *) nbin=$((nbin+1)) ;; esac; done
 
 njar=${#jars[@]}
-notes="Cross-built \`libselenium_core\` engine, ${nbin} platform artifact(s), plus ${njar} Java jar(s) (lean \`selenium-client.jar\`, per-platform, and the all-in-one \`selenium-client-standalone.jar\`) — each with a \`.sha256\` (and a combined \`SHA256SUMS.txt\`).
+# The os-arch combinations the standalone jar bundles — derived from the actual
+# engine libs in dist (their names carry -<os>-<arch>.<ext>), so this stays true
+# as the matrix grows/shrinks rather than hardcoding a count. Deduped, comma-listed.
+plats="$(
+  for f in "${bins[@]}"; do
+    case "$f" in *.dll.lib) continue ;; esac
+    b="$(basename "$f")"
+    # strip the "libselenium_core-<tag>-" prefix and the ".<ext>" suffix -> os-arch
+    printf '%s\n' "${b#libselenium_core-*-}" | sed -E 's/\.(so|dylib|dll)$//'
+  done | sort -u | awk 'NR>1{printf ", "} {printf "%s", $0} END{if (NR) print ""}'
+)"
+notes="Cross-built \`libselenium_core\` engine, ${nbin} platform artifact(s), plus ${njar} Java jar(s) — each with a \`.sha256\` (and a combined \`SHA256SUMS.txt\`):
+
+- \`selenium-client.jar\` — lean, classes only; bring your own native (\`SELENIUM_CORE_LIB\` / OS loader path).
+- \`selenium-client-<os>-<arch>.jar\` — one bundled native for a single platform.
+- \`selenium-client-standalone.jar\` — all-in-one, bundles the native for every platform (${plats}); loads zero-config on any of them.
 
 Built from a single Linux host via \`ae build --target\` — see \`release/README.md\` for the build-here / attest-on-hardware model and the per-artifact coverage caveats (local \`http://\` works everywhere; BiDi \`ws://\`/\`wss://\` is covered; remote HTTPS-Grid needs the Tier-2 TLS helper)."
 
