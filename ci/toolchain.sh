@@ -33,12 +33,12 @@ for tool in curl tar make cc; do
 done
 
 # uname -> the {os}-{arch} slug the release assets are named for
-# (aeb-{os}-{arch}.zip: os in linux/macos/freebsd/windows, arch in amd64/arm64,
+# (aeb-{os}-{arch}.zip: os in linux/macos/freebsd/windows, arch in x86_64/arm64,
 # with -musl variants on linux). Empty for an unrecognised platform.
 platform_slug() {
   arch=$(uname -m)
   case "$arch" in
-    x86_64|amd64) arch=amd64 ;;
+    x86_64|amd64) arch=x86_64 ;;
     aarch64|arm64) arch=arm64 ;;
     *) return 0 ;;
   esac

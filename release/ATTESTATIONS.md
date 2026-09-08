@@ -76,8 +76,8 @@ notes=Required on-target: SSL_CERT_FILE -> the MSYS ca-bundle.crt (the pure-TLS 
 
 ```
 sha256=55ceb2a75bbcfe3e18a08119a0ee2cc1db23e82c647349d9efc56802447a1c2f
-artifact=libselenium_core macos-amd64 dylib (ae 0.622.0, drivermgr xplat + tls13_client import)
-target=macos-amd64  host=macvm (macOS, x86_64)  date=2026-09-02
+artifact=libselenium_core macos-x86_64 dylib (ae 0.622.0, drivermgr xplat + tls13_client import)
+target=macos-x86_64  host=macvm (macOS, x86_64)  date=2026-09-02
 built-on=ChromeOS/Linux dev box via 'ae build --target=x86_64-macos' (zig cc) — NO native build on the Mac
 coverage=ffi+live-self-provision
 result=PASS
@@ -87,8 +87,8 @@ notes=THE aether#1849 https-on-cross-build gap is RESOLVED in ae 0.622.0. Fix re
 
 ```
 sha256=8beb6ce5082b72b275faf0518a3275945bf11427aa81d7b24f49ee7d8b1b42df
-artifact=libselenium_core-v0.1.0-116-g76c5a5c-macos-amd64.dylib
-target=macos-amd64  host=Intel iMac (macOS 15.7, x86_64)  date=2026-09-01
+artifact=libselenium_core-v0.1.0-116-g76c5a5c-macos-x86_64.dylib
+target=macos-x86_64  host=Intel iMac (macOS 15.7, x86_64)  date=2026-09-01
 built-on=ChromeOS/Linux dev box via 'ae build --target=x86_64-macos' (zig cc) — NO native build on the Mac
 coverage=ffi+live-local-chrome
 result=PASS

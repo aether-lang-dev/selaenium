@@ -7,7 +7,7 @@
 // /native/<os>-<arch>/ jar resource, then runs the consumer on the jar classpath
 // with --enable-native-access and SELENIUM_CORE_LIB unset (only the bundled
 // resource can satisfy the load — Native.locate() picks it by os+arch).
-// This build runs on linux-amd64, so it asserts that arch's entry.
+// This build runs on linux-x86_64, so it asserts that arch's entry.
 // Modes: ffi/discovery/live (live self-skips). Needs a JDK >= 22 (FFM).
 import bldr
 import java
@@ -20,7 +20,7 @@ aeb(cap) {
         java.consumer_example() {
             consumer_source("example/ConsumerExample.java")
             consumer_main("ConsumerExample")
-            asset_in_jar("native/linux-amd64/libselenium_core.so")
+            asset_in_jar("native/linux-x86_64/libselenium_core.so")
             consumer_jvm_flag("--enable-native-access=ALL-UNNAMED")
             consumer_arg("ffi")
             consumer_arg("discovery")

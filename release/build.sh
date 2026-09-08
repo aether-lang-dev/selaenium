@@ -9,7 +9,7 @@
 # and a combined release/dist/SHA256SUMS.txt.
 #
 # Usage:
-#   release/build.sh                    # core matrix (linux+macos amd64/arm64)
+#   release/build.sh                    # core matrix (linux+macos x86_64/arm64)
 #   RELEASE_EXTRA_TARGETS=1 release/build.sh   # + windows (slow) + freebsd (needs sysroot)
 #   RELEASE_TAG=v1.2.3 release/build.sh  # stamp the tag into artifact names
 #                                          (default: `git describe`, else "dev")
@@ -47,7 +47,7 @@ rm -rf "$DIST"; mkdir -p "$DIST"
 
 # triple -> {os, arch, extension} for the artifact name.
 os_of()  { case "$1" in *-linux|*-linux-musl) echo linux;; *-macos) echo macos;; *-windows) echo windows;; *-freebsd) echo freebsd;; *) echo unknown;; esac; }
-arch_of(){ case "$1" in aarch64-*) echo arm64;; x86_64-*) echo amd64;; *) echo "$1";; esac; }
+arch_of(){ case "$1" in aarch64-*) echo arm64;; x86_64-*) echo x86_64;; *) echo "$1";; esac; }
 ext_of() { case "$1" in *-macos) echo dylib;; *-windows) echo dll;; *) echo so;; esac; }
 
 say "engine: libselenium_core  tag: $TAG"
@@ -108,7 +108,7 @@ if [ "${RELEASE_NO_JARS:-0}" != "1" ] && have aeb; then
   # aeb resolves node labels repo-root-relative, so run it from ROOT with relative paths.
   if ( cd "$ROOT" && aeb selenium_core/.crossbuild.ae java/.package.ae ) >"$DIST/.jars.log" 2>&1; then
     jdir="$ROOT/target/package/java"
-    for j in "$jdir"/selenium-client.jar "$jdir"/selenium-client-standalone.jar "$jdir"/selenium-client-"$(uname -s | tr 'A-Z' 'a-z' | sed 's/darwin/macos/;s/.*linux.*/linux/')-$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')".jar; do
+    for j in "$jdir"/selenium-client.jar "$jdir"/selenium-client-standalone.jar "$jdir"/selenium-client-"$(uname -s | tr 'A-Z' 'a-z' | sed 's/darwin/macos/;s/.*linux.*/linux/')-$(uname -m | sed 's/aarch64/arm64/')".jar; do
       [ -f "$j" ] || continue
       cp "$j" "$DIST/"
       ( cd "$DIST" && sha256sum "$(basename "$j")" > "$(basename "$j").sha256" )

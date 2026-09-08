@@ -9,7 +9,7 @@
 //
 //   selenium-client-<os>-<arch>.jar SINGLE-PLATFORM: classes + JUST the build
 //                                   host's native (this box's os-arch, e.g.
-//                                   selenium-client-linux-amd64.jar). The small
+//                                   selenium-client-linux-x86_64.jar). The small
 //                                   "I only deploy where I build" classifier jar
 //                                   (the Netty/os-maven-plugin convention).
 //
@@ -18,7 +18,7 @@
 //                                   /native/<os>-<arch>/libselenium_core.<ext>.
 //                                   Native.locate() reads os.name+os.arch and
 //                                   extracts the matching one at load — ONE jar
-//                                   serves linux/macos/windows x amd64/arm64, zero
+//                                   serves linux/macos/windows x x86_64/arm64, zero
 //                                   config (the Bytedeco outcome, in aeb: one Linux
 //                                   agent cross-compiles the matrix via zig and
 //                                   cross-packages here).
@@ -49,7 +49,7 @@ aeb(cap) {
         one = string.trim(dep_artifact("selenium_core/.crossbuild.ae", "shared_lib"))
         libdir = bldr._dirname(one)
 
-        // Host os-arch token (matches crossbuild/release naming: linux-amd64,
+        // Host os-arch token (matches crossbuild/release naming: linux-x86_64,
         // macos-arm64, …) for the single-platform jar's name + which native.
         host = bldr._host_os_arch()
         // Native extension by host OS (.so linux / .dylib macos / .dll windows).
@@ -77,16 +77,16 @@ aeb(cap) {
         java.package_jar() {
             jar_name("selenium-client-standalone.jar")
             release("22")
-            native_resource(string.concat(libdir, "/libselenium_core-linux-amd64.so"),
-                            "native/linux-amd64/libselenium_core.so")
+            native_resource(string.concat(libdir, "/libselenium_core-linux-x86_64.so"),
+                            "native/linux-x86_64/libselenium_core.so")
             native_resource(string.concat(libdir, "/libselenium_core-linux-arm64.so"),
                             "native/linux-arm64/libselenium_core.so")
-            native_resource(string.concat(libdir, "/libselenium_core-macos-amd64.dylib"),
-                            "native/macos-amd64/libselenium_core.dylib")
+            native_resource(string.concat(libdir, "/libselenium_core-macos-x86_64.dylib"),
+                            "native/macos-x86_64/libselenium_core.dylib")
             native_resource(string.concat(libdir, "/libselenium_core-macos-arm64.dylib"),
                             "native/macos-arm64/libselenium_core.dylib")
-            native_resource(string.concat(libdir, "/libselenium_core-windows-amd64.dll"),
-                            "native/windows-amd64/selenium_core.dll")
+            native_resource(string.concat(libdir, "/libselenium_core-windows-x86_64.dll"),
+                            "native/windows-x86_64/selenium_core.dll")
             native_resource(string.concat(libdir, "/libselenium_core-windows-arm64.dll"),
                             "native/windows-arm64/selenium_core.dll")
         }

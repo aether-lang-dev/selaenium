@@ -5,8 +5,8 @@
 // libselenium_core-<os>-<arch>.<ext> so java/.package.ae can bundle all of them
 // into ONE multi-platform jar.
 //
-// Matrix (6 that cross-build clean from Linux): linux/macos/windows x amd64/arm64.
-// FreeBSD is a documented follow-up (freebsd-amd64 needs a build-flag fix for the
+// Matrix (6 that cross-build clean from Linux): linux/macos/windows x x86_64/arm64.
+// FreeBSD is a documented follow-up (freebsd-x86_64 needs a build-flag fix for the
 // drivermgr `resolve` module path; freebsd-arm64 needs a sysroot) — see
 // asks/multi-platform-jar.md.
 //
@@ -33,7 +33,7 @@ aeb(cap) {
             size()
             extra_source(strdup_c)
             target("x86_64-linux")
-            output("libselenium_core-linux-amd64.so")
+            output("libselenium_core-linux-x86_64.so")
         }
         aether.shared_lib() {
             source("embed.ae")
@@ -51,7 +51,7 @@ aeb(cap) {
             size()
             extra_source(strdup_c)
             target("x86_64-macos")
-            output("libselenium_core-macos-amd64.dylib")
+            output("libselenium_core-macos-x86_64.dylib")
         }
         aether.shared_lib() {
             source("embed.ae")
@@ -69,7 +69,7 @@ aeb(cap) {
             size()
             extra_source(strdup_c)
             target("x86_64-windows")
-            output("libselenium_core-windows-amd64.dll")
+            output("libselenium_core-windows-x86_64.dll")
         }
         aether.shared_lib() {
             source("embed.ae")

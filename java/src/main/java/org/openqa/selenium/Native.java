@@ -119,7 +119,10 @@ final class Native {
     /**
      * The {@code <os>-<arch>} token for the running platform, matching the names
      * {@code release/build.sh} stamps into the jar's {@code /native/<os>-<arch>/}
-     * resource dirs — e.g. {@code linux-amd64}, {@code macos-arm64}.
+     * resource dirs — e.g. {@code linux-x86_64}, {@code macos-arm64}. The arch is
+     * emitted as {@code x86_64} (the Aether ecosystem's word); the JVM's
+     * {@code os.arch} reports {@code amd64} on many platforms, so that is accepted
+     * as an alias here.
      */
     private static String osArch() {
         String osName = System.getProperty("os.name", "").toLowerCase();
@@ -138,7 +141,7 @@ final class Native {
         if (archName.equals("aarch64") || archName.equals("arm64")) {
             arch = "arm64";
         } else if (archName.equals("x86_64") || archName.equals("amd64")) {
-            arch = "amd64";
+            arch = "x86_64";
         } else {
             arch = archName;
         }

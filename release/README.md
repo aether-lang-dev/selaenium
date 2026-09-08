@@ -8,7 +8,7 @@ done out of band and recorded as an attestation keyed by SHA256.
 ## Build
 
 ```sh
-release/build.sh                     # core matrix: linux + macos, amd64 + arm64
+release/build.sh                     # core matrix: linux + macos, x86_64 + arm64
 RELEASE_TAG=v1.2.3 release/build.sh   # stamp a tag into the artifact names
 RELEASE_EXTRA_TARGETS=1 release/build.sh   # + windows (slow) + freebsd (needs AETHER_SYSROOT)
 TARGETS="aarch64-macos" release/build.sh   # just one
