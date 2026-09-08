@@ -23,7 +23,7 @@ One line installs a pinned `ae` (>= `AE_PIN`) THEN a pinned `aeb`, into
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/aether-lang-dev/aeb/main/get.sh \
-  | AE_PIN=0.650.0 AEB_REF=v0.299 sh
+  | AE_PIN=0.650.0 AEB_REF=v0.300 sh
 ```
 
 `get.sh` is also a sourceable library — a CI step can source it (set
@@ -31,7 +31,7 @@ curl -fsSL https://raw.githubusercontent.com/aether-lang-dev/aeb/main/get.sh \
 
 ```bash
 AEBGET_SOURCE_ONLY=1 . <(curl -fsSL https://raw.githubusercontent.com/aether-lang-dev/aeb/main/get.sh)
-AE_PIN=0.650.0 AEB_REF=v0.299 aeb_bootstrap
+AE_PIN=0.650.0 AEB_REF=v0.300 aeb_bootstrap
 ```
 
 Then build the engine (the one thing every binding needs) and, for a given
