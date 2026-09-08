@@ -45,17 +45,17 @@ aeb(cap) {
         dep("selenium_core/.crossbuild.ae")
 
         // The crossbuild node emits all 6 libs into its target-dir's lib/. Its
-        // shared_lib edge points at ONE of them; take its directory as the lib dir.
+        // shared_lib edge points at ONE of them; its directory is the lib dir.
         one = string.trim(dep_artifact("selenium_core/.crossbuild.ae", "shared_lib"))
-        libdir_raw, _direrr = bldr._sh_capture(string.concat("dirname '", string.concat(one, "'")))
-        libdir = string.trim(libdir_raw)
+        libdir = bldr._dirname(one)
 
         // Host os-arch token (matches crossbuild/release naming: linux-amd64,
         // macos-arm64, …) for the single-platform jar's name + which native.
-        host_raw, _herr = bldr._sh_capture("echo \"$(uname -s | tr 'A-Z' 'a-z' | sed 's/darwin/macos/;s/.*linux.*/linux/;s/.*freebsd.*/freebsd/')-$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')\"")
-        host = string.trim(host_raw)
-        host_ext_raw, _eerr = bldr._sh_capture(string.concat(string.concat("case ", host), " in macos-*) echo dylib;; windows-*) echo dll;; *) echo so;; esac"))
-        host_ext = string.trim(host_ext_raw)
+        host = bldr._host_os_arch()
+        // Native extension by host OS (.so linux / .dylib macos / .dll windows).
+        host_ext = "so"
+        if bldr._host_os() == "macos" { host_ext = "dylib" }
+        if bldr._host_os() == "windows" { host_ext = "dll" }
         host_src = string.concat(string.concat(libdir, "/libselenium_core-"), string.concat(host, string.concat(".", host_ext)))
         host_dest = string.concat(string.concat("native/", host), string.concat("/libselenium_core.", host_ext))
 
