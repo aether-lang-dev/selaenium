@@ -277,6 +277,38 @@ class FacadeTest < Minitest::Test
     assert_match(/submitForm/, call[1]['script'])
   end
 
+  # ---- ShadowRoot -------------------------------------------------------------
+
+  SHADOW_KEY = Selenium::WebDriver::W3C_SHADOW_KEY
+
+  def test_element_shadow_root_reads_shadow_key
+    d = RecordingDriver.new('getShadowRoot' => { SHADOW_KEY => 'S1' })
+    root = M::WebElement.new(d, 'E1').shadow_root
+    assert_kind_of M::ShadowRoot, root
+    assert_equal 'S1', root.id
+    assert_equal 'E1', d.command('getShadowRoot')[1]['id']
+  end
+
+  def test_element_shadow_root_missing_key_raises
+    d = RecordingDriver.new('getShadowRoot' => {})
+    assert_raises(M::NoSuchShadowRootError) { M::WebElement.new(d, 'E1').shadow_root }
+  end
+
+  def test_shadow_root_find_element_issues_shadow_command_with_id
+    d = RecordingDriver.new('findElementFromShadowRoot' => { W3C_KEY => 'C1' })
+    el = M::ShadowRoot.new(d, 'S1').find_element(css: '#sinner')
+    assert_kind_of M::WebElement, el
+    assert_equal 'C1', el.id
+    assert_equal 'S1', d.command('findElementFromShadowRoot')[1]['id']
+  end
+
+  def test_shadow_root_find_elements_plural
+    d = RecordingDriver.new('findElementsFromShadowRoot' => [{ W3C_KEY => 'C1' }, { W3C_KEY => 'C2' }])
+    els = M::ShadowRoot.new(d, 'S1').find_elements(css: 'p')
+    assert_equal %w[C1 C2], els.map(&:id)
+    assert_equal 'S1', d.command('findElementsFromShadowRoot')[1]['id']
+  end
+
   # ---- Driver additions (via a light Driver-like double) ---------------------
 
   # A Driver subclass that stubs the FFI seam so the mainstream Driver additions
@@ -331,6 +363,46 @@ class FacadeTest < Minitest::Test
     end
     d2 = FakeDriver.new('screenshot' => b64)
     assert_raises(M::UnsupportedOperationError) { d2.screenshot_as(:gif) }
+  end
+
+  # ---- Firefox / Edge / Safari session factories ----------------------------
+  # No-browser surface check: the new factories assemble the right browserName
+  # (+ vendor-options key/args for the headless variants). Intercept Driver.new
+  # to capture the caps a factory would hand to the session constructor.
+  def capture_factory_caps(&block)
+    captured = {}
+    stub = lambda do |_executor, caps, **_kw|
+      captured[:caps] = caps
+      :fake
+    end
+    M::Driver.stub(:new, stub) { block.call }
+    captured[:caps]
+  end
+
+  def test_firefox_edge_safari_factories_set_browser_name
+    assert_equal 'firefox', capture_factory_caps { M.firefox('http://127.0.0.1:4444') }['browserName']
+    assert_equal 'MicrosoftEdge', capture_factory_caps { M.edge('http://127.0.0.1:9515') }['browserName']
+    assert_equal 'safari', capture_factory_caps { M.safari('http://127.0.0.1:4444') }['browserName']
+  end
+
+  def test_headless_firefox_and_edge_vendor_args
+    ff = capture_factory_caps { M.headless_firefox('http://127.0.0.1:4444') }
+    assert_equal 'firefox', ff['browserName']
+    assert_equal ['-headless'], ff['moz:firefoxOptions']['args']
+
+    ed = capture_factory_caps { M.headless_edge('http://127.0.0.1:9515') }
+    assert_equal 'MicrosoftEdge', ed['browserName']
+    assert_equal ['--headless=new', '--no-sandbox', '--disable-gpu', '--disable-dev-shm-usage'],
+                 ed['ms:edgeOptions']['args']
+  end
+
+  def test_for_dispatches_firefox_edge_safari
+    assert_equal 'firefox',
+                 capture_factory_caps { M.for(:firefox, command_executor: 'http://127.0.0.1:4444') }['browserName']
+    assert_equal 'MicrosoftEdge',
+                 capture_factory_caps { M.for(:edge, command_executor: 'http://127.0.0.1:9515') }['browserName']
+    assert_equal 'safari',
+                 capture_factory_caps { M.for(:safari, command_executor: 'http://127.0.0.1:4444') }['browserName']
   end
 
   def test_driver_facade_accessors_present

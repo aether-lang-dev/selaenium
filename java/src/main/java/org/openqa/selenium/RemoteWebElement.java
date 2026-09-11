@@ -183,19 +183,22 @@ public final class RemoteWebElement implements WebElement {
         return target.convertFromBase64Png(base64);
     }
 
-    /** The element's shadow root as a {@link SearchContext} (upstream). */
+    /**
+     * This element's shadow root as a {@link SearchContext} (upstream), or a
+     * {@link NoSuchShadowRootException} if it has none. The returned
+     * {@link ShadowRoot} scopes finds inside the shadow tree.
+     */
     @Override
     @SuppressWarnings("unchecked")
     public SearchContext getShadowRoot() {
-        Object result = exec("getElementShadowRoot", null);
+        Object result = exec("getShadowRoot", null);
         if (result instanceof Map<?, ?> m) {
-            Object ref = ((Map<String, Object>) m).get("shadow-6066-11e4-a52e-4f735466cecf");
-            if (ref == null) {
-                ref = ((Map<String, Object>) m).get(RemoteWebDriver.W3C_ELEMENT_KEY);
+            Object ref = ((Map<String, Object>) m).get(ShadowRoot.W3C_SHADOW_KEY);
+            if (ref != null) {
+                return new ShadowRoot(driver, String.valueOf(ref));
             }
-            return new RemoteWebElement(driver, String.valueOf(ref));
         }
-        throw new WebDriverException("element has no shadow root", 0);
+        throw new NoSuchShadowRootException("no such shadow root");
     }
 
     // ---- element-scoped finders (search within this element's subtree) ----

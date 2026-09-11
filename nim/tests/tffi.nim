@@ -13,6 +13,26 @@ suite "ffi":
     check errorCode("no such element") == 17
     check errorCode("") == 0
 
+  test "shadow-DOM routes + error codes are wired":
+    check route("getShadowRoot") == "GET /session/:sessionId/element/:id/shadow"
+    check route("findElementFromShadowRoot") ==
+      "POST /session/:sessionId/shadow/:id/element"
+    check route("findElementsFromShadowRoot") ==
+      "POST /session/:sessionId/shadow/:id/elements"
+    check errorCode("no such shadow root") == 19
+    check errorCode("detached shadow root") == 2
+
+  test "ShadowRoot type + finders exist (compile-surface)":
+    # ShadowRoot is a search context with findElement/findElements; WebElement
+    # exposes shadowRoot. No browser is touched — this only proves the surface
+    # compiles and the finder signatures are declared.
+    proc surface(s: ShadowRoot, e: WebElement, by: By) =
+      if false:
+        discard s.findElement(by)
+        discard s.findElements(by)
+        discard e.shadowRoot()
+    check compiles(surface)
+
   test "By factory carries strategy + value":
     let css = By.cssSelector("div.foo")
     check css.strategy == "css selector"
@@ -35,6 +55,18 @@ suite "ffi":
     except WebDriverError as e:
       threw = e.code == -1
     check threw
+
+  test "firefox/edge/safari factories exist (compile-surface)":
+    # No browser is touched — this only proves the per-browser factories and
+    # the headless convenience variants are declared with the chrome shape.
+    proc surface() =
+      if false:
+        discard firefox("http://127.0.0.1:1")
+        discard headlessFirefox("http://127.0.0.1:1")
+        discard edge("http://127.0.0.1:1")
+        discard headlessEdge("http://127.0.0.1:1")
+        discard safari("http://127.0.0.1:1")
+    check compiles(surface)
 
 # ---- convenience tier (pure, no browser) -----------------------------------
 

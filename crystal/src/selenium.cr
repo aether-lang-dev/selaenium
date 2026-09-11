@@ -75,6 +75,8 @@ end
 
 module Selenium
   W3C_ELEMENT_KEY = "element-6066-11e4-a52e-4f735466cecf"
+  # The W3C shadow-root reference key, distinct from the element key.
+  W3C_SHADOW_KEY = "shadow-6066-11e4-a52e-4f735466cecf"
 
   # A locator carrying a (strategy, value) pair — what `By.id("x")` returns and
   # what `WebDriver#find_element` takes (Selenium 4.x one-arg find).
@@ -354,6 +356,63 @@ module Selenium
     def self.headless_chrome(command_executor : String) : WebDriver
       opts = JSON.parse(%({"goog:chromeOptions":{"args":["--headless=new","--no-sandbox","--disable-gpu","--disable-dev-shm-usage"]}}))
       chrome(command_executor, opts)
+    end
+
+    # Start a Firefox session against a running geckodriver (or Grid). `options`
+    # is a JSON object of extra capabilities merged under browserName: firefox.
+    def self.firefox(command_executor : String, options : JSON::Any? = nil,
+                     ca_path : String? = nil, insecure : Bool = false) : WebDriver
+      caps = Hash(String, JSON::Any).new
+      if options && (obj = options.as_h?)
+        obj.each { |k, v| caps[k] = v }
+      end
+      caps["browserName"] = JSON::Any.new("firefox")
+      d = WebDriver.new(command_executor)
+      d.configure_tls(ca_path, insecure)
+      d.new_session(caps)
+      d
+    end
+
+    # Convenience: headless-Firefox launch args baked in (`moz:firefoxOptions`).
+    def self.headless_firefox(command_executor : String) : WebDriver
+      opts = JSON.parse(%({"moz:firefoxOptions":{"args":["-headless"]}}))
+      firefox(command_executor, opts)
+    end
+
+    # Start a Microsoft Edge session against a running msedgedriver (or Grid).
+    # (W3C browserName is "MicrosoftEdge".) `options` merges extra capabilities.
+    def self.edge(command_executor : String, options : JSON::Any? = nil,
+                  ca_path : String? = nil, insecure : Bool = false) : WebDriver
+      caps = Hash(String, JSON::Any).new
+      if options && (obj = options.as_h?)
+        obj.each { |k, v| caps[k] = v }
+      end
+      caps["browserName"] = JSON::Any.new("MicrosoftEdge")
+      d = WebDriver.new(command_executor)
+      d.configure_tls(ca_path, insecure)
+      d.new_session(caps)
+      d
+    end
+
+    # Convenience: headless-Edge launch args baked in (Chromium `ms:edgeOptions`).
+    def self.headless_edge(command_executor : String) : WebDriver
+      opts = JSON.parse(%({"ms:edgeOptions":{"args":["--headless=new","--no-sandbox","--disable-gpu","--disable-dev-shm-usage"]}}))
+      edge(command_executor, opts)
+    end
+
+    # Start a Safari session against a running safaridriver (macOS only). Safari
+    # has no headless mode, so there is no `headless_safari`.
+    def self.safari(command_executor : String, options : JSON::Any? = nil,
+                    ca_path : String? = nil, insecure : Bool = false) : WebDriver
+      caps = Hash(String, JSON::Any).new
+      if options && (obj = options.as_h?)
+        obj.each { |k, v| caps[k] = v }
+      end
+      caps["browserName"] = JSON::Any.new("safari")
+      d = WebDriver.new(command_executor)
+      d.configure_tls(ca_path, insecure)
+      d.new_session(caps)
+      d
     end
 
     # A Chrome session that spawns its own chromedriver via the engine — no
@@ -922,8 +981,59 @@ module Selenium
       end
     end
 
+    # This element's shadow root as a search context (getShadowRoot). Reads the
+    # shadow-6066 key (distinct from the element key). Raises WebDriverError(19)
+    # (no such shadow root) when the element hosts no open shadow root.
+    def shadow_root : ShadowRoot
+      value = exec("getShadowRoot")
+      id = value[Selenium::W3C_SHADOW_KEY]?.try(&.as_s?)
+      raise WebDriverError.new("no such shadow root", 19) if id.nil?
+      ShadowRoot.new(@driver, id)
+    end
+
     # The findChild* commands take the W3C locator JSON plus this element's id;
     # merge the two objects and yield the combined JSON string.
+    private def inject_id(locator_json : String)
+      obj = JSON.parse(locator_json).as_h.dup
+      obj["id"] = JSON::Any.new(@id)
+      yield obj.to_json
+    end
+  end
+
+  # ---- ShadowRoot ----
+
+  # A shadow root as a search context (mirrors Selenium's `ShadowRoot`). Only
+  # `find_element` / `find_elements` are supported, scoped inside the shadow
+  # tree — exactly like WebElement's element-scoped finds, but through the
+  # findElementFromShadowRoot / findElementsFromShadowRoot commands with the
+  # shadow id as the `:id` path param.
+  class ShadowRoot
+    getter id : String
+
+    def initialize(@driver : WebDriver, @id : String)
+    end
+
+    # Find one descendant of this shadow root matching `locator`
+    # (findElementFromShadowRoot).
+    def find_element(locator : Locator) : WebElement
+      params = Selenium.locator(locator.strategy, locator.value)
+      inject_id(params) do |json|
+        @driver.element_from(@driver.execute_json("findElementFromShadowRoot", json))
+      end
+    end
+
+    # Find all descendants of this shadow root matching `locator`
+    # (findElementsFromShadowRoot).
+    def find_elements(locator : Locator) : Array(WebElement)
+      params = Selenium.locator(locator.strategy, locator.value)
+      inject_id(params) do |json|
+        arr = @driver.execute_json("findElementsFromShadowRoot", json).as_a? || [] of JSON::Any
+        arr.map { |el| @driver.element_from(el) }
+      end
+    end
+
+    # Merge this shadow root's id into the W3C locator JSON object and yield the
+    # combined JSON string (the shadow-scoped finds take the shadow id + locator).
     private def inject_id(locator_json : String)
       obj = JSON.parse(locator_json).as_h.dup
       obj["id"] = JSON::Any.new(@id)

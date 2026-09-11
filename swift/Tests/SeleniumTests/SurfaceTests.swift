@@ -148,6 +148,28 @@ final class SurfaceTests: XCTestCase {
         XCTAssertNotNil(path as String?)
     }
 
+    func testBrowserFactoriesExistAndReachTransport() {
+        // firefox/headlessFirefox/edge/headlessEdge/safari mirror chrome: each
+        // sets the right browserName then runs newSession. Against a dead endpoint
+        // they must throw a transport WebDriverError — this pins the surface
+        // (the factory exists and is wired) with no driver present.
+        XCTAssertThrowsError(try WebDriver.firefox(commandExecutor: "http://127.0.0.1:1")) {
+            XCTAssertTrue($0 is WebDriverError)
+        }
+        XCTAssertThrowsError(try WebDriver.headlessFirefox(commandExecutor: "http://127.0.0.1:1")) {
+            XCTAssertTrue($0 is WebDriverError)
+        }
+        XCTAssertThrowsError(try WebDriver.edge(commandExecutor: "http://127.0.0.1:1")) {
+            XCTAssertTrue($0 is WebDriverError)
+        }
+        XCTAssertThrowsError(try WebDriver.headlessEdge(commandExecutor: "http://127.0.0.1:1")) {
+            XCTAssertTrue($0 is WebDriverError)
+        }
+        XCTAssertThrowsError(try WebDriver.safari(commandExecutor: "http://127.0.0.1:1")) {
+            XCTAssertTrue($0 is WebDriverError)
+        }
+    }
+
     func testDriverProcessEnsureSkipCleanlyWithoutDriver() {
         // ensure returns nil (no driver) or a live process; both are valid. This
         // proves ensure_driver / stop_driver link and the optional flows.
@@ -180,5 +202,33 @@ final class SurfaceTests: XCTestCase {
         XCTAssertThrowsError(try BiDi(wsUrl: "ws://127.0.0.1:1/session")) { err in
             XCTAssertTrue(err is WebDriverError)
         }
+    }
+
+    // ---- shadow DOM: surface + error-code facts (no browser) ----
+
+    func testShadowErrorCodesDeclared() {
+        // The two W3C shadow error codes are declared (19 / 2).
+        XCTAssertEqual(WebDriverError.noSuchShadowRoot, 19)
+        XCTAssertEqual(WebDriverError.detachedShadowRoot, 2)
+        XCTAssertEqual(errorCode("no such shadow root"), 19)
+        XCTAssertEqual(errorCode("detached shadow root"), 2)
+    }
+
+    func testShadowRootIsASearchContext() {
+        // ShadowRoot carries the shadow id and exposes findElement/findElements —
+        // the search-context surface. Build one without a session and pin its shape.
+        let d = WebDriver(commandExecutor: "http://127.0.0.1:1")
+        let sr = ShadowRoot(driver: d, id: "SHADOWID")
+        XCTAssertEqual(sr.id, "SHADOWID")
+        // The finders exist and are callable (they hit a dead endpoint, so they
+        // throw a transport error rather than returning) — this pins the surface.
+        XCTAssertThrowsError(try sr.findElement(By.css("#x")))
+        XCTAssertThrowsError(try sr.findElements(By.css("p")))
+    }
+
+    func testShadowRootKeyIsDistinctFromElementKey() {
+        // The shadow key must differ from the element key (do not conflate).
+        XCTAssertEqual(ShadowRoot.w3cShadowKey, "shadow-6066-11e4-a52e-4f735466cecf")
+        XCTAssertNotEqual(ShadowRoot.w3cShadowKey, WebElement.w3cElementKey)
     }
 }

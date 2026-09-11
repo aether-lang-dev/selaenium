@@ -14,6 +14,9 @@
 
 -export([
     chrome/1, chrome/2, chrome/3, chrome_tls/3, headless_chrome/1,
+    firefox/1, firefox/2, firefox/3, headless_firefox/1,
+    edge/1, edge/2, edge/3, headless_edge/1,
+    safari/1, safari/2, safari/3,
     resolve_driver/1, resolve_driver/2, launch_driver/1, launch_driver/2,
     ensure_driver/1, ensure_driver/2, ensure_driver/3,
     driver_url/1, driver_pid/1, stop_driver/1,
@@ -21,6 +24,9 @@
     get/2, current_url/1, title/1, page_source/1, back/1, forward/1, refresh/1,
     find_element/2, find_elements/2, find_element/3, find_elements/3,
     exists/2, active_element/1,
+    shadow_root/2,
+    find_element_from_shadow_root/3, find_element_from_shadow_root/4,
+    find_elements_from_shadow_root/3, find_elements_from_shadow_root/4,
     click/2, send_keys/3, clear/2, submit/2,
     element_text/2, tag_name/2, element_property/3, get_property/3, element_rect/2,
     css_value/3, value_of_css_property/3, element_screenshot/2,
@@ -61,9 +67,13 @@
 ]).
 
 -define(W3C_KEY, <<"element-6066-11e4-a52e-4f735466cecf">>).
-%% W3C error codes used for control-flow (no such element / no such alert open).
+%% The W3C shadow-root reference key, distinct from the element key.
+-define(SHADOW_KEY, <<"shadow-6066-11e4-a52e-4f735466cecf">>).
+%% W3C error codes used for control-flow (no such element / no such alert open /
+%% no such shadow root).
 -define(ERR_NO_SUCH_ELEMENT, 17).
 -define(ERR_NO_SUCH_ALERT, 15).
+-define(ERR_NO_SUCH_SHADOW_ROOT, 19).
 
 %% Per-session BiDi state lives in a named ETS table keyed by the session
 %% handle: {Handle, WsUrl, BidiHandle, NextId}. WsUrl is the negotiated
@@ -105,6 +115,48 @@ headless_chrome(CommandExecutor) ->
         Bin -> Opts0#{<<"binary">> => list_to_binary(Bin)}
     end,
     chrome(CommandExecutor, #{<<"goog:chromeOptions">> => Opts}).
+
+%% ---- Firefox ----
+firefox(CommandExecutor) -> firefox(CommandExecutor, #{}).
+firefox(CommandExecutor, Options) when is_map(Options) ->
+    firefox(CommandExecutor, Options, #{}).
+
+%% Start a Firefox session against a running geckodriver (or Grid). Same shape as
+%% chrome/3, only the browserName differs (the engine passes it through verbatim).
+firefox(CommandExecutor, Options, TlsOpts) when is_map(Options), is_map(TlsOpts) ->
+    Caps = maps:merge(#{<<"browserName">> => <<"firefox">>}, Options),
+    new(CommandExecutor, Caps, TlsOpts).
+
+%% Convenience: a headless Firefox session (moz:firefoxOptions args ["-headless"]).
+headless_firefox(CommandExecutor) ->
+    Opts = #{<<"args">> => [<<"-headless">>]},
+    firefox(CommandExecutor, #{<<"moz:firefoxOptions">> => Opts}).
+
+%% ---- Edge (Chromium-based; W3C browserName is "MicrosoftEdge") ----
+edge(CommandExecutor) -> edge(CommandExecutor, #{}).
+edge(CommandExecutor, Options) when is_map(Options) ->
+    edge(CommandExecutor, Options, #{}).
+
+%% Start a Microsoft Edge session against a running msedgedriver (or Grid).
+edge(CommandExecutor, Options, TlsOpts) when is_map(Options), is_map(TlsOpts) ->
+    Caps = maps:merge(#{<<"browserName">> => <<"MicrosoftEdge">>}, Options),
+    new(CommandExecutor, Caps, TlsOpts).
+
+%% Convenience: a headless Edge session (Chromium, so the same 4 args as Chrome,
+%% carried under the ms:edgeOptions vendor key).
+headless_edge(CommandExecutor) ->
+    Opts = #{<<"args">> => [<<"--headless=new">>, <<"--no-sandbox">>,
+                            <<"--disable-gpu">>, <<"--disable-dev-shm-usage">>]},
+    edge(CommandExecutor, #{<<"ms:edgeOptions">> => Opts}).
+
+%% ---- Safari (safaridriver, macOS only; no headless mode -> no headless_safari) ----
+safari(CommandExecutor) -> safari(CommandExecutor, #{}).
+safari(CommandExecutor, Options) when is_map(Options) ->
+    safari(CommandExecutor, Options, #{}).
+
+safari(CommandExecutor, Options, TlsOpts) when is_map(Options), is_map(TlsOpts) ->
+    Caps = maps:merge(#{<<"browserName">> => <<"safari">>}, Options),
+    new(CommandExecutor, Caps, TlsOpts).
 
 new(CommandExecutor, Caps) -> new(CommandExecutor, Caps, #{}).
 
@@ -291,6 +343,48 @@ submit(H, ElementId) ->
 active_element(H) ->
     case execute(H, <<"getActiveElement">>, #{}) of
         {ok, M} when is_map(M) -> {ok, maps:get(?W3C_KEY, M)};
+        Err -> Err
+    end.
+
+%% ---- shadow DOM ----
+%%
+%% An element's open shadow root is a distinct search context: getShadowRoot
+%% returns a shadow-root reference (the shadow-6066 key), which then scopes
+%% findElementFromShadowRoot / findElementsFromShadowRoot (POST .../shadow/:id/
+%% element[s]) — mirroring how findChildElement is scoped to an element id, but
+%% with the shadow id as `id` and reading the element key from the results.
+
+%% The element's shadow-root reference (W3C getShadowRoot). {ok, ShadowId} |
+%% {error, {19, _}} when the element hosts no open shadow root. The ShadowId is
+%% the opaque handle find_element_from_shadow_root/3 scopes to.
+shadow_root(H, ElementId) ->
+    case execute(H, <<"getShadowRoot">>, #{<<"id">> => ElementId}) of
+        {ok, M} when is_map(M) -> {ok, maps:get(?SHADOW_KEY, M)};
+        Err -> Err
+    end.
+
+%% Find one descendant of the shadow root matching (By, Value)
+%% (findElementFromShadowRoot). ShadowId is a shadow_root/2 result. {ok,
+%% ElementId} | {error, _}.
+find_element_from_shadow_root(H, ShadowId, {Strategy, Value}) ->
+    find_element_from_shadow_root(H, ShadowId, normalize_strategy(Strategy), Value).
+
+find_element_from_shadow_root(H, ShadowId, By, Value) ->
+    Params = maps:put(<<"id">>, ShadowId, decode_by(By, Value)),
+    case execute(H, <<"findElementFromShadowRoot">>, Params) of
+        {ok, M} -> {ok, maps:get(?W3C_KEY, M)};
+        Err -> Err
+    end.
+
+%% Find all descendants of the shadow root matching (By, Value)
+%% (findElementsFromShadowRoot). {ok, [ElementId]} | {error, _}.
+find_elements_from_shadow_root(H, ShadowId, {Strategy, Value}) ->
+    find_elements_from_shadow_root(H, ShadowId, normalize_strategy(Strategy), Value).
+
+find_elements_from_shadow_root(H, ShadowId, By, Value) ->
+    Params = maps:put(<<"id">>, ShadowId, decode_by(By, Value)),
+    case execute(H, <<"findElementsFromShadowRoot">>, Params) of
+        {ok, L} -> {ok, [maps:get(?W3C_KEY, E) || E <- L]};
         Err -> Err
     end.
 

@@ -138,6 +138,9 @@ function M.Keys.chord(modifier, text)
 end
 
 local W3C_ELEMENT_KEY = "element-6066-11e4-a52e-4f735466cecf"
+-- The W3C shadow-root reference key, distinct from the element key: a
+-- getShadowRoot result is { ["shadow-6066-11e4-a52e-4f735466cecf"] = "<id>" }.
+local W3C_SHADOW_KEY = "shadow-6066-11e4-a52e-4f735466cecf"
 
 -- A distinct value for JSON null (so it round-trips distinct from Lua nil).
 M.null = setmetatable({}, { __tostring = function() return "null" end })
@@ -311,11 +314,13 @@ M.json = json
 -- ==== error classification ====
 
 local CODE_NAME = {
+  [2] = "detached shadow root",
   [3] = "element click intercepted",
   [4] = "element not interactable",
   [11] = "invalid selector",
   [13] = "javascript error",
   [17] = "no such element",
+  [19] = "no such shadow root",
   [21] = "script timeout",
   [23] = "stale element reference",
   [24] = "timeout",
@@ -434,6 +439,44 @@ end
 -- newSession. Matches the Rust binding's chrome_tls.
 function M.chrome_tls(command_executor, options, tls)
   return M.chrome(command_executor, options, tls)
+end
+
+-- options: a raw capabilities table merged under browserName=firefox.
+-- tls (optional): { ca_path=..., insecure=... } — applied before newSession.
+function M.firefox(command_executor, options, tls)
+  local caps = { browserName = "firefox" }
+  if options then for k, v in pairs(options) do caps[k] = v end end
+  return new(command_executor, caps, tls)
+end
+
+function M.headless_firefox(command_executor, tls)
+  return M.firefox(command_executor, {
+    ["moz:firefoxOptions"] = { args = { "-headless" } },
+  }, tls)
+end
+
+-- options: a raw capabilities table merged under browserName=MicrosoftEdge
+-- (Edge's W3C browserName). tls (optional): { ca_path=..., insecure=... }.
+function M.edge(command_executor, options, tls)
+  local caps = { browserName = "MicrosoftEdge" }
+  if options then for k, v in pairs(options) do caps[k] = v end end
+  return new(command_executor, caps, tls)
+end
+
+function M.headless_edge(command_executor, tls)
+  return M.edge(command_executor, {
+    ["ms:edgeOptions"] = {
+      args = { "--headless=new", "--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage" },
+    },
+  }, tls)
+end
+
+-- options: a raw capabilities table merged under browserName=safari (macOS
+-- only; safaridriver has no headless mode, so there is no headless_safari).
+function M.safari(command_executor, options, tls)
+  local caps = { browserName = "safari" }
+  if options then for k, v in pairs(options) do caps[k] = v end end
+  return new(command_executor, caps, tls)
 end
 
 -- ==== driver orchestration (spawn/adopt a driver process in-binding) ====
@@ -575,6 +618,49 @@ function WebElement:find_elements(by, value)
   local out = {}
   for i = 1, #r do out[i] = wrap_element(self.driver, r[i][W3C_ELEMENT_KEY]) end
   return out
+end
+
+-- ==== ShadowRoot ====
+-- A shadow root as a search context (mirrors Selenium's ShadowRoot). Only
+-- find_element/find_elements are supported, scoped inside the shadow tree — like
+-- WebElement's element-scoped finds, but against the shadow id via the
+-- shadow-root commands.
+local ShadowRoot = {}
+ShadowRoot.__index = ShadowRoot
+
+local function wrap_shadow_root(driver, id)
+  return setmetatable({ driver = driver, id = id }, ShadowRoot)
+end
+
+function ShadowRoot:find_element(by, value)
+  local strategy, v = locator_args(by, value)
+  local params = decode_by(strategy, v)
+  params.id = self.id
+  local r = self.driver:execute("findElementFromShadowRoot", params)
+  return wrap_element(self.driver, r[W3C_ELEMENT_KEY])
+end
+
+function ShadowRoot:find_elements(by, value)
+  local strategy, v = locator_args(by, value)
+  local params = decode_by(strategy, v)
+  params.id = self.id
+  local r = self.driver:execute("findElementsFromShadowRoot", params)
+  local out = {}
+  for i = 1, #r do out[i] = wrap_element(self.driver, r[i][W3C_ELEMENT_KEY]) end
+  return out
+end
+
+M.ShadowRoot = ShadowRoot
+
+-- This element's shadow root as a search context (mirrors Selenium's
+-- getShadowRoot). Reads the shadow-6066 key; raises "no such shadow root"
+-- (code 19) if the element hosts no open shadow root.
+function WebElement:shadow_root()
+  local r = self.driver:execute("getShadowRoot", { id = self.id })
+  if type(r) == "table" and type(r[W3C_SHADOW_KEY]) == "string" then
+    return wrap_shadow_root(self.driver, r[W3C_SHADOW_KEY])
+  end
+  raise(19, "no such shadow root")
 end
 
 -- Submit the form this element belongs to. W3C removed the dedicated submit

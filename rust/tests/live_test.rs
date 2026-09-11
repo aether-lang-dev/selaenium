@@ -289,6 +289,29 @@ fn live_chrome_surface() {
     // alert_present(): none open here.
     assert!(!d.alert_present().unwrap(), "no alert on this page");
 
+    // shadow DOM: attach an open shadow root hosting <p id="sinner">, reach
+    // inside it via WebElement::shadow_root -> find_element, and confirm a
+    // non-host element errors with NoSuchShadowRoot (code 19).
+    d.get("data:text/html,<!doctype html><title>Shadow</title><h1 id=\"top\">t</h1>")
+        .unwrap();
+    d.execute_script(
+        "var h=document.createElement('div');h.id='shost';document.body.appendChild(h);\
+         var r=h.attachShadow({mode:'open'});r.innerHTML='<p id=\"sinner\">shadowtext</p>';",
+        vec![],
+    )
+    .unwrap();
+    let host = d.find_element(By::id("shost")).unwrap();
+    let root = host.shadow_root().unwrap();
+    assert!(!root.id().is_empty(), "shadow root has an id");
+    assert_eq!(
+        root.find_element(By::css("#sinner")).unwrap().text().unwrap(),
+        "shadowtext"
+    );
+    assert_eq!(root.find_elements(By::css("p")).unwrap().len(), 1);
+    let no_shadow = d.find_element(By::id("top")).unwrap().shadow_root().unwrap_err();
+    assert_eq!(no_shadow.kind, ErrorKind::NoSuchShadowRoot);
+    assert_eq!(no_shadow.code, 19);
+
     d.quit().unwrap();
     stop.store(true, Ordering::Relaxed);
 }
@@ -595,6 +618,46 @@ fn driver_orchestration() {
     assert_eq!(d.find_element(By::id("hdr")).unwrap().text().unwrap(), "Hello");
     println!("PASS: live driver-orchestration test green (self-spawned driver)");
     d.quit().unwrap();
+}
+
+/// A LIVE Firefox smoke over the engine-managed geckodriver: resolve + spawn a
+/// geckodriver in-binding (no geckodriver on PATH, no Grid), open a headless
+/// Firefox session against it, drive a data: page, and assert title + element
+/// text — the firefox()/headless_firefox() factories against real Firefox.
+/// Self-skips loudly when the engine cannot resolve a geckodriver here.
+#[test]
+fn live_firefox() {
+    use selenium::{ensure_driver, resolve_driver, DriverProcess};
+
+    let path = resolve_driver("firefox", "").unwrap();
+    if path.is_empty() {
+        eprintln!("SKIPPED: engine cannot resolve a geckodriver (no Firefox/cache)");
+        return;
+    }
+    assert!(
+        std::path::Path::new(&path).is_file(),
+        "resolve_driver(firefox) returned a non-file: {path:?}"
+    );
+    println!("  ok: resolve_driver(firefox) -> {path}");
+
+    let mut proc: DriverProcess = ensure_driver("firefox", "", 15000)
+        .unwrap()
+        .expect("ensure_driver should spawn a geckodriver");
+    let url = proc.url().unwrap();
+    assert!(url.starts_with("http"), "geckodriver url={url:?}");
+
+    let page = concat!(
+        "data:text/html,<!doctype html><title>Aether Firefox</title>",
+        "<h1 id='hdr'>Hello FF</h1>"
+    );
+    let d = WebDriver::headless_firefox(&url).expect("headless_firefox new session");
+    assert!(!d.session_id().is_empty(), "no session id from headless_firefox");
+    d.get(page).unwrap();
+    assert_eq!(d.title().unwrap(), "Aether Firefox", "title mismatch");
+    assert_eq!(d.find_element(By::id("hdr")).unwrap().text().unwrap(), "Hello FF");
+    println!("PASS: live Firefox test green (self-spawned geckodriver)");
+    d.quit().unwrap();
+    proc.stop();
 }
 
 /// A LIVE exercise of the convenience tier (waits + Select + an Actions gesture)

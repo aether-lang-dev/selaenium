@@ -13,6 +13,10 @@ public class NotFoundException extends WebDriverException {
     super(message);
   }
 
+  public NotFoundException(String message, int code) {
+    super(message, code);
+  }
+
   public NotFoundException(String message, Throwable cause) {
     super(message, cause);
   }

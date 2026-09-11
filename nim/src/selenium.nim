@@ -146,7 +146,8 @@ type
   ErrorKind* = enum
     ekTransport, ekNoSuchElement, ekStaleElementReference,
     ekElementClickIntercepted, ekElementNotInteractable, ekInvalidSelector,
-    ekTimeout, ekJavascript, ekUnknownCommand, ekOther
+    ekTimeout, ekJavascript, ekUnknownCommand, ekNoSuchShadowRoot,
+    ekDetachedShadowRoot, ekOther
 
   WebDriverError* = object of CatchableError
     code*: int
@@ -161,6 +162,8 @@ proc classify(code: int, message: string): ref WebDriverError =
     of 11: ekInvalidSelector
     of 13: ekJavascript
     of 17: ekNoSuchElement
+    of 19: ekNoSuchShadowRoot
+    of 2: ekDetachedShadowRoot
     of 21, 24: ekTimeout
     of 23: ekStaleElementReference
     of 28: ekUnknownCommand
@@ -200,6 +203,8 @@ proc xpath*(_: typedesc[By], value: string): By =
   By(strategy: "xpath", value: value)
 
 const w3cElementKey = "element-6066-11e4-a52e-4f735466cecf"
+const w3cShadowKey = "shadow-6066-11e4-a52e-4f735466cecf"
+  ## The W3C shadow-root reference key, distinct from the element key.
 
 # ---- pure engine helpers ----
 
@@ -238,6 +243,13 @@ type
   WebElement* = object
     driver: WebDriver
     id*: string  ## the W3C element reference; also the Actions/Select origin key
+
+  ShadowRoot* = object
+    ## A shadow root as a search context (mirrors Selenium's `ShadowRoot`). Only
+    ## `findElement`/`findElements` are supported, scoped inside the shadow tree.
+    ## Obtain one from `WebElement.shadowRoot`.
+    driver: WebDriver
+    id*: string  ## the W3C shadow-root reference
 
 proc `=destroy`(d: typeof(WebDriver()[])) =
   if d.handle != nil:
@@ -308,6 +320,88 @@ proc headlessChrome*(commandExecutor: string, caPath = "", insecure = false): We
       "args": ["--headless=new", "--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage"]
     }
   }, caPath = caPath, insecure = insecure)
+
+proc firefox*(commandExecutor: string, options: JsonNode = newJObject(),
+              caPath = "", insecure = false): WebDriver =
+  ## Start a Firefox session against a running geckodriver (or Grid).
+  ##
+  ## Identical to `chrome` except for the negotiated browserName; `caPath` and
+  ## `insecure` behave as they do there.
+  var caps = newJObject()
+  for k, v in options: caps[k] = v
+  caps["browserName"] = %"firefox"
+  caps["webSocketUrl"] = %true
+  let handle = selOpen(commandExecutor.cstring)
+  if handle == nil:
+    raise classify(-1, "failed to open session handle")
+  if caPath.len != 0:
+    selSetCa(handle, caPath.cstring)
+  if insecure:
+    selSetInsecure(handle, 1)
+  result = WebDriver(handle: handle)
+  let session = result.execute("newSession", %*{"capabilities": {"alwaysMatch": caps}})
+  if session.kind == JObject and session.hasKey("capabilities"):
+    let negotiated = session["capabilities"]
+    if negotiated.kind == JObject and negotiated.hasKey("webSocketUrl"):
+      result.wsUrl = negotiated["webSocketUrl"].getStr
+
+proc headlessFirefox*(commandExecutor: string, caPath = "", insecure = false): WebDriver =
+  ## Convenience: a headless Firefox session (`moz:firefoxOptions` `-headless`).
+  firefox(commandExecutor, %*{
+    "moz:firefoxOptions": {"args": ["-headless"]}
+  }, caPath = caPath, insecure = insecure)
+
+proc edge*(commandExecutor: string, options: JsonNode = newJObject(),
+           caPath = "", insecure = false): WebDriver =
+  ## Start a Microsoft Edge session against a running msedgedriver (or Grid).
+  ## (W3C browserName is "MicrosoftEdge".)
+  var caps = newJObject()
+  for k, v in options: caps[k] = v
+  caps["browserName"] = %"MicrosoftEdge"
+  caps["webSocketUrl"] = %true
+  let handle = selOpen(commandExecutor.cstring)
+  if handle == nil:
+    raise classify(-1, "failed to open session handle")
+  if caPath.len != 0:
+    selSetCa(handle, caPath.cstring)
+  if insecure:
+    selSetInsecure(handle, 1)
+  result = WebDriver(handle: handle)
+  let session = result.execute("newSession", %*{"capabilities": {"alwaysMatch": caps}})
+  if session.kind == JObject and session.hasKey("capabilities"):
+    let negotiated = session["capabilities"]
+    if negotiated.kind == JObject and negotiated.hasKey("webSocketUrl"):
+      result.wsUrl = negotiated["webSocketUrl"].getStr
+
+proc headlessEdge*(commandExecutor: string, caPath = "", insecure = false): WebDriver =
+  ## Convenience: a headless Edge session (Chromium-based, `ms:edgeOptions` args).
+  edge(commandExecutor, %*{
+    "ms:edgeOptions": {
+      "args": ["--headless=new", "--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage"]
+    }
+  }, caPath = caPath, insecure = insecure)
+
+proc safari*(commandExecutor: string, options: JsonNode = newJObject(),
+             caPath = "", insecure = false): WebDriver =
+  ## Start a Safari session against a running safaridriver (macOS only). Safari
+  ## has no headless mode, so there is no `headlessSafari`.
+  var caps = newJObject()
+  for k, v in options: caps[k] = v
+  caps["browserName"] = %"safari"
+  caps["webSocketUrl"] = %true
+  let handle = selOpen(commandExecutor.cstring)
+  if handle == nil:
+    raise classify(-1, "failed to open session handle")
+  if caPath.len != 0:
+    selSetCa(handle, caPath.cstring)
+  if insecure:
+    selSetInsecure(handle, 1)
+  result = WebDriver(handle: handle)
+  let session = result.execute("newSession", %*{"capabilities": {"alwaysMatch": caps}})
+  if session.kind == JObject and session.hasKey("capabilities"):
+    let negotiated = session["capabilities"]
+    if negotiated.kind == JObject and negotiated.hasKey("webSocketUrl"):
+      result.wsUrl = negotiated["webSocketUrl"].getStr
 
 # ---- navigation ----
 proc get*(d: WebDriver, url: string) = discard d.execute("get", %*{"url": url})
@@ -444,6 +538,31 @@ proc findElements*(e: WebElement, by: By): seq[WebElement] =
   params["id"] = %e.id
   for child in e.driver.execute("findChildElements", params):
     result.add e.driver.elementFrom(child)
+
+proc shadowRoot*(e: WebElement): ShadowRoot =
+  ## This element's shadow root as a search context (W3C getShadowRoot; mirrors
+  ## Selenium's `getShadowRoot`). Raises a `ekNoSuchShadowRoot` WebDriverError
+  ## (code 19) if the element hosts no open shadow root.
+  let v = e.elExec("getShadowRoot", newJObject())
+  if v.kind == JObject and v.hasKey(w3cShadowKey):
+    return ShadowRoot(driver: e.driver, id: v[w3cShadowKey].getStr)
+  raise classify(19, "no such shadow root")
+
+proc srExec(s: ShadowRoot, command: string, params: JsonNode): JsonNode =
+  var p = params
+  p["id"] = %s.id
+  s.driver.execute(command, p)
+
+proc findElement*(s: ShadowRoot, by: By): WebElement =
+  ## Find a single descendant of this shadow root (W3C findElementFromShadowRoot),
+  ## scoped inside the shadow tree.
+  s.driver.elementFrom(s.srExec("findElementFromShadowRoot", decodeBy(by)))
+
+proc findElements*(s: ShadowRoot, by: By): seq[WebElement] =
+  ## Find all descendants of this shadow root matching `by` (W3C
+  ## findElementsFromShadowRoot), scoped inside the shadow tree. Empty seq if none.
+  for child in s.srExec("findElementsFromShadowRoot", decodeBy(by)):
+    result.add s.driver.elementFrom(child)
 
 # ---- script ----
 proc executeScript*(d: WebDriver, script: string, args: JsonNode = newJArray()): JsonNode =

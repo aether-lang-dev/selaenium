@@ -25,6 +25,39 @@ do
   check((not ok) and err.code == -1, "transport failure -> code -1")
 end
 
+-- ---- per-browser factories exist and set the right browserName ----
+-- No browser is touched: each factory opens against a dead port and fails
+-- transport (code -1), proving it exists and is callable with the chrome shape.
+-- Edge (no Edge on Linux) and Safari (macOS-only) are not live-runnable here,
+-- so this surface check is their coverage.
+check(type(s.firefox) == "function", "M.firefox is declared")
+check(type(s.headless_firefox) == "function", "M.headless_firefox is declared")
+check(type(s.edge) == "function", "M.edge is declared")
+check(type(s.headless_edge) == "function", "M.headless_edge is declared")
+check(type(s.safari) == "function", "M.safari is declared")
+for _, open in ipairs({
+  function() return s.firefox("http://127.0.0.1:1") end,
+  function() return s.headless_firefox("http://127.0.0.1:1") end,
+  function() return s.edge("http://127.0.0.1:1") end,
+  function() return s.headless_edge("http://127.0.0.1:1") end,
+  function() return s.safari("http://127.0.0.1:1") end,
+}) do
+  local ok, err = pcall(open)
+  check((not ok) and err.code == -1, "per-browser factory transport failure -> code -1")
+end
+
+-- ---- Shadow DOM: error codes + ShadowRoot search-context surface ----
+check(s.error_code("no such shadow root") == 19, "errorCode no such shadow root -> 19")
+check(s.error_code("detached shadow root") == 2, "errorCode detached shadow root -> 2")
+check(s.route("getShadowRoot") == "GET /session/:sessionId/element/:id/shadow", "route getShadowRoot")
+check(s.route("findElementFromShadowRoot") == "POST /session/:sessionId/shadow/:id/element",
+      "route findElementFromShadowRoot")
+check(s.route("findElementsFromShadowRoot") == "POST /session/:sessionId/shadow/:id/elements",
+      "route findElementsFromShadowRoot")
+check(type(s.ShadowRoot) == "table" and type(s.ShadowRoot.find_element) == "function"
+      and type(s.ShadowRoot.find_elements) == "function", "ShadowRoot exposes find_element/find_elements")
+check(type(s.WebElement.shadow_root) == "function", "WebElement:shadow_root is declared")
+
 -- ---- Keys: W3C PUA code points + chord (offline, pure) ----
 check(s.Keys.NULL == 0xE000, "Keys.NULL code point")
 check(s.Keys.TAB == 0xE004, "Keys.TAB code point")

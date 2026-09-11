@@ -33,10 +33,25 @@ defmodule SeleniumTest do
              Selenium.chrome_tls("https://127.0.0.1:1", %{}, %{insecure: true})
   end
 
+  test "firefox/edge/safari factories build a session (transport failure to a dead port)" do
+    # Each new browser factory is callable and reaches newSession the same way
+    # chrome() does; against a dead port they all surface a clean transport error.
+    assert {:error, {-1, _}} = Selenium.firefox("http://127.0.0.1:1")
+    assert {:error, {-1, _}} = Selenium.headless_firefox("http://127.0.0.1:1")
+    assert {:error, {-1, _}} = Selenium.edge("http://127.0.0.1:1")
+    assert {:error, {-1, _}} = Selenium.headless_edge("http://127.0.0.1:1")
+    assert {:error, {-1, _}} = Selenium.safari("http://127.0.0.1:1")
+  end
+
   test "full public surface is exported (ABI parity with the Rust bar)" do
     # Driver (session) surface added in the full-feature pass.
     for {f, a} <- [
           {:chrome_tls, 3},
+          {:firefox, 2},
+          {:headless_firefox, 1},
+          {:edge, 2},
+          {:headless_edge, 1},
+          {:safari, 2},
           {:resolve_driver, 2},
           {:launch_driver, 2},
           {:ensure_driver, 3},
@@ -64,6 +79,9 @@ defmodule SeleniumTest do
           {:get_cookie, 2},
           {:find_child_element, 3},
           {:find_child_elements, 3},
+          {:shadow_root, 2},
+          {:find_element_from_shadow_root, 3},
+          {:find_elements_from_shadow_root, 3},
           {:find_relative, 3},
           {:find_relative_count, 3},
           {:clear, 2},
@@ -225,6 +243,26 @@ defmodule SeleniumTest do
             assert Map.get(status, "type") == "success"
             assert is_binary(Selenium.bidi_top_context(d))
             assert {:ok, 42} = Selenium.bidi_evaluate_value(d, "6*7")
+
+            # shadow DOM: host an open shadow root, reach inside it, and confirm
+            # a non-host element reports code 19 (no such shadow root).
+            {:ok, _} =
+              Selenium.execute_script(
+                d,
+                "var h=document.createElement('div');h.id='shost';" <>
+                  "document.body.appendChild(h);" <>
+                  "var r=h.attachShadow({mode:'open'});" <>
+                  "r.innerHTML='<p id=\"sinner\">shadowtext</p>';"
+              )
+
+            {:ok, shost} = Selenium.find_element(d, "id", "shost")
+            {:ok, shadow_id} = Selenium.shadow_root(d, shost)
+            assert byte_size(shadow_id) > 0
+            {:ok, sinner} = Selenium.find_element_from_shadow_root(d, shadow_id, {:css, "#sinner"})
+            assert {:ok, "shadowtext"} = Selenium.element_text(d, sinner)
+            {:ok, [_ | _]} = Selenium.find_elements_from_shadow_root(d, shadow_id, {:css, "p"})
+            {:ok, hdr_el} = Selenium.find_element(d, "id", "hdr")
+            assert {:error, {19, _}} = Selenium.shadow_root(d, hdr_el)
 
             # negative path
             assert {:error, {17, _}} = Selenium.find_element(d, "id", "does-not-exist")

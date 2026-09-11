@@ -50,7 +50,34 @@
           (ck "round-trip element ref"
               (let* ((m (maps:put #"element-6066-11e4-a52e-4f735466cecf" #"e1" #M()))
                      (j (selenium_lfe:encode m)))
-                (=:= (selenium_lfe:decode j) m))))))
+                (=:= (selenium_lfe:decode j) m)))
+          ;; ---- shadow-root reference shape (getShadowRoot value) ----
+          (ck "round-trip shadow-root ref"
+              (let* ((m (maps:put #"shadow-6066-11e4-a52e-4f735466cecf" #"s1" #M()))
+                     (j (selenium_lfe:encode m)))
+                (=:= (selenium_lfe:decode j) m)))
+          ;; the shadow finders are exported (surface parity with the Erlang twin)
+          (ck "shadow_root/2 exported"
+              (=:= (erlang:function_exported 'selenium_lfe 'shadow_root 2) 'true))
+          (ck "find_element_from_shadow_root/3 exported"
+              (=:= (erlang:function_exported
+                    'selenium_lfe 'find_element_from_shadow_root 3) 'true))
+          (ck "find_elements_from_shadow_root/3 exported"
+              (=:= (erlang:function_exported
+                    'selenium_lfe 'find_elements_from_shadow_root 3) 'true))
+          ;; ---- browser session factories (surface parity with the Erlang twin) ----
+          (ck "firefox/1 exported"
+              (=:= (erlang:function_exported 'selenium_lfe 'firefox 1) 'true))
+          (ck "firefox/2 exported"
+              (=:= (erlang:function_exported 'selenium_lfe 'firefox 2) 'true))
+          (ck "headless_firefox/1 exported"
+              (=:= (erlang:function_exported 'selenium_lfe 'headless_firefox 1) 'true))
+          (ck "edge/1 exported"
+              (=:= (erlang:function_exported 'selenium_lfe 'edge 1) 'true))
+          (ck "headless_edge/1 exported"
+              (=:= (erlang:function_exported 'selenium_lfe 'headless_edge 1) 'true))
+          (ck "safari/1 exported"
+              (=:= (erlang:function_exported 'selenium_lfe 'safari 1) 'true)))))
     (if (=:= fails 0)
         (progn (io:format "PASS: LFE surface tests green~n") (halt 0))
         (progn (io:format "FAILED: ~p LFE surface test(s)~n" (list fails)) (halt 1)))))

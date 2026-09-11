@@ -104,6 +104,22 @@ class SurfaceTest < Minitest::Test
       assert_equal 'clicked', d.find_element(Selenium::WebDriver::By::ID, 'hdr').text
       d.clear_actions
 
+      # shadow DOM: reach inside an open shadow root, and confirm a non-host
+      # element reports no shadow root (W3C code 19).
+      d.execute_script(
+        "var h=document.createElement('div');h.id='shost';" \
+        "document.body.appendChild(h);" \
+        "var r=h.attachShadow({mode:'open'});" \
+        "r.innerHTML='<p id=\"sinner\">shadowtext</p>';"
+      )
+      host = d.find_element(Selenium::WebDriver::By::ID, 'shost')
+      root = host.shadow_root
+      inner = root.find_element(Selenium::WebDriver::By::CSS_SELECTOR, '#sinner')
+      assert_equal 'shadowtext', inner.text
+      assert_raises(Selenium::WebDriver::NoSuchShadowRootError) do
+        d.find_element(Selenium::WebDriver::By::ID, 'hdr').shadow_root
+      end
+
       # screenshot -> PNG
       raw = Base64.decode64(d.screenshot_base64)
       assert_equal "\x89PNG".b, raw[0, 4].b

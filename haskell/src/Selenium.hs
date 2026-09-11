@@ -30,6 +30,11 @@ module Selenium
     -- * Session lifecycle
   , chrome
   , headlessChrome
+  , firefox
+  , headlessFirefox
+  , edge
+  , headlessEdge
+  , safari
   , execute
   , sessionId
   , quit
@@ -46,6 +51,10 @@ module Selenium
   , findElements
   , findChildElement
   , findChildElements
+  , ShadowRoot (..)
+  , getShadowRoot
+  , shadowFindElement
+  , shadowFindElements
   , activeElement
   , exists
   , elementClick
@@ -232,6 +241,10 @@ byXpath = Locator (byString ByXpath)
 w3cElementKey :: String
 w3cElementKey = "element-6066-11e4-a52e-4f735466cecf"
 
+-- | The W3C shadow-root reference key, distinct from the element key.
+w3cShadowKey :: String
+w3cShadowKey = "shadow-6066-11e4-a52e-4f735466cecf"
+
 -- ---- pure engine helpers ----
 
 route :: String -> IO String
@@ -276,6 +289,36 @@ headlessChrome commandExecutor = do
       args = "\"args\":[\"--headless=new\",\"--no-sandbox\",\"--disable-gpu\",\"--disable-dev-shm-usage\"]"
   chrome commandExecutor
     ("{\"browserName\":\"chrome\",\"goog:chromeOptions\":{" ++ args ++ binField ++ "}}")
+
+-- | Start a Firefox session against a running geckodriver (or Grid). @capsJson@
+-- is the alwaysMatch capabilities object as a JSON string.
+firefox :: String -> String -> IO WebDriver
+firefox = chrome
+
+-- | A headless Firefox session (@moz:firefoxOptions@ @-headless@).
+headlessFirefox :: String -> IO WebDriver
+headlessFirefox commandExecutor =
+  firefox commandExecutor
+    "{\"browserName\":\"firefox\",\"moz:firefoxOptions\":{\"args\":[\"-headless\"]}}"
+
+-- | Start a Microsoft Edge session against a running msedgedriver (or Grid).
+-- (W3C browserName is @MicrosoftEdge@.) @capsJson@ is the alwaysMatch
+-- capabilities object as a JSON string.
+edge :: String -> String -> IO WebDriver
+edge = chrome
+
+-- | A headless Edge session (Chromium-based, @ms:edgeOptions@ launch args).
+headlessEdge :: String -> IO WebDriver
+headlessEdge commandExecutor =
+  let args = "\"args\":[\"--headless=new\",\"--no-sandbox\",\"--disable-gpu\",\"--disable-dev-shm-usage\"]"
+  in edge commandExecutor
+       ("{\"browserName\":\"MicrosoftEdge\",\"ms:edgeOptions\":{" ++ args ++ "}}")
+
+-- | Start a Safari session against a running safaridriver (macOS only). Safari
+-- has no headless mode, so there is no @headlessSafari@. @capsJson@ is the
+-- alwaysMatch capabilities object as a JSON string.
+safari :: String -> String -> IO WebDriver
+safari = chrome
 
 -- | Execute a command by name with a JSON params object string. Returns the
 -- response @value@ as a JSON string, or throws 'WebDriverError'.
@@ -360,6 +403,40 @@ findChildElements :: WebDriver -> String -> Locator -> IO [String]
 findChildElements d eid (Locator strategy value) = do
   loc <- N.selByLocator strategy value
   v <- execute d "findChildElements" (mergeId eid loc)
+  pure (extractElementIds v)
+
+-- | A shadow root as a search context (mirrors Selenium's @ShadowRoot@). Wraps
+-- the opaque W3C shadow-root reference id; use it with 'shadowFindElement' /
+-- 'shadowFindElements' to reach elements inside the shadow tree.
+newtype ShadowRoot = ShadowRoot String
+  deriving (Show, Eq)
+
+-- | This element's shadow root (@getShadowRoot@). Reads the shadow-6066 key from
+-- the response. Throws 'WebDriverError' 19 (no such shadow root) when the element
+-- hosts no open shadow root.
+getShadowRoot :: WebDriver -> String -> IO ShadowRoot
+getShadowRoot d eid = do
+  v <- execute d "getShadowRoot" ("{\"id\":" ++ jsonStr eid ++ "}")
+  case extractShadowId v of
+    Just sid -> pure (ShadowRoot sid)
+    Nothing -> throwIO (WebDriverError 19 "no such shadow root")
+
+-- | Find one descendant of @shadow@ matching a 'Locator' (@findElementFromShadowRoot@,
+-- scoped to the shadow tree via the shadow id). Returns the element id.
+shadowFindElement :: WebDriver -> ShadowRoot -> Locator -> IO String
+shadowFindElement d (ShadowRoot sid) (Locator strategy value) = do
+  loc <- N.selByLocator strategy value
+  v <- execute d "findElementFromShadowRoot" (mergeId sid loc)
+  case extractElementId v of
+    Just cid -> pure cid
+    Nothing -> throwIO (WebDriverError 17 "element reference key missing")
+
+-- | Find all descendants of @shadow@ matching a 'Locator'
+-- (@findElementsFromShadowRoot@). Returns the list of element ids.
+shadowFindElements :: WebDriver -> ShadowRoot -> Locator -> IO [String]
+shadowFindElements d (ShadowRoot sid) (Locator strategy value) = do
+  loc <- N.selByLocator strategy value
+  v <- execute d "findElementsFromShadowRoot" (mergeId sid loc)
   pure (extractElementIds v)
 
 -- | The active (focused) element id (@getActiveElement@).
@@ -1066,6 +1143,16 @@ jsonBool s = case dropWhile (== ' ') s of
 extractElementId :: String -> Maybe String
 extractElementId v =
   let needle = "\"" ++ w3cElementKey ++ "\":\""
+   in if needle `isInfixOf` v
+        then Just (takeWhile (/= '"') (afterInfix needle v))
+        else Nothing
+
+-- | Pull the shadow-root reference id out of a getShadowRoot value JSON string,
+-- which looks like @{"shadow-6066-...":"<id>"}@ (the shadow key, distinct from
+-- the element key). @Nothing@ when absent (a non-host element -> code 19).
+extractShadowId :: String -> Maybe String
+extractShadowId v =
+  let needle = "\"" ++ w3cShadowKey ++ "\":\""
    in if needle `isInfixOf` v
         then Just (takeWhile (/= '"') (afterInfix needle v))
         else Nothing

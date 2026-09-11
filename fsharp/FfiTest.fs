@@ -37,6 +37,21 @@ let ``By factory carries strategy and value`` () =
     Assert.Equal<string>("class name", By.ClassName("x").Strategy)
 
 [<Fact>]
+let ``shadow-DOM surface rides the C# types`` () =
+    // F# adds no FFI: shadow DOM comes for free from the one C# binding. Assert
+    // the surface is reachable through the shared types — IWebElement.GetShadowRoot
+    // returns an ISearchContext, ShadowRoot IS an ISearchContext (so its
+    // FindElement/FindElements are usable), and the typed error (code 19) exists.
+    let getShadow = typeof<IWebElement>.GetMethod("GetShadowRoot")
+    Assert.NotNull(getShadow)
+    Assert.Equal<System.Type>(typeof<ISearchContext>, getShadow.ReturnType)
+    Assert.True(typeof<ISearchContext>.IsAssignableFrom(typeof<ShadowRoot>))
+    Assert.NotNull(typeof<ShadowRoot>.GetMethod("FindElement"))
+    Assert.NotNull(typeof<ShadowRoot>.GetMethod("FindElements"))
+    let ex = NoSuchShadowRootException("no such shadow root", 19)
+    Assert.Equal<int>(19, ex.Code)
+
+[<Fact>]
 let ``transport failure`` () =
     let mutable threw = false
     try
@@ -44,3 +59,15 @@ let ``transport failure`` () =
     with :? WebDriverException as e ->
         threw <- e.Code = -1
     Assert.True(threw, "transport failure should surface code -1")
+
+[<Fact>]
+let ``firefox/edge/safari factories ride the C# binding`` () =
+    // F# adds no FFI: the browser factories come for free from the one C#
+    // binding (RemoteWebDriver). Assert the static factories are reachable
+    // through CLR interop — the same way chrome() already is.
+    let t = typeof<RemoteWebDriver>
+    Assert.NotNull(t.GetMethod("Firefox"))
+    Assert.NotNull(t.GetMethod("HeadlessFirefox"))
+    Assert.NotNull(t.GetMethod("Edge"))
+    Assert.NotNull(t.GetMethod("HeadlessEdge"))
+    Assert.NotNull(t.GetMethod("Safari"))

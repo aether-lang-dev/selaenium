@@ -89,6 +89,24 @@ main() {
     fails = fails + ck("relative count >= 1",
              _gt0(webdriver.find_relative_count(d, "button", "[{\"kind\":\"below\",\"sel\":\"#hdr\"}]")))
 
+    // ---- shadow DOM: host an open shadow root and reach inside it ----
+    // attachShadow an open root with a <p id=sinner>, then get_shadow_root the
+    // host and find #sinner inside its shadow tree. A non-host element yields ""
+    // (no such shadow root, engine code 19) — the typed-absent shape find() uses.
+    webdriver.execute_script(d, "var h=document.createElement('div');h.id='shost';document.body.appendChild(h);var r=h.attachShadow({mode:'open'});r.innerHTML='<p id=\"sinner\">shadowtext</p>';", "[]")
+    shost = webdriver.find(d, webdriver.By_ID(), "shost")
+    fails = fails + ck("found shadow host #shost", _gt0(string.length(shost)))
+    shadow_id = webdriver.get_shadow_root(d, shost)
+    fails = fails + ck("get_shadow_root -> non-empty id", _gt0(string.length(shadow_id)))
+    sinner = webdriver.find_from_shadow_root(d, shadow_id, webdriver.By_CSS(), "#sinner")
+    fails = fails + ck("find #sinner inside shadow root", _gt0(string.length(sinner)))
+    fails = fails + ck("shadow #sinner text", string.equals(webdriver.element_text(d, sinner), "shadowtext"))
+    fails = fails + ck("find_all_from_shadow_root p >= 1",
+             _gt0(webdriver.find_all_from_shadow_root(d, shadow_id, webdriver.By_CSS(), "p")))
+    // #hdr hosts no shadow root -> "" (code 19, surfaced as the typed-absent "").
+    fails = fails + ck("non-host get_shadow_root -> ''",
+             string.equals(webdriver.get_shadow_root(d, hdr2), ""))
+
     // ---- WebDriver-BiDi: subscribe + receive an async event ----
     // chrome() negotiated webSocketUrl:true, so BiDi is available in-process.
     // Subscribe to console log entries, emit one via the classic script channel,
@@ -161,6 +179,37 @@ main() {
 
     webdriver.quit(d)
 
+    // ---- Firefox leg: the new firefox() session ctor, same transparent driver
+    // management as chrome() (resolve/launch geckodriver in-process). Self-skips
+    // when no geckodriver is resolvable here. Edge/Safari are surface-only (no
+    // Edge on Linux, Safari is macOS-only): their ctors are exercised only far
+    // enough to confirm they're callable and fail cleanly (null) with no driver.
+    fpath = driver.resolve_driver("firefox", "")
+    if string.length(fpath) == 0 {
+        println("  (firefox: no geckodriver resolvable — skipping Firefox leg)")
+    } else {
+        f = webdriver.firefox()
+        if f == null {
+            println("  (firefox: firefox() could not launch — skipping Firefox leg)")
+        } else {
+            webdriver.get(f, "data:text/html,<title>Firefox Aether</title><h1 id='hdr'>Fox</h1>")
+            fails = fails + ck("firefox title", string.equals(webdriver.title(f), "Firefox Aether"))
+            fhdr = webdriver.find(f, webdriver.By_ID(), "hdr")
+            fails = fails + ck("firefox #hdr text Fox", string.equals(webdriver.element_text(f, fhdr), "Fox"))
+            webdriver.quit(f)
+        }
+    }
+
+    // Edge/Safari surface check: no matching driver here, so the ctor returns
+    // null cleanly — the point is that the ctors exist and are callable without
+    // faking a live pass.
+    e = webdriver.edge()
+    fails = fails + ck("edge() callable (null without msedgedriver here)", _is_null(e))
+    if e != null { webdriver.quit(e) }
+    s = webdriver.safari()
+    fails = fails + ck("safari() callable (null off macOS)", _is_null(s))
+    if s != null { webdriver.quit(s) }
+
     if fails == 0 {
         println("PASS: native Aether client live surface green")
         exit(0)
@@ -171,3 +220,6 @@ main() {
 
 _gt0(n: int) -> int { if n > 0 { return 1 } return 0 }
 _not(n: int) -> int { if n == 0 { return 1 } return 0 }
+// 1 when the session ctor returned null (no matching driver) — the surface-check
+// pass for edge()/safari() where a live session cannot be opened here.
+_is_null(p: ptr) -> int { if p == null { return 1 } return 0 }

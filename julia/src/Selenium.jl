@@ -16,14 +16,14 @@
 # no second copy of the protocol here.
 module Selenium
 
-export By, Locator, WebDriver, WebElement, Keys, Select, Actions, Wait,
+export By, Locator, WebDriver, WebElement, ShadowRoot, Keys, Select, Actions, Wait,
     BiDi, BidiEvent, TlsConfig, WebDriverError,
     route, errorcode, locator, execute,
     # navigation
     get_url, current_url, title, page_source, back, forward, refresh,
     # elements
     findelement, find_element, find_elements, active_element, exists,
-    find_relative, find_relative_count,
+    find_relative, find_relative_count, shadow_root,
     # element ops
     click, clear, send_keys, text, tag_name, is_displayed, is_enabled,
     is_selected, get_attribute, get_dom_attribute, get_property, rect,
@@ -57,6 +57,7 @@ export By, Locator, WebDriver, WebElement, Keys, Select, Actions, Wait,
     chord,
     # lifecycle / driver mgmt
     quit, sessionid, chrome, chrome_tls, headless_chrome, local_chrome,
+    firefox, headless_firefox, edge, headless_edge, safari,
     resolve_driver, launch_driver, ensure_driver,
     # bidi
     bidi, bidi_available, subscribe, unsubscribe, next_event, command,
@@ -346,6 +347,8 @@ function execute(d::WebDriver, name::AbstractString, params = "{}")::String
 end
 
 const W3C_ELEMENT_KEY = "element-6066-11e4-a52e-4f735466cecf"
+# The W3C shadow-root reference key, distinct from the element key.
+const W3C_SHADOW_KEY = "shadow-6066-11e4-a52e-4f735466cecf"
 
 # Pull the element-reference id out of a findElement value JSON string, which
 # looks like {"element-6066-...":"<id>"}. Textual extraction keeps the binding
@@ -375,6 +378,19 @@ function _extract_element_ids(v::AbstractString)::Vector{String}
         rest = rest[(nextind(rest, stop)):end]
     end
     return ids
+end
+
+# Pull the shadow-root reference id out of a getShadowRoot value JSON string,
+# which looks like {"shadow-6066-...":"<id>"} (the shadow key, distinct from the
+# element key). Returns nothing when absent (a non-host element -> code 19).
+function _extract_shadow_id(v::AbstractString)::Union{String,Nothing}
+    needle = "\"" * W3C_SHADOW_KEY * "\":\""
+    r = findfirst(needle, v)
+    r === nothing && return nothing
+    rest = v[(last(r) + 1):end]
+    stop = findfirst('"', rest)
+    stop === nothing && return nothing
+    return rest[1:(prevind(rest, stop))]
 end
 
 # ---- WebElement — a remote element handle ---------------------------------
@@ -454,6 +470,45 @@ end
 function find_elements(e::WebElement, loc::Locator)::Vector{WebElement}
     v = execute(e.driver, "findChildElements", _child_find_params(e, loc))
     return [WebElement(e.driver, id) for id in _extract_element_ids(v)]
+end
+
+# ---- ShadowRoot — a shadow root as a search context -----------------------
+# Mirrors Selenium's `ShadowRoot`: only `find_element` / `find_elements` are
+# supported, scoped inside the shadow tree — exactly like the element-scoped
+# child finds, but through findElementFromShadowRoot / findElementsFromShadowRoot
+# with the shadow id as the `:id` path param.
+struct ShadowRoot
+    driver::WebDriver
+    id::String
+end
+
+# This element's shadow root (getShadowRoot). Reads the shadow-6066 key. Throws
+# WebDriverError(19) (no such shadow root) when the element hosts none.
+function shadow_root(e::WebElement)::ShadowRoot
+    v = _exec(e, "getShadowRoot")
+    sid = _extract_shadow_id(v)
+    sid === nothing && throw(WebDriverError("no such shadow root", Cint(19)))
+    return ShadowRoot(e.driver, sid)
+end
+
+# The shadow-scoped finds take the W3C locator plus the shadow id; splice the
+# id into the locator object (string merge), mirroring `_child_find_params`.
+function _shadow_find_params(s::ShadowRoot, loc::Locator)::String
+    j = strip(locator(loc.strategy, loc.value))
+    inner = j[nextind(j, firstindex(j)):prevind(j, lastindex(j))]
+    return "{\"id\":\"" * s.id * "\"," * inner * "}"
+end
+
+function find_element(s::ShadowRoot, loc::Locator)::WebElement
+    v = execute(s.driver, "findElementFromShadowRoot", _shadow_find_params(s, loc))
+    eid = _extract_element_id(v)
+    eid === nothing && throw(WebDriverError("element reference key missing", Cint(17)))
+    return WebElement(s.driver, eid)
+end
+
+function find_elements(s::ShadowRoot, loc::Locator)::Vector{WebElement}
+    v = execute(s.driver, "findElementsFromShadowRoot", _shadow_find_params(s, loc))
+    return [WebElement(s.driver, id) for id in _extract_element_ids(v)]
 end
 
 # ---- relative locators ----
@@ -993,6 +1048,43 @@ function headless_chrome(commandexecutor::AbstractString)
     opts = Dict{String,Any}("goog:chromeOptions" =>
         Dict("args" => ["--headless=new", "--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage"]))
     return chrome(commandexecutor, opts)
+end
+
+# Start a Firefox session against a running geckodriver (or Grid). `options` is a
+# Dict of extra capabilities merged under browserName: firefox.
+function firefox(commandexecutor::AbstractString, options::AbstractDict = Dict{String,Any}(), tls::TlsConfig = TlsConfig())
+    caps = Dict{String,Any}(options)
+    caps["browserName"] = "firefox"
+    return _new_session(commandexecutor, caps, tls)
+end
+
+# Convenience: headless-Firefox launch args baked in (`moz:firefoxOptions`).
+function headless_firefox(commandexecutor::AbstractString)
+    opts = Dict{String,Any}("moz:firefoxOptions" => Dict("args" => ["-headless"]))
+    return firefox(commandexecutor, opts)
+end
+
+# Start a Microsoft Edge session against a running msedgedriver (or Grid).
+# (W3C browserName is "MicrosoftEdge".) `options` merges extra capabilities.
+function edge(commandexecutor::AbstractString, options::AbstractDict = Dict{String,Any}(), tls::TlsConfig = TlsConfig())
+    caps = Dict{String,Any}(options)
+    caps["browserName"] = "MicrosoftEdge"
+    return _new_session(commandexecutor, caps, tls)
+end
+
+# Convenience: headless-Edge launch args baked in (Chromium `ms:edgeOptions`).
+function headless_edge(commandexecutor::AbstractString)
+    opts = Dict{String,Any}("ms:edgeOptions" =>
+        Dict("args" => ["--headless=new", "--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage"]))
+    return edge(commandexecutor, opts)
+end
+
+# Start a Safari session against a running safaridriver (macOS only). Safari has
+# no headless mode, so there is no `headless_safari`.
+function safari(commandexecutor::AbstractString, options::AbstractDict = Dict{String,Any}(), tls::TlsConfig = TlsConfig())
+    caps = Dict{String,Any}(options)
+    caps["browserName"] = "safari"
+    return _new_session(commandexecutor, caps, tls)
 end
 
 # A Chrome session that spawns its own chromedriver via the engine — no driver on

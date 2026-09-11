@@ -301,6 +301,26 @@ proc main() =
       doAssert d.bidi.setCacheBehavior("default")["type"].getStr == "success"
       echo "  ok: BiDi setCacheBehavior (bypass -> default)"
 
+      # Shadow DOM: attach an open shadow root hosting <p id="sinner">, then
+      # reach inside it via WebElement.shadowRoot -> findElement. A non-host
+      # element must raise ekNoSuchShadowRoot (code 19).
+      d.get("data:text/html,<!doctype html><title>Shadow</title><h1 id='top'>t</h1>")
+      discard d.executeScript(
+        "var h=document.createElement('div');h.id='shost';document.body.appendChild(h);" &
+        "var r=h.attachShadow({mode:'open'});r.innerHTML='<p id=\"sinner\">shadowtext</p>';")
+      let host = d.findElement(By.id("shost"))
+      let root = host.shadowRoot()
+      doAssert root.id.len > 0
+      doAssert root.findElement(By.cssSelector("#sinner")).text == "shadowtext"
+      doAssert root.findElements(By.cssSelector("p")).len == 1
+      var noShadow = false
+      try:
+        discard d.findElement(By.id("top")).shadowRoot()
+      except WebDriverError as e:
+        noShadow = e.kind == ekNoSuchShadowRoot and e.code == 19
+      doAssert noShadow
+      echo "  ok: shadow DOM (getShadowRoot + findElementFromShadowRoot)"
+
       echo "PASS: Nim live surface test green"
     finally:
       d.quit()
@@ -365,5 +385,34 @@ proc driverOrchestration() =
   finally:
     lc.quit()
 
+proc firefoxLive() =
+  ## Live Firefox smoke over the engine-managed geckodriver: resolve + spawn a
+  ## geckodriver in-binding (no geckodriver on PATH, no Grid), open a headless
+  ## Firefox session against it, drive a data: page, and assert title + element
+  ## text — the firefox()/headlessFirefox() factories against real Firefox.
+  ## Self-skips when the engine cannot resolve a geckodriver here.
+  let path = resolveDriver("firefox")
+  if path.len == 0:
+    echo "SKIPPED: engine cannot resolve a geckodriver (no Firefox/cache)"
+    return
+  doAssert fileExists(path), "resolveDriver(firefox) returned a non-file: " & path
+  echo "  ok: resolveDriver(firefox) -> " & path
+
+  let p = ensureDriver("firefox")
+  doAssert p != nil, "ensureDriver(firefox) returned nil"
+  doAssert p.url.startsWith("http"), "geckodriver url=" & p.url
+  let d = headlessFirefox(p.url)
+  try:
+    doAssert d.sessionId.len > 0, "no session id from headlessFirefox"
+    d.get("data:text/html," &
+      "<!doctype html><title>Aether Firefox</title><h1 id='hdr'>Hello FF</h1>")
+    doAssert d.title == "Aether Firefox", "title=" & d.title
+    doAssert d.findElement(By.id("hdr")).text == "Hello FF"
+    echo "PASS: Nim live Firefox test green (self-spawned geckodriver)"
+  finally:
+    d.quit()
+    p.stop()
+
 main()
 driverOrchestration()
+firefoxLive()

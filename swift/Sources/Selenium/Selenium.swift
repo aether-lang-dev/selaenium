@@ -81,6 +81,10 @@ public struct WebDriverError: Error {
     public static let noSuchElement: Int32 = 17
     /// The stable W3C code for "no such alert" (probed by `alertPresent`).
     public static let noSuchAlert: Int32 = 15
+    /// The stable W3C code for "no such shadow root" (an element hosts none).
+    public static let noSuchShadowRoot: Int32 = 19
+    /// The stable W3C code for "detached shadow root".
+    public static let detachedShadowRoot: Int32 = 2
 }
 
 // Take ownership of a C string the engine returned, copy to a Swift String, and
@@ -203,6 +207,73 @@ public final class WebDriver {
             ]
         ]
         return try chrome(commandExecutor: url, options: opts)
+    }
+
+    /// Start a Firefox session against a running geckodriver (or Grid). `options`
+    /// is a JSON-object dictionary of extra capabilities merged under
+    /// browserName: firefox. Throws on a protocol/transport error at newSession.
+    @discardableResult
+    public static func firefox(
+        commandExecutor url: String = "http://127.0.0.1:4444",
+        options: [String: Any]? = nil
+    ) throws -> WebDriver {
+        var caps: [String: Any] = options ?? [:]
+        caps["browserName"] = "firefox"
+        let d = WebDriver(commandExecutor: url)
+        try d.startSession(caps)
+        return d
+    }
+
+    /// Convenience: headless-Firefox launch args baked in (`moz:firefoxOptions`).
+    @discardableResult
+    public static func headlessFirefox(
+        commandExecutor url: String = "http://127.0.0.1:4444"
+    ) throws -> WebDriver {
+        let opts: [String: Any] = [
+            "moz:firefoxOptions": ["args": ["-headless"]]
+        ]
+        return try firefox(commandExecutor: url, options: opts)
+    }
+
+    /// Start a Microsoft Edge session against a running msedgedriver (or Grid).
+    /// (W3C browserName is "MicrosoftEdge".) `options` merges extra capabilities.
+    @discardableResult
+    public static func edge(
+        commandExecutor url: String = "http://127.0.0.1:9515",
+        options: [String: Any]? = nil
+    ) throws -> WebDriver {
+        var caps: [String: Any] = options ?? [:]
+        caps["browserName"] = "MicrosoftEdge"
+        let d = WebDriver(commandExecutor: url)
+        try d.startSession(caps)
+        return d
+    }
+
+    /// Convenience: headless-Edge launch args baked in (Chromium `ms:edgeOptions`).
+    @discardableResult
+    public static func headlessEdge(
+        commandExecutor url: String = "http://127.0.0.1:9515"
+    ) throws -> WebDriver {
+        let opts: [String: Any] = [
+            "ms:edgeOptions": [
+                "args": ["--headless=new", "--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage"]
+            ]
+        ]
+        return try edge(commandExecutor: url, options: opts)
+    }
+
+    /// Start a Safari session against a running safaridriver (macOS only). Safari
+    /// has no headless mode, so there is no `headlessSafari`.
+    @discardableResult
+    public static func safari(
+        commandExecutor url: String = "http://127.0.0.1:4444",
+        options: [String: Any]? = nil
+    ) throws -> WebDriver {
+        var caps: [String: Any] = options ?? [:]
+        caps["browserName"] = "safari"
+        let d = WebDriver(commandExecutor: url)
+        try d.startSession(caps)
+        return d
     }
 
     /// Run a WebDriver command by name with JSON params. Returns the result value
@@ -647,8 +718,69 @@ public final class WebElement {
         }
     }
 
+    /// This element's shadow root as a search context (`getShadowRoot`), or throws
+    /// `WebDriverError` (noSuchShadowRoot, code 19) if the element hosts none.
+    /// Reads the shadow-6066 key (distinct from the element key).
+    public func getShadowRoot() throws -> ShadowRoot {
+        let value = try exec("getShadowRoot") as? [String: Any]
+        guard let ref = value?[ShadowRoot.w3cShadowKey] as? String else {
+            throw WebDriverError(message: "no such shadow root", code: WebDriverError.noSuchShadowRoot)
+        }
+        return ShadowRoot(driver: driver, id: ref)
+    }
+
     // The {"using","value"} object for a By, decoded from the engine's locator
     // JSON so id/name are rewritten to CSS exactly as the driver-level finds are.
+    private func decodeBy(_ by: By) -> [String: Any] {
+        let raw = take(aether_sel_embed_by_locator(by.strategy, by.value))
+        return (decodeJSON(raw) as? [String: Any]) ?? ["using": by.strategy, "value": by.value]
+    }
+}
+
+// ---- ShadowRoot ----
+
+/// A shadow root as a search context (mainstream `ShadowRoot`). Only
+/// `findElement`/`findElements` are supported, scoped inside the shadow tree —
+/// exactly like `WebElement`'s element-scoped finds, but through the
+/// `findElementFromShadowRoot` / `findElementsFromShadowRoot` commands with the
+/// shadow id as the `:id` path param.
+public final class ShadowRoot {
+    private unowned let driver: WebDriver
+    public let id: String
+
+    init(driver: WebDriver, id: String) {
+        self.driver = driver
+        self.id = id
+    }
+
+    // The W3C shadow-root reference key, distinct from the element key.
+    static let w3cShadowKey = "shadow-6066-11e4-a52e-4f735466cecf"
+
+    // Shadow-scoped exec: fold this shadow root's id into the params, then issue.
+    @discardableResult
+    private func exec(_ command: String, _ params: [String: Any] = [:]) throws -> Any? {
+        var p = params
+        p["id"] = id
+        return try driver.exec(command, p)
+    }
+
+    /// Find one descendant matching `by` (`findElementFromShadowRoot`).
+    public func findElement(_ by: By) throws -> WebElement {
+        let value = try exec("findElementFromShadowRoot", decodeBy(by)) as? [String: Any]
+        guard let ref = value?[WebElement.w3cElementKey] as? String else {
+            throw WebDriverError(message: "element reference key missing", code: WebDriverError.noSuchElement)
+        }
+        return WebElement(driver: driver, id: ref)
+    }
+
+    /// Find all descendants matching `by` (`findElementsFromShadowRoot`).
+    public func findElements(_ by: By) throws -> [WebElement] {
+        let value = try exec("findElementsFromShadowRoot", decodeBy(by)) as? [[String: Any]] ?? []
+        return value.compactMap { ref in
+            (ref[WebElement.w3cElementKey] as? String).map { WebElement(driver: driver, id: $0) }
+        }
+    }
+
     private func decodeBy(_ by: By) -> [String: Any] {
         let raw = take(aether_sel_embed_by_locator(by.strategy, by.value))
         return (decodeJSON(raw) as? [String: Any]) ?? ["using": by.strategy, "value": by.value]

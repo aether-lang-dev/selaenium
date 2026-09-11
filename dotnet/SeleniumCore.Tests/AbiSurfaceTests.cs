@@ -506,4 +506,35 @@ namespace SeleniumCore.Tests
             pdf.ShouldBeAssignableTo<EncodedFile>();
         }
     }
+
+    /// <summary>The per-browser session factories exist alongside Chrome (no
+    /// engine change — browserName passes through). Reflection surface check, no
+    /// browser: Firefox/Edge/Safari + the headless variants are declared, and
+    /// there is deliberately NO HeadlessSafari (Safari has no headless mode).</summary>
+    public class BrowserFactoryAbiTests
+    {
+        [Theory]
+        [InlineData("Chrome")]
+        [InlineData("HeadlessChrome")]
+        [InlineData("Firefox")]
+        [InlineData("HeadlessFirefox")]
+        [InlineData("Edge")]
+        [InlineData("HeadlessEdge")]
+        [InlineData("Safari")]
+        [InlineData("OpenSession")]
+        public void FactoryIsDeclared(string name)
+        {
+            typeof(RemoteWebDriver)
+                .GetMethod(name, System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static)
+                .ShouldNotBeNull($"RemoteWebDriver.{name} should be a public static factory");
+        }
+
+        [Fact]
+        public void NoHeadlessSafari()
+        {
+            typeof(RemoteWebDriver)
+                .GetMethod("HeadlessSafari", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static)
+                .ShouldBeNull("Safari has no headless mode — HeadlessSafari must not exist");
+        }
+    }
 }

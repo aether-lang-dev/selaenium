@@ -505,6 +505,68 @@ func TestLiveDriverOrchestration(t *testing.T) {
 	t.Log("PASS: live driver-orchestration test green (self-spawned driver)")
 }
 
+// TestLiveFirefox drives real Firefox over the engine-managed geckodriver:
+// resolve + spawn a geckodriver in-binding (no geckodriver on PATH, no Grid),
+// open a headless Firefox session against it, drive a data: page, and assert
+// title + element text — the NewFirefox/NewHeadlessFirefox factories against
+// real Firefox. Self-skips when the engine cannot resolve a geckodriver here.
+func TestLiveFirefox(t *testing.T) {
+	path, err := ResolveDriver("firefox", "")
+	if err != nil {
+		t.Fatalf("ResolveDriver(firefox): %v", err)
+	}
+	if path == "" {
+		t.Skip("engine cannot resolve a geckodriver (no Firefox/cache)")
+	}
+	if fi, err := os.Stat(path); err != nil || fi.IsDir() {
+		t.Fatalf("ResolveDriver(firefox) returned a non-file: %q (err=%v)", path, err)
+	}
+	t.Logf("ok: ResolveDriver(firefox) -> %s", path)
+
+	proc, err := EnsureDriver("firefox", "")
+	if err != nil {
+		t.Fatalf("EnsureDriver(firefox): %v", err)
+	}
+	defer proc.Stop()
+	if u := proc.URL(); !strings.HasPrefix(u, "http") {
+		t.Fatalf("geckodriver url = %q; want http prefix", u)
+	}
+
+	drv, err := NewHeadlessFirefox(proc.URL())
+	if err != nil {
+		t.Fatalf("NewHeadlessFirefox: %v", err)
+	}
+	defer drv.Quit()
+	if drv.SessionID() == "" {
+		t.Fatal("no session id from NewHeadlessFirefox")
+	}
+	page := "data:text/html;charset=utf-8," + url.PathEscape(
+		"<!doctype html><title>Aether Firefox</title><h1 id=\"hdr\">Hello FF</h1>")
+	if err := drv.Get(page); err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if title, _ := drv.Title(); title != "Aether Firefox" {
+		t.Fatalf("Title = %q; want Aether Firefox", title)
+	}
+	hdr, err := drv.FindElement(By.Id("hdr"))
+	if err != nil {
+		t.Fatalf("FindElement(#hdr): %v", err)
+	}
+	if txt, _ := hdr.Text(); txt != "Hello FF" {
+		t.Fatalf("hdr.Text = %q; want Hello FF", txt)
+	}
+	t.Log("PASS: live Firefox test green (self-spawned geckodriver)")
+}
+
+// The NewEdge/NewSafari factories are not live-runnable here (no Edge on Linux,
+// Safari is macOS-only), so this is a compile-surface check that they exist and
+// are callable with the same option-varargs shape as NewChrome. Never invoked.
+var (
+	_ = NewEdge
+	_ = NewHeadlessEdge
+	_ = NewSafari
+)
+
 // TestLiveBidiAuth drives the full network.continueWithAuth round-trip:
 // intercept the authRequired phase, catch the Basic-Auth challenge Chrome
 // raises for a protected fetch, answer it with credentials, and prove the page

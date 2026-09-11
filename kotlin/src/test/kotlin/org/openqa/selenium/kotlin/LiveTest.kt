@@ -140,6 +140,24 @@ private fun liveSurface(driverBin: String) {
             val png = Base64.getDecoder().decode(d.screenshotBase64())
             check(png.size > 8 && png[1] == 'P'.code.toByte() && png[2] == 'N'.code.toByte(), "screenshot is PNG")
 
+            // shadow DOM: the Java WebElement.getShadowRoot() / ShadowRoot search
+            // context reached straight through Kotlin/Java interop (no Kotlin FFI).
+            d.script(
+                "var h=document.createElement('div');h.id='shost';document.body.appendChild(h);" +
+                    "var r=h.attachShadow({mode:'open'});r.innerHTML='<p id=\"sinner\">shadowtext</p>';",
+            )
+            val root = d.find(By.id("shost")).getShadowRoot()
+            check(root is org.openqa.selenium.ShadowRoot, "getShadowRoot returns a ShadowRoot")
+            check(root.findElement(By.cssSelector("#sinner")).getText() == "shadowtext",
+                "findElement inside the shadow root")
+            var noShadow = false
+            try {
+                d.find(By.id("hdr")).getShadowRoot()
+            } catch (e: org.openqa.selenium.NoSuchShadowRootException) {
+                noShadow = e.code() == 19
+            }
+            check(noShadow, "getShadowRoot on a non-host -> NoSuchShadowRootException (19)")
+
             // WebDriver-BiDi over the same FFM binding: the Java BiDi class is
             // reached directly through Kotlin/Java interop — no Kotlin-side FFI.
             check(d.bidiAvailable(), "bidi available (webSocketUrl negotiated)")

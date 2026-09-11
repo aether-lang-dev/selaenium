@@ -431,6 +431,70 @@ func (e *WebElement) FindElements(sel Selector) ([]*WebElement, error) {
 	return elementList(e.driver, v)
 }
 
+// ---- shadow DOM ------------------------------------------------------------
+
+// ShadowRoot is a shadow root as a search context (mirrors Selenium's
+// ShadowRoot). Only FindElement/FindElements are supported, scoped inside the
+// shadow tree. Obtain one from WebElement.ShadowRoot.
+type ShadowRoot struct {
+	driver *WebDriver
+	id     string
+}
+
+// ID returns the W3C shadow-root reference id.
+func (s *ShadowRoot) ID() string { return s.id }
+
+// ShadowRoot returns this element's shadow root as a search context (W3C
+// getShadowRoot). It errors (IsNoSuchShadowRoot, code 19) if the element hosts
+// no open shadow root.
+func (e *WebElement) ShadowRoot() (*ShadowRoot, error) {
+	v, err := e.exec("getShadowRoot", nil)
+	if err != nil {
+		return nil, err
+	}
+	m, ok := v.(map[string]interface{})
+	if !ok {
+		return nil, &Error{Code: codeNoSuchShadowRoot, Message: "shadow root response was not an object"}
+	}
+	id, ok := m[w3cShadowKey].(string)
+	if !ok {
+		return nil, &Error{Code: codeNoSuchShadowRoot, Message: "no such shadow root"}
+	}
+	return &ShadowRoot{driver: e.driver, id: id}, nil
+}
+
+func (s *ShadowRoot) exec(command string, params map[string]interface{}) (interface{}, error) {
+	if params == nil {
+		params = map[string]interface{}{}
+	}
+	params["id"] = s.id
+	return s.driver.execute(command, params)
+}
+
+// FindElement finds one descendant of this shadow root matching sel (W3C
+// findElementFromShadowRoot), scoped inside the shadow tree.
+func (s *ShadowRoot) FindElement(sel Selector) (*WebElement, error) {
+	v, err := s.exec("findElementFromShadowRoot", decodeBy(sel))
+	if err != nil {
+		return nil, err
+	}
+	id, err := elementID(v)
+	if err != nil {
+		return nil, err
+	}
+	return &WebElement{driver: s.driver, id: id}, nil
+}
+
+// FindElements finds all descendants of this shadow root matching sel (W3C
+// findElementsFromShadowRoot), scoped inside the shadow tree.
+func (s *ShadowRoot) FindElements(sel Selector) ([]*WebElement, error) {
+	v, err := s.exec("findElementsFromShadowRoot", decodeBy(sel))
+	if err != nil {
+		return nil, err
+	}
+	return elementList(s.driver, v)
+}
+
 // ---- Select (<select> dropdown helper) -------------------------------------
 
 // Select wraps a <select> WebElement and drives it by finding and clicking its

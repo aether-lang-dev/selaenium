@@ -103,10 +103,14 @@ public class RemoteWebDriver : IWebDriver, ITakesScreenshot
     /// <summary>Pin an explicit native library path (wins over env/bundled).</summary>
     public static void ConfigureNativeLib(string path) => NativeLoader.Configure(path);
 
-    public static RemoteWebDriver Chrome(string commandExecutor, IDictionary<string, object?>? options = null,
-                                         string? caPath = null, bool insecure = false)
+    /// <summary>Open a W3C session with the given <paramref name="browserName"/> and
+    /// capabilities against a running driver (or Grid). The per-browser Chrome/Firefox/
+    /// Edge/Safari factories are thin wrappers over this.</summary>
+    public static RemoteWebDriver OpenSession(string commandExecutor, string browserName,
+                                              IDictionary<string, object?>? options = null,
+                                              string? caPath = null, bool insecure = false)
     {
-        var caps = new Dictionary<string, object?> { ["browserName"] = "chrome" };
+        var caps = new Dictionary<string, object?> { ["browserName"] = browserName };
         if (options != null)
         {
             foreach (var kv in options)
@@ -117,6 +121,11 @@ public class RemoteWebDriver : IWebDriver, ITakesScreenshot
         return new RemoteWebDriver(commandExecutor, caps, caPath, insecure);
     }
 
+    // ---- Chrome ----
+    public static RemoteWebDriver Chrome(string commandExecutor, IDictionary<string, object?>? options = null,
+                                         string? caPath = null, bool insecure = false) =>
+        OpenSession(commandExecutor, "chrome", options, caPath, insecure);
+
     public static RemoteWebDriver HeadlessChrome(string commandExecutor) =>
         Chrome(commandExecutor, new Dictionary<string, object?>
         {
@@ -125,6 +134,39 @@ public class RemoteWebDriver : IWebDriver, ITakesScreenshot
                 ["args"] = new List<object?> { "--headless=new", "--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage" },
             },
         });
+
+    // ---- Firefox ----
+    public static RemoteWebDriver Firefox(string commandExecutor, IDictionary<string, object?>? options = null,
+                                          string? caPath = null, bool insecure = false) =>
+        OpenSession(commandExecutor, "firefox", options, caPath, insecure);
+
+    public static RemoteWebDriver HeadlessFirefox(string commandExecutor) =>
+        Firefox(commandExecutor, new Dictionary<string, object?>
+        {
+            ["moz:firefoxOptions"] = new Dictionary<string, object?>
+            {
+                ["args"] = new List<object?> { "-headless" },
+            },
+        });
+
+    // ---- Edge (W3C browserName is "MicrosoftEdge"; Chromium-based) ----
+    public static RemoteWebDriver Edge(string commandExecutor, IDictionary<string, object?>? options = null,
+                                       string? caPath = null, bool insecure = false) =>
+        OpenSession(commandExecutor, "MicrosoftEdge", options, caPath, insecure);
+
+    public static RemoteWebDriver HeadlessEdge(string commandExecutor) =>
+        Edge(commandExecutor, new Dictionary<string, object?>
+        {
+            ["ms:edgeOptions"] = new Dictionary<string, object?>
+            {
+                ["args"] = new List<object?> { "--headless=new", "--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage" },
+            },
+        });
+
+    // ---- Safari (safaridriver, macOS only; no headless mode) ----
+    public static RemoteWebDriver Safari(string commandExecutor, IDictionary<string, object?>? options = null,
+                                         string? caPath = null, bool insecure = false) =>
+        OpenSession(commandExecutor, "safari", options, caPath, insecure);
 
     // ---- the FFI seam ----
     /// <summary>Issue any W3C command by name with a params dictionary, returning

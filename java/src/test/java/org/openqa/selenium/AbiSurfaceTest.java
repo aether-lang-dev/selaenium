@@ -52,6 +52,12 @@ class AbiSurfaceTest {
             return returns.get(command);
         }
 
+        // Bypass the engine's By decode for the no-.so tests (no libselenium_core.so).
+        @Override
+        Map<String, Object> decodeBy(String by, String value) {
+            return Map.of("using", by, "value", value);
+        }
+
         // Bypass the engine's By decode for the no-.so tests.
         @Override
         public WebElement findElement(By by) {
@@ -111,6 +117,34 @@ class AbiSurfaceTest {
     @Test
     void printsPageInterfaceIsImplemented() {
         assertInstanceOf(PrintsPage.class, new RecordingDriver());
+    }
+
+    // The per-browser static session factories exist with the same shape as
+    // chrome(): a (String, Map) two-arg form and a (String, Map, String, boolean)
+    // four-arg form, all returning RemoteWebDriver. Edge/Safari have no browser
+    // to drive here (no Edge on Linux, Safari is macOS-only), so this is a
+    // surface/compile check; firefox() is exercised live in LiveTest.
+    @Test
+    void perBrowserFactoriesDeclared() throws Exception {
+        for (String name : List.of("chrome", "firefox", "edge", "safari")) {
+            assertEquals(RemoteWebDriver.class,
+                RemoteWebDriver.class.getMethod(name, String.class, Map.class).getReturnType(),
+                name + "(String, Map)");
+            assertEquals(RemoteWebDriver.class,
+                RemoteWebDriver.class.getMethod(name, String.class, Map.class, String.class, boolean.class)
+                    .getReturnType(),
+                name + "(String, Map, String, boolean)");
+        }
+        // Headless convenience factories for the two browsers that support it
+        // (no headlessSafari — Safari has no headless mode).
+        for (String name : List.of("headlessChrome", "headlessFirefox", "headlessEdge")) {
+            assertEquals(RemoteWebDriver.class,
+                RemoteWebDriver.class.getMethod(name, String.class).getReturnType(),
+                name + "(String)");
+        }
+        assertThrows(NoSuchMethodException.class,
+            () -> RemoteWebDriver.class.getMethod("headlessSafari", String.class),
+            "there is no headlessSafari");
     }
 
     @Test
@@ -326,6 +360,60 @@ class AbiSurfaceTest {
         assertEquals("rgb(0, 0, 0)", el.getCssValue("color"));
         assertEquals("button", el.getAriaRole());
         assertEquals("Submit", el.getAccessibleName());
+    }
+
+    // ---- shadow root ----
+
+    @Test
+    void getShadowRootReadsShadowKeyAndReturnsShadowRoot() {
+        RecordingDriver d = new RecordingDriver(
+                Map.of("getShadowRoot", Map.of(ShadowRoot.W3C_SHADOW_KEY, "S-1")));
+        WebElement el = new RemoteWebElement(d, "e1");
+        SearchContext root = el.getShadowRoot();
+        assertInstanceOf(ShadowRoot.class, root);
+        assertEquals("S-1", ((ShadowRoot) root).id());
+        // Reads the DISTINCT shadow key, via the "getShadowRoot" command (not element key).
+        assertEquals("getShadowRoot", d.lastCommand());
+        assertEquals("e1", d.paramsOf("getShadowRoot").get("id"));
+    }
+
+    @Test
+    void getShadowRootMissingKeyThrowsNoSuchShadowRoot() {
+        RecordingDriver d = new RecordingDriver(Map.of("getShadowRoot", Map.of()));
+        WebElement el = new RemoteWebElement(d, "e1");
+        assertThrows(NoSuchShadowRootException.class, el::getShadowRoot);
+    }
+
+    @Test
+    void shadowRootFindsUseShadowScopedCommands() {
+        RecordingDriver d = new RecordingDriver(Map.of(
+                "getShadowRoot", Map.of(ShadowRoot.W3C_SHADOW_KEY, "S-1"),
+                "findElementFromShadowRoot", Map.of(RemoteWebDriver.W3C_ELEMENT_KEY, "inner-1"),
+                "findElementsFromShadowRoot",
+                List.of(Map.of(RemoteWebDriver.W3C_ELEMENT_KEY, "inner-1"))));
+        WebElement el = new RemoteWebElement(d, "e1");
+        SearchContext root = el.getShadowRoot();
+
+        WebElement inner = root.findElement(By.cssSelector("#sinner"));
+        assertEquals("inner-1", inner.id());
+        // Shadow-scoped command with the shadow id as :id (NOT findChildElement).
+        assertTrue(d.sent("findElementFromShadowRoot"));
+        assertFalse(d.sent("findChildElement"));
+        assertEquals("S-1", d.paramsOf("findElementFromShadowRoot").get("id"));
+
+        List<WebElement> many = root.findElements(By.cssSelector("p"));
+        assertEquals(1, many.size());
+        assertTrue(d.sent("findElementsFromShadowRoot"));
+        assertEquals("S-1", d.paramsOf("findElementsFromShadowRoot").get("id"));
+    }
+
+    @Test
+    void noSuchShadowRootCarriesCode19() {
+        assertEquals(19, RemoteWebDriver.classify(19, "no such shadow root").code());
+        assertInstanceOf(NoSuchShadowRootException.class,
+                RemoteWebDriver.classify(19, "no such shadow root"));
+        assertInstanceOf(DetachedShadowRootException.class,
+                RemoteWebDriver.classify(2, "detached shadow root"));
     }
 
     // ---- Keys code points match upstream exactly ----

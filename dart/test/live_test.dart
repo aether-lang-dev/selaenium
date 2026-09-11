@@ -182,6 +182,24 @@ void main() {
         ]);
         expect(below.length, greaterThanOrEqualTo(1));
         expect(below.first.getAttribute('id'), 'btn');
+
+        // Shadow DOM: attach an open shadow root hosting a #sinner, then reach
+        // inside it via getShadowRoot().findElement(css '#sinner').
+        d.executeScript(
+            "var h=document.createElement('div');h.id='shost';"
+            "document.body.appendChild(h);"
+            "var r=h.attachShadow({mode:'open'});"
+            "r.innerHTML='<p id=\"sinner\">shadowtext</p>';");
+        final shadow = d.findElement(By.id('shost')).shadowRoot;
+        expect(shadow.id, isNotEmpty);
+        final inner = shadow.findElement(By.cssSelector('#sinner'));
+        expect(inner.text, 'shadowtext');
+        expect(shadow.findElements(By.cssSelector('p')), hasLength(1));
+
+        // A non-host element raises NoSuchShadowRoot (code 19).
+        expect(() => d.findElement(By.id('hdr')).shadowRoot,
+            throwsA(isA<NoSuchShadowRootException>()
+                .having((e) => e.code, 'code', 19)));
       } finally {
         d.quit();
       }
@@ -232,6 +250,40 @@ void main() {
       expect(d.findElement(By.id('hdr')).text, 'Hello');
     } finally {
       d.quit();
+    }
+  }, timeout: const Timeout(Duration(seconds: 120)));
+
+  test('live firefox', () async {
+    // Live Firefox smoke over the engine-managed geckodriver: resolve + spawn a
+    // geckodriver in-binding (no geckodriver on PATH, no Grid), open a headless
+    // Firefox session against it, drive a data: page, and assert title +
+    // element text — WebDriver.firefox/headlessFirefox against real Firefox.
+    final path = resolveDriver(browser: 'firefox');
+    if (path.isEmpty) {
+      markTestSkipped('engine cannot resolve a geckodriver (no Firefox/cache)');
+      return;
+    }
+    expect(File(path).existsSync(), isTrue,
+        reason: 'resolveDriver(firefox) returned a non-file: $path');
+
+    final proc = ensureDriver(browser: 'firefox');
+    expect(proc, isNotNull);
+    try {
+      expect(proc!.url, startsWith('http'),
+          reason: 'geckodriver url=${proc.url}');
+      final d = WebDriver.headlessFirefox(proc.url);
+      try {
+        expect(d.sessionId, isNotEmpty);
+        const html = '<!doctype html><title>Aether Firefox</title>'
+            '<h1 id="hdr">Hello FF</h1>';
+        d.get('data:text/html,${Uri.encodeComponent(html)}');
+        expect(d.title, 'Aether Firefox');
+        expect(d.findElement(By.id('hdr')).text, 'Hello FF');
+      } finally {
+        d.quit();
+      }
+    } finally {
+      proc!.stop();
     }
   }, timeout: const Timeout(Duration(seconds: 120)));
 

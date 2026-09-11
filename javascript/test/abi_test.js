@@ -376,10 +376,57 @@ test('actions() serializes a WebElement pointer origin to its W3C ref', async ()
   assert.deepStrictEqual(move.origin, { [W3C_KEY]: 'el-origin' })
 })
 
+test('getShadowRoot returns a ShadowRoot whose finders use the shadow commands', async () => {
+  const d = newDriver()
+  queue({ [W3C_KEY]: 'host-1' })
+  const el = await d.findElement(s.By.id('host'))
+  reset()
+
+  // getShadowRoot reads the shadow-6066 key and yields a ShadowRoot.
+  const SHADOW_KEY = 'shadow-6066-11e4-a52e-4f735466cecf'
+  queue({ [SHADOW_KEY]: 'shadow-1' })
+  const sr = await el.getShadowRoot()
+  assert.ok(sr instanceof s.ShadowRoot)
+  assert.strictEqual(sr.id, 'shadow-1')
+  assert.strictEqual(lastCall()[0], 'getShadowRoot')
+  assert.strictEqual(lastCall()[1].id, 'host-1')
+
+  // findElement inside the shadow root routes to findElementFromShadowRoot,
+  // passing the shadow id as `id` (mirrors findChildElement).
+  reset()
+  queue({ [W3C_KEY]: 'inner-1' })
+  const inner = await sr.findElement(s.By.css('#sinner'))
+  assert.ok(inner instanceof s.WebElement)
+  assert.strictEqual(inner.id, 'inner-1')
+  assert.strictEqual(lastCall()[0], 'findElementFromShadowRoot')
+  assert.strictEqual(lastCall()[1].id, 'shadow-1')
+
+  reset()
+  queue([{ [W3C_KEY]: 'inner-1' }, { [W3C_KEY]: 'inner-2' }])
+  const all = await sr.findElements(s.By.css('p'))
+  assert.strictEqual(all.length, 2)
+  assert.strictEqual(lastCall()[0], 'findElementsFromShadowRoot')
+  assert.strictEqual(lastCall()[1].id, 'shadow-1')
+})
+
+test('getShadowRoot throws NoSuchShadowRootError when the shadow key is absent', async () => {
+  const d = newDriver()
+  queue({ [W3C_KEY]: 'host-2' })
+  const el = await d.findElement(s.By.id('nohost'))
+  reset()
+  queue(null) // no shadow key in the payload
+  await assert.rejects(
+    () => el.getShadowRoot(),
+    (e) => e instanceof s.error.NoSuchShadowRootError && e.code === 19,
+  )
+})
+
 test('error namespace has upstream Error names and legacy Exception aliases', () => {
   assert.strictEqual(typeof s.error, 'object')
   assert.strictEqual(typeof s.error.WebDriverError, 'function')
   assert.strictEqual(typeof s.error.NoSuchElementError, 'function')
+  assert.strictEqual(typeof s.error.NoSuchShadowRootError, 'function')
+  assert.strictEqual(typeof s.error.DetachedShadowRootError, 'function')
   assert.strictEqual(typeof s.error.TimeoutError, 'function')
   // legacy aliases point at the SAME constructors
   assert.strictEqual(s.NoSuchElementException, s.error.NoSuchElementError)

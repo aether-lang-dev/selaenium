@@ -102,6 +102,10 @@ import (
 // {"element-6066-11e4-a52e-4f735466cecf": "<id>"}.
 const w3cElementKey = "element-6066-11e4-a52e-4f735466cecf"
 
+// The W3C shadow-root reference key, distinct from the element key: a
+// getShadowRoot result is {"shadow-6066-11e4-a52e-4f735466cecf": "<id>"}.
+const w3cShadowKey = "shadow-6066-11e4-a52e-4f735466cecf"
+
 // Selector is a locator: a (strategy, value) pair produced by the By factory and
 // passed to FindElement/FindElements. The strategy strings match the engine's
 // by_locator strings; id/name/"class name" are rewritten to CSS in the engine.
@@ -169,6 +173,8 @@ const (
 	codeInvalidSelector        = 11
 	codeNoSuchAlert            = 15
 	codeTimeout                = 24
+	codeNoSuchShadowRoot       = 19
+	codeDetachedShadowRoot     = 2
 	codeTransport              = -1
 )
 
@@ -177,6 +183,10 @@ func IsNoSuchElement(err error) bool { return codeIs(err, codeNoSuchElement) }
 
 // IsStaleElement reports whether err is a "stale element reference" error.
 func IsStaleElement(err error) bool { return codeIs(err, codeStaleElementReference) }
+
+// IsNoSuchShadowRoot reports whether err is a "no such shadow root" error — the
+// element hosts no open shadow root.
+func IsNoSuchShadowRoot(err error) bool { return codeIs(err, codeNoSuchShadowRoot) }
 
 func codeIs(err error, code int) bool {
 	if e, ok := err.(*Error); ok {
@@ -292,6 +302,55 @@ func NewChrome(commandExecutor string, opts ...Option) (*WebDriver, error) {
 // NewChrome(commandExecutor, Headless(), opts...).
 func NewHeadlessChrome(commandExecutor string, opts ...Option) (*WebDriver, error) {
 	return NewChrome(commandExecutor, append([]Option{Headless()}, opts...)...)
+}
+
+// NewFirefox starts a Firefox session against a running geckodriver (or Grid).
+func NewFirefox(commandExecutor string, opts ...Option) (*WebDriver, error) {
+	cfg := &sessionConfig{caps: map[string]interface{}{"browserName": "firefox"}}
+	for _, o := range opts {
+		o(cfg)
+	}
+	return openSession(commandExecutor, cfg)
+}
+
+// NewHeadlessFirefox starts a Firefox session with the headless launch arg
+// (moz:firefoxOptions "-headless") baked in.
+func NewHeadlessFirefox(commandExecutor string, opts ...Option) (*WebDriver, error) {
+	headless := func(cfg *sessionConfig) {
+		cfg.caps["moz:firefoxOptions"] = map[string]interface{}{"args": []string{"-headless"}}
+	}
+	return NewFirefox(commandExecutor, append([]Option{headless}, opts...)...)
+}
+
+// NewEdge starts a Microsoft Edge session against a running msedgedriver (or
+// Grid). Edge's W3C browserName is "MicrosoftEdge".
+func NewEdge(commandExecutor string, opts ...Option) (*WebDriver, error) {
+	cfg := &sessionConfig{caps: map[string]interface{}{"browserName": "MicrosoftEdge"}}
+	for _, o := range opts {
+		o(cfg)
+	}
+	return openSession(commandExecutor, cfg)
+}
+
+// NewHeadlessEdge starts an Edge session with the standard headless launch args
+// (Chromium-based, ms:edgeOptions args) baked in.
+func NewHeadlessEdge(commandExecutor string, opts ...Option) (*WebDriver, error) {
+	headless := func(cfg *sessionConfig) {
+		cfg.caps["ms:edgeOptions"] = map[string]interface{}{
+			"args": []string{"--headless=new", "--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage"},
+		}
+	}
+	return NewEdge(commandExecutor, append([]Option{headless}, opts...)...)
+}
+
+// NewSafari starts a Safari session against a running safaridriver (macOS only).
+// Safari has no headless mode, so there is no NewHeadlessSafari.
+func NewSafari(commandExecutor string, opts ...Option) (*WebDriver, error) {
+	cfg := &sessionConfig{caps: map[string]interface{}{"browserName": "safari"}}
+	for _, o := range opts {
+		o(cfg)
+	}
+	return openSession(commandExecutor, cfg)
 }
 
 // NewRemote starts a session against an arbitrary remote end with explicit caps.

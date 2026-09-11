@@ -33,6 +33,12 @@ module Selenium
         else
           WebDriver.local_chrome(**opts)
         end
+      when :firefox
+        WebDriver.firefox(*[command_executor].compact, **opts)
+      when :edge
+        WebDriver.edge(*[command_executor].compact, **opts)
+      when :safari
+        WebDriver.safari(*[command_executor].compact, **opts)
       else
         raise WebDriverError, "unsupported browser: #{browser.inspect}"
       end

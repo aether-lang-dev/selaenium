@@ -12,6 +12,7 @@ use PHPUnit\Framework\TestCase;
 use SeleniumCore\By;
 use SeleniumCore\WebDriver;
 use SeleniumCore\NoSuchElementException;
+use SeleniumCore\NoSuchShadowRootException;
 
 final class LiveTest extends TestCase
 {
@@ -138,6 +139,23 @@ PHP);
                 // screenshot
                 $png = \base64_decode($d->screenshotBase64());
                 $this->assertTrue(\strlen($png) > 8 && \substr($png, 1, 3) === 'PNG', 'screenshot is PNG');
+
+                // shadow DOM: host an open shadow root, then reach inside it.
+                $d->executeScript(
+                    "var h=document.createElement('div');h.id='shost';document.body.appendChild(h);"
+                    . "var r=h.attachShadow({mode:'open'});r.innerHTML='<p id=\"sinner\">shadowtext</p>';"
+                );
+                $shadow = $d->findElement(By::ID, 'shost')->getShadowRoot();
+                $this->assertSame('shadowtext', $shadow->findElement(By::CSS, '#sinner')->text(), 'shadow findElement');
+                $this->assertCount(1, $shadow->findElements(By::CSS, 'p'), 'shadow findElements');
+                // getShadowRoot on a non-host element raises code 19.
+                $nsr = false;
+                try {
+                    $d->findElement(By::ID, 'hdr')->getShadowRoot();
+                } catch (NoSuchShadowRootException $e) {
+                    $nsr = $e->code_ === 19;
+                }
+                $this->assertTrue($nsr, 'no such shadow root on a non-host element');
 
                 // negative path
                 $nse = false;

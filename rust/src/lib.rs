@@ -193,6 +193,8 @@ pub enum ErrorKind {
     Timeout,
     Javascript,
     UnknownCommand,
+    NoSuchShadowRoot,
+    DetachedShadowRoot,
     Other,
 }
 
@@ -205,6 +207,8 @@ impl WebDriverError {
             11 => ErrorKind::InvalidSelector,
             13 => ErrorKind::Javascript,
             17 => ErrorKind::NoSuchElement,
+            19 => ErrorKind::NoSuchShadowRoot,
+            2 => ErrorKind::DetachedShadowRoot,
             21 | 24 => ErrorKind::Timeout,
             23 => ErrorKind::StaleElementReference,
             28 => ErrorKind::UnknownCommand,
@@ -344,6 +348,9 @@ fn decode_by(by: &By) -> Json {
 
 pub(crate) const W3C_ELEMENT_KEY: &str = "element-6066-11e4-a52e-4f735466cecf";
 
+/// The W3C shadow-root reference key, distinct from the element key.
+pub(crate) const W3C_SHADOW_KEY: &str = "shadow-6066-11e4-a52e-4f735466cecf";
+
 // ---- TLS ----
 
 /// TLS trust configuration for a session, applied on the handle before
@@ -427,6 +434,93 @@ impl WebDriver {
             )]),
         )]);
         WebDriver::chrome(command_executor, Some(opts))
+    }
+
+    /// Start a Firefox session against a running geckodriver (or Grid).
+    /// `options` is a JSON object of extra capabilities merged under
+    /// browserName: firefox.
+    pub fn firefox(command_executor: &str, options: Option<Json>) -> Result<WebDriver> {
+        WebDriver::firefox_tls(command_executor, options, TlsConfig::default())
+    }
+
+    /// Like [`WebDriver::firefox`], but with TLS trust configuration applied on
+    /// the session handle before `newSession` (see [`WebDriver::chrome_tls`]).
+    pub fn firefox_tls(command_executor: &str, options: Option<Json>, tls: TlsConfig) -> Result<WebDriver> {
+        let mut caps = match options {
+            Some(Json::Obj(m)) => Json::Obj(m),
+            _ => json::obj(vec![]),
+        };
+        if let Json::Obj(ref mut m) = caps {
+            m.insert("browserName".into(), json::s("firefox"));
+        }
+        WebDriver::new(command_executor, caps, tls)
+    }
+
+    /// Convenience: headless-Firefox launch args baked in
+    /// (`moz:firefoxOptions` `-headless`).
+    pub fn headless_firefox(command_executor: &str) -> Result<WebDriver> {
+        let opts = json::obj(vec![(
+            "moz:firefoxOptions",
+            json::obj(vec![("args", Json::Arr(vec![json::s("-headless")]))]),
+        )]);
+        WebDriver::firefox(command_executor, Some(opts))
+    }
+
+    /// Start a Microsoft Edge session against a running msedgedriver (or Grid).
+    /// `options` is a JSON object of extra capabilities merged under
+    /// browserName: MicrosoftEdge (Edge's W3C browserName).
+    pub fn edge(command_executor: &str, options: Option<Json>) -> Result<WebDriver> {
+        WebDriver::edge_tls(command_executor, options, TlsConfig::default())
+    }
+
+    /// Like [`WebDriver::edge`], but with TLS trust configuration applied on the
+    /// session handle before `newSession` (see [`WebDriver::chrome_tls`]).
+    pub fn edge_tls(command_executor: &str, options: Option<Json>, tls: TlsConfig) -> Result<WebDriver> {
+        let mut caps = match options {
+            Some(Json::Obj(m)) => Json::Obj(m),
+            _ => json::obj(vec![]),
+        };
+        if let Json::Obj(ref mut m) = caps {
+            m.insert("browserName".into(), json::s("MicrosoftEdge"));
+        }
+        WebDriver::new(command_executor, caps, tls)
+    }
+
+    /// Convenience: headless-Edge launch args baked in (Chromium-based,
+    /// `ms:edgeOptions` args).
+    pub fn headless_edge(command_executor: &str) -> Result<WebDriver> {
+        let opts = json::obj(vec![(
+            "ms:edgeOptions",
+            json::obj(vec![(
+                "args",
+                Json::Arr(vec![
+                    json::s("--headless=new"),
+                    json::s("--no-sandbox"),
+                    json::s("--disable-gpu"),
+                    json::s("--disable-dev-shm-usage"),
+                ]),
+            )]),
+        )]);
+        WebDriver::edge(command_executor, Some(opts))
+    }
+
+    /// Start a Safari session against a running safaridriver (macOS only).
+    /// Safari has no headless mode, so there is no `headless_safari`.
+    pub fn safari(command_executor: &str, options: Option<Json>) -> Result<WebDriver> {
+        WebDriver::safari_tls(command_executor, options, TlsConfig::default())
+    }
+
+    /// Like [`WebDriver::safari`], but with TLS trust configuration applied on
+    /// the session handle before `newSession` (see [`WebDriver::chrome_tls`]).
+    pub fn safari_tls(command_executor: &str, options: Option<Json>, tls: TlsConfig) -> Result<WebDriver> {
+        let mut caps = match options {
+            Some(Json::Obj(m)) => Json::Obj(m),
+            _ => json::obj(vec![]),
+        };
+        if let Json::Obj(ref mut m) = caps {
+            m.insert("browserName".into(), json::s("safari"));
+        }
+        WebDriver::new(command_executor, caps, tls)
     }
 
     fn new(command_executor: &str, mut capabilities: Json, tls: TlsConfig) -> Result<WebDriver> {
@@ -1108,6 +1202,61 @@ if(f.requestSubmit){f.requestSubmit();}else{f.submit();}";
     /// `findChildElements`). Used by [`Select`] to enumerate `<option>` children.
     pub fn find_elements(&self, by: By) -> Result<Vec<WebElement<'a>>> {
         let result = self.exec("findChildElements", decode_by(&by))?;
+        let arr = result.as_array().cloned().unwrap_or_default();
+        arr.iter().map(|e| self.driver.element_from(e)).collect()
+    }
+
+    /// This element's shadow root as a search context (W3C `getShadowRoot`;
+    /// mirrors Selenium's `getShadowRoot`). Errors with kind
+    /// [`NoSuchShadowRoot`](ErrorKind::NoSuchShadowRoot) (code 19) if the element
+    /// hosts no open shadow root. The returned [`ShadowRoot`] is tied to the same
+    /// driver borrow as this element.
+    pub fn shadow_root(&self) -> Result<ShadowRoot<'a>> {
+        let result = self.exec("getShadowRoot", json::obj(vec![]))?;
+        let id = result
+            .get(W3C_SHADOW_KEY)
+            .and_then(|x| x.as_str())
+            .ok_or_else(|| WebDriverError::classify(19, "no such shadow root".into()))?;
+        Ok(ShadowRoot { driver: self.driver, id: id.to_string() })
+    }
+}
+
+/// A shadow root as a search context (mirrors Selenium's `ShadowRoot`). Only
+/// [`find_element`](ShadowRoot::find_element) /
+/// [`find_elements`](ShadowRoot::find_elements) are supported, scoped inside the
+/// shadow tree. Obtain one from [`WebElement::shadow_root`].
+#[derive(Debug)]
+pub struct ShadowRoot<'a> {
+    driver: &'a WebDriver,
+    id: String,
+}
+
+impl<'a> ShadowRoot<'a> {
+    /// The W3C shadow-root reference id.
+    pub fn id(&self) -> &str {
+        &self.id
+    }
+
+    fn exec(&self, command: &str, mut params: Json) -> Result<Json> {
+        if let Json::Obj(ref mut m) = params {
+            m.insert("id".into(), json::s(&self.id));
+        } else {
+            params = json::obj(vec![("id", json::s(&self.id))]);
+        }
+        self.driver.execute(command, params)
+    }
+
+    /// Find one descendant of this shadow root matching `by`
+    /// (`findElementFromShadowRoot`), scoped inside the shadow tree.
+    pub fn find_element(&self, by: By) -> Result<WebElement<'a>> {
+        let result = self.exec("findElementFromShadowRoot", decode_by(&by))?;
+        self.driver.element_from(&result)
+    }
+
+    /// Find all descendants of this shadow root matching `by`
+    /// (`findElementsFromShadowRoot`), scoped inside the shadow tree.
+    pub fn find_elements(&self, by: By) -> Result<Vec<WebElement<'a>>> {
+        let result = self.exec("findElementsFromShadowRoot", decode_by(&by))?;
         let arr = result.as_array().cloned().unwrap_or_default();
         arr.iter().map(|e| self.driver.element_from(e)).collect()
     }

@@ -4,7 +4,8 @@
   needs chromedriver + a content server (started here via com.sun.net.httpserver
   and ProcessBuilder); skips if chromedriver is absent."
   (:require [selenium :as sel])
-  (:import [org.openqa.selenium WebDriverException NoSuchElementException BidiEvent]
+  (:import [org.openqa.selenium WebDriverException NoSuchElementException BidiEvent
+            NoSuchShadowRootException ShadowRoot By]
            [com.sun.net.httpserver HttpServer HttpHandler]
            [java.net InetSocketAddress ServerSocket Socket InetAddress]
            [java.nio.charset StandardCharsets]
@@ -112,6 +113,19 @@
           ;; screenshot
           (let [png (.decode (Base64/getDecoder) (sel/screenshot-base64 d))]
             (check (and (> (alength png) 8) (= (byte \P) (aget png 1)) (= (byte \N) (aget png 2))) "screenshot is PNG"))
+
+          ;; shadow DOM: the Java WebElement.getShadowRoot() / ShadowRoot search
+          ;; context reached directly through Clojure/Java interop (no Clojure FFI).
+          (sel/execute-script d
+            (str "var h=document.createElement('div');h.id='shost';document.body.appendChild(h);"
+                 "var r=h.attachShadow({mode:'open'});r.innerHTML='<p id=\"sinner\">shadowtext</p>';"))
+          (let [root (.getShadowRoot (sel/find-element d :id "shost"))]
+            (check (instance? ShadowRoot root) "getShadowRoot returns a ShadowRoot")
+            (check (= "shadowtext" (.getText (.findElement root (By/cssSelector "#sinner"))))
+                   "findElement inside the shadow root"))
+          (let [no-shadow (try (.getShadowRoot (sel/find-element d :id "hdr")) false
+                               (catch NoSuchShadowRootException e (= 19 (.code e))))]
+            (check no-shadow "getShadowRoot on a non-host -> NoSuchShadowRootException (19)"))
 
           ;; WebDriver-BiDi over the shared Java Panama binding (Clojure reaches
           ;; the Java BiDi class directly via interop — no Clojure-side FFI).

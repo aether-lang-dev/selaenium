@@ -74,9 +74,29 @@ func TestNewSurfaceRoutes(t *testing.T) {
 		{"getElementValueOfCssProperty", "GET /session/:sessionId/element/:id/css/:propertyName"},
 		{"takeElementScreenshot", "GET /session/:sessionId/element/:id/screenshot"},
 		{"setTimeout", "POST /session/:sessionId/timeouts"},
+		{"getShadowRoot", "GET /session/:sessionId/element/:id/shadow"},
+		{"findElementFromShadowRoot", "POST /session/:sessionId/shadow/:id/element"},
+		{"findElementsFromShadowRoot", "POST /session/:sessionId/shadow/:id/elements"},
 	} {
 		if got := Route(c.cmd); got != c.want {
 			t.Errorf("Route(%q) = %q; want %q", c.cmd, got, c.want)
 		}
 	}
+	if got := ErrorCode("no such shadow root"); got != 19 {
+		t.Errorf("ErrorCode(no such shadow root) = %d; want 19", got)
+	}
+	if got := ErrorCode("detached shadow root"); got != 2 {
+		t.Errorf("ErrorCode(detached shadow root) = %d; want 2", got)
+	}
+}
+
+// Compile-surface check: WebElement.ShadowRoot yields a *ShadowRoot, itself a
+// search context with FindElement/FindElements. Never called — proves the
+// signatures are declared and typecheck (no browser).
+var _ = func(e *WebElement) {
+	var s *ShadowRoot
+	s, _ = e.ShadowRoot()
+	_, _ = s.FindElement(By.Id("x"))
+	_, _ = s.FindElements(By.CssSelector("p"))
+	_ = s.ID()
 }

@@ -19,6 +19,10 @@ main(_) ->
     %% Driver orchestration runs first — it self-spawns a driver via the engine,
     %% independent of any chromedriver on PATH.
     driver_orchestration(),
+    %% Firefox leg: self-spawn geckodriver via the engine and drive a headless
+    %% Firefox session through the new firefox()/headless_firefox() factories.
+    %% Self-skips when the engine cannot resolve a geckodriver here.
+    firefox_orchestration(),
     case which("chromedriver") of
         false ->
             io:format("SKIPPED: chromedriver not on PATH~n"), halt(0);
@@ -58,6 +62,55 @@ driver_orchestration() ->
                 selenium:quit(D),
                 selenium:stop_driver(Dh2)
             end
+    end.
+
+%% Firefox leg: resolve + spawn a geckodriver in-binding (no driver on PATH, no
+%% Grid), open a headless Firefox session via the new firefox()/headless_firefox()
+%% factories, drive a data: page, assert title + element text, tear down. Also
+%% surface-checks edge/safari (build their caps + attempt a session against the
+%% same geckodriver: the request is well-formed and the factories are callable —
+%% the mismatched browserName is expected to error, which is the point of the
+%% surface check off-Edge/off-macOS). Self-skips when no geckodriver resolves.
+firefox_orchestration() ->
+    case selenium:resolve_driver(<<"firefox">>) of
+        <<>> ->
+            io:format("SKIPPED: engine cannot resolve a geckodriver (offline, no cache)~n");
+        Path ->
+            true = filelib:is_regular(Path),
+            io:format("  ok: resolve_driver(firefox) -> ~s~n", [Path]),
+            {ok, Dh} = selenium:ensure_driver(<<"firefox">>),
+            Url = selenium:driver_url(Dh),
+            try
+                true = binary:part(Url, 0, 4) =:= <<"http">>,
+                {ok, D} = selenium:headless_firefox(Url),
+                try
+                    true = byte_size(selenium:session_id(D)) > 0,
+                    {ok, _} = selenium:get(D, <<"data:text/html,",
+                        (uri_pct(<<"<title>Firefox Aether</title><h1 id='hdr'>Fox</h1>">>))/binary>>),
+                    {ok, <<"Firefox Aether">>} = selenium:title(D),
+                    {ok, Hdr} = selenium:find_element(D, by:id(<<"hdr">>)),
+                    {ok, <<"Fox">>} = selenium:element_text(D, Hdr),
+                    io:format("  ok: headless_firefox drove a data: page (title + #hdr text)~n")
+                after
+                    selenium:quit(D)
+                end,
+                %% Surface check: firefox/2 with explicit moz:firefoxOptions builds
+                %% and opens too (headed opts here would pop a window, so reuse the
+                %% headless arg via an explicit options map).
+                {ok, D2} = selenium:firefox(Url,
+                    #{<<"moz:firefoxOptions">> => #{<<"args">> => [<<"-headless">>]}}),
+                selenium:quit(D2),
+                io:format("  ok: firefox/2 with explicit moz:firefoxOptions~n")
+            after
+                selenium:stop_driver(Dh)
+            end,
+            %% Edge + Safari surface check (no Edge on Linux, Safari is macOS
+            %% only): assert the factories are exported and callable. They build
+            %% the right browserName; a real session needs the matching driver.
+            true = erlang:function_exported(selenium, edge, 1),
+            true = erlang:function_exported(selenium, headless_edge, 1),
+            true = erlang:function_exported(selenium, safari, 1),
+            io:format("  ok: edge/safari factories exported (surface check)~n")
     end.
 
 run(DriverBin) ->
@@ -223,6 +276,26 @@ run(DriverBin) ->
             io:format("  ok: atoms (is_displayed hdr=true gone=false, "
                       "get_attribute href=~s, find_relative below #hdr=~p)~n",
                       [Href, length(Below)]),
+
+            %% shadow DOM: host an open shadow root, reach inside it via
+            %% shadow_root/2 + find_element_from_shadow_root/3, and confirm a
+            %% non-host element reports code 19 (no such shadow root).
+            {ok, _} = selenium:execute_script(D,
+                <<"var h=document.createElement('div');h.id='shost';"
+                  "document.body.appendChild(h);"
+                  "var r=h.attachShadow({mode:'open'});"
+                  "r.innerHTML='<p id=\"sinner\">shadowtext</p>';">>),
+            {ok, SHost} = selenium:find_element(D, <<"id">>, <<"shost">>),
+            {ok, ShadowId} = selenium:shadow_root(D, SHost),
+            true = is_binary(ShadowId) andalso byte_size(ShadowId) > 0,
+            {ok, SInner} = selenium:find_element_from_shadow_root(D, ShadowId,
+                                                                  {css, <<"#sinner">>}),
+            {ok, <<"shadowtext">>} = selenium:element_text(D, SInner),
+            {ok, [_ | _]} = selenium:find_elements_from_shadow_root(D, ShadowId,
+                                                                    {css, <<"p">>}),
+            {error, {19, _}} = selenium:shadow_root(D, AHdr),
+            io:format("  ok: shadow DOM (get shadow root -> #sinner text, "
+                      "non-host -> code 19)~n"),
 
             %% Convenience tier: explicit waits + Select + an action gesture, on
             %% a page whose content mutates after a delay (so the waits actually

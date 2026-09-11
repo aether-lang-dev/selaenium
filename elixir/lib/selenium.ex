@@ -19,6 +19,8 @@ defmodule Selenium do
   alias Selenium.Native
 
   @w3c_key "element-6066-11e4-a52e-4f735466cecf"
+  # The W3C shadow-root reference key, distinct from the element key.
+  @shadow_key "shadow-6066-11e4-a52e-4f735466cecf"
 
   # ---- session lifecycle ----
 
@@ -57,6 +59,38 @@ defmodule Selenium do
       end
 
     chrome(command_executor, %{"goog:chromeOptions" => chrome_opts})
+  end
+
+  @doc "Start a Firefox session against a running geckodriver (or Grid)."
+  def firefox(command_executor, options \\ %{}) do
+    caps = Map.merge(%{"browserName" => "firefox"}, options)
+    new(command_executor, caps)
+  end
+
+  @doc "Convenience: a headless Firefox session (`moz:firefoxOptions` `-headless`)."
+  def headless_firefox(command_executor) do
+    firefox(command_executor, %{"moz:firefoxOptions" => %{"args" => ["-headless"]}})
+  end
+
+  @doc "Start a Microsoft Edge session against a running msedgedriver (or Grid). (W3C browserName is `MicrosoftEdge`.)"
+  def edge(command_executor, options \\ %{}) do
+    caps = Map.merge(%{"browserName" => "MicrosoftEdge"}, options)
+    new(command_executor, caps)
+  end
+
+  @doc "Convenience: a headless Edge session (Chromium-based, `ms:edgeOptions` args)."
+  def headless_edge(command_executor) do
+    edge_opts = %{
+      "args" => ["--headless=new", "--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage"]
+    }
+
+    edge(command_executor, %{"ms:edgeOptions" => edge_opts})
+  end
+
+  @doc "Start a Safari session against a running safaridriver (macOS only). Safari has no headless mode."
+  def safari(command_executor, options \\ %{}) do
+    caps = Map.merge(%{"browserName" => "safari"}, options)
+    new(command_executor, caps)
   end
 
   defp new(command_executor, caps, tls \\ %{}) do
@@ -287,6 +321,50 @@ defmodule Selenium do
   def find_relative_count(h, base_css, filters) do
     case find_relative(h, base_css, filters) do
       {:ok, ids} -> {:ok, length(ids)}
+      err -> err
+    end
+  end
+
+  # ---- shadow DOM ----
+
+  @doc """
+  The element's open shadow-root reference (`getShadowRoot`). Returns `{:ok,
+  shadow_id}`; an element with no open shadow root surfaces `{:error, {19, _}}`
+  (no such shadow root). The `shadow_id` scopes `find_element_from_shadow_root/3`.
+  """
+  def shadow_root(h, element_id) do
+    case execute(h, "getShadowRoot", %{"id" => element_id}) do
+      {:ok, m} when is_map(m) -> {:ok, Map.fetch!(m, @shadow_key)}
+      err -> err
+    end
+  end
+
+  @doc """
+  Find one descendant of a shadow root matching a `Selenium.By` locator or a
+  `{strategy, value}` tuple (`findElementFromShadowRoot`). `shadow_id` is a
+  `shadow_root/2` result.
+  """
+  def find_element_from_shadow_root(h, shadow_id, {strategy, value}),
+    do: find_element_from_shadow_root(h, shadow_id, strategy, value)
+
+  def find_element_from_shadow_root(h, shadow_id, by, value) do
+    params = Map.put(decode_by(by, value), "id", shadow_id)
+
+    case execute(h, "findElementFromShadowRoot", params) do
+      {:ok, m} -> {:ok, Map.fetch!(m, @w3c_key)}
+      err -> err
+    end
+  end
+
+  @doc "Find all descendants of a shadow root matching the locator (`findElementsFromShadowRoot`)."
+  def find_elements_from_shadow_root(h, shadow_id, {strategy, value}),
+    do: find_elements_from_shadow_root(h, shadow_id, strategy, value)
+
+  def find_elements_from_shadow_root(h, shadow_id, by, value) do
+    params = Map.put(decode_by(by, value), "id", shadow_id)
+
+    case execute(h, "findElementsFromShadowRoot", params) do
+      {:ok, list} -> {:ok, Enum.map(list, &Map.fetch!(&1, @w3c_key))}
       err -> err
     end
   end

@@ -50,6 +50,41 @@ class LiveTest {
         return RemoteWebDriver.chrome(commandExecutor, Map.of("goog:chromeOptions", chromeOpts));
     }
 
+    // Live Firefox against a running geckodriver, driving a data: page. Mirrors
+    // the Chrome surface leg but exercises RemoteWebDriver.headlessFirefox and
+    // the "firefox" browserName end-to-end. Self-skips when geckodriver is
+    // absent (Firefox is optional on a CI box).
+    @Test
+    void liveFirefoxSurface() throws Exception {
+        String driverBin = which("geckodriver");
+        assumeTrue(driverBin != null, "geckodriver not on PATH");
+        assumeTrue(RemoteWebDriver.resolveDriver("firefox") != null,
+                "engine cannot resolve firefox");
+
+        int gdPort = freePort();
+        Process gd = new ProcessBuilder(driverBin, "--port=" + gdPort)
+                .redirectOutput(ProcessBuilder.Redirect.DISCARD)
+                .redirectError(ProcessBuilder.Redirect.DISCARD)
+                .start();
+        try {
+            assumeTrue(waitUp(gdPort, 10000), "geckodriver did not come up");
+            RemoteWebDriver d = RemoteWebDriver.headlessFirefox("http://127.0.0.1:" + gdPort);
+            try {
+                assertTrue(!d.sessionId().isEmpty(), "firefox session id present");
+                assertEquals("firefox", d.getCapabilities().getBrowserName(), "browserName firefox");
+
+                d.get("data:text/html;charset=utf-8,"
+                        + "%3Ctitle%3EFirefox%20Page%3C/title%3E%3Ch1%20id='hdr'%3EGecko%3C/h1%3E");
+                assertEquals("Firefox Page", d.getTitle(), "firefox title");
+                assertEquals("Gecko", d.findElement(By.id("hdr")).getText(), "firefox #hdr text");
+            } finally {
+                d.quit();
+            }
+        } finally {
+            gd.destroy();
+        }
+    }
+
     @Test
     void liveChromeSurface() throws Exception {
         String driverBin = which("chromedriver");
@@ -318,6 +353,51 @@ class LiveTest {
                 List<WebElement> below = d.findRelative(
                         "button", List.of(Map.of("kind", "below", "sel", "#hdr")));
                 assertTrue(below.size() >= 1, "findRelative(button below #hdr) found at least one");
+            } finally {
+                d.quit();
+            }
+        } finally {
+            cd.destroy();
+        }
+    }
+
+    @Test
+    void liveChromeShadowRoot() throws Exception {
+        String driverBin = which("chromedriver");
+        assumeTrue(driverBin != null, "chromedriver not on PATH");
+
+        int cdPort = freePort();
+        Process cd = new ProcessBuilder(driverBin, "--port=" + cdPort)
+                .redirectOutput(ProcessBuilder.Redirect.DISCARD)
+                .redirectError(ProcessBuilder.Redirect.DISCARD)
+                .start();
+        try {
+            assumeTrue(waitUp(cdPort, 10000), "chromedriver did not come up");
+            WebDriver d = headlessChromeAt("http://127.0.0.1:" + cdPort);
+            try {
+                d.get("data:text/html,<!doctype html><title>Shadow</title><p id=\"plain\">plain</p>");
+                // Attach an open shadow root hosting #sinner (contract setup).
+                d.executeScript(
+                        "var h=document.createElement('div');h.id='shost';document.body.appendChild(h);"
+                        + "var r=h.attachShadow({mode:'open'});r.innerHTML='<p id=\"sinner\">shadowtext</p>';");
+
+                WebElement host = d.findElement(By.id("shost"));
+                org.openqa.selenium.SearchContext root = host.getShadowRoot();
+                assertTrue(root instanceof org.openqa.selenium.ShadowRoot, "getShadowRoot returns a ShadowRoot");
+
+                // Reaching INSIDE the shadow tree via the shadow-scoped find.
+                WebElement inner = root.findElement(By.cssSelector("#sinner"));
+                assertEquals("shadowtext", inner.getText(), "text inside the shadow root");
+
+                // A non-host element has no shadow root -> W3C code 19.
+                boolean threw = false;
+                try {
+                    d.findElement(By.id("plain")).getShadowRoot();
+                } catch (org.openqa.selenium.NoSuchShadowRootException e) {
+                    threw = true;
+                    assertEquals(19, e.code(), "no such shadow root code");
+                }
+                assertTrue(threw, "NoSuchShadowRootException raised on a non-host");
             } finally {
                 d.quit();
             }

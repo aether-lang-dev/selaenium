@@ -121,4 +121,46 @@ end
     @test da[4]["type"] == "pointerUp"
 end
 
+@testset "Shadow DOM — surface + key/error facts (no browser)" begin
+    # routes are known to the engine.
+    @test route("getShadowRoot") == "GET /session/:sessionId/element/:id/shadow"
+    @test route("findElementFromShadowRoot") == "POST /session/:sessionId/shadow/:id/element"
+    @test route("findElementsFromShadowRoot") == "POST /session/:sessionId/shadow/:id/elements"
+    # the two W3C shadow error codes.
+    @test errorcode("no such shadow root") == 19
+    @test errorcode("detached shadow root") == 2
+    # the shadow key is distinct from the element key (do not conflate).
+    @test Selenium.W3C_SHADOW_KEY == "shadow-6066-11e4-a52e-4f735466cecf"
+    @test Selenium.W3C_SHADOW_KEY != Selenium.W3C_ELEMENT_KEY
+    # ShadowRoot carries the shadow id (a search context).
+    d = WebDriver("http://127.0.0.1:1")
+    sr = ShadowRoot(d, "SHADOWID")
+    @test sr.id == "SHADOWID"
+    # the textual shadow-id extractor pulls the shadow key value.
+    @test Selenium._extract_shadow_id("{\"$(Selenium.W3C_SHADOW_KEY)\":\"abc123\"}") == "abc123"
+    @test Selenium._extract_shadow_id("{\"$(Selenium.W3C_ELEMENT_KEY)\":\"x\"}") === nothing
+    # find_element / find_elements are dispatched for ShadowRoot.
+    @test hasmethod(find_element, Tuple{ShadowRoot,Selenium.Locator})
+    @test hasmethod(find_elements, Tuple{ShadowRoot,Selenium.Locator})
+end
+
+@testset "browser session factories (no browser)" begin
+    # firefox/edge/safari (+ headless variants) mirror chrome: each sets the
+    # right browserName then negotiates newSession. Pin the surface — the
+    # factories are defined — plus a transport check that firefox reaches the
+    # engine (dead endpoint => code -1), no driver required.
+    @test hasmethod(firefox, Tuple{AbstractString})
+    @test hasmethod(headless_firefox, Tuple{AbstractString})
+    @test hasmethod(edge, Tuple{AbstractString})
+    @test hasmethod(headless_edge, Tuple{AbstractString})
+    @test hasmethod(safari, Tuple{AbstractString})
+    threw = false
+    try
+        firefox("http://127.0.0.1:1")
+    catch e
+        threw = e isa Selenium.WebDriverError && e.code == -1
+    end
+    @test threw
+end
+
 println("PASS: Julia FFI + ABI-surface tests green")

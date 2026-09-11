@@ -53,6 +53,7 @@ module.exports = {
   Builder: webdriver.Builder,
   WebDriver: webdriver.WebDriver,
   WebElement: webdriver.WebElement,
+  ShadowRoot: webdriver.ShadowRoot,
   LocalChrome: webdriver.LocalChrome,
 
   // ---- locators ----

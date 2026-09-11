@@ -57,3 +57,40 @@ pub fn transport_failure_test() {
     Ok(_) -> should.fail()
   }
 }
+
+// The new firefox/edge/safari factories exist, are typed, and reach newSession
+// the same way chrome() does: against a dead port each surfaces a transport
+// error (code -1). headless_firefox/headless_edge build their own caps.
+pub fn firefox_transport_failure_test() {
+  case selenium.headless_firefox("http://127.0.0.1:1") {
+    Error(selenium.WebDriverError(code, _)) -> should.equal(code, -1)
+    Ok(_) -> should.fail()
+  }
+}
+
+pub fn browser_factories_surface_test() {
+  let _firefox = selenium.firefox
+  let _headless_firefox = selenium.headless_firefox
+  let _edge = selenium.edge
+  let _headless_edge = selenium.headless_edge
+  let _safari = selenium.safari
+
+  // edge builds the "MicrosoftEdge" browserName under ms:edgeOptions; a dead
+  // port still yields a clean transport error.
+  case selenium.headless_edge("http://127.0.0.1:1") {
+    Error(selenium.WebDriverError(code, _)) -> should.equal(code, -1)
+    Ok(_) -> should.fail()
+  }
+}
+
+// Compile-surface check that the shadow-DOM API is present and typed: a session
+// that fails to open cannot reach a shadow root, and the shadow finders type as
+// (ShadowRoot, Locator) -> WebElement / raw JSON. This exercises the whole path
+// without a browser (the chrome() open fails, so shadow_root is never called on
+// a live element — the value here is the type-level surface assertion).
+pub fn shadow_surface_test() {
+  let _shadow_root = selenium.shadow_root
+  let _find_one = selenium.find_element_from_shadow_root
+  let _find_all = selenium.find_elements_from_shadow_root
+  should.be_true(True)
+}

@@ -174,6 +174,37 @@ def test_live_chrome():
             proc.kill()
 
 
+def test_live_firefox():
+    """Live end-to-end against a real headless Firefox, proving the firefox()
+    factory drives the same pipeline as Chrome. The engine resolves + spawns
+    geckodriver in-binding (ensure_driver("firefox")); skips loudly when no
+    geckodriver is resolvable here (offline + empty cache, or no Firefox)."""
+    from selenium.webdriver import By, ensure_driver, headless_firefox, resolve_driver
+
+    path = resolve_driver("firefox")
+    if not path:
+        pytest.skip("engine cannot resolve a geckodriver (offline, no cache, or no Firefox)")
+
+    proc = ensure_driver("firefox")
+    if proc is None:
+        pytest.skip("could not launch geckodriver")
+    try:
+        driver = headless_firefox(proc.url)
+        try:
+            assert driver.session_id, "no session id after newSession"
+            assert driver.name == "firefox", f"browserName={driver.name!r}"
+            print(f"  ok: firefox session started ({driver.session_id[:8]}...)")
+
+            driver.get(PAGE)
+            assert driver.title == "Aether Selenium", f"title={driver.title!r}"
+            assert driver.find_element(By.ID, "hdr").text == "Hello"
+            print("PASS: live Firefox smoke test green")
+        finally:
+            driver.quit()
+    finally:
+        proc.stop()
+
+
 import base64  # noqa: E402
 import http.server  # noqa: E402
 import threading  # noqa: E402

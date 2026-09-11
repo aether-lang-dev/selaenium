@@ -42,10 +42,34 @@ main = do
   -- NB: "\xE009a" would lex as one char U+E009A (Haskell hex escapes are greedy);
   -- "\&" is the empty-string separator that ends the escape so 'a' stays literal.
   check (keysChord "\xE009" "a" == "\xE009\&a\xE000") "keysChord ctrl+a shape"
+  -- shadow-root routes are known to the engine (surface check, no browser).
+  rs1 <- route "getShadowRoot"
+  check (rs1 == "GET /session/:sessionId/element/:id/shadow") "route getShadowRoot"
+  rs2 <- route "findElementFromShadowRoot"
+  check (rs2 == "POST /session/:sessionId/shadow/:id/element") "route findElementFromShadowRoot"
+  rs3 <- route "findElementsFromShadowRoot"
+  check (rs3 == "POST /session/:sessionId/shadow/:id/elements") "route findElementsFromShadowRoot"
+  ecShadow <- errorCode "no such shadow root"
+  check (ecShadow == 19) "errorCode no such shadow root"
   transport <- try (chrome "http://127.0.0.1:1" "{\"browserName\":\"chrome\"}")
   case transport of
     Left (WebDriverError code _) -> check (code == -1) "transport failure -> code -1"
     Right _ -> check False "transport failure"
+
+  -- firefox/edge/safari factories exist and reach the transport (no driver here,
+  -- so a dead endpoint must surface code -1) — surface check, no browser.
+  ffTransport <- try (firefox "http://127.0.0.1:1" "{\"browserName\":\"firefox\"}")
+  case ffTransport of
+    Left (WebDriverError code _) -> check (code == -1) "firefox factory -> transport code -1"
+    Right _ -> check False "firefox transport failure"
+  edgeTransport <- try (edge "http://127.0.0.1:1" "{\"browserName\":\"MicrosoftEdge\"}")
+  case edgeTransport of
+    Left (WebDriverError code _) -> check (code == -1) "edge factory -> transport code -1"
+    Right _ -> check False "edge transport failure"
+  safariTransport <- try (safari "http://127.0.0.1:1" "{\"browserName\":\"safari\"}")
+  case safariTransport of
+    Left (WebDriverError code _) -> check (code == -1) "safari factory -> transport code -1"
+    Right _ -> check False "safari transport failure"
 
   -- ---- newly-completed FFI surface: link + safe-without-a-session ----
   -- resolveDriver must link and return (possibly "") without crashing.
@@ -166,5 +190,23 @@ liveSurface check cdUrl base = do
   case nse of
     Left (WebDriverError code _) -> check (code == 17) "no such element error"
     Right _ -> check False "no such element error"
+
+  -- shadow DOM: host an open shadow root, then reach an element inside it.
+  _ <- executeScript d
+        ("var h=document.createElement('div');h.id='shost';document.body.appendChild(h);"
+          ++ "var r=h.attachShadow({mode:'open'});r.innerHTML='<p id=\"sinner\">shadowtext</p>';")
+        "[]"
+  shostEl <- findElement d (byId "shost")
+  shadow <- getShadowRoot d shostEl
+  inner <- shadowFindElement d shadow (byCss "#sinner")
+  innerTxt <- elementText d inner
+  check (innerTxt == "shadowtext") "shadow findElement reaches inside shadow root"
+  innerAll <- shadowFindElements d shadow (byCss "p")
+  check (length innerAll == 1) "shadow findElements finds the inner <p>"
+  -- getShadowRoot on a non-host element raises code 19.
+  nsr <- findElement d (byId "hdr") >>= \e -> try (getShadowRoot d e)
+  case nsr of
+    Left (WebDriverError code _) -> check (code == 19) "no such shadow root error (non-host)"
+    Right _ -> check False "no such shadow root error (non-host)"
 
   quit d

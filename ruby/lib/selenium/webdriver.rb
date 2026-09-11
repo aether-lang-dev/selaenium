@@ -203,6 +203,9 @@ module Selenium
     }.freeze
 
     W3C_ELEMENT_KEY = 'element-6066-11e4-a52e-4f735466cecf'
+    # The W3C shadow-root reference key, distinct from the element key. A
+    # getShadowRoot result is {shadow-key => id}.
+    W3C_SHADOW_KEY = 'shadow-6066-11e4-a52e-4f735466cecf'
 
   # ---- pure engine helpers (no session needed) ----
   module_function
@@ -345,6 +348,16 @@ module Selenium
       result.map { |e| WebElement.new(@driver, e.fetch(W3C_ELEMENT_KEY)) }
     end
 
+    # This element's shadow root as a search context (mainstream
+    # Element#shadow_root). Raises NoSuchShadowRootError if the element hosts no
+    # open shadow root.
+    def shadow_root
+      result = exec('getShadowRoot')
+      return ShadowRoot.new(@driver, result.fetch(W3C_SHADOW_KEY)) if result.is_a?(Hash) && result.key?(W3C_SHADOW_KEY)
+
+      raise NoSuchShadowRootError.new('no such shadow root', 19)
+    end
+
     # The computed value of a CSS property (mainstream Element#css_value / #style).
     def css_value(prop)
       exec('getElementValueOfCssProperty', 'propertyName' => prop)
@@ -416,6 +429,44 @@ module Selenium
   # `is_a?(Element)` / `is_a?(WebElement)` agree.
   Element = WebElement
 
+  # A shadow root as a search context (mainstream Selenium::WebDriver::ShadowRoot).
+  # Only #find_element / #find_elements are supported, scoped inside the shadow
+  # tree; each passes this shadow root's id as the :id path parameter.
+  class ShadowRoot
+    attr_reader :id
+
+    def initialize(driver, id)
+      @driver = driver
+      @id = id
+    end
+
+    def find_element(how, what = nil)
+      params = WebDriver.decode_by(how, what)
+      params['id'] = @id
+      result = @driver.send(:execute, 'findElementFromShadowRoot', params)
+      WebElement.new(@driver, result.fetch(W3C_ELEMENT_KEY))
+    end
+
+    def find_elements(how, what = nil)
+      params = WebDriver.decode_by(how, what)
+      params['id'] = @id
+      result = @driver.send(:execute, 'findElementsFromShadowRoot', params)
+      result.map { |e| WebElement.new(@driver, e.fetch(W3C_ELEMENT_KEY)) }
+    end
+
+    def ==(other)
+      other.is_a?(ShadowRoot) && other.id == @id
+    end
+    alias eql? ==
+
+    def hash
+      @id.hash
+    end
+
+    alias first find_element
+    alias all find_elements
+  end
+
   # A WebDriver session over the shared engine. Authentic Selenium names the
   # session class Selenium::WebDriver::Driver; the module-level entry points
   # (Selenium::WebDriver.for / .chrome / .headless_chrome / .local_chrome)
@@ -440,6 +491,47 @@ module Selenium
              })
     end
 
+    # Start a Firefox session against a running geckodriver (or Grid).
+    #   options: a raw capabilities Hash merged under browserName: firefox.
+    def self.firefox(command_executor = 'http://127.0.0.1:4444', options: nil, ca_path: nil, insecure: false)
+      caps = { 'browserName' => 'firefox' }
+      caps.merge!(WebDriver.options_to_caps(options)) if options
+      new(command_executor, caps, ca_path: ca_path, insecure: insecure)
+    end
+
+    # Convenience: headless-Firefox launch arg (moz:firefoxOptions -headless).
+    def self.headless_firefox(command_executor = 'http://127.0.0.1:4444', ca_path: nil, insecure: false)
+      firefox(command_executor, ca_path: ca_path, insecure: insecure, options: {
+                'moz:firefoxOptions' => { 'args' => ['-headless'] }
+              })
+    end
+
+    # Start a Microsoft Edge session against a running msedgedriver (or Grid).
+    # Edge is Chromium-based; the W3C browserName is "MicrosoftEdge".
+    def self.edge(command_executor = 'http://127.0.0.1:9515', options: nil, ca_path: nil, insecure: false)
+      caps = { 'browserName' => 'MicrosoftEdge' }
+      caps.merge!(WebDriver.options_to_caps(options)) if options
+      new(command_executor, caps, ca_path: ca_path, insecure: insecure)
+    end
+
+    # Convenience: headless-Edge launch args baked in (ms:edgeOptions, the same
+    # Chromium launch args as headless Chrome).
+    def self.headless_edge(command_executor = 'http://127.0.0.1:9515', ca_path: nil, insecure: false)
+      edge(command_executor, ca_path: ca_path, insecure: insecure, options: {
+             'ms:edgeOptions' => {
+               'args' => ['--headless=new', '--no-sandbox', '--disable-gpu', '--disable-dev-shm-usage']
+             }
+           })
+    end
+
+    # Start a Safari session against a running safaridriver (macOS only). Safari
+    # has no headless mode, so there is no headless_safari.
+    def self.safari(command_executor = 'http://127.0.0.1:4444', options: nil, ca_path: nil, insecure: false)
+      caps = { 'browserName' => 'safari' }
+      caps.merge!(WebDriver.options_to_caps(options)) if options
+      new(command_executor, caps, ca_path: ca_path, insecure: insecure)
+    end
+
     # Chrome session that spawns its OWN chromedriver via the engine — no driver
     # on PATH, no Grid. See {Selenium::WebDriver.local_chrome}.
     def self.local_chrome(options: nil, hint: '', timeout_ms: 15_000, ca_path: nil, insecure: false)
@@ -448,9 +540,9 @@ module Selenium
     end
 
     # Construct a session for +browser+ (mainstream Selenium::WebDriver.for /
-    # Driver.for). Only :chrome (and its aliases) is served by this binding;
-    # delegates to the existing .chrome constructor. +opts+ is passed through
-    # (e.g. options:, ca_path:, insecure:, command_executor:).
+    # Driver.for). :chrome (with local-launch), :firefox, :edge and :safari are
+    # served; each delegates to the matching constructor. +opts+ is passed
+    # through (e.g. options:, ca_path:, insecure:, command_executor:).
     def self.for(browser, opts = {})
       case browser
       when :chrome, :chrome_headless_shell, :headless_chrome
@@ -460,6 +552,15 @@ module Selenium
         else
           local_chrome(**opts)
         end
+      when :firefox
+        executor = opts.delete(:command_executor) || 'http://127.0.0.1:4444'
+        firefox(executor, **opts)
+      when :edge
+        executor = opts.delete(:command_executor) || 'http://127.0.0.1:9515'
+        edge(executor, **opts)
+      when :safari
+        executor = opts.delete(:command_executor) || 'http://127.0.0.1:4444'
+        safari(executor, **opts)
       else
         raise ArgumentError, "unknown driver: #{browser.inspect}"
       end
@@ -843,6 +944,29 @@ module Selenium
 
   def headless_chrome(command_executor = 'http://127.0.0.1:9515', ca_path: nil, insecure: false)
     Driver.headless_chrome(command_executor, ca_path: ca_path, insecure: insecure)
+  end
+
+  # Module-level Firefox/Edge/Safari entry points (authentic
+  # Selenium::WebDriver.firefox / .edge / .safari), delegating to the Driver
+  # class constructors — mirroring .chrome / .headless_chrome.
+  def firefox(command_executor = 'http://127.0.0.1:4444', options: nil, ca_path: nil, insecure: false)
+    Driver.firefox(command_executor, options: options, ca_path: ca_path, insecure: insecure)
+  end
+
+  def headless_firefox(command_executor = 'http://127.0.0.1:4444', ca_path: nil, insecure: false)
+    Driver.headless_firefox(command_executor, ca_path: ca_path, insecure: insecure)
+  end
+
+  def edge(command_executor = 'http://127.0.0.1:9515', options: nil, ca_path: nil, insecure: false)
+    Driver.edge(command_executor, options: options, ca_path: ca_path, insecure: insecure)
+  end
+
+  def headless_edge(command_executor = 'http://127.0.0.1:9515', ca_path: nil, insecure: false)
+    Driver.headless_edge(command_executor, ca_path: ca_path, insecure: insecure)
+  end
+
+  def safari(command_executor = 'http://127.0.0.1:4444', options: nil, ca_path: nil, insecure: false)
+    Driver.safari(command_executor, options: options, ca_path: ca_path, insecure: insecure)
   end
 
   # A Chrome session that spawns its own chromedriver via the engine — no driver

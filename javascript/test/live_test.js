@@ -123,9 +123,57 @@ test('driver orchestration', async (t) => {
     const html = '<html><head><title>Aether Selenium</title></head><body><h1 id="hdr">Hello</h1></body></html>'
     d.get(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`)
     assert.strictEqual(d.title, 'Aether Selenium', `title=${d.title}`)
-    assert.strictEqual(d.findElement(s.By.id('hdr')).text, 'Hello')
+    assert.strictEqual(await d.findElement(s.By.id('hdr')).getText(), 'Hello')
   } finally {
     d.quit()
+  }
+})
+
+// Live Firefox smoke over the engine-managed geckodriver: resolve + spawn a
+// geckodriver in-binding (no geckodriver on PATH, no Grid), open a headless
+// Firefox session against it, drive a data: page, and assert title + element
+// text — WebDriver.firefox/headlessFirefox against real Firefox. Self-skips
+// when the engine cannot resolve a geckodriver here.
+test('live firefox', async (t) => {
+  const path = s.resolveDriver('firefox')
+  if (!path) {
+    t.skip('engine cannot resolve a geckodriver (no Firefox/cache)')
+    return
+  }
+  assert.ok(fs.existsSync(path), `resolveDriver(firefox) returned a non-file: ${path}`)
+
+  const proc = s.ensureDriver('firefox')
+  assert.ok(proc instanceof s.DriverProcess, 'ensureDriver(firefox) did not return a DriverProcess')
+  try {
+    assert.ok(proc.url.startsWith('http'), `geckodriver url=${proc.url}`)
+    const d = s.WebDriver.headlessFirefox(proc.url)
+    try {
+      assert.ok(d.sessionId, 'no session id from headlessFirefox')
+      const html = '<!doctype html><title>Aether Firefox</title><h1 id="hdr">Hello FF</h1>'
+      d.get(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`)
+      assert.strictEqual(d.title, 'Aether Firefox', `title=${d.title}`)
+      assert.strictEqual(await d.findElement(s.By.id('hdr')).getText(), 'Hello FF')
+    } finally {
+      d.quit()
+    }
+  } finally {
+    proc.stop()
+  }
+})
+
+// The edge/safari factories are not live-runnable here (no Edge on Linux,
+// Safari is macOS-only), so this is a surface check that they exist and set the
+// right browserName — each opens against a dead port and fails transport (-1),
+// proving the factory is callable with the chrome shape. No browser is touched.
+test('firefox/edge/safari factories set the right browserName', () => {
+  for (const open of [
+    () => s.WebDriver.firefox('http://127.0.0.1:1'),
+    () => s.WebDriver.headlessFirefox('http://127.0.0.1:1'),
+    () => s.WebDriver.edge('http://127.0.0.1:1'),
+    () => s.WebDriver.headlessEdge('http://127.0.0.1:1'),
+    () => s.WebDriver.safari('http://127.0.0.1:1'),
+  ]) {
+    assert.throws(open, (e) => e.code === -1)
   }
 })
 
@@ -164,8 +212,8 @@ test('live chrome + surface', async (t) => {
 
       d.get(`${base}/one`)
       assert.strictEqual(d.title, 'Page One')
-      assert.strictEqual(d.findElement(s.By.id('hdr')).text, 'One')
-      assert.strictEqual(d.findElement(s.By.css('#go')).tagName.toLowerCase(), 'a')
+      assert.strictEqual(await d.findElement(s.By.id('hdr')).getText(), 'One')
+      assert.strictEqual((await d.findElement(s.By.css('#go')).getTagName()).toLowerCase(), 'a')
 
       // navigation history
       d.findElement(s.By.id('go')).click()
@@ -218,7 +266,7 @@ test('live chrome + surface', async (t) => {
           ],
         },
       ])
-      assert.strictEqual(d.findElement(s.By.id('hdr')).text, 'clicked')
+      assert.strictEqual(await d.findElement(s.By.id('hdr')).getText(), 'clicked')
       d.clearActions()
 
       // screenshot -> PNG
@@ -409,6 +457,24 @@ test('live chrome + atoms', async (t) => {
       // relative locators: the button is below the header
       const below = d.findRelative('button', { kind: 'below', sel: '#hdr' })
       assert.ok(below.length >= 1, `findRelative found none: ${below.length}`)
+
+      // Shadow DOM: attach an open shadow root hosting a #sinner, then reach
+      // inside it via getShadowRoot().findElement(css '#sinner').
+      await d.executeScript(
+        "var h=document.createElement('div');h.id='shost';document.body.appendChild(h);" +
+          "var r=h.attachShadow({mode:'open'});r.innerHTML='<p id=\"sinner\">shadowtext</p>';",
+      )
+      const shadow = await d.findElement(s.By.id('shost')).getShadowRoot()
+      assert.ok(shadow instanceof s.ShadowRoot, 'getShadowRoot did not return a ShadowRoot')
+      const inner = await shadow.findElement(s.By.css('#sinner'))
+      assert.strictEqual(await inner.getText(), 'shadowtext')
+      assert.strictEqual((await shadow.findElements(s.By.css('p'))).length, 1)
+
+      // A non-host element rejects with NoSuchShadowRootError (code 19).
+      await assert.rejects(
+        () => d.findElement(s.By.id('hdr')).getShadowRoot(),
+        (e) => e instanceof s.error.NoSuchShadowRootError && e.code === 19,
+      )
     } finally {
       d.quit()
     }

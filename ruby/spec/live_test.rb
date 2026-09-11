@@ -20,10 +20,10 @@ class LiveTest < Minitest::Test
          '<input id="box" name="q"/></body></html>'
 
   def setup
-    # The driver-orchestration test spawns its OWN chromedriver via the engine
-    # (the whole point is not relying on one on PATH), so it skips this shared
-    # PATH-based chromedriver harness.
-    return if name == 'test_live_driver_orchestration'
+    # These tests spawn their OWN driver via the engine (the whole point is not
+    # relying on chromedriver on PATH), so they skip this shared PATH-based
+    # chromedriver harness. test_live_firefox drives geckodriver, not chromedriver.
+    return if %w[test_live_driver_orchestration test_live_firefox].include?(name)
 
     @driver_bin = which('chromedriver')
     skip 'chromedriver not on PATH' unless @driver_bin
@@ -125,6 +125,33 @@ class LiveTest < Minitest::Test
       assert_equal 'Hello', driver.find_element(Selenium::WebDriver::By::ID, 'hdr').text
     ensure
       driver.quit
+    end
+  end
+
+  # Live end-to-end against a real headless Firefox, proving the .firefox factory
+  # drives the same pipeline as Chrome. The engine resolves + spawns geckodriver
+  # in-binding (ensure_driver('firefox')); self-skips when no geckodriver is
+  # resolvable here (offline + empty cache, or no Firefox).
+  def test_live_firefox
+    path = Selenium::WebDriver.resolve_driver('firefox')
+    skip 'engine cannot resolve a geckodriver (offline, no cache, or no Firefox)' if path.empty?
+
+    proc = Selenium::WebDriver.ensure_driver('firefox')
+    skip 'could not launch geckodriver' if proc.nil?
+    begin
+      driver = Selenium::WebDriver.headless_firefox(proc.url)
+      begin
+        refute_empty driver.session_id, 'no session id after newSession'
+
+        page = 'data:text/html;charset=utf-8,' + CGI.escape(HTML).gsub('+', '%20')
+        driver.get(page)
+        assert_equal 'Aether Selenium', driver.title
+        assert_equal 'Hello', driver.find_element(id: 'hdr').text
+      ensure
+        driver.quit
+      end
+    ensure
+      proc.stop
     end
   end
 

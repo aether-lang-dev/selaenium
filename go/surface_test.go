@@ -272,5 +272,42 @@ func TestLiveFullFeatureSurface(t *testing.T) {
 		t.Fatalf("SetTimeouts: %v", err)
 	}
 
-	t.Logf("full-feature surface: active/exists/css/frame/window/submit/print/timeouts all green")
+	// Shadow DOM: attach an open shadow root hosting <p id="sinner">, reach
+	// inside it via WebElement.ShadowRoot -> FindElement, and confirm a non-host
+	// element errors with IsNoSuchShadowRoot (code 19).
+	if err := d.Get("data:text/html,<!doctype html><title>Shadow</title><h1 id=\"top\">t</h1>"); err != nil {
+		t.Fatalf("Get(shadow page): %v", err)
+	}
+	if _, err := d.ExecuteScript(
+		"var h=document.createElement('div');h.id='shost';document.body.appendChild(h);" +
+			"var r=h.attachShadow({mode:'open'});r.innerHTML='<p id=\"sinner\">shadowtext</p>';"); err != nil {
+		t.Fatalf("ExecuteScript(attachShadow): %v", err)
+	}
+	host, err := d.FindElement(By.Id("shost"))
+	if err != nil {
+		t.Fatalf("FindElement(shost): %v", err)
+	}
+	root, err := host.ShadowRoot()
+	if err != nil {
+		t.Fatalf("ShadowRoot: %v", err)
+	}
+	if root.ID() == "" {
+		t.Fatalf("ShadowRoot ID is empty")
+	}
+	sinner, err := root.FindElement(By.CssSelector("#sinner"))
+	if err != nil {
+		t.Fatalf("ShadowRoot.FindElement(#sinner): %v", err)
+	}
+	if txt, _ := sinner.Text(); txt != "shadowtext" {
+		t.Fatalf("shadow inner text = %q; want shadowtext", txt)
+	}
+	if ps, err := root.FindElements(By.CssSelector("p")); err != nil || len(ps) != 1 {
+		t.Fatalf("ShadowRoot.FindElements(p) = %d, %v; want 1", len(ps), err)
+	}
+	top, _ := d.FindElement(By.Id("top"))
+	if _, err := top.ShadowRoot(); !IsNoSuchShadowRoot(err) {
+		t.Fatalf("ShadowRoot on non-host: err = %v; want IsNoSuchShadowRoot", err)
+	}
+
+	t.Logf("full-feature surface: active/exists/css/frame/window/submit/print/timeouts/shadow all green")
 }

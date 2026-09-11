@@ -130,6 +130,19 @@ if (driverBin == null) {
                 def png = Base64.decoder.decode(d.screenshotBase64())
                 check(png.length > 8 && png[1] == (byte) 'P' && png[2] == (byte) 'N', "screenshot is PNG")
 
+                // shadow DOM: the Java WebElement.getShadowRoot() / ShadowRoot search
+                // context reached directly through Groovy/Java interop (no Groovy FFI).
+                d.executeScript('var h=document.createElement("div");h.id="shost";document.body.appendChild(h);' +
+                    'var r=h.attachShadow({mode:"open"});r.innerHTML=\'<p id="sinner">shadowtext</p>\';')
+                def root = d.findElement(By.id("shost")).getShadowRoot()
+                check(root instanceof org.openqa.selenium.ShadowRoot, "getShadowRoot returns a ShadowRoot")
+                check(root.findElement(By.cssSelector("#sinner")).getText() == "shadowtext",
+                    "findElement inside the shadow root")
+                def noShadow = false
+                try { d.findElement(By.id("hdr")).getShadowRoot() }
+                catch (org.openqa.selenium.NoSuchShadowRootException e) { noShadow = e.code() == 19 }
+                check(noShadow, "getShadowRoot on a non-host -> NoSuchShadowRootException (19)")
+
                 // WebDriver-BiDi over the shared Java Panama binding (Groovy
                 // reaches the Java BiDi class directly — no Groovy-side FFI).
                 check(d.bidiAvailable(), "bidi available (webSocketUrl negotiated)")

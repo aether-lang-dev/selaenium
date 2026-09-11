@@ -49,6 +49,39 @@ do
   end
 end
 
+-- ---- live Firefox over the engine-managed geckodriver (no gecko on PATH) ----
+-- Resolve + spawn a geckodriver in-binding, open a headless Firefox session
+-- against it, drive a data: page, and assert title + element text — the
+-- M.firefox/M.headless_firefox factories against real Firefox. Self-skips when
+-- the engine cannot resolve a geckodriver here.
+do
+  local path = s.resolve_driver("firefox")
+  if path == "" then
+    print("SKIPPED: engine cannot resolve a geckodriver (no Firefox/cache)")
+  else
+    local f = io.open(path, "r")
+    assert(f, "resolve_driver(firefox) returned a non-file: " .. path)
+    f:close()
+    print("  ok: resolve_driver(firefox) -> " .. path)
+
+    local proc = s.ensure_driver("firefox")
+    assert(proc, "ensure_driver(firefox) returned nil")
+    assert(proc:url():sub(1, 4) == "http", "geckodriver url: " .. proc:url())
+
+    local d = s.headless_firefox(proc:url())
+    local fok, ferr = pcall(function()
+      assert(#d:session_id() > 0, "headless_firefox session id present")
+      d:get("data:text/html;charset=utf-8,%3Ctitle%3EAether%20Firefox%3C/title%3E%3Ch1%20id='hdr'%3EHello%20FF%3C/h1%3E")
+      assert_eq(d:title(), "Aether Firefox", "headless_firefox title")
+      assert_eq(d:element_text(d:find_element(s.By.id("hdr"))), "Hello FF", "headless_firefox #hdr text")
+    end)
+    d:quit()
+    proc:stop()
+    if not fok then print("FAIL: headless_firefox — " .. tostring(ferr and ferr.message or ferr)); os.exit(1) end
+    print("  ok: headless_firefox (self-spawned geckodriver) drove a page")
+  end
+end
+
 local cd_url = os.getenv("SEL_CHROMEDRIVER_URL")
 local base = os.getenv("SEL_BASE_URL")
 if not cd_url or not base then
@@ -146,6 +179,20 @@ local ok, err = pcall(function()
   local rel = d:find_relative("button", { { kind = "below", sel = "#hdr" } })
   assert(#rel >= 1, "find_relative below #hdr")
   print("  ok: atoms (is_displayed / get_attribute / find_relative)")
+
+  -- Shadow DOM: attach an open shadow root hosting a #sinner, then reach inside
+  -- it via el:shadow_root():find_element(css "#sinner").
+  d:execute_script(
+    "var h=document.createElement('div');h.id='shost';document.body.appendChild(h);" ..
+    "var r=h.attachShadow({mode:'open'});r.innerHTML='<p id=\"sinner\">shadowtext</p>';")
+  local shadow = d:find_element(s.By.id("shost")):shadow_root()
+  assert(type(shadow) == "table" and #shadow.id > 0, "shadow_root returns a ShadowRoot with an id")
+  assert_eq(shadow:find_element(s.By.css_selector("#sinner")):text(), "shadowtext", "shadow inner text")
+  assert_eq(#shadow:find_elements(s.By.css_selector("p")), 1, "shadow find_elements count")
+  -- a non-host element raises "no such shadow root" (code 19)
+  local sok, serr = pcall(function() return d:find_element(s.By.id("hdr")):shadow_root() end)
+  assert((not sok) and type(serr) == "table" and serr.code == 19, "non-host -> no such shadow root (19)")
+  print("  ok: shadow DOM (shadow_root -> find_element/find_elements, code 19)")
 
   -- WebDriver-BiDi: subscribe to console log entries, emit one via the classic
   -- script channel, and receive the event asynchronously over the demux — the

@@ -66,6 +66,14 @@ pub opaque type WebElement {
   WebElement(driver: WebDriver, id: String)
 }
 
+/// A shadow root as a search context (mirrors Selenium's `ShadowRoot`). Only
+/// [`find_element_from_shadow_root`](#find_element_from_shadow_root) /
+/// [`find_elements_from_shadow_root`](#find_elements_from_shadow_root) are
+/// supported, scoped inside the shadow tree.
+pub opaque type ShadowRoot {
+  ShadowRoot(driver: WebDriver, id: String)
+}
+
 /// A protocol error: the engine's W3C error code (0 success, -1 transport) plus
 /// a message.
 pub type WebDriverError {
@@ -115,6 +123,9 @@ pub fn by_xpath(value: String) -> Locator {
 }
 
 const w3c_element_key = "element-6066-11e4-a52e-4f735466cecf"
+
+// The W3C shadow-root reference key, distinct from the element key.
+const w3c_shadow_key = "shadow-6066-11e4-a52e-4f735466cecf"
 
 // ---- pure engine helpers ----
 
@@ -169,6 +180,38 @@ pub fn headless_chrome(command_executor: String) -> Result(WebDriver, WebDriverE
   let caps =
     "{\"browserName\":\"chrome\",\"goog:chromeOptions\":{" <> chrome_opts <> "}}"
   chrome(command_executor, caps)
+}
+
+/// Start a Firefox session. `caps_json` is the alwaysMatch capabilities object as
+/// a JSON string (e.g. `{"browserName":"firefox","moz:firefoxOptions":{...}}`).
+pub fn firefox(command_executor: String, caps_json: String) -> Result(WebDriver, WebDriverError) {
+  chrome(command_executor, caps_json)
+}
+
+/// Convenience: a headless Firefox session (`moz:firefoxOptions` `-headless`).
+pub fn headless_firefox(command_executor: String) -> Result(WebDriver, WebDriverError) {
+  let caps =
+    "{\"browserName\":\"firefox\",\"moz:firefoxOptions\":{\"args\":[\"-headless\"]}}"
+  chrome(command_executor, caps)
+}
+
+/// Start a Microsoft Edge session. `caps_json` is the alwaysMatch capabilities
+/// object as a JSON string (W3C browserName is `MicrosoftEdge`).
+pub fn edge(command_executor: String, caps_json: String) -> Result(WebDriver, WebDriverError) {
+  chrome(command_executor, caps_json)
+}
+
+/// Convenience: a headless Edge session (Chromium-based, `ms:edgeOptions` args).
+pub fn headless_edge(command_executor: String) -> Result(WebDriver, WebDriverError) {
+  let caps =
+    "{\"browserName\":\"MicrosoftEdge\",\"ms:edgeOptions\":{\"args\":[\"--headless=new\",\"--no-sandbox\",\"--disable-gpu\",\"--disable-dev-shm-usage\"]}}"
+  chrome(command_executor, caps)
+}
+
+/// Start a Safari session (safaridriver, macOS only). Safari has no headless
+/// mode, so there is no `headless_safari`.
+pub fn safari(command_executor: String, caps_json: String) -> Result(WebDriver, WebDriverError) {
+  chrome(command_executor, caps_json)
 }
 
 /// Execute a command by name with JSON params (a JSON object string, or "{}").
@@ -249,6 +292,61 @@ pub fn tag_name(element: WebElement) -> Result(String, WebDriverError) {
   execute(driver, "getElementTagName", "{\"id\":" <> json_string(id) <> "}")
 }
 
+// ---- shadow DOM ----
+
+/// The element's open shadow root (`getShadowRoot`). An element with no open
+/// shadow root surfaces the engine's code 19 (no such shadow root).
+pub fn shadow_root(element: WebElement) -> Result(ShadowRoot, WebDriverError) {
+  let WebElement(driver, id) = element
+  case execute(driver, "getShadowRoot", "{\"id\":" <> json_string(id) <> "}") {
+    Ok(json_value) ->
+      case extract_ref(json_value, w3c_shadow_key) {
+        Ok(sid) -> Ok(ShadowRoot(driver, sid))
+        Error(_) -> Error(WebDriverError(19, "no such shadow root"))
+      }
+    Error(e) -> Error(e)
+  }
+}
+
+/// Find one descendant of a shadow root matching a `Locator`
+/// (`findElementFromShadowRoot`), scoped inside the shadow tree.
+pub fn find_element_from_shadow_root(
+  shadow: ShadowRoot,
+  locator: Locator,
+) -> Result(WebElement, WebDriverError) {
+  let ShadowRoot(driver, id) = shadow
+  let Locator(by, value) = locator
+  let params =
+    "{\"using\":" <> json_string(by) <> ",\"value\":" <> json_string(value) <> ",\"id\":" <> json_string(
+      id,
+    ) <> "}"
+  case execute(driver, "findElementFromShadowRoot", params) {
+    Ok(json_value) ->
+      case extract_ref(json_value, w3c_element_key) {
+        Ok(eid) -> Ok(WebElement(driver, eid))
+        Error(_) -> Error(WebDriverError(17, "element reference key missing"))
+      }
+    Error(e) -> Error(e)
+  }
+}
+
+/// The raw JSON array of element references from a shadow root matching a
+/// `Locator` (`findElementsFromShadowRoot`). Returns the value JSON string, so
+/// the caller can count/decode it (this binding keeps element collections as the
+/// engine's JSON, matching the rest of its thin surface).
+pub fn find_elements_from_shadow_root(
+  shadow: ShadowRoot,
+  locator: Locator,
+) -> Result(String, WebDriverError) {
+  let ShadowRoot(driver, id) = shadow
+  let Locator(by, value) = locator
+  let params =
+    "{\"using\":" <> json_string(by) <> ",\"value\":" <> json_string(value) <> ",\"id\":" <> json_string(
+      id,
+    ) <> "}"
+  execute(driver, "findElementsFromShadowRoot", params)
+}
+
 // ---- script ----
 
 /// Execute a script. `args_json` is a JSON array string (e.g. "[]" or "[40,2]").
@@ -293,7 +391,14 @@ fn json_string(s: String) -> String {
 /// value looks like {"element-6066-...":"<id>"}; a small textual extraction
 /// keeps this binding dependency-free for the common case.
 fn extract_element_id(json_value: String) -> Result(String, Nil) {
-  let needle = "\"" <> w3c_element_key <> "\":\""
+  extract_ref(json_value, w3c_element_key)
+}
+
+/// Pull the value of a W3C reference key (element or shadow) out of a value JSON
+/// string. The value looks like {"<key>":"<id>"}; a small textual extraction
+/// keeps this binding dependency-free for the common case.
+fn extract_ref(json_value: String, key: String) -> Result(String, Nil) {
+  let needle = "\"" <> key <> "\":\""
   case string.split_once(json_value, needle) {
     Ok(#(_, rest)) ->
       case string.split_once(rest, "\"") {

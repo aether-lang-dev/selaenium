@@ -53,11 +53,13 @@ class UnsupportedOperationError extends WebDriverError {}
 // Engine integer error code -> the typed error class raised for it (see the
 // core error_code() catalog). Codes not listed fall back to WebDriverError.
 const CODE_TO_ERROR = {
+  2: DetachedShadowRootError,
   3: ElementClickInterceptedError,
   4: ElementNotInteractableError,
   11: InvalidSelectorError,
   13: JavascriptError,
   17: NoSuchElementError,
+  19: NoSuchShadowRootError,
   21: TimeoutError,
   23: StaleElementReferenceError,
   24: TimeoutError,

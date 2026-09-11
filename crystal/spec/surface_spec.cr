@@ -134,4 +134,38 @@ describe "Selenium ABI surface" do
       Selenium::Actions.new(driver).pause(10).build.empty?.should be_true
     end
   end
+
+  describe Selenium::ShadowRoot do
+    # The shadow key is distinct from the element key (do not conflate).
+    it "has a shadow key distinct from the element key" do
+      Selenium::W3C_SHADOW_KEY.should eq("shadow-6066-11e4-a52e-4f735466cecf")
+      Selenium::W3C_SHADOW_KEY.should_not eq(Selenium::W3C_ELEMENT_KEY)
+    end
+
+    it "wraps a shadow id and is a search context" do
+      driver = Selenium::WebDriver.new("http://127.0.0.1:1")
+      sr = Selenium::ShadowRoot.new(driver, "SHADOWID")
+      sr.id.should eq("SHADOWID")
+      sr.responds_to?(:find_element).should be_true
+      sr.responds_to?(:find_elements).should be_true
+    end
+
+    it "maps the shadow error codes" do
+      Selenium.error_code("no such shadow root").should eq(19)
+      Selenium.error_code("detached shadow root").should eq(2)
+    end
+  end
+
+  describe "browser session factories" do
+    # firefox/edge/safari (+ headless variants) mirror chrome: each is a class
+    # method that sets the right browserName then negotiates newSession. No
+    # browser here, so pin the surface (the factories exist).
+    it "declares firefox/edge/safari and the headless variants" do
+      Selenium::WebDriver.responds_to?(:firefox).should be_true
+      Selenium::WebDriver.responds_to?(:headless_firefox).should be_true
+      Selenium::WebDriver.responds_to?(:edge).should be_true
+      Selenium::WebDriver.responds_to?(:headless_edge).should be_true
+      Selenium::WebDriver.responds_to?(:safari).should be_true
+    end
+  end
 end

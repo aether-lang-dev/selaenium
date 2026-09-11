@@ -88,6 +88,72 @@ builder chrome(): ptr {
     return sess
 }
 
+// webdriver.firefox() { … } — resolve + launch geckodriver for the local Firefox
+// (transparent detect/resolve/cache-or-download/launch, nothing on PATH), then
+// open a W3C session. Same builder-DSL block as chrome() — with_headless(0) runs
+// headed; with_arg appends a moz:firefoxOptions arg — only the browserName, the
+// vendor-options key, and the headless arg differ. The engine passes browserName
+// through verbatim; the driver manager resolves geckodriver. Returns *Session or
+// null.
+builder firefox(): ptr {
+    dh = driver.ensure("firefox", _hint(_builder), _timeout(_builder))
+    if dh == null { return null }
+    url = driver.url_of(dh)
+    eng = selenium_core.session_new(url)
+    sess = _mk(eng, dh)
+    args = _firefox_args(_builder)
+    caps = "{\"capabilities\":{\"alwaysMatch\":{\"browserName\":\"firefox\",\"webSocketUrl\":true,\"moz:firefoxOptions\":{\"args\":${args}}}}}"
+    rc = selenium_core.execute(eng, "newSession", caps)
+    if rc != 0 {
+        quit(sess)
+        return null
+    }
+    _capture_ws_url(sess)
+    return sess
+}
+
+// webdriver.edge() { … } — resolve + launch msedgedriver for the local Edge, then
+// open a W3C session. Edge is Chromium-based, so the option args match chrome()'s
+// (carried under the ms:edgeOptions vendor key) and the W3C browserName is
+// "MicrosoftEdge". Same block setters as chrome(). Returns *Session or null.
+builder edge(): ptr {
+    dh = driver.ensure("edge", _hint(_builder), _timeout(_builder))
+    if dh == null { return null }
+    url = driver.url_of(dh)
+    eng = selenium_core.session_new(url)
+    sess = _mk(eng, dh)
+    args = _chrome_args(_builder)
+    caps = "{\"capabilities\":{\"alwaysMatch\":{\"browserName\":\"MicrosoftEdge\",\"webSocketUrl\":true,\"ms:edgeOptions\":{\"args\":${args}}}}}"
+    rc = selenium_core.execute(eng, "newSession", caps)
+    if rc != 0 {
+        quit(sess)
+        return null
+    }
+    _capture_ws_url(sess)
+    return sess
+}
+
+// webdriver.safari() { … } — resolve + launch safaridriver for the local Safari
+// (macOS only), then open a W3C session. Safari has no headless mode and no
+// vendor-options args, so the block setters are accepted for symmetry but only
+// the driver-manager hints (with_version/with_timeout) affect it. Returns
+// *Session or null (null off macOS, where safaridriver cannot be resolved).
+builder safari(): ptr {
+    dh = driver.ensure("safari", _hint(_builder), _timeout(_builder))
+    if dh == null { return null }
+    url = driver.url_of(dh)
+    eng = selenium_core.session_new(url)
+    sess = _mk(eng, dh)
+    caps = "{\"capabilities\":{\"alwaysMatch\":{\"browserName\":\"safari\",\"webSocketUrl\":true}}}"
+    rc = selenium_core.execute(eng, "newSession", caps)
+    if rc != 0 {
+        quit(sess)
+        return null
+    }
+    _capture_ws_url(sess)
+    return sess
+}
+
 // ---- chrome() block setters (called inside the chrome() { … } block) ----
 
 // Run headed (a real, watchable window) when `on` is 0; headless (the default)
@@ -131,6 +197,29 @@ _chrome_args(_ctx: ptr) -> string {
     parts = "\"--no-sandbox\",\"--disable-dev-shm-usage\""
     if headed == 0 { parts = string.concat("\"--headless=new\",", parts) }
     if string.length(extra) > 0 { parts = string.concat(parts, string.concat(",", extra)) }
+    return string.concat("[", string.concat(parts, "]"))
+}
+
+// Build the moz:firefoxOptions "args" JSON array from the block config. Default:
+// ["-headless"]. with_headless(0) runs headed (drops -headless); with_arg
+// appends. Firefox's headless flag is the single "-headless" (not Chrome's four
+// container/gpu args), the one place a firefox() session diverges from chrome().
+_firefox_args(_ctx: ptr) -> string {
+    headed = 0
+    extra = ""
+    if _ctx != null {
+        if map_has(_ctx, "headless") == 1 {
+            hv, _e = string.to_int(map_get_raw(_ctx, "headless"))
+            if hv == 0 { headed = 1 }
+        }
+        if map_has(_ctx, "extra_args") == 1 { extra = map_get_raw(_ctx, "extra_args") }
+    }
+    parts = ""
+    if headed == 0 { parts = "\"-headless\"" }
+    if string.length(extra) > 0 {
+        if string.length(parts) > 0 { parts = string.concat(parts, ",") }
+        parts = string.concat(parts, extra)
+    }
     return string.concat("[", string.concat(parts, "]"))
 }
 
@@ -206,6 +295,43 @@ find(sp: ptr, by: string, value: string) -> string {
     if rc != 0 { return "" }
     val = _value(sp)
     return _element_ref(val)
+}
+
+// ---- shadow DOM ----
+//
+// An element's open shadow root is a distinct search context. get_shadow_root
+// returns a shadow-root reference (the shadow-6066 key, distinct from the
+// element key), and find_from_shadow_root scopes a find inside it — exactly like
+// find() but through findElementFromShadowRoot with the shadow id as `id`.
+
+// get_shadow_root(session, element_id) -> shadow-root id ("" if the element
+// hosts no open shadow root, or on error). The returned id is what
+// find_from_shadow_root scopes to. Unwraps the shadow-6066 key from the
+// getShadowRoot value, mirroring find()'s element-ref unwrap.
+get_shadow_root(sp: ptr, elem_id: string) -> string {
+    rc = _exec(sp, "getShadowRoot", _elem_body(elem_id))
+    if rc != 0 { return "" }
+    return _shadow_ref(_value(sp))
+}
+
+// find_from_shadow_root(session, shadow_id, By_*, value) -> element id ("" if
+// not found / error). findElementFromShadowRoot with the shadow id as `id`,
+// reading the element-6066 key from the result. Reuses the engine's ONE
+// By-normalization (by_locator — the same CSS-escape path find() rides), then
+// splices the shadow id into that {using,value} locator.
+find_from_shadow_root(sp: ptr, shadow_id: string, by: string, value: string) -> string {
+    rc = _exec(sp, "findElementFromShadowRoot", _shadow_scoped_locator(by, value, shadow_id))
+    if rc != 0 { return "" }
+    return _element_ref(_value(sp))
+}
+
+// find_all_from_shadow_root(session, shadow_id, By_*, value) -> number of
+// matching descendants (findElementsFromShadowRoot). Mirrors
+// find_relative_count's count-of-matches shape for a shadow-scoped search.
+find_all_from_shadow_root(sp: ptr, shadow_id: string, by: string, value: string) -> int {
+    rc = _exec(sp, "findElementsFromShadowRoot", _shadow_scoped_locator(by, value, shadow_id))
+    if rc != 0 { return 0 }
+    return _element_array_len(_value(sp))
 }
 
 // element operations take the element id find() returned.
@@ -1045,6 +1171,29 @@ _element_ref(value_json: string) -> string {
     ev, _e = json.object_get(root, "element-6066-11e4-a52e-4f735466cecf")
     id, _i = json.get_string(ev)
     return id
+}
+
+// Pull the W3C shadow-root reference out of a getShadowRoot value payload
+// ({"shadow-6066-11e4-a52e-4f735466cecf":"<id>"}), "" if absent (the element
+// hosts no open shadow root). The shadow key is DISTINCT from the element key.
+_shadow_ref(value_json: string) -> string {
+    root, perr = json.parse(value_json)
+    if string.length(perr) > 0 { return "" }
+    sv, _e = json.object_get(root, "shadow-6066-11e4-a52e-4f735466cecf")
+    id, _i = json.get_string(sv)
+    return id
+}
+
+// A shadow-scoped locator body: the engine's {using,value} for (by,value) with
+// the shadow id spliced in as `id` — {"using":..,"value":..,"id":".."}. Reuses
+// by_locator (the one CSS-escape path) then injects the id before the closing
+// brace, so shadow finds share find()'s exact normalization.
+_shadow_scoped_locator(by: string, value: string, shadow_id: string) -> string {
+    loc = selenium_core.by_locator(by, value)
+    n = string.length(loc)
+    // loc ends in "}"; replace that closing brace with ,"id":"<shadow>"}.
+    head = string.substring(loc, 0, n - 1)
+    return string.concat(head, string.concat(",\"id\":", string.concat(_qjson(shadow_id), "}")))
 }
 
 // The first element ref out of a JSON array of element refs (findElements /

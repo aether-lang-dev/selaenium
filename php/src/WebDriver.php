@@ -40,8 +40,11 @@ final class NoSuchElementException extends WebDriverException {}
 final class StaleElementReferenceException extends WebDriverException {}
 final class TimeoutException extends WebDriverException {}
 final class InvalidSelectorException extends WebDriverException {}
+final class NoSuchShadowRootException extends WebDriverException {}
+final class DetachedShadowRootException extends WebDriverException {}
 
 const W3C_ELEMENT_KEY = 'element-6066-11e4-a52e-4f735466cecf';
+const W3C_SHADOW_KEY = 'shadow-6066-11e4-a52e-4f735466cecf';
 
 final class WebElement
 {
@@ -58,10 +61,52 @@ final class WebElement
     public function getProperty(string $name): mixed { return $this->exec('getElementProperty', ['name' => $name]); }
     public function rect(): array { return (array) $this->exec('getElementRect'); }
 
+    /**
+     * This element's shadow root as a search context (getShadowRoot). Reads the
+     * shadow-6066 key (distinct from the element key). Throws
+     * NoSuchShadowRootException (code 19) if the element hosts no open shadow root.
+     */
+    public function getShadowRoot(): ShadowRoot
+    {
+        $r = $this->exec('getShadowRoot');
+        if (!\is_array($r) || !isset($r[W3C_SHADOW_KEY])) {
+            throw new NoSuchShadowRootException('no such shadow root', 19);
+        }
+        return new ShadowRoot($this->driver, $r[W3C_SHADOW_KEY]);
+    }
+
     private function exec(string $command, array $params = []): mixed
     {
         $params['id'] = $this->id;
         return $this->driver->execute($command, $params);
+    }
+}
+
+/**
+ * A shadow root as a search context (mainstream ShadowRoot). Only findElement /
+ * findElements are supported, scoped inside the shadow tree — through the
+ * findElementFromShadowRoot / findElementsFromShadowRoot commands with the
+ * shadow id passed as the `id` param, reading the element-6066 key from results.
+ */
+final class ShadowRoot
+{
+    public function __construct(private WebDriver $driver, public string $id) {}
+
+    public function findElement(string $by, string $value): WebElement
+    {
+        $params = $this->driver->decodeBy($by, $value);
+        $params['id'] = $this->id;
+        $r = $this->driver->execute('findElementFromShadowRoot', $params);
+        return new WebElement($this->driver, $r[W3C_ELEMENT_KEY]);
+    }
+
+    /** @return WebElement[] */
+    public function findElements(string $by, string $value): array
+    {
+        $params = $this->driver->decodeBy($by, $value);
+        $params['id'] = $this->id;
+        $r = $this->driver->execute('findElementsFromShadowRoot', $params);
+        return \array_map(fn($e) => new WebElement($this->driver, $e[W3C_ELEMENT_KEY]), $r);
     }
 }
 
@@ -93,6 +138,37 @@ final class WebDriver
         ]);
     }
 
+    public static function firefox(string $commandExecutor, array $options = []): self
+    {
+        return new self($commandExecutor, \array_merge(['browserName' => 'firefox'], $options));
+    }
+
+    public static function headlessFirefox(string $commandExecutor): self
+    {
+        return self::firefox($commandExecutor, [
+            'moz:firefoxOptions' => ['args' => ['-headless']],
+        ]);
+    }
+
+    /** W3C browserName is "MicrosoftEdge". */
+    public static function edge(string $commandExecutor, array $options = []): self
+    {
+        return new self($commandExecutor, \array_merge(['browserName' => 'MicrosoftEdge'], $options));
+    }
+
+    public static function headlessEdge(string $commandExecutor): self
+    {
+        return self::edge($commandExecutor, [
+            'ms:edgeOptions' => ['args' => ['--headless=new', '--no-sandbox', '--disable-gpu', '--disable-dev-shm-usage']],
+        ]);
+    }
+
+    /** safaridriver, macOS only. Safari has no headless mode. */
+    public static function safari(string $commandExecutor, array $options = []): self
+    {
+        return new self($commandExecutor, \array_merge(['browserName' => 'safari'], $options));
+    }
+
     public static function configureNativeLib(string $path): void { Native::configure($path); }
 
     /** The FFI seam: one command by name with a params array. */
@@ -122,11 +198,14 @@ final class WebDriver
             23 => new StaleElementReferenceException($message, $code),
             21, 24 => new TimeoutException($message, $code),
             11 => new InvalidSelectorException($message, $code),
+            19 => new NoSuchShadowRootException($message, $code),
+            2 => new DetachedShadowRootException($message, $code),
             default => new WebDriverException($message, $code),
         };
     }
 
-    private function decodeBy(string $by, string $value): array
+    /** The {"using","value"} locator array for a (by, value) pair (engine-normalized). */
+    public function decodeBy(string $by, string $value): array
     {
         $raw = Native::takeString($this->ffi, $this->ffi->aether_sel_embed_by_locator($by, $value));
         return \json_decode($raw, true);

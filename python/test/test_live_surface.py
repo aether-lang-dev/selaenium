@@ -150,6 +150,26 @@ def test_live_surface():
             d._execute("clearActions")
             print("  ok: W3C actions (pointer click) + clearActions")
 
+            # shadow DOM: reach inside an open shadow root, and confirm a
+            # non-host element reports no shadow root (W3C code 19).
+            from selenium.common.exceptions import NoSuchShadowRootException
+            d.execute_script(
+                "var h=document.createElement('div');h.id='shost';"
+                "document.body.appendChild(h);"
+                "var r=h.attachShadow({mode:'open'});"
+                "r.innerHTML='<p id=\"sinner\">shadowtext</p>';"
+            )
+            host = d.find_element(By.ID, "shost")
+            root = host.shadow_root
+            inner = root.find_element(By.CSS_SELECTOR, "#sinner")
+            assert inner.text == "shadowtext", inner.text
+            try:
+                d.find_element(By.ID, "hdr").shadow_root
+                assert False, "expected NoSuchShadowRootException on a non-host"
+            except NoSuchShadowRootException:
+                pass
+            print("  ok: shadow root (getShadowRoot + findElementFromShadowRoot)")
+
             # screenshot -> valid base64 PNG
             shot = d.get_screenshot_as_base64()
             raw = base64.b64decode(shot)

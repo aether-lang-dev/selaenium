@@ -14,7 +14,7 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from selenium._webdriver import WebElement, _W3C_ELEMENT_KEY  # noqa: E402
+from selenium._webdriver import WebElement, _W3C_ELEMENT_KEY, _W3C_SHADOW_KEY  # noqa: E402
 
 
 # ---- import-path resolution (the mainstream locations must all resolve) ------
@@ -281,6 +281,72 @@ def test_find_element_default_args():
         assert sig.parameters["value"].default is None
 
 
+# ---- ShadowRoot -------------------------------------------------------------
+
+
+def test_shadow_root_import_path_resolves():
+    from selenium.webdriver.remote.shadowroot import ShadowRoot as SR
+    from selenium._webdriver import ShadowRoot as Core
+
+    assert SR is Core
+
+
+def test_shadow_root_property_issues_get_shadow_root_and_reads_shadow_key():
+    from selenium._webdriver import ShadowRoot
+
+    d = FakeDriver(returns={"getShadowRoot": {_W3C_SHADOW_KEY: "shadow-1"}})
+    el = WebElement(d, "e1")
+    # PROPERTY, not a method (mainstream `.shadow_root`)
+    assert isinstance(WebElement.shadow_root, property)
+    root = el.shadow_root
+    assert isinstance(root, ShadowRoot) and root.id == "shadow-1"
+    # getShadowRoot carried this element's id
+    assert ("getShadowRoot", {"id": "e1"}) in d.calls
+
+
+def test_shadow_root_missing_key_raises_no_such_shadow_root():
+    from selenium.common.exceptions import NoSuchShadowRootException
+
+    # A payload without the shadow key -> NoSuchShadowRootException.
+    d = FakeDriver(returns={"getShadowRoot": {}})
+    el = WebElement(d, "e1")
+    try:
+        el.shadow_root
+        assert False, "expected NoSuchShadowRootException"
+    except NoSuchShadowRootException:
+        pass
+
+
+def test_shadow_root_finders_issue_shadow_commands_with_id(monkeypatch):
+    from selenium.webdriver.common.by import By
+    import selenium._webdriver as core
+    from selenium._webdriver import ShadowRoot
+
+    # Locator decoding lives in the engine (_native.by_locator); this no-.so test
+    # stubs it to the plain W3C {"using","value"} shape it returns.
+    monkeypatch.setattr(core, "_decode_by", lambda by, value: {"using": by, "value": value})
+
+    d = FakeDriver(returns={
+        "findElementFromShadowRoot": {_W3C_ELEMENT_KEY: "inner-1"},
+        "findElementsFromShadowRoot": [
+            {_W3C_ELEMENT_KEY: "inner-1"}, {_W3C_ELEMENT_KEY: "inner-2"}
+        ],
+    })
+    root = ShadowRoot(d, "shadow-1")
+
+    one = root.find_element(By.CSS_SELECTOR, "#sinner")
+    assert isinstance(one, WebElement) and one.id == "inner-1"
+    cmd, params = d.calls[-1]
+    assert cmd == "findElementFromShadowRoot"
+    assert params["id"] == "shadow-1"
+    assert params["using"] == "css selector" and params["value"] == "#sinner"
+
+    many = root.find_elements(By.CSS_SELECTOR, "p")
+    assert [e.id for e in many] == ["inner-1", "inner-2"]
+    cmd, params = d.calls[-1]
+    assert cmd == "findElementsFromShadowRoot" and params["id"] == "shadow-1"
+
+
 # ---- Options / ChromeOptions ------------------------------------------------
 
 
@@ -356,6 +422,51 @@ def test_chrome_still_accepts_raw_dict():
         core.WebDriver = orig
 
     assert captured["caps"]["goog:chromeOptions"] == {"args": ["--x"]}
+
+
+def _capture_caps(factory_name, *args, **kwargs):
+    # Intercept WebDriver construction and return the caps a factory would send.
+    import selenium._webdriver as core
+
+    captured = {}
+
+    class FakeWD:
+        def __init__(self, url, caps, ca_path=None, insecure=False):
+            captured["url"] = url
+            captured["caps"] = caps
+
+    orig = core.WebDriver
+    core.WebDriver = FakeWD
+    try:
+        getattr(core, factory_name)(*args, **kwargs)
+    finally:
+        core.WebDriver = orig
+    return captured["caps"]
+
+
+def test_firefox_edge_safari_factories_exist_and_set_browser_name():
+    # The new per-browser factories set the exact W3C browserName (Edge's is the
+    # CamelCase "MicrosoftEdge") and are reachable on the webdriver namespace.
+    from selenium import webdriver
+
+    for name in ("Firefox", "Edge", "Safari", "headless_firefox", "headless_edge"):
+        assert hasattr(webdriver, name), f"webdriver.{name} missing"
+
+    assert _capture_caps("Firefox", "http://localhost:4444")["browserName"] == "firefox"
+    assert _capture_caps("Edge", "http://localhost:9515")["browserName"] == "MicrosoftEdge"
+    assert _capture_caps("Safari", "http://localhost:4444")["browserName"] == "safari"
+
+
+def test_headless_firefox_and_edge_vendor_args():
+    # Headless variants bake the right vendor-options key + args.
+    ff = _capture_caps("headless_firefox", "http://localhost:4444")
+    assert ff["browserName"] == "firefox"
+    assert ff["moz:firefoxOptions"]["args"] == ["-headless"]
+
+    ed = _capture_caps("headless_edge", "http://localhost:9515")
+    assert ed["browserName"] == "MicrosoftEdge"
+    assert ed["ms:edgeOptions"]["args"] == [
+        "--headless=new", "--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage"]
 
 
 # ---- Keys -------------------------------------------------------------------

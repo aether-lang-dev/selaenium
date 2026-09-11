@@ -13,6 +13,10 @@ import 'native.dart';
 
 const String w3cElementKey = 'element-6066-11e4-a52e-4f735466cecf';
 
+/// The W3C shadow-root reference key, distinct from [w3cElementKey]. A
+/// `getShadowRoot` result is `{shadow-6066-...: "<shadowId>"}`.
+const String w3cShadowKey = 'shadow-6066-11e4-a52e-4f735466cecf';
+
 /// A locator: a Selenium-style mechanism/value pair (`{strategy, value}`),
 /// built through the static factory methods and passed to
 /// [WebDriver.findElement]/[WebDriver.findElements]. Mirrors Java's `By`.
@@ -71,10 +75,24 @@ class TimeoutException extends WebDriverException {
   TimeoutException(super.m, super.c);
 }
 
+/// The element hosts no (open) shadow root (W3C code 19).
+class NoSuchShadowRootException extends WebDriverException {
+  NoSuchShadowRootException(super.m, super.c);
+}
+
+/// The shadow root is no longer attached to the DOM (W3C code 2).
+class DetachedShadowRootException extends WebDriverException {
+  DetachedShadowRootException(super.m, super.c);
+}
+
 WebDriverException _classify(int code, String message) {
   switch (code) {
+    case 2:
+      return DetachedShadowRootException(message, code);
     case 17:
       return NoSuchElementException(message, code);
+    case 19:
+      return NoSuchShadowRootException(message, code);
     case 23:
       return StaleElementReferenceException(message, code);
     case 21:
@@ -222,6 +240,54 @@ class WebElement implements ElementLike {
             _driver, (e as Map<String, dynamic>)[w3cElementKey] as String))
         .toList();
   }
+
+  /// This element's shadow root as a search context (W3C `getShadowRoot`),
+  /// mirroring Selenium's `getShadowRoot`. Throws a
+  /// [NoSuchShadowRootException] (code 19) if the element hosts no open shadow
+  /// root.
+  ShadowRoot get shadowRoot {
+    final r = _exec('getShadowRoot');
+    if (r is Map<String, dynamic> && r[w3cShadowKey] is String) {
+      return ShadowRoot(_driver, r[w3cShadowKey] as String);
+    }
+    throw NoSuchShadowRootException('no such shadow root', 19);
+  }
+}
+
+/// A shadow root as a search context (mirrors Selenium's `ShadowRoot`). Only
+/// [findElement]/[findElements] are supported, scoped inside the shadow tree —
+/// like [WebElement]'s element-scoped finds, but against the shadow id.
+class ShadowRoot {
+  final WebDriver _driver;
+
+  /// The W3C shadow-root reference id.
+  final String id;
+
+  ShadowRoot(this._driver, this.id);
+
+  dynamic _exec(String command, [Map<String, dynamic>? params]) {
+    final p = <String, dynamic>{...?params, 'id': id};
+    return _driver.execute(command, p);
+  }
+
+  /// The first element inside this shadow tree matching [by]
+  /// (`findElementFromShadowRoot`).
+  WebElement findElement(By by) {
+    final r =
+        _exec('findElementFromShadowRoot', _decodeBy(by)) as Map<String, dynamic>;
+    return WebElement(_driver, r[w3cElementKey] as String);
+  }
+
+  /// All elements inside this shadow tree matching [by]
+  /// (`findElementsFromShadowRoot`).
+  List<WebElement> findElements(By by) {
+    final r =
+        _exec('findElementsFromShadowRoot', _decodeBy(by)) as List<dynamic>;
+    return r
+        .map((e) => WebElement(
+            _driver, (e as Map<String, dynamic>)[w3cElementKey] as String))
+        .toList();
+  }
 }
 
 /// A frame target for [WebDriver.switchToFrame]: an index among the current
@@ -331,6 +397,58 @@ class WebDriver implements DriverLike {
               ],
             },
           });
+
+  factory WebDriver.firefox(String commandExecutor,
+      {Map<String, dynamic>? options, String? caPath, bool insecure = false}) {
+    final caps = <String, dynamic>{'browserName': 'firefox', ...?options};
+    return WebDriver._create(commandExecutor, caps,
+        caPath: caPath, insecure: insecure);
+  }
+
+  factory WebDriver.headlessFirefox(String commandExecutor,
+          {String? caPath, bool insecure = false}) =>
+      WebDriver.firefox(commandExecutor,
+          caPath: caPath,
+          insecure: insecure,
+          options: {
+            'moz:firefoxOptions': {
+              'args': ['-headless'],
+            },
+          });
+
+  /// Start a Microsoft Edge session against a running msedgedriver (or Grid).
+  /// (W3C browserName is "MicrosoftEdge".)
+  factory WebDriver.edge(String commandExecutor,
+      {Map<String, dynamic>? options, String? caPath, bool insecure = false}) {
+    final caps = <String, dynamic>{'browserName': 'MicrosoftEdge', ...?options};
+    return WebDriver._create(commandExecutor, caps,
+        caPath: caPath, insecure: insecure);
+  }
+
+  factory WebDriver.headlessEdge(String commandExecutor,
+          {String? caPath, bool insecure = false}) =>
+      WebDriver.edge(commandExecutor,
+          caPath: caPath,
+          insecure: insecure,
+          options: {
+            'ms:edgeOptions': {
+              'args': [
+                '--headless=new',
+                '--no-sandbox',
+                '--disable-gpu',
+                '--disable-dev-shm-usage'
+              ],
+            },
+          });
+
+  /// Start a Safari session against a running safaridriver (macOS only). Safari
+  /// has no headless mode, so there is no `WebDriver.headlessSafari`.
+  factory WebDriver.safari(String commandExecutor,
+      {Map<String, dynamic>? options, String? caPath, bool insecure = false}) {
+    final caps = <String, dynamic>{'browserName': 'safari', ...?options};
+    return WebDriver._create(commandExecutor, caps,
+        caPath: caPath, insecure: insecure);
+  }
 
   factory WebDriver._create(String commandExecutor, Map<String, dynamic> caps,
           {String? caPath, bool insecure = false}) =>

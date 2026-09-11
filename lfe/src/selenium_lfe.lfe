@@ -36,6 +36,9 @@
    (by_xpath 1)
    ;; session lifecycle
    (chrome 1) (chrome 2) (chrome 3) (chrome_tls 3) (headless_chrome 1)
+   (firefox 1) (firefox 2) (firefox 3) (headless_firefox 1)
+   (edge 1) (edge 2) (edge 3) (headless_edge 1)
+   (safari 1) (safari 2) (safari 3)
    (open 1)
    (resolve_driver 1) (resolve_driver 2)
    (launch_driver 1) (launch_driver 2)
@@ -54,6 +57,9 @@
    ;; elements
    (find_element 2) (find_elements 2) (find_element 3) (find_elements 3)
    (exists 2) (active_element 1)
+   (shadow_root 2)
+   (find_element_from_shadow_root 3) (find_element_from_shadow_root 4)
+   (find_elements_from_shadow_root 3) (find_elements_from_shadow_root 4)
    (click 2) (send_keys 3) (clear 2) (submit 2)
    (element_text 2) (tag_name 2) (element_property 3) (get_property 3)
    (element_rect 2) (css_value 3) (value_of_css_property 3) (element_screenshot 2)
@@ -105,6 +111,8 @@
    (bidi_set_cache_behavior 1) (bidi_set_cache_behavior 2)))
 
 (defun w3c-element-key () #"element-6066-11e4-a52e-4f735466cecf")
+;; The W3C shadow-root reference key, distinct from the element key.
+(defun w3c-shadow-key () #"shadow-6066-11e4-a52e-4f735466cecf")
 ;; The named ETS table holding per-session BiDi state:
 ;; {Handle, WsUrl, BidiHandle, NextId}.
 (defun bidi-table-name () 'selenium_lfe_bidi)
@@ -162,6 +170,46 @@
                  ("" opts0)
                  (bin (maps:put #"binary" (list_to_binary bin) opts0)))))
     (chrome command-executor (maps:put #"goog:chromeOptions" opts #M()))))
+
+;; ---- Firefox ----
+(defun firefox (command-executor) (firefox command-executor #M()))
+(defun firefox (command-executor options) (firefox command-executor options #M()))
+
+;; Start a Firefox session against a running geckodriver (or Grid). Same shape
+;; as chrome/3, only the browserName differs (the engine passes it through).
+(defun firefox (command-executor options tls-opts)
+  (let ((caps (maps:merge #M(#"browserName" #"firefox") options)))
+    (new-session command-executor caps tls-opts)))
+
+;; Convenience: a headless Firefox session (moz:firefoxOptions args ["-headless"]).
+(defun headless_firefox (command-executor)
+  (let ((opts (maps:put #"args" (list #"-headless") #M())))
+    (firefox command-executor (maps:put #"moz:firefoxOptions" opts #M()))))
+
+;; ---- Edge (Chromium-based; W3C browserName is "MicrosoftEdge") ----
+(defun edge (command-executor) (edge command-executor #M()))
+(defun edge (command-executor options) (edge command-executor options #M()))
+
+(defun edge (command-executor options tls-opts)
+  (let ((caps (maps:merge #M(#"browserName" #"MicrosoftEdge") options)))
+    (new-session command-executor caps tls-opts)))
+
+;; Convenience: a headless Edge session (Chromium, so the same 4 args as Chrome,
+;; carried under the ms:edgeOptions vendor key).
+(defun headless_edge (command-executor)
+  (let ((opts (maps:put #"args"
+                        (list #"--headless=new" #"--no-sandbox"
+                              #"--disable-gpu" #"--disable-dev-shm-usage")
+                        #M())))
+    (edge command-executor (maps:put #"ms:edgeOptions" opts #M()))))
+
+;; ---- Safari (safaridriver, macOS only; no headless mode) ----
+(defun safari (command-executor) (safari command-executor #M()))
+(defun safari (command-executor options) (safari command-executor options #M()))
+
+(defun safari (command-executor options tls-opts)
+  (let ((caps (maps:merge #M(#"browserName" #"safari") options)))
+    (new-session command-executor caps tls-opts)))
 
 ;; Low-level open: returns a raw session handle integer (no newSession). Kept
 ;; for callers driving the engine directly.
@@ -342,6 +390,45 @@
   (case (execute h #"getActiveElement" #M())
     ((tuple 'ok m) (when (is_map m)) (tuple 'ok (maps:get (w3c-element-key) m)))
     (err err)))
+
+;; ---- shadow DOM ----
+;; An element's open shadow root is a distinct search context: getShadowRoot
+;; returns a shadow-root reference (the shadow-6066 key), which then scopes
+;; findElementFromShadowRoot / findElementsFromShadowRoot — mirroring the
+;; element-scoped finds, with the shadow id as `id` and the element key read
+;; from the results.
+
+;; The element's shadow-root reference (W3C getShadowRoot). #(ok ShadowId) |
+;; #(error #(19 _)) when the element hosts no open shadow root.
+(defun shadow_root (h element-id)
+  (case (execute h #"getShadowRoot" (maps:put #"id" element-id #M()))
+    ((tuple 'ok m) (when (is_map m)) (tuple 'ok (maps:get (w3c-shadow-key) m)))
+    (err err)))
+
+;; Find one descendant of the shadow root matching a #(Strategy Value) locator
+;; (findElementFromShadowRoot). ShadowId is a shadow_root/2 result.
+(defun find_element_from_shadow_root (h shadow-id loc)
+  (let ((`#(,strategy ,value) loc))
+    (find_element_from_shadow_root h shadow-id strategy value)))
+
+(defun find_element_from_shadow_root (h shadow-id by value)
+  (let ((params (maps:put #"id" shadow-id (decode-by by value))))
+    (case (execute h #"findElementFromShadowRoot" params)
+      ((tuple 'ok m) (tuple 'ok (maps:get (w3c-element-key) m)))
+      (err err))))
+
+;; Find all descendants of the shadow root matching the locator
+;; (findElementsFromShadowRoot). #(ok [ElementId]) | #(error _).
+(defun find_elements_from_shadow_root (h shadow-id loc)
+  (let ((`#(,strategy ,value) loc))
+    (find_elements_from_shadow_root h shadow-id strategy value)))
+
+(defun find_elements_from_shadow_root (h shadow-id by value)
+  (let ((params (maps:put #"id" shadow-id (decode-by by value))))
+    (case (execute h #"findElementsFromShadowRoot" params)
+      ((tuple 'ok l)
+       (tuple 'ok (lists:map (lambda (e) (maps:get (w3c-element-key) e)) l)))
+      (err err))))
 
 ;; Whether an element matching the locator is present. #(ok true|false); a real
 ;; error (not "no such element") propagates. Accepts a #(Strategy Value) tuple.

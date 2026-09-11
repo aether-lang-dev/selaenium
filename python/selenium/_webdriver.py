@@ -18,6 +18,10 @@ from . import _native
 # {"element-6066-11e4-a52e-4f735466cecf": "<id>"}.
 _W3C_ELEMENT_KEY = "element-6066-11e4-a52e-4f735466cecf"
 
+# The W3C shadow-root reference key, distinct from the element key. A
+# getShadowRoot result is {"shadow-6066-11e4-a52e-4f735466cecf": "<id>"}.
+_W3C_SHADOW_KEY = "shadow-6066-11e4-a52e-4f735466cecf"
+
 
 class By:
     """Locator strategies. Values match the engine's ``by_locator`` strategy
@@ -210,12 +214,14 @@ class UnknownCommandException(WebDriverException):
 # The engine's integer error codes (selenium.error_code) -> exception type.
 # Codes not listed map to the base WebDriverException.
 _CODE_TO_EXC = {
+    2: DetachedShadowRootException,
     3: ElementClickInterceptedException,
     4: ElementNotInteractableException,
     11: InvalidSelectorException,
     13: JavascriptException,
     17: NoSuchElementException,
     18: NoSuchFrameException,
+    19: NoSuchShadowRootException,
     20: NoSuchWindowException,
     21: TimeoutException,
     22: SessionNotCreatedException,
@@ -367,6 +373,16 @@ class WebElement:
             del png
         return True
 
+    @property
+    def shadow_root(self) -> "ShadowRoot":
+        """This element's shadow root as a search context (mainstream:
+        ``.shadow_root``). Raises :class:`NoSuchShadowRootException` if the
+        element hosts no open shadow root."""
+        result = self._exec("getShadowRoot")
+        if isinstance(result, dict) and _W3C_SHADOW_KEY in result:
+            return ShadowRoot(self._driver, result[_W3C_SHADOW_KEY])
+        raise NoSuchShadowRootException("no such shadow root")
+
     def find_element(self, by: str = By.ID, value: str | None = None) -> "WebElement":
         loc = _decode_by(by, value)
         loc["id"] = self._id
@@ -384,6 +400,38 @@ class WebElement:
 
     def __repr__(self):
         return f"<WebElement id={self._id!r}>"
+
+
+class ShadowRoot:
+    """A shadow root as a search context (mainstream ``ShadowRoot``). Only
+    ``find_element`` / ``find_elements`` are supported, scoped inside the shadow
+    tree; each passes this shadow root's id as the ``:id`` path parameter."""
+
+    def __init__(self, driver: "WebDriver", shadow_id: str):
+        self._driver = driver
+        self._id = shadow_id
+
+    @property
+    def id(self) -> str:
+        return self._id
+
+    def find_element(self, by: str = By.ID, value: str | None = None) -> "WebElement":
+        loc = _decode_by(by, value)
+        loc["id"] = self._id
+        result = self._driver._execute("findElementFromShadowRoot", loc)
+        return WebElement(self._driver, result[_W3C_ELEMENT_KEY])
+
+    def find_elements(self, by: str = By.ID, value: str | None = None) -> list["WebElement"]:
+        loc = _decode_by(by, value)
+        loc["id"] = self._id
+        result = self._driver._execute("findElementsFromShadowRoot", loc)
+        return [WebElement(self._driver, e[_W3C_ELEMENT_KEY]) for e in result]
+
+    def __eq__(self, other):
+        return isinstance(other, ShadowRoot) and other._id == self._id
+
+    def __repr__(self):
+        return f"<ShadowRoot id={self._id!r}>"
 
 
 def _wrap_args(args):
@@ -1088,6 +1136,19 @@ def _options_to_caps(options) -> dict:
     return dict(options)
 
 
+def _open_session(command_executor: str, browser_name: str, options=None,
+                  ca_path: str | None = None, insecure: bool = False) -> WebDriver:
+    """Open a W3C session for ``browser_name`` against a running driver (or Grid)
+    at ``command_executor``. ``options`` may be a mainstream options object
+    (``.to_capabilities()`` is applied) or a raw capabilities dict (back-compat);
+    it is merged over ``browserName: <browser_name>``. The per-browser factories
+    (:func:`Chrome` / :func:`Firefox` / :func:`Edge` / :func:`Safari`) are thin
+    wrappers over this — only the browserName and vendor options differ."""
+    caps = {"browserName": browser_name}
+    caps.update(_options_to_caps(options))
+    return WebDriver(command_executor, caps, ca_path=ca_path, insecure=insecure)
+
+
 def Chrome(command_executor: str | None = None, options=None,
            ca_path: str | None = None, insecure: bool = False) -> WebDriver:
     """A Chrome session, matching ``webdriver.Chrome()`` in Selenium 4.x.
@@ -1099,9 +1160,60 @@ def Chrome(command_executor: str | None = None, options=None,
     or a raw capabilities dict (back-compat), merged under ``browserName: chrome``."""
     if command_executor is None:
         return LocalChrome(options=options, ca_path=ca_path, insecure=insecure)
-    caps = {"browserName": "chrome"}
-    caps.update(_options_to_caps(options))
-    return WebDriver(command_executor, caps, ca_path=ca_path, insecure=insecure)
+    return _open_session(command_executor, "chrome", options, ca_path, insecure)
+
+
+def Firefox(command_executor: str, options=None,
+            ca_path: str | None = None, insecure: bool = False) -> WebDriver:
+    """A Firefox session against a running geckodriver (or Grid), matching
+    ``webdriver.Firefox()`` in Selenium 4.x. ``options`` may be a mainstream
+    options object (``.to_capabilities()`` is applied) or a raw capabilities dict,
+    merged under ``browserName: firefox``."""
+    return _open_session(command_executor, "firefox", options, ca_path, insecure)
+
+
+def Edge(command_executor: str, options=None,
+         ca_path: str | None = None, insecure: bool = False) -> WebDriver:
+    """A Microsoft Edge session against a running msedgedriver (or Grid), matching
+    ``webdriver.Edge()`` in Selenium 4.x. Edge is Chromium-based; the W3C
+    ``browserName`` is ``MicrosoftEdge``. ``options`` may be a mainstream options
+    object or a raw capabilities dict, merged under that browserName."""
+    return _open_session(command_executor, "MicrosoftEdge", options, ca_path, insecure)
+
+
+def Safari(command_executor: str, options=None,
+           ca_path: str | None = None, insecure: bool = False) -> WebDriver:
+    """A Safari session against a running safaridriver (macOS only), matching
+    ``webdriver.Safari()`` in Selenium 4.x. Safari has no headless mode, so there
+    is no ``headless_safari``. ``options`` may be a mainstream options object or a
+    raw capabilities dict, merged under ``browserName: safari``."""
+    return _open_session(command_executor, "safari", options, ca_path, insecure)
+
+
+def headless_chrome(command_executor: str, ca_path: str | None = None,
+                    insecure: bool = False) -> WebDriver:
+    """Convenience: a headless Chrome session with the standard launch args
+    (``goog:chromeOptions.args`` = --headless=new + the sandbox/gpu/shm flags)."""
+    options = {"goog:chromeOptions": {
+        "args": ["--headless=new", "--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage"]}}
+    return Chrome(command_executor, options=options, ca_path=ca_path, insecure=insecure)
+
+
+def headless_firefox(command_executor: str, ca_path: str | None = None,
+                     insecure: bool = False) -> WebDriver:
+    """Convenience: a headless Firefox session (``moz:firefoxOptions.args`` =
+    ``["-headless"]``)."""
+    options = {"moz:firefoxOptions": {"args": ["-headless"]}}
+    return Firefox(command_executor, options=options, ca_path=ca_path, insecure=insecure)
+
+
+def headless_edge(command_executor: str, ca_path: str | None = None,
+                  insecure: bool = False) -> WebDriver:
+    """Convenience: a headless Edge session (Chromium-based, ``ms:edgeOptions.args``
+    = the same launch args as headless Chrome)."""
+    options = {"ms:edgeOptions": {
+        "args": ["--headless=new", "--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage"]}}
+    return Edge(command_executor, options=options, ca_path=ca_path, insecure=insecure)
 
 
 def Remote(command_executor: str, capabilities: dict) -> WebDriver:

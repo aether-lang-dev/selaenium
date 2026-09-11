@@ -108,18 +108,29 @@ public class RemoteWebDriver
         Native.configure(path);
     }
 
+    /**
+     * Open a W3C session with the given {@code browserName} and capabilities
+     * against a running driver (or Grid) at {@code commandExecutor}. The
+     * per-browser {@code chrome}/{@code firefox}/{@code edge}/{@code safari}
+     * factories are thin wrappers over this.
+     */
+    public static RemoteWebDriver openSession(String commandExecutor, String browserName,
+                                              Map<String, Object> options, String caPath, boolean insecure) {
+        Map<String, Object> caps = new HashMap<>();
+        caps.put("browserName", browserName);
+        if (options != null) {
+            caps.putAll(options);
+        }
+        return new RemoteWebDriver(commandExecutor, caps, caPath, insecure);
+    }
+
     public static RemoteWebDriver chrome(String commandExecutor, Map<String, Object> options) {
         return chrome(commandExecutor, options, null, false);
     }
 
     public static RemoteWebDriver chrome(String commandExecutor, Map<String, Object> options,
                                          String caPath, boolean insecure) {
-        Map<String, Object> caps = new HashMap<>();
-        caps.put("browserName", "chrome");
-        if (options != null) {
-            caps.putAll(options);
-        }
-        return new RemoteWebDriver(commandExecutor, caps, caPath, insecure);
+        return openSession(commandExecutor, "chrome", options, caPath, insecure);
     }
 
     public static RemoteWebDriver headlessChrome(String commandExecutor) {
@@ -133,6 +144,50 @@ public class RemoteWebDriver
             chromeOpts.put("binary", chromeBin);
         }
         return chrome(commandExecutor, Map.of("goog:chromeOptions", chromeOpts));
+    }
+
+    // --- Firefox ---
+    public static RemoteWebDriver firefox(String commandExecutor, Map<String, Object> options) {
+        return firefox(commandExecutor, options, null, false);
+    }
+
+    public static RemoteWebDriver firefox(String commandExecutor, Map<String, Object> options,
+                                          String caPath, boolean insecure) {
+        return openSession(commandExecutor, "firefox", options, caPath, insecure);
+    }
+
+    /** A headless Firefox session ({@code moz:firefoxOptions} {@code -headless}). */
+    public static RemoteWebDriver headlessFirefox(String commandExecutor) {
+        return firefox(commandExecutor,
+                Map.of("moz:firefoxOptions", Map.of("args", List.of("-headless"))));
+    }
+
+    // --- Edge (Chromium-based; W3C browserName is "MicrosoftEdge") ---
+    public static RemoteWebDriver edge(String commandExecutor, Map<String, Object> options) {
+        return edge(commandExecutor, options, null, false);
+    }
+
+    public static RemoteWebDriver edge(String commandExecutor, Map<String, Object> options,
+                                       String caPath, boolean insecure) {
+        return openSession(commandExecutor, "MicrosoftEdge", options, caPath, insecure);
+    }
+
+    /** A headless Edge session ({@code ms:edgeOptions} args, like Chrome's). */
+    public static RemoteWebDriver headlessEdge(String commandExecutor) {
+        Map<String, Object> edgeOpts = new java.util.LinkedHashMap<>();
+        edgeOpts.put("args",
+                List.of("--headless=new", "--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage"));
+        return edge(commandExecutor, Map.of("ms:edgeOptions", edgeOpts));
+    }
+
+    // --- Safari (safaridriver, macOS only; no headless mode) ---
+    public static RemoteWebDriver safari(String commandExecutor, Map<String, Object> options) {
+        return safari(commandExecutor, options, null, false);
+    }
+
+    public static RemoteWebDriver safari(String commandExecutor, Map<String, Object> options,
+                                         String caPath, boolean insecure) {
+        return openSession(commandExecutor, "safari", options, caPath, insecure);
     }
 
     // ---- driver orchestration (spawn/adopt a driver process in-binding) ------
@@ -173,19 +228,21 @@ public class RemoteWebDriver
     }
 
     /**
-     * A Chrome session that spawns its OWN chromedriver via the engine — no driver
-     * on PATH, no Grid. The driver process is stopped on {@link #quit()}. Throws
-     * {@link WebDriverException} if no driver can be resolved/launched.
+     * A session that spawns its OWN driver via the engine — no driver on PATH,
+     * no Grid — resolving the driver for {@code browser} and negotiating the
+     * given {@code browserName}. The driver process is stopped on {@link #quit()}.
+     * Throws {@link WebDriverException} if no driver can be resolved/launched.
      */
-    public static RemoteWebDriver localChrome(Map<String, Object> options, String hint, int timeoutMs,
-                                              String caPath, boolean insecure) {
-        DriverProcess proc = ensureDriver("chrome", hint, timeoutMs);
+    public static RemoteWebDriver localSession(String browser, String browserName,
+                                               Map<String, Object> options, String hint, int timeoutMs,
+                                               String caPath, boolean insecure) {
+        DriverProcess proc = ensureDriver(browser, hint, timeoutMs);
         if (proc == null) {
-            throw new WebDriverException("could not resolve/launch chromedriver", -1);
+            throw new WebDriverException("could not resolve/launch " + browser + " driver", -1);
         }
         try {
             Map<String, Object> caps = new HashMap<>();
-            caps.put("browserName", "chrome");
+            caps.put("browserName", browserName);
             if (options != null) {
                 caps.putAll(options);
             }
@@ -198,8 +255,38 @@ public class RemoteWebDriver
         }
     }
 
+    /**
+     * A Chrome session that spawns its OWN chromedriver via the engine — no driver
+     * on PATH, no Grid. The driver process is stopped on {@link #quit()}. Throws
+     * {@link WebDriverException} if no driver can be resolved/launched.
+     */
+    public static RemoteWebDriver localChrome(Map<String, Object> options, String hint, int timeoutMs,
+                                              String caPath, boolean insecure) {
+        return localSession("chrome", "chrome", options, hint, timeoutMs, caPath, insecure);
+    }
+
     public static RemoteWebDriver localChrome(Map<String, Object> options) {
         return localChrome(options, "", 15000, null, false);
+    }
+
+    /** A Firefox session that spawns its own geckodriver via the engine. */
+    public static RemoteWebDriver localFirefox(Map<String, Object> options, String hint, int timeoutMs,
+                                               String caPath, boolean insecure) {
+        return localSession("firefox", "firefox", options, hint, timeoutMs, caPath, insecure);
+    }
+
+    public static RemoteWebDriver localFirefox(Map<String, Object> options) {
+        return localFirefox(options, "", 15000, null, false);
+    }
+
+    /** An Edge session that spawns its own msedgedriver via the engine. */
+    public static RemoteWebDriver localEdge(Map<String, Object> options, String hint, int timeoutMs,
+                                            String caPath, boolean insecure) {
+        return localSession("edge", "MicrosoftEdge", options, hint, timeoutMs, caPath, insecure);
+    }
+
+    public static RemoteWebDriver localEdge(Map<String, Object> options) {
+        return localEdge(options, "", 15000, null, false);
     }
 
     // ---- the FFI seam ----
@@ -274,6 +361,8 @@ public class RemoteWebDriver
             case 11 -> new InvalidSelectorException(message, code);
             case 13 -> new JavascriptException(message, code);
             case 17 -> new NoSuchElementException(message, code);
+            case 19 -> new NoSuchShadowRootException(message, code);
+            case 2 -> new DetachedShadowRootException(message, code);
             case 21, 24 -> new TimeoutException(message, code);
             case 23 -> new StaleElementReferenceException(message, code);
             case 28 -> new UnknownCommandException(message, code);

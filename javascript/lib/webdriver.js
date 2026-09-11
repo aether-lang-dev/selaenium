@@ -41,6 +41,10 @@ const { WebDriverError } = error
 // { "element-6066-11e4-a52e-4f735466cecf": "<id>" }.
 const W3C_ELEMENT_KEY = 'element-6066-11e4-a52e-4f735466cecf'
 
+// The W3C shadow-root reference key, distinct from the element key: a
+// getShadowRoot result is { "shadow-6066-11e4-a52e-4f735466cecf": "<id>" }.
+const W3C_SHADOW_KEY = 'shadow-6066-11e4-a52e-4f735466cecf'
+
 // Unpack a By locator into the engine's normalized { using, value }. The engine
 // rewrites id/name/class name to CSS. NO engine change.
 function decodeBy(locator) {
@@ -209,6 +213,64 @@ class WebElement {
     })
     return (result || []).map((e) => new WebElement(this._driver, e[W3C_ELEMENT_KEY]))
   }
+
+  // This element's shadow root as a search context (mainstream getShadowRoot()).
+  // Reads the shadow-6066 key; throws NoSuchShadowRootError (code 19) if the
+  // element hosts no open shadow root.
+  async getShadowRoot() {
+    const result = this._exec('getShadowRoot')
+    if (result && typeof result === 'object' && typeof result[W3C_SHADOW_KEY] === 'string') {
+      return new ShadowRoot(this._driver, result[W3C_SHADOW_KEY])
+    }
+    throw new error.NoSuchShadowRootError('no such shadow root', 19)
+  }
+}
+
+// A shadow root as a search context (mainstream ShadowRoot). Only findElement /
+// findElements are supported, scoped inside the shadow tree — like WebElement's
+// element-scoped finds, but against the shadow id via the shadow-root commands.
+class ShadowRoot {
+  constructor(driver, id) {
+    this._driver = driver
+    this._id = id
+  }
+
+  getId() {
+    return Promise.resolve(this._id)
+  }
+
+  get id() {
+    return this._id
+  }
+
+  [Symbol.for('selenium.serialize')]() {
+    return { [W3C_SHADOW_KEY]: this._id }
+  }
+
+  findElement(locator) {
+    return newWebElementPromise(
+      this._driver,
+      (async () => {
+        const decoded = decodeBy(checkedLocator(locator))
+        const result = this._driver._execute('findElementFromShadowRoot', {
+          id: this._id,
+          using: decoded.using,
+          value: decoded.value,
+        })
+        return new WebElement(this._driver, result[W3C_ELEMENT_KEY])
+      })(),
+    )
+  }
+
+  async findElements(locator) {
+    const decoded = decodeBy(checkedLocator(locator))
+    const result = this._driver._execute('findElementsFromShadowRoot', {
+      id: this._id,
+      using: decoded.using,
+      value: decoded.value,
+    })
+    return (result || []).map((e) => new WebElement(this._driver, e[W3C_ELEMENT_KEY]))
+  }
 }
 
 // A WebElement that is ALSO awaitable — upstream returns this from findElement so
@@ -242,6 +304,7 @@ function newWebElementPromise(driver, elementPromise) {
     'takeScreenshot',
     'findElement',
     'findElements',
+    'getShadowRoot',
   ].forEach(proxy)
   return wep
 }
@@ -469,6 +532,43 @@ class WebDriver {
         args: ['--headless=new', '--no-sandbox', '--disable-gpu', '--disable-dev-shm-usage'],
       },
     })
+  }
+
+  // Start a Firefox session against a running geckodriver (or Grid).
+  static firefox(commandExecutor = 'http://127.0.0.1:4444', options = null, tls = {}) {
+    const caps = { browserName: 'firefox' }
+    if (options) Object.assign(caps, options)
+    return new WebDriver(commandExecutor, caps, tls)
+  }
+
+  static headlessFirefox(commandExecutor = 'http://127.0.0.1:4444') {
+    return WebDriver.firefox(commandExecutor, {
+      'moz:firefoxOptions': { args: ['-headless'] },
+    })
+  }
+
+  // Start a Microsoft Edge session against a running msedgedriver (or Grid).
+  // Edge's W3C browserName is "MicrosoftEdge".
+  static edge(commandExecutor = 'http://127.0.0.1:9515', options = null, tls = {}) {
+    const caps = { browserName: 'MicrosoftEdge' }
+    if (options) Object.assign(caps, options)
+    return new WebDriver(commandExecutor, caps, tls)
+  }
+
+  static headlessEdge(commandExecutor = 'http://127.0.0.1:9515') {
+    return WebDriver.edge(commandExecutor, {
+      'ms:edgeOptions': {
+        args: ['--headless=new', '--no-sandbox', '--disable-gpu', '--disable-dev-shm-usage'],
+      },
+    })
+  }
+
+  // Start a Safari session against a running safaridriver (macOS only). Safari
+  // has no headless mode, so there is no headlessSafari.
+  static safari(commandExecutor = 'http://127.0.0.1:4444', options = null, tls = {}) {
+    const caps = { browserName: 'safari' }
+    if (options) Object.assign(caps, options)
+    return new WebDriver(commandExecutor, caps, tls)
   }
 
   // The FFI seam: one command by name with a params object. BLOCKS (koffi), then
@@ -1263,6 +1363,7 @@ module.exports = {
   Builder,
   WebDriver,
   WebElement,
+  ShadowRoot,
   Condition,
   WebElementCondition,
   Navigation,
@@ -1281,4 +1382,5 @@ module.exports = {
   errorCode,
   locator,
   W3C_ELEMENT_KEY,
+  W3C_SHADOW_KEY,
 }
