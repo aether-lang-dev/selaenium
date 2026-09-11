@@ -4,19 +4,30 @@
 // (convenience_test) + the live-Chrome smoke (live_test) and broad surface
 // (surface_test), which skip cleanly when chromedriver is absent.
 // Ruby 3.4 unbundled minitest/base64/webrick from the stdlib, so the Gemfile
-// declares them and ruby.install() resolves them into .aeb/bundle; minitest()
-// then runs `bundle exec ruby` so the specs see the bundled gems.
+// declares them and install() resolves them into .aeb/bundle; minitest() then
+// runs `bundle exec ruby` so the specs see the bundled gems. Both are steps of
+// the tool-named ruby.bundle() builder (aeb v0.303 — install/minitest were
+// bare ruby.install()/ruby.minitest() before).
 // Skipped by preflight when ruby is absent (prereq ruby:3).
 import bldr
 import ruby
+import ruby (rbenv, install, minitest, minitest_file, env)
 
 aeb(cap) {
     bldr.build() {
         prereq("ruby:3")
         dep("selenium_core/.build.ae")
         lib = dep_artifact("selenium_core/.build.ae", "shared_lib")
-        ruby.install()
-        ruby.minitest() {
+        ruby.bundle() {
+            // Run under the rbenv-managed Ruby (aeb v0.306 bare rbenv() flag):
+            // the system apt Ruby 3.1 is too old (bundler can't swap the default
+            // cgi gem); an rbenv 3.3.x is installed. Declared, not a silent PATH
+            // accident. (The flag is rbenv(), not ruby_env — ruby_env mangle-
+            // collided with the `env` setter and segfaulted; see the aeb asks.
+            // Resolves via the rbenv shim so bundle install/exec agree.)
+            rbenv()
+            install()
+            minitest()
             minitest_file("spec/ffi_test.rb")
             minitest_file("spec/convenience_test.rb")
             minitest_file("spec/live_test.rb")

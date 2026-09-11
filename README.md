@@ -23,7 +23,7 @@ One line installs a pinned `ae` (>= `AE_PIN`) THEN a pinned `aeb`, into
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/aether-lang-dev/aeb/main/get.sh \
-  | AE_PIN=0.650.0 AEB_REF=v0.300 sh
+  | AE_PIN=0.650.0 AEB_REF=v0.307 sh
 ```
 
 `get.sh` is also a sourceable library — a CI step can source it (set
@@ -31,7 +31,7 @@ curl -fsSL https://raw.githubusercontent.com/aether-lang-dev/aeb/main/get.sh \
 
 ```bash
 AEBGET_SOURCE_ONLY=1 . <(curl -fsSL https://raw.githubusercontent.com/aether-lang-dev/aeb/main/get.sh)
-AE_PIN=0.650.0 AEB_REF=v0.300 aeb_bootstrap
+AE_PIN=0.650.0 AEB_REF=v0.307 aeb_bootstrap
 ```
 
 Then build the engine (the one thing every binding needs) and, for a given
@@ -72,6 +72,7 @@ Erlang NIF, and the three extra JVM languages share one Java FFM jar.
 | Gleam    | rides the Erlang NIF (BEAM)            |
 | Nim      | `importc` (link-time)                  |
 | Zig      | `@extern` (link-time)                  |
+| D        | `extern(C)` (link-time, dmd)           |
 | Lua      | Lua 5.4 C extension                    |
 | Kotlin   | JVM interop over the Java FFM jar      |
 | Clojure  | JVM interop over the Java FFM jar      |
@@ -241,6 +242,8 @@ without it the client hangs on chromedriver responses).
   surface**. std/json; `{.passL.}` links the engine with rpath.
 - **Zig binding** (`@extern` + link-time, Zig 0.16): ✅ FFI + **live headless
   Chrome + surface**. std.json; build.zig links + rpaths the engine.
+- **D binding** (`extern(C)` + link-time, dmd): ✅ FFI + **live headless Chrome +
+  surface**. std.json; the `d` aeb SDK module (`dmd -run`) links + rpaths the engine.
 - **Lua binding** (Lua 5.4 C extension): ✅ FFI + **live headless Chrome +
   surface**. A real C extension (Lua has no stdlib FFI) that dlopen's the engine;
   hand-rolled JSON. Builds a bundled 5.4 host on boxes whose interpreter is 5.3.

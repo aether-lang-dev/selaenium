@@ -1,12 +1,13 @@
 // Ruby consumer package (the gem). Bundles the engine .so into lib/ (what the
 // gemspec's Dir['lib/**/*'] ships) then builds the gem from the hand-written
-// selenium-webdriver.gemspec via ruby.package, which publishes the dist dir on the
+// selenium-webdriver.gemspec via ruby.gem(){ build(...) } (aeb v0.303 — was
+// ruby.package(){ gemspec(...) } before), which publishes the dist dir on the
 // "gem_dir" edge for the consumer-install proof (ruby/.example.ae). The .so
 // staging is declarative (copy.file) into the SOURCE lib tree so the gem picks
 // it up. Skipped by preflight when ruby is absent (prereq ruby:3).
 import bldr
 import ruby
-import ruby (gemspec)
+import ruby (rbenv, build)
 import copy
 
 aeb(cap) {
@@ -18,8 +19,9 @@ aeb(cap) {
             from(lib)
             to("lib/selenium/native/libselenium_core.so")
         }
-        ruby.package() {
-            gemspec("selenium-webdriver.gemspec")
+        ruby.gem() {
+            rbenv()   // rbenv-managed Ruby (see ruby/.tests.ae; aeb v0.306 grammar)
+            build("selenium-webdriver.gemspec")
         }
     }
 }

@@ -19,14 +19,14 @@ test('errorCode', () => {
 })
 
 test('locator css', () => {
-  assert.deepStrictEqual(JSON.parse(s.locator(s.By.CSS_SELECTOR, 'div.foo')), {
+  assert.deepStrictEqual(JSON.parse(s.locator('css selector', 'div.foo')), {
     using: 'css selector',
     value: 'div.foo',
   })
 })
 
 test('locator id rewrite', () => {
-  assert.deepStrictEqual(JSON.parse(s.locator(s.By.ID, 'main')), {
+  assert.deepStrictEqual(JSON.parse(s.locator('id', 'main')), {
     using: 'css selector',
     value: '*[id="main"]',
   })

@@ -240,6 +240,11 @@ entities.json
 /dart/example/.dart_tool/
 /dart/example/pubspec.lock
 
+# D
+/d/native/
+/d/*.o
+/d/tests/*.o
+
 # Nim
 /nim/native/
 /nim/nimcache/
@@ -302,3 +307,15 @@ __pycache__/
 
 # Release build outputs
 /release/dist/
+
+# C client
+/c/target/
+/c/*.o
+
+# C++ client
+/cpp/target/
+/cpp/*.o
+
+# aeb per-binding build dirs
+/java/target/
+/erlang/target/
