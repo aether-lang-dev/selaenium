@@ -3,12 +3,14 @@
 // libselenium_core.so -> std.http.client -> chromedriver -> Chrome. Skips if
 // chromedriver is absent. Uses node:test.
 //
-// IMPORTANT: the binding's FFI calls are SYNCHRONOUS and block the Node event
-// loop, so the content server the browser fetches from MUST live in a SEPARATE
-// process (test/content_server.js) — an in-process server could not answer while
-// a d.get() blocks. chromedriver + the content server are both started (and
-// waited on) BEFORE any blocking FFI call, using async I/O; from newSession
-// onward everything is synchronous.
+// IMPORTANT: the WebDriver surface is async (Promise-returning) exactly like
+// mainstream selenium-webdriver, but each command is a blocking FFI round-trip
+// under the hood (the resolved Promise's work runs synchronously before it
+// resolves). So the content server the browser fetches from MUST live in a
+// SEPARATE process (test/content_server.js) — an in-process server could not
+// answer while an `await d.get()` blocks. chromedriver + the content server are
+// both started (and waited on) BEFORE any command. The BiDi channel (d.bidi.*)
+// stays synchronous — it has no mainstream ABI to match.
 'use strict'
 
 const { test } = require('node:test')
@@ -196,8 +198,9 @@ test('live chrome + surface', async (t) => {
       return
     }
 
-    // From here on, everything is synchronous (blocking FFI). Builder with an
-    // explicit usingServer() -> the Remote/WebDriver path against a running driver.
+    // Builder with an explicit usingServer() -> the Remote/WebDriver path against
+    // a running driver. The surface is async (Promise-returning) exactly like
+    // mainstream selenium-webdriver, so every command is awaited.
     const d = new s.Builder()
       .forBrowser('chrome')
       .usingServer(`http://127.0.0.1:${cdPort}`)
@@ -210,51 +213,51 @@ test('live chrome + surface', async (t) => {
     try {
       assert.ok(d.sessionId, 'no session id after newSession')
 
-      d.get(`${base}/one`)
-      assert.strictEqual(d.title, 'Page One')
+      await d.get(`${base}/one`)
+      assert.strictEqual(await d.getTitle(), 'Page One')
       assert.strictEqual(await d.findElement(s.By.id('hdr')).getText(), 'One')
       assert.strictEqual((await d.findElement(s.By.css('#go')).getTagName()).toLowerCase(), 'a')
 
       // navigation history
-      d.findElement(s.By.id('go')).click()
-      assert.strictEqual(d.title, 'Page Two')
-      d.back()
-      assert.strictEqual(d.title, 'Page One')
-      d.forward()
-      assert.strictEqual(d.title, 'Page Two')
-      d.back()
+      await d.findElement(s.By.id('go')).click()
+      assert.strictEqual(await d.getTitle(), 'Page Two')
+      await d.back()
+      assert.strictEqual(await d.getTitle(), 'Page One')
+      await d.forward()
+      assert.strictEqual(await d.getTitle(), 'Page Two')
+      await d.back()
 
       // cookies
-      d.deleteAllCookies()
-      d.addCookie({ name: 'flavor', value: 'mint' })
-      assert.strictEqual(d.getCookie('flavor').value, 'mint')
-      assert.ok(d.getCookies().some((c) => c.name === 'flavor'))
-      d.deleteCookie('flavor')
-      assert.ok(!d.getCookies().some((c) => c.name === 'flavor'))
+      await d.deleteAllCookies()
+      await d.addCookie({ name: 'flavor', value: 'mint' })
+      assert.strictEqual((await d.getCookie('flavor')).value, 'mint')
+      assert.ok((await d.getCookies()).some((c) => c.name === 'flavor'))
+      await d.deleteCookie('flavor')
+      assert.ok(!(await d.getCookies()).some((c) => c.name === 'flavor'))
 
       // windows
-      const handles = d.windowHandles
+      const handles = await d.getAllWindowHandles()
       assert.ok(handles.length >= 1)
-      assert.ok(handles.includes(d.currentWindowHandle))
-      d.setWindowRect({ width: 900, height: 650 })
-      assert.strictEqual(d.getWindowRect().width, 900)
+      assert.ok(handles.includes(await d.getWindowHandle()))
+      await d.setWindowRect({ width: 900, height: 650 })
+      assert.strictEqual((await d.getWindowRect()).width, 900)
 
       // execute_script shapes
-      assert.strictEqual(d.executeScript('return 6*7;'), 42)
-      assert.strictEqual(d.executeScript("return 'hi';"), 'hi')
-      assert.deepStrictEqual(d.executeScript('return [1,2,3];'), [1, 2, 3])
-      assert.deepStrictEqual(d.executeScript('return {a:1};'), { a: 1 })
-      assert.strictEqual(d.executeScript('return arguments[0]+arguments[1];', 40, 2), 42)
+      assert.strictEqual(await d.executeScript('return 6*7;'), 42)
+      assert.strictEqual(await d.executeScript("return 'hi';"), 'hi')
+      assert.deepStrictEqual(await d.executeScript('return [1,2,3];'), [1, 2, 3])
+      assert.deepStrictEqual(await d.executeScript('return {a:1};'), { a: 1 })
+      assert.strictEqual(await d.executeScript('return arguments[0]+arguments[1];', 40, 2), 42)
 
       // timeout setter + async script: the async callback is arguments[last].
-      d.setScriptTimeout(10000)
-      assert.strictEqual(d.executeAsyncScript('arguments[arguments.length-1](42);'), 42)
+      await d.setScriptTimeout(10000)
+      assert.strictEqual(await d.executeAsyncScript('arguments[arguments.length-1](42);'), 42)
 
       // W3C actions: pointer click on the button.
-      const rect = d.findElement(s.By.id('btn')).rect
+      const rect = await d.findElement(s.By.id('btn')).getRect()
       const cx = Math.round(rect.x + rect.width / 2)
       const cy = Math.round(rect.y + rect.height / 2)
-      d.performActions([
+      await d.performActions([
         {
           type: 'pointer',
           id: 'mouse',
@@ -267,19 +270,19 @@ test('live chrome + surface', async (t) => {
         },
       ])
       assert.strictEqual(await d.findElement(s.By.id('hdr')).getText(), 'clicked')
-      d.clearActions()
+      await d.clearActions()
 
       // screenshot -> PNG
-      const raw = Buffer.from(d.screenshotBase64(), 'base64')
+      const raw = Buffer.from(await d.screenshotBase64(), 'base64')
       assert.strictEqual(raw.subarray(1, 4).toString('ascii'), 'PNG')
 
       // negative path: typed error
-      assert.throws(
+      await assert.rejects(
         () => d.findElement(s.By.id('does-not-exist')),
         (e) => e instanceof s.NoSuchElementException,
       )
     } finally {
-      d.quit()
+      await d.quit()
     }
   } finally {
     cd.kill()
@@ -307,18 +310,19 @@ test('live chrome + bidi', async (t) => {
       return
     }
 
-    // From here on, everything is synchronous (blocking FFI).
+    // The classic WebDriver surface is async (Promise-returning); the BiDi
+    // channel (d.bidi.*) is synchronous blocking FFI.
     const d = s.WebDriver.headlessChrome(`http://127.0.0.1:${cdPort}`)
     try {
       assert.ok(d.sessionId, 'no session id after newSession')
       assert.ok(d.bidiAvailable(), 'session negotiated no BiDi webSocketUrl')
 
-      d.get('data:text/html,<title>BiDi</title><h1>hi</h1>')
+      await d.get('data:text/html,<title>BiDi</title><h1>hi</h1>')
 
       const ack = d.bidi.subscribe(s.BidiEvent.LOG_ENTRY_ADDED)
       assert.strictEqual(ack.type, 'success', `subscribe ack: ${JSON.stringify(ack)}`)
 
-      d.executeScript("console.log('bidi-hello');")
+      await d.executeScript("console.log('bidi-hello');")
 
       const ev = d.bidi.nextEvent(s.BidiEvent.LOG_ENTRY_ADDED, 8000)
       assert.ok(ev, 'no log.entryAdded event received')
@@ -346,7 +350,7 @@ test('live chrome + bidi', async (t) => {
       const ic = d.bidi.addIntercept('beforeRequestSent', '')
       assert.ok(ic, `addIntercept returned falsy: ${JSON.stringify(ic)}`)
 
-      d.executeScript("fetch('https://example.com/blocked').catch(()=>{});")
+      await d.executeScript("fetch('https://example.com/blocked').catch(()=>{});")
 
       const netEv = d.bidi.nextEvent(s.BidiEvent.BEFORE_REQUEST_SENT, 8000)
       assert.ok(netEv, 'no network.beforeRequestSent event received')
@@ -366,7 +370,7 @@ test('live chrome + bidi', async (t) => {
       const ic2 = d.bidi.addIntercept('beforeRequestSent', '')
       assert.ok(ic2, `addIntercept(2) returned falsy: ${JSON.stringify(ic2)}`)
 
-      d.executeScript(
+      await d.executeScript(
         "window.__mock='';fetch('https://example.com/api').then(r=>r.text()).then(t=>{window.__mock=t}).catch(()=>{});",
       )
 
@@ -389,7 +393,7 @@ test('live chrome + bidi', async (t) => {
       }
       let mock = ''
       for (let i = 0; i < 25 && !mock.includes('MOCKED-BODY'); i++) {
-        mock = d.executeScript('return window.__mock;') || ''
+        mock = (await d.executeScript('return window.__mock;')) || ''
         if (mock.includes('MOCKED-BODY')) break
         sleep(200)
       }
@@ -406,7 +410,7 @@ test('live chrome + bidi', async (t) => {
       assert.strictEqual(dflt.type, 'success', `setCacheBehavior('default'): ${JSON.stringify(dflt)}`)
       assert.strictEqual(typeof d.bidi.continueWithAuth, 'function', 'continueWithAuth missing')
     } finally {
-      d.quit()
+      await d.quit()
     }
   } finally {
     cd.kill()
@@ -416,7 +420,8 @@ test('live chrome + bidi', async (t) => {
 // Live atom-backed commands: isDisplayed / getAttribute / relative locators all
 // run the shared JS atoms in-page via the engine. Same fixture as above: own
 // chromedriver on an ephemeral port, self-skip if absent. Uses a data: URL so no
-// content server is needed. All calls are synchronous blocking FFI.
+// content server is needed. The surface is async (Promise-returning), so every
+// command is awaited.
 test('live chrome + atoms', async (t) => {
   const driverBin = which('chromedriver')
   if (!driverBin) {
@@ -433,7 +438,8 @@ test('live chrome + atoms', async (t) => {
       return
     }
 
-    // From here on, everything is synchronous (blocking FFI).
+    // The classic surface is async (Promise-returning); the atom-backed commands
+    // (isDisplayed/getAttribute) and findRelative are exposed through it too.
     const d = s.WebDriver.headlessChrome(`http://127.0.0.1:${cdPort}`)
     try {
       assert.ok(d.sessionId, 'no session id after newSession')
@@ -444,14 +450,22 @@ test('live chrome + atoms', async (t) => {
         "<button id='btn'>go</button>" +
         "<p id='gone' style='display:none'>hidden</p>" +
         "<a id='lnk' href='https://example.com/x'>link</a>"
-      d.get(`data:text/html,${encodeURIComponent(html)}`)
+      await d.get(`data:text/html,${encodeURIComponent(html)}`)
 
       // isDisplayed atom
-      assert.strictEqual(d.findElement(s.By.id('hdr')).isDisplayed(), true, '#hdr should be displayed')
-      assert.strictEqual(d.findElement(s.By.id('gone')).isDisplayed(), false, '#gone should be hidden')
+      assert.strictEqual(
+        await d.findElement(s.By.id('hdr')).isDisplayed(),
+        true,
+        '#hdr should be displayed',
+      )
+      assert.strictEqual(
+        await d.findElement(s.By.id('gone')).isDisplayed(),
+        false,
+        '#gone should be hidden',
+      )
 
       // getAttribute atom (property-or-attribute)
-      const href = d.findElement(s.By.id('lnk')).getAttribute('href')
+      const href = await d.findElement(s.By.id('lnk')).getAttribute('href')
       assert.ok(href.includes('example.com/x'), `href missing: ${href}`)
 
       // relative locators: the button is below the header
@@ -476,7 +490,7 @@ test('live chrome + atoms', async (t) => {
         (e) => e instanceof s.error.NoSuchShadowRootError && e.code === 19,
       )
     } finally {
-      d.quit()
+      await d.quit()
     }
   } finally {
     cd.kill()

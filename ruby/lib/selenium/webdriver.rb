@@ -630,7 +630,15 @@ module Selenium
     # {kind: "above"|"below"|"left"|"right"|"near", sel: "<css>"} (+near+ also
     # accepts +dist+). Returns an Array of WebElement.
     def find_relative(base_css, *filters)
-      rc = Native.call(:find_relative, @handle, base_css, JSON.generate(filters))
+      # Bind both String args to locals so they stay referenced for the whole
+      # Fiddle call: Fiddle converts a Ruby String arg to a VOIDP pointer, and an
+      # inline temporary (e.g. JSON.generate(...) passed directly) can be GC'd
+      # between the conversion and the C read under some allocation interleavings
+      # — a seed-dependent use-after-free segfault. See
+      # asks/ruby-find-relative-segfault.md.
+      base = base_css.to_s
+      filters_json = JSON.generate(filters)
+      rc = Native.call(:find_relative, @handle, base, filters_json)
       result = atom_result(rc) || []
       result.map { |ref| WebElement.new(self, ref.fetch(W3C_ELEMENT_KEY)) }
     end

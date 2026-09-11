@@ -28,12 +28,36 @@ causes to investigate:
 - the relative-locator atom returning a shape the Ruby side then mis-drains
   (`last_value` / element-array unwrap) under specific interleavings.
 
-## Cross-binding check needed
-`find_relative` exists in several bindings (the D binding's `findRelative`,
-nim `findRelative`, etc.). Determine whether the fault is in the **engine**
-`find_relative` ABI (would affect ALL bindings — high blast radius) or only in
-Ruby's Fiddle marshalling. Repro first in a pure C-ABI smoke against the same
-seed/interleaving before blaming a binding.
+## Cross-binding check — DONE: it is Ruby-Fiddle-specific, NOT engine-level
+Stress-tested the engine's `find_relative` via the **D binding** (link-time FFI,
+same `aether_sel_embed_find_relative` ABI): 150 calls in a tight loop with varied
+below/near filters + `findRelativeCount`, against live headless Chrome —
+**rock solid, zero crashes, consistent results**. So the engine's
+`find_relative` path is sound and there is NO all-binding blast radius. The fault
+is in **Ruby's Fiddle marshalling / result-drain of this specific call**, not the
+engine.
+
+## Likely cause + fix candidate (Ruby side)
+`webdriver.rb`:
+```
+def find_relative(base_css, *filters)
+  rc = Native.call(:find_relative, @handle, base_css, JSON.generate(filters))
+  result = atom_result(rc) || []
+  ...
+```
+The 2nd/3rd VOIDP args are Ruby Strings Fiddle auto-converts to pointers; the
+inline `JSON.generate(filters)` temporary can be GC'd between the argument
+conversion and the C read under specific allocation/GC interleavings (hence the
+seed dependence). `Native.call` just does `functions.fetch(name).call(*args)` —
+no pinning. FIX CANDIDATES to try: (a) bind the JSON to a local before the call
+(`json = JSON.generate(filters); Native.call(..., base_css, json)`) so it stays
+referenced across the call; (b) if that doesn't hold it, explicitly build a
+`Fiddle::Pointer` from the frozen string bytes and keep it alive for the call
+duration. Confirm by re-running `ruby -Ilib spec/live_test.rb --seed 3` (the
+seed that reproduced) many times after the change. Note the same Fiddle
+String→VOIDP pattern is used by `execute` (which passes inline `JSON.generate`
+too and does NOT crash), so also compare the two call sites — the differentiator
+may instead be in `atom_result`'s drain for the relative-locator result shape.
 
 ## Repro
 ```
