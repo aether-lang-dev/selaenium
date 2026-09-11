@@ -1,0 +1,32 @@
+// C++ client tests: cpp.tests compiles test/selenium_test.cpp (C++17,
+// header-only over cpp/include/selenium.hpp) and links (1) the C client's object
+// from c/.objects.ae — compiled AS C so its `extern "C"` symbols aren't
+// C++-mangled — via cpp's dep-object collection, and (2) the engine .so from
+// ../selenium_core/native (staged by selenium_core/.build.ae) with an rpath.
+// The test exercises the pure helpers + transport-error→exception, then live
+// headless Chrome (find/text/aria/executeScript/shadow-root/NoSuchElement) and
+// live headless Firefox — self-skipping when a driver can't be resolved. Skipped
+// by preflight when a C++ compiler is absent (prereq gcc — g++ ships with it).
+import bldr
+import cpp
+import cpp (source, include, std, link_flag)
+
+aeb(cap) {
+    bldr.build() {
+        prereq("gcc")
+        dep("selenium_core/.build.ae")
+        dep("c/.objects.ae")
+        // Engine .so by ABSOLUTE artifact path + rpath its dir (cpp.tests
+        // compiles from the module dir; an absolute path is layout-robust).
+        lib = dep_artifact("selenium_core/.build.ae", "shared_lib")
+        libdir = bldr._dirname(lib)
+        cpp.tests() {
+            std("c++17")
+            source("test/selenium_test.cpp")
+            include("include")
+            include("../c/include")
+            link_flag(lib)
+            link_flag("-Wl,-rpath,${libdir}")
+        }
+    }
+}

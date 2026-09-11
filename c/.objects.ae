@@ -1,0 +1,19 @@
+// The C client compiled to an object set (src/selenium.c), published as the
+// `c_objects` artifact so a dependent target links it WITHOUT recompiling — used
+// by the C test binary (c/.build.ae) AND the C++ client (cpp/.tests.ae), whose
+// C++ compiler must NOT recompile selenium.c (its `extern "C"` symbols would be
+// mangled). The engine .so is linked by the final binary, not here. Skipped by
+// preflight when a C compiler is absent (prereq gcc).
+import bldr
+import c
+import c (sources, include)
+
+aeb(cap) {
+    bldr.build() {
+        prereq("gcc")
+        c.compile() {
+            sources("src/selenium.c")
+            include("include")
+        }
+    }
+}

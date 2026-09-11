@@ -1,0 +1,28 @@
+// The C client's test binary: compiles test/selenium_test.c, links the C
+// client's object (from c/.objects.ae) and the engine .so (../selenium_core
+// /native, staged by selenium_core/.build.ae) with an rpath. Publishes the
+// binary on the program_binary edge for c/.tests.ae to run. Skipped by preflight
+// when a C compiler is absent (prereq gcc).
+import bldr
+import c
+import c (sources, include, link_flag, output_file)
+
+aeb(cap) {
+    bldr.build() {
+        prereq("gcc")
+        dep("selenium_core/.build.ae")
+        dep("c/.objects.ae")
+        // Link the engine .so by its ABSOLUTE artifact path (the c.program link
+        // step runs from the repo root, so a relative -L would misresolve); rpath
+        // its dir so the test binary finds it at run time.
+        lib = dep_artifact("selenium_core/.build.ae", "shared_lib")
+        libdir = bldr._dirname(lib)
+        c.program() {
+            sources("test/selenium_test.c")
+            include("include")
+            link_flag(lib)
+            link_flag("-Wl,-rpath,${libdir}")
+            output_file("selenium_test")
+        }
+    }
+}

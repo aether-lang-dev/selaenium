@@ -1,0 +1,19 @@
+// C client tests: run the test binary built by c/.build.ae. selenium_test.c
+// exercises the pure engine helpers + the transport-error path (always), then a
+// live headless Chrome leg (find/text/aria/click/executeScript/shadow-root) and
+// a live headless Firefox leg — each self-skips when its driver can't be
+// resolved. c.tests runs the dep's program_binary and treats a non-zero exit as
+// failure. Skipped by preflight when a C compiler is absent (prereq gcc).
+import bldr
+import c
+import c (run)
+
+aeb(cap) {
+    bldr.build() {
+        prereq("gcc")
+        dep("c/.build.ae")
+        c.tests() {
+            run("c/.build.ae", "")
+        }
+    }
+}
