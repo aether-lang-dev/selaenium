@@ -5,8 +5,10 @@
   "license": "Apache-2.0",
   "author": "Paul Hammant <paul@hammant.org>",
   "main": "index.js",
+  "types": "index.d.ts",
   "files": [
     "index.js",
+    "index.d.ts",
     "lib/",
     "native/"
   ],
