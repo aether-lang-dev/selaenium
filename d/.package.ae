@@ -1,0 +1,21 @@
+// D consumer package. The D module is consumed in-place (dmd reads src/ + the
+// staged native/.so at compile time), so packaging is just staging the engine
+// .so into native/ (where a consumer links it) and publishing the module dir on
+// the "package_dir" edge for the consumer-install proof (d/.example.ae).
+// copy.file does the staging declaratively. Skipped by preflight when dmd is
+// absent (prereq dmd).
+import bldr
+import copy
+
+aeb(cap) {
+    bldr.build() {
+        prereq("dmd")
+        dep("selenium_core/.build.ae")
+        lib = dep_artifact("selenium_core/.build.ae", "shared_lib")
+        copy.file() {
+            from(lib)
+            to("native/libselenium_core.so")
+        }
+        publish_artifact("package_dir", bldr._get(builder_context(), "source_dir"))
+    }
+}

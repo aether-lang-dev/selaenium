@@ -1,0 +1,28 @@
+// D consumer-install proof: prove the packaged binding drives the engine from a
+// CLEAN environment for a third party. d.consumer_example stages the package
+// (src/ + native/.so — no tests/ or core/) as d-pkg, plus the consumer, asserts
+// the .so shipped, then compiles-and-runs the consumer with `dmd` from the
+// consumer dir with SELENIUM_CORE_LIB unset — so it links ONLY the package's own
+// bundled .so (via -I../d-pkg/src, the packaged source, and a -L to
+// ../d-pkg/native + rpath). Modes: ffi/live. Skipped by preflight when dmd is
+// absent (prereq dmd).
+import bldr
+import d
+import d (stage, run_in, consumer_run_cmd, run_arg, assert_file)
+
+aeb(cap) {
+    bldr.build() {
+        prereq("dmd")
+        dep("d/.package.ae")
+        d.consumer_example() {
+            stage("src/selenium/package.d", "d-pkg/src/selenium/package.d")
+            stage("native/libselenium_core.so", "d-pkg/native/libselenium_core.so")
+            stage("example/consumer.d", "d-consumer/consumer.d")
+            assert_file("d-pkg/native/libselenium_core.so")
+            run_in("d-consumer")
+            consumer_run_cmd("dmd -I../d-pkg/src -L-L../d-pkg/native -L-lselenium_core -L-rpath -L../d-pkg/native ../d-pkg/src/selenium/package.d -run consumer.d")
+            run_arg("ffi")
+            run_arg("live")
+        }
+    }
+}

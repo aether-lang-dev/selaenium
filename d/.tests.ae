@@ -1,0 +1,31 @@
+// D binding tests (extern(C) + link-time). Like Nim/Go-cgo/Rust, D compiles and
+// links: d.test() compiles-and-runs each test file with `dmd -run`, with the
+// binding's own module (src/selenium/package.d) compiled in via d_source() and
+// the engine .so linked via d_flag() (-L forwards to the linker) + rpath. The
+// engine .so lives at ../selenium_core/native (staged by selenium_core/.build.ae)
+// — a fixed relative path from this module dir. tests/ffi_test.d is the
+// no-browser FFI + convenience-tier facts; tests/live_test.d is the live-Chrome
+// smoke, which self-skips (exit 0) when chromedriver is absent. Skipped by
+// preflight when dmd is absent (prereq dmd).
+import bldr
+import d
+import d (d_source, test_file, d_flag)
+
+aeb(cap) {
+    bldr.build() {
+        prereq("dmd")
+        dep("selenium_core/.build.ae")
+        d.test() {
+            d_flag("-Isrc")
+            // Link the engine .so from its in-tree staged location + bake rpath
+            // so the test binary finds it at run time (dmd forwards -L<x> to ld).
+            d_flag("-L-L../selenium_core/native")
+            d_flag("-L-lselenium_core")
+            d_flag("-L-rpath")
+            d_flag("-L../selenium_core/native")
+            d_source("src/selenium/package.d")
+            test_file("tests/ffi_test.d")
+            test_file("tests/live_test.d")
+        }
+    }
+}
