@@ -2,13 +2,13 @@
 
 # Live surface-coverage test (Ruby): cookies, navigation history, windows, W3C
 # actions, screenshot, and execute_script return shapes against a real headless
-# Chrome served by a local WEBrick server (so cookies/navigation have a real
-# http:// origin). Skips if chromedriver is absent.
+# Chrome served by a tiny local HTTP server (so cookies/navigation have a real
+# http:// origin). Skips if chromedriver is absent. The server is a plain
+# TCPServer rather than WEBrick: webrick left Ruby's stdlib in 3.0, and this
+# suite must not need a gem to run.
 
 require 'minitest/autorun'
 require 'socket'
-require 'base64'
-require 'webrick'
 
 $LOAD_PATH.unshift File.expand_path('../lib', __dir__)
 require 'selenium-webdriver'
@@ -23,15 +23,7 @@ class SurfaceTest < Minitest::Test
     @driver_bin = which('chromedriver')
     skip 'chromedriver not on PATH' unless @driver_bin
 
-    @web = WEBrick::HTTPServer.new(BindAddress: '127.0.0.1', Port: 0,
-                                   Logger: WEBrick::Log.new(File::NULL),
-                                   AccessLog: [])
-    @web.mount_proc('/') do |req, res|
-      res.content_type = 'text/html; charset=utf-8'
-      res.body = req.path.start_with?('/two') ? PAGE_TWO : PAGE_ONE
-    end
-    @web_port = @web.config[:Port]
-    @web_thread = Thread.new { @web.start }
+    @web, @web_thread, @web_port = start_content_server
 
     @port = free_port
     @cd = spawn(@driver_bin, "--port=#{@port}", out: File::NULL, err: File::NULL)
@@ -39,8 +31,8 @@ class SurfaceTest < Minitest::Test
   end
 
   def teardown
-    @web&.shutdown
-    @web_thread&.join(2)
+    @web&.close
+    @web_thread&.kill
     return unless @cd
 
     Process.kill('TERM', @cd)
@@ -121,7 +113,7 @@ class SurfaceTest < Minitest::Test
       end
 
       # screenshot -> PNG
-      raw = Base64.decode64(d.screenshot_base64)
+      raw = d.screenshot_base64.unpack1('m')
       assert_equal "\x89PNG".b, raw[0, 4].b
     ensure
       d.quit
@@ -129,6 +121,40 @@ class SurfaceTest < Minitest::Test
   end
 
   private
+
+  # A two-route static content server on an ephemeral port. Returns
+  # [server, thread, port]; the caller closes the server and kills the thread.
+  def start_content_server
+    server = TCPServer.new('127.0.0.1', 0)
+    thread = Thread.new do
+      loop do
+        begin
+          sock = server.accept
+        rescue IOError, Errno::EBADF
+          break
+        end
+        Thread.new(sock) do |conn|
+          path = conn.gets.to_s.split(' ')[1].to_s
+          # Drain the request headers so the client sees a clean response.
+          nil while (line = conn.gets) && line.strip != ''
+          body = path.start_with?('/two') ? PAGE_TWO : PAGE_ONE
+          conn.write("HTTP/1.1 200 OK\r\n" \
+                     "Content-Type: text/html; charset=utf-8\r\n" \
+                     "Content-Length: #{body.bytesize}\r\n" \
+                     "Connection: close\r\n\r\n#{body}")
+        rescue StandardError
+          nil
+        ensure
+          begin
+            conn.close
+          rescue StandardError
+            nil
+          end
+        end
+      end
+    end
+    [server, thread, server.addr[1]]
+  end
 
   def which(cmd)
     ENV['PATH'].split(File::PATH_SEPARATOR).each do |dir|

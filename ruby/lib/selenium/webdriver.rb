@@ -679,8 +679,7 @@ module Selenium
 
     # Render the current page to a PDF and write the decoded bytes to +path+.
     def save_print_page(path, **opts)
-      require 'base64'
-      File.binwrite(path, Base64.decode64(print_page(**opts)))
+      File.binwrite(path, print_page(**opts).unpack1('m'))
       path
     end
 
@@ -692,8 +691,9 @@ module Selenium
       when :base64
         execute('screenshot')
       when :png
-        require 'base64'
-        Base64.decode64(execute('screenshot'))
+        # unpack1('m') is what Base64.decode64 does; using it directly keeps the
+        # gem dependency-free (base64 left Ruby's default gems in 3.4).
+        execute('screenshot').unpack1('m')
       else
         raise UnsupportedOperationError, "unsupported format: #{format.inspect}"
       end

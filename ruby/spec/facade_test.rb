@@ -8,7 +8,6 @@
 # chromedriver and no live .so calls needed.
 
 require 'minitest/autorun'
-require 'base64'
 require 'tmpdir'
 
 $LOAD_PATH.unshift File.expand_path('../lib', __dir__)
@@ -349,7 +348,7 @@ class FacadeTest < Minitest::Test
 
   def test_driver_screenshot_as_and_save
     png = "\x89PNG\r\n\x1A\n".b
-    b64 = Base64.strict_encode64(png)
+    b64 = [png].pack('m0')
     d = FakeDriver.new('screenshot' => b64)
     assert_equal b64, d.screenshot_as(:base64)
     assert_equal png, d.screenshot_as(:png)
@@ -492,15 +491,28 @@ class FacadeTest < Minitest::Test
     assert_equal({}, M.options_to_caps(nil))
   end
 
+  # A real subclass whose .new records the caps instead of opening a session.
+  # Driver.chrome calls new(...) on `self`, so calling it on the subclass runs
+  # the REAL Driver.chrome body through ordinary inheritance — no mock library
+  # and no patching of the class under test.
+  class CapsRecorder < M::Driver
+    class << self
+      attr_accessor :captured
+
+      def new(_url, caps, **_kw)
+        self.captured = caps
+        :ok
+      end
+    end
+  end
+
   def test_chrome_constructor_accepts_options_object
     # Driver.chrome merges options.to_capabilities under browserName without
-    # opening a session — stub the constructor to capture the caps it builds.
-    captured = nil
-    M::Driver.stub(:new, ->(_url, caps, **_kw) { captured = caps; :ok }) do
-      o = M::Chrome::Options.new
-      o.add_argument('--headless=new')
-      assert_equal :ok, M::Driver.chrome('http://127.0.0.1:9515', options: o)
-    end
+    # opening a session.
+    o = M::Chrome::Options.new
+    o.add_argument('--headless=new')
+    assert_equal :ok, CapsRecorder.chrome('http://127.0.0.1:9515', options: o)
+    captured = CapsRecorder.captured
     assert_equal 'chrome', captured['browserName']
     assert_equal ['--headless=new'], captured['goog:chromeOptions']['args']
   end

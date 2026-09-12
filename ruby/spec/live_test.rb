@@ -439,8 +439,7 @@ class LiveTest < Minitest::Test
   # right credentials arrive — the challenge Chrome surfaces as authRequired.
   # Raw TCPServer thread (no webrick dependency), mirroring the Python harness.
   def basic_auth_server
-    require 'base64'
-    expected = 'Basic ' + Base64.strict_encode64("#{BASIC_AUTH_USER}:#{BASIC_AUTH_PASS}")
+    expected = 'Basic ' + ["#{BASIC_AUTH_USER}:#{BASIC_AUTH_PASS}"].pack('m0')
     server = TCPServer.new('127.0.0.1', 0)
     port = server.addr[1]
     Thread.new do
