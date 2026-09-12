@@ -507,3 +507,25 @@ class LiveTest < Minitest::Test
     false
   end
 end
+
+# Grid CLIENT: drive a session THROUGH a real Selenium Grid hub —
+# chrome(hub_url) -> HTTP -> router -> node -> Chromium. Its own class because
+# LiveTest#setup skips when chromedriver is not on PATH, and a Grid run needs no
+# local driver at all. grid/run-grid-test.sh exports SEL_GRID_URL; without it
+# this skips, so the ordinary no-Grid run is unaffected.
+class GridTest < Minitest::Test
+  def test_live_grid
+    url = ENV['SEL_GRID_URL'].to_s
+    skip 'SEL_GRID_URL unset (no Grid hub)' if url.empty?
+
+    d = Selenium::WebDriver.chrome(url)
+    begin
+      refute_empty d.session_id, 'no session established via the hub'
+      d.get('data:text/html,<title>Grid</title><h1 id="h">Hello Grid</h1>')
+      assert_equal 'Grid', d.title
+      assert_equal 'Hello Grid', d.find_element(:id, 'h').text
+    ensure
+      d.quit
+    end
+  end
+end

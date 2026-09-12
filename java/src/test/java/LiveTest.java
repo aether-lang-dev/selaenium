@@ -226,6 +226,31 @@ class LiveTest {
         }
     }
 
+    /**
+     * Grid CLIENT: drive a session THROUGH a real Selenium Grid hub —
+     * openSession(hubUrl) -> HTTP -> router -> node -> Chromium.
+     *
+     * <p>grid/run-grid-test.sh stands a hub up in a container and exports
+     * SEL_GRID_URL; without it this assumeTrue-skips, so the ordinary no-Grid
+     * run of java/.tests.ae is unaffected.
+     */
+    @Test
+    void liveGrid() throws Exception {
+        String gridUrl = System.getenv("SEL_GRID_URL");
+        assumeTrue(gridUrl != null && !gridUrl.isEmpty(), "SEL_GRID_URL unset (no Grid hub)");
+
+        WebDriver d = RemoteWebDriver.chrome(gridUrl, Map.of());
+        try {
+            assertTrue(!d.sessionId().isEmpty(), "no session established via the hub");
+            d.get("data:text/html,<title>Grid</title><h1 id='h'>Hello Grid</h1>");
+            assertEquals("Grid", d.getTitle(), "nav+title through the hub");
+            assertEquals("Hello Grid", d.findElement(By.id("h")).getText(),
+                    "find+text through the hub");
+        } finally {
+            d.quit();
+        }
+    }
+
     @Test
     void liveChromeBidi() throws Exception {
         String driverBin = which("chromedriver");

@@ -627,3 +627,31 @@ def test_live_timeouts_property():
     finally:
         cd.terminate()
         cd.wait()
+
+
+def test_live_grid():
+    """Grid CLIENT: drive a session THROUGH a real Selenium Grid hub —
+    Remote(hub_url) -> HTTP -> router -> node -> Chromium.
+
+    grid/run-grid-test.sh stands a hub up in a container and exports
+    SEL_GRID_URL; without it this self-skips, so the ordinary no-Grid run of
+    python/.tests.ae is unaffected.
+    """
+    grid_url = os.environ.get("SEL_GRID_URL", "")
+    if not grid_url:
+        pytest.skip("SEL_GRID_URL unset (no Grid hub)")
+
+    from selenium.webdriver import By, Remote
+
+    driver = Remote(grid_url, {"browserName": "chrome"})
+    try:
+        assert driver.session_id, "no session established via the hub"
+        driver.get(PAGE)
+        assert driver.title == "Aether Selenium", f"title={driver.title!r}"
+        assert driver.find_element(By.ID, "hdr").text == "Hello"
+        # the parity surface works through the hub too, not just direct
+        assert driver.find_element(By.ID, "hdr").parent is driver
+        assert driver.timeouts.page_load > 0
+        print(f"PASS: live Grid test green via {grid_url}")
+    finally:
+        driver.quit()
