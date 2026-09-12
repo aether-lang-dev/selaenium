@@ -34,6 +34,28 @@ cd "$ROOT"
 STRICT=0
 [ "${1:-}" = "--strict" ] && STRICT=1
 
+# Some nodes under-declare their toolchain: the node names one prereq but the
+# builder also needs a compiler the prereq does not mention. Probe those too.
+#
+# The JVM family is deliberately NOT listed here. They all declare
+# prereq("jdk:22") and that is the RIGHT check: aeb does not invoke the `scalac`
+# / `kotlinc` binaries on PATH at all, it resolves the compiler jars from Maven
+# and runs them on the JDK (`java -cp <jars> dotty.tools.dotc.Main`). Probing the
+# PATH binary would answer a question nobody asked — this box has a working
+# scalac 3.8.4 while aeb's scala node still fails, because its resolved compiler
+# classpath is missing scala3-compiler. That is a visible FAILURE, which run.sh
+# already catches; it is not an invisible skip, which is what this script is for.
+#
+# node path -> extra command that must also work.
+extra_probe() {
+    case "$1" in
+        crystal/*) crystal --version ;;
+        julia/*)   julia --version ;;
+        lua/*)     lua -v ;;
+        *)         return 0 ;;   # nothing extra to check
+    esac
+}
+
 # prereq token -> a command that must succeed for that toolchain to be usable.
 probe() {
     case "$1" in
@@ -69,9 +91,15 @@ for node in $(find . -maxdepth 3 -name ".tests.ae" -not -path "./target/*" | sed
     prereqs="$(grep -oE 'prereq\("[^"]+"\)' "$node" | sed 's/prereq("//;s/")//')"
     if [ -z "$prereqs" ]; then
         # No prereq() gate: a missing toolchain fails this node loudly rather
-        # than passing quietly, so there is nothing to verify here.
-        printf '%-40s %-12s %s\n' "$node" "-" "ungated (absence fails loudly)"
-        ungated=$((ungated + 1))
+        # than passing quietly. Still probe the real compiler where we know it.
+        if extra_probe "$node" >/dev/null 2>&1; then
+            printf '%-40s %-12s %s\n' "$node" "-" "ungated (absence fails loudly)"
+            ungated=$((ungated + 1))
+        else
+            printf '%-40s %-12s %s\n' "$node" "-" "NOT TESTED — its compiler is absent or broken"
+            missing="$missing $node"
+            untested=$((untested + 1))
+        fi
         continue
     fi
     node_ok=1
@@ -90,6 +118,12 @@ for node in $(find . -maxdepth 3 -name ".tests.ae" -not -path "./target/*" | sed
             node_ok=0
         fi
     done
+    # The declared prereq can pass while the node's actual compiler is broken.
+    if [ "$node_ok" = "1" ] && ! extra_probe "$node" >/dev/null 2>&1; then
+        printf '%-40s %-12s %s\n' "$node" "(compiler)" "NOT TESTED — prereq OK but its compiler is broken"
+        missing="$missing $node(compiler)"
+        node_ok=0
+    fi
     [ "$node_ok" = "1" ] && tested=$((tested + 1)) || untested=$((untested + 1))
 done
 
