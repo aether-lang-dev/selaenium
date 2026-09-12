@@ -635,3 +635,226 @@ def test_webdriver_execute_is_public_alias():
     # execute() delegates to _execute
     d.execute("screenshot")
     assert ("screenshot", {}) in d.calls
+
+
+# ---- Selenium 4.x parity additions: shadow DOM, timeouts, proxy, WebAuthn ----
+
+
+def test_webelement_parent_and_session_id():
+    """parent is the driver the element came from; session_id delegates to it
+    (both mainstream WebElement members). Shadow-root behaviour itself is
+    covered by the shadow tests above."""
+    from selenium._webdriver import WebElement
+
+    d = _make_driver_without_session()
+    el = WebElement(d, "el-1")
+    assert el.parent is d
+    assert isinstance(WebElement.parent, property)
+    assert isinstance(WebElement.session_id, property)
+
+
+def test_webelement_location_once_scrolled_into_view_rounds():
+    from selenium._webdriver import WebElement
+
+    d = _make_driver_without_session()
+    d.execute_script = lambda script, *args: {"x": 10.4, "y": 20.6}
+    el = WebElement(d, "el-1")
+    assert el.location_once_scrolled_into_view == {"x": 10, "y": 21}
+
+
+def test_timeouts_converts_seconds_to_wire_milliseconds():
+    from selenium.webdriver.common.timeouts import Timeouts
+    from selenium.webdriver import Timeouts as Timeouts2
+
+    assert Timeouts is Timeouts2
+    t = Timeouts(implicit_wait=10, page_load=30, script=5)
+    assert t._to_wire() == {"implicit": 10000, "pageLoad": 30000, "script": 5000}
+    # and back again, in seconds
+    back = Timeouts._from_wire({"implicit": 500, "pageLoad": 300000, "script": 30000})
+    assert (back.implicit_wait, back.page_load, back.script) == (0.5, 300.0, 30.0)
+
+
+def test_driver_timeouts_property_round_trip():
+    from selenium.webdriver.common.timeouts import Timeouts
+
+    d = _make_driver_without_session()
+
+    def _execute(command, params=None):
+        d.calls.append((command, params or {}))
+        if command == "getTimeout":
+            return {"implicit": 1000, "pageLoad": 2000, "script": 3000}
+        return None
+
+    d._execute = _execute
+    assert d.timeouts == Timeouts(implicit_wait=1.0, page_load=2.0, script=3.0)
+    d.timeouts = Timeouts(implicit_wait=7)
+    assert ("setTimeout", {"implicit": 7000}) in d.calls
+
+
+def test_proxy_renders_w3c_capability_block():
+    from selenium.webdriver.common.proxy import Proxy, ProxyType
+
+    p = Proxy()
+    p.http_proxy = "127.0.0.1:8080"
+    p.ssl_proxy = "127.0.0.1:8443"
+    p.no_proxy = "localhost"
+    caps = p.to_capabilities()
+    assert caps == {
+        "proxyType": "manual",
+        "httpProxy": "127.0.0.1:8080",
+        "sslProxy": "127.0.0.1:8443",
+        "noProxy": "localhost",
+    }
+    assert Proxy({"proxyType": "DIRECT"}).to_capabilities() == {"proxyType": "direct"}
+    assert ProxyType.load("MANUAL") is ProxyType.MANUAL
+
+
+def test_options_standard_w3c_capability_properties():
+    from selenium.webdriver import ChromeOptions
+    from selenium.webdriver.common.proxy import Proxy
+
+    o = ChromeOptions()
+    o.accept_insecure_certs = True
+    o.browser_version = "152"
+    o.platform_name = "linux"
+    o.page_load_strategy = "eager"
+    o.unhandled_prompt_behavior = "dismiss"
+    o.strict_file_interactability = True
+    o.set_window_rect = True
+    o.enable_downloads = True
+    o.timeouts = {"implicit": 500}
+    proxy = Proxy()
+    proxy.http_proxy = "127.0.0.1:8080"
+    o.proxy = proxy
+
+    caps = o.to_capabilities()
+    assert caps["acceptInsecureCerts"] is True
+    assert caps["browserVersion"] == "152"
+    assert caps["platformName"] == "linux"
+    assert caps["pageLoadStrategy"] == "eager"
+    assert caps["unhandledPromptBehavior"] == "dismiss"
+    assert caps["strictFileInteractability"] is True
+    assert caps["setWindowRect"] is True
+    assert caps["se:downloadsEnabled"] is True
+    assert caps["timeouts"] == {"implicit": 500}
+    assert caps["proxy"]["httpProxy"] == "127.0.0.1:8080"
+    # readable back through the same property
+    assert o.page_load_strategy == "eager"
+
+
+def test_options_capability_properties_validate():
+    import pytest as _pytest
+    from selenium.webdriver import ChromeOptions
+
+    o = ChromeOptions()
+    with _pytest.raises(ValueError):
+        o.page_load_strategy = "sideways"
+    with _pytest.raises(ValueError):
+        o.unhandled_prompt_behavior = "panic"
+    with _pytest.raises(ValueError):
+        o.timeouts = {"nope": 1}
+    with _pytest.raises(TypeError):
+        o.proxy = {"httpProxy": "x"}  # must be a Proxy instance
+
+
+def test_options_enable_bidi_maps_to_web_socket_url():
+    from selenium.webdriver import ChromeOptions
+
+    o = ChromeOptions()
+    assert o.enable_bidi is False
+    o.enable_bidi = True
+    assert o.to_capabilities()["webSocketUrl"] is True
+    assert o.enable_bidi is True
+
+
+def test_chrome_options_extensions():
+    import base64
+    import pytest as _pytest
+    from selenium.webdriver import ChromeOptions
+
+    o = ChromeOptions()
+    o.add_encoded_extension("QUJD")
+    assert o.extensions == ["QUJD"]
+    assert o.to_capabilities()["goog:chromeOptions"]["extensions"] == ["QUJD"]
+    with _pytest.raises(OSError):
+        o.add_extension("/definitely/not/here.crx")
+    with _pytest.raises(ValueError):
+        o.add_encoded_extension("")
+
+
+def test_chrome_options_enable_webextensions_toggles_flags():
+    from selenium.webdriver import ChromeOptions
+
+    o = ChromeOptions()
+    o.enable_webextensions = True
+    assert "--enable-unsafe-extension-debugging" in o.arguments
+    assert "--remote-debugging-pipe" in o.arguments
+    o.enable_webextensions = False
+    assert o.arguments == []
+
+
+def test_virtual_authenticator_surface_issues_right_commands():
+    from selenium.webdriver.common.virtual_authenticator import (
+        Credential,
+        Protocol,
+        Transport,
+        VirtualAuthenticatorOptions,
+    )
+
+    d = _make_driver_without_session()
+
+    def _execute(command, params=None):
+        d.calls.append((command, params or {}))
+        if command == "addVirtualAuthenticator":
+            return "auth-1"
+        if command == "getCredentials":
+            return []
+        return None
+
+    d._execute = _execute
+
+    opts = VirtualAuthenticatorOptions(
+        protocol=Protocol.CTAP2, transport=Transport.INTERNAL, has_resident_key=True
+    )
+    d.add_virtual_authenticator(opts)
+    assert d.virtual_authenticator_id == "auth-1"
+    assert ("addVirtualAuthenticator", opts.to_dict()) in d.calls
+
+    d.add_credential(Credential.create_non_resident_credential(b"\x01\x02", "example.com", b"KEY"))
+    command, params = d.calls[-1]
+    assert command == "addCredential"
+    assert params["authenticatorId"] == "auth-1"
+    assert params["credentialId"] == "AQI"  # base64url, unpadded
+
+    assert d.get_credentials() == []
+    d.set_user_verified(True)
+    assert ("setUserVerified", {"authenticatorId": "auth-1", "isUserVerified": True}) in d.calls
+    d.remove_credential("AQI")
+    assert ("removeCredential", {"authenticatorId": "auth-1", "credentialId": "AQI"}) in d.calls
+    d.remove_all_credentials()
+    d.remove_virtual_authenticator()
+    assert d.virtual_authenticator_id is None
+
+
+def test_virtual_authenticator_requires_one_to_be_added():
+    import pytest as _pytest
+    from selenium import WebDriverException
+
+    d = _make_driver_without_session()
+    with _pytest.raises(WebDriverException):
+        d.get_credentials()
+
+
+def test_downloadable_files_surface():
+    d = _make_driver_without_session()
+
+    def _execute(command, params=None):
+        d.calls.append((command, params or {}))
+        if command == "getDownloadableFiles":
+            return {"names": ["a.txt", "b.txt"]}
+        return None
+
+    d._execute = _execute
+    assert d.get_downloadable_files() == ["a.txt", "b.txt"]
+    d.delete_downloadable_files()
+    assert ("deleteDownloadableFiles", {}) in d.calls

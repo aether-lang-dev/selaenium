@@ -22,6 +22,10 @@ from .._webdriver import (
     DriverProcess,
     WebDriver,
     WebElement,
+    ShadowRoot,
+    Timeouts,
+    VirtualAuthenticatorOptions,
+    Credential,
     SwitchTo,
     Alert,
     resolve_driver,
@@ -30,6 +34,7 @@ from .._webdriver import (
 )
 from .._native import configure as configure_native_lib
 from .common.by import By
+from .common.proxy import Proxy, ProxyType
 from .common.keys import Keys
 from .common.action_chains import ActionChains
 from .chrome.options import Options as ChromeOptions
@@ -52,6 +57,12 @@ __all__ = [
     "DriverProcess",
     "WebDriver",
     "WebElement",
+    "ShadowRoot",
+    "Timeouts",
+    "Proxy",
+    "ProxyType",
+    "VirtualAuthenticatorOptions",
+    "Credential",
     "SwitchTo",
     "Alert",
     "By",

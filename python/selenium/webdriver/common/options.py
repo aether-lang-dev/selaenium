@@ -23,9 +23,95 @@ class PageLoadStrategy(str, Enum):
     none = "none"
 
 
+class _CapabilityDescriptor:
+    """Reads/writes one top-level W3C capability as an attribute.
+
+    Mainstream exposes the standard capabilities as typed properties rather than
+    making callers remember the camelCase wire key; each of those is one of
+    these, bound to the capability name it reads and writes.
+    """
+
+    def __init__(self, name: str):
+        self.name = name
+
+    def __get__(self, obj, cls):
+        if obj is None:
+            return self
+        return obj._caps.get(self.name)
+
+    def __set__(self, obj, value) -> None:
+        obj.set_capability(self.name, value)
+
+
+class _PageLoadStrategyDescriptor(_CapabilityDescriptor):
+    """``pageLoadStrategy`` — only the three W3C values are accepted."""
+
+    def __set__(self, obj, value) -> None:
+        if value not in ("normal", "eager", "none"):
+            raise ValueError("Strategy can only be one of the following: normal, eager, none")
+        obj.set_capability(self.name, value)
+
+
+class _UnhandledPromptBehaviorDescriptor(_CapabilityDescriptor):
+    """``unhandledPromptBehavior`` — only the W3C prompt-handling values."""
+
+    VALUES = ("dismiss", "accept", "dismiss and notify", "accept and notify", "ignore")
+
+    def __set__(self, obj, value) -> None:
+        if value not in self.VALUES:
+            raise ValueError(f"Behavior can only be one of the following: {', '.join(self.VALUES)}")
+        obj.set_capability(self.name, value)
+
+
+class _TimeoutsDescriptor(_CapabilityDescriptor):
+    """``timeouts`` — the W3C {implicit, pageLoad, script} block, in ms."""
+
+    def __set__(self, obj, value) -> None:
+        if not all(key in ("implicit", "pageLoad", "script") for key in value.keys()):
+            raise ValueError("Timeout keys can only be one of the following: implicit, pageLoad, script")
+        obj.set_capability(self.name, value)
+
+
+class _ProxyDescriptor(_CapabilityDescriptor):
+    """``proxy`` — takes a :class:`~selenium.webdriver.common.proxy.Proxy` and
+    stores its rendered capability block."""
+
+    def __set__(self, obj, value) -> None:
+        if not hasattr(value, "to_capabilities"):
+            raise TypeError("Proxy must be an instance of selenium.webdriver.common.proxy.Proxy")
+        obj.set_capability(self.name, value.to_capabilities())
+
+
+class _EnableBidiDescriptor(_CapabilityDescriptor):
+    """``enable_bidi`` is a read of ``webSocketUrl`` and a write of it too —
+    matching mainstream, where asking for BiDi means asking for the socket."""
+
+    def __get__(self, obj, cls):
+        if obj is None:
+            return self
+        return obj._caps.get("webSocketUrl") is not None
+
+    def __set__(self, obj, value) -> None:
+        obj.set_capability("webSocketUrl", value)
+
+
 class BaseOptions(metaclass=ABCMeta):
     """Base for browser options: an accumulating capabilities dict plus the
     mainstream setter surface."""
+
+    # ---- the standard W3C capabilities, as mainstream typed properties ----
+    browser_version = _CapabilityDescriptor("browserVersion")
+    platform_name = _CapabilityDescriptor("platformName")
+    accept_insecure_certs = _CapabilityDescriptor("acceptInsecureCerts")
+    strict_file_interactability = _CapabilityDescriptor("strictFileInteractability")
+    set_window_rect = _CapabilityDescriptor("setWindowRect")
+    web_socket_url = _CapabilityDescriptor("webSocketUrl")
+    enable_downloads = _CapabilityDescriptor("se:downloadsEnabled")
+    page_load_strategy = _PageLoadStrategyDescriptor("pageLoadStrategy")
+    unhandled_prompt_behavior = _UnhandledPromptBehaviorDescriptor("unhandledPromptBehavior")
+    timeouts = _TimeoutsDescriptor("timeouts")
+    proxy = _ProxyDescriptor("proxy")
+    enable_bidi = _EnableBidiDescriptor("webSocketUrl")
 
     def __init__(self) -> None:
         super().__init__()

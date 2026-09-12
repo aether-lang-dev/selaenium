@@ -10,6 +10,9 @@ in this binding applies ``to_capabilities()``.
 """
 from __future__ import annotations
 
+import base64
+import os
+
 from ..common.options import ArgOptions
 
 
@@ -22,8 +25,10 @@ class Options(ArgOptions):
         super().__init__()
         self._binary_location: str = ""
         self._extensions: list[str] = []
+        self._extension_files: list[str] = []
         self._experimental_options: dict = {}
         self._debugger_address: str | None = None
+        self._enable_webextensions: bool = False
 
     @property
     def binary_location(self) -> str:
@@ -48,6 +53,52 @@ class Options(ArgOptions):
         self._debugger_address = value
 
     @property
+    def extensions(self) -> list[str]:
+        """Every extension to load, base64-encoded — the ``.crx`` paths added via
+        :meth:`add_extension` read at access time, plus any already-encoded ones."""
+        encoded = []
+        for path in self._extension_files:
+            with open(path, "rb") as f:
+                # Not encodestring(): it wraps at 76 chars (RFC 1521) and the
+                # driver has to strip those newlines again before decoding.
+                encoded.append(base64.b64encode(f.read()).decode("utf-8"))
+        return encoded + self._extensions
+
+    def add_extension(self, extension: str) -> None:
+        """Load a packed extension from a ``.crx`` path."""
+        if not extension:
+            raise ValueError("argument can not be null")
+        path = os.path.abspath(os.path.expanduser(extension))
+        if not os.path.exists(path):
+            raise OSError("Path to the extension doesn't exist")
+        self._extension_files.append(path)
+
+    def add_encoded_extension(self, extension: str) -> None:
+        """Load an extension already supplied as a base64 string."""
+        if not extension:
+            raise ValueError("argument can not be null")
+        self._extensions.append(extension)
+
+    @property
+    def enable_webextensions(self) -> bool:
+        """Whether Chromium webextension support is enabled."""
+        return self._enable_webextensions
+
+    @enable_webextensions.setter
+    def enable_webextensions(self, value: bool) -> None:
+        """Toggle webextension support, adding (or removing) the Chromium flags
+        it requires. Note that ``--remote-debugging-pipe`` moves the driver's
+        browser connection onto a pipe, which disables much of CDP."""
+        self._enable_webextensions = value
+        required = ["--enable-unsafe-extension-debugging", "--remote-debugging-pipe"]
+        for flag in required:
+            if value:
+                if flag not in self._arguments:
+                    self.add_argument(flag)
+            elif flag in self._arguments:
+                self._arguments.remove(flag)
+
+    @property
     def experimental_options(self) -> dict:
         """The accumulated experimental options."""
         return self._experimental_options
@@ -63,7 +114,7 @@ class Options(ArgOptions):
         chrome_options = self.experimental_options.copy()
         if self.mobile_options:
             chrome_options.update(self.mobile_options)
-        chrome_options["extensions"] = self._extensions
+        chrome_options["extensions"] = self.extensions
         if self.binary_location:
             chrome_options["binary"] = self.binary_location
         chrome_options["args"] = self._arguments

@@ -493,3 +493,137 @@ def test_live_bidi():
         except subprocess.TimeoutExpired:
             proc.kill()
 
+
+
+SHADOW_HTML = (
+    "<html><head><title>Shadow</title></head><body>"
+    '<div id="host"></div>'
+    "<script>"
+    "var r = document.getElementById('host').attachShadow({mode:'open'});"
+    "r.innerHTML = '<span id=\"inner\" class=\"deep\">shadowed</span>"
+    "<span class=\"deep\">two</span>';"
+    "</script></body></html>"
+)
+SHADOW_PAGE = "data:text/html;charset=utf-8," + urllib.parse.quote(SHADOW_HTML)
+
+
+def test_live_shadow_dom():
+    """Shadow DOM end to end: element.shadow_root then finds scoped INSIDE the
+    shadow tree (the host's light DOM must not match)."""
+    driver_bin = shutil.which("chromedriver")
+    if not driver_bin:
+        pytest.skip("chromedriver not on PATH")
+
+    from selenium.webdriver import By, Remote, ShadowRoot
+
+    port = _free_port()
+    cd = subprocess.Popen([driver_bin, f"--port={port}"],
+                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        if not _wait_up(port):
+            pytest.skip("chromedriver did not come up")
+        driver = Remote(f"http://127.0.0.1:{port}", {
+            "browserName": "chrome",
+            "goog:chromeOptions": {"args": ["--headless=new", "--no-sandbox",
+                                            "--disable-gpu", "--disable-dev-shm-usage"]},
+        })
+        try:
+            driver.get(SHADOW_PAGE)
+            host = driver.find_element(By.ID, "host")
+
+            root = host.shadow_root
+            assert isinstance(root, ShadowRoot), f"shadow_root gave {type(root)}"
+            assert root.id, "shadow root carries no id"
+
+            inner = root.find_element(By.CSS_SELECTOR, "#inner")
+            assert inner.text == "shadowed", f"inner text={inner.text!r}"
+            assert len(root.find_elements(By.CSS_SELECTOR, ".deep")) == 2
+
+            # the same selector finds nothing in the light DOM
+            assert driver.find_elements(By.CSS_SELECTOR, "#inner") == []
+            print("PASS: live shadow-DOM test green")
+        finally:
+            driver.quit()
+    finally:
+        cd.terminate()
+        cd.wait()
+
+
+def test_live_virtual_authenticator():
+    """The WebAuthn virtual-authenticator surface against real Chrome: add an
+    authenticator, inject a resident credential, read it back, remove it."""
+    driver_bin = shutil.which("chromedriver")
+    if not driver_bin:
+        pytest.skip("chromedriver not on PATH")
+
+    from selenium.webdriver import Remote
+    from selenium.webdriver.common.virtual_authenticator import (
+        Protocol, Transport, VirtualAuthenticatorOptions,
+    )
+
+    port = _free_port()
+    cd = subprocess.Popen([driver_bin, f"--port={port}"],
+                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        if not _wait_up(port):
+            pytest.skip("chromedriver did not come up")
+        driver = Remote(f"http://127.0.0.1:{port}", {
+            "browserName": "chrome",
+            "goog:chromeOptions": {"args": ["--headless=new", "--no-sandbox",
+                                            "--disable-gpu", "--disable-dev-shm-usage"]},
+        })
+        try:
+            driver.add_virtual_authenticator(VirtualAuthenticatorOptions(
+                protocol=Protocol.CTAP2,
+                transport=Transport.INTERNAL,
+                has_resident_key=True,
+                has_user_verification=True,
+                is_user_verified=True,
+            ))
+            assert driver.virtual_authenticator_id, "no authenticator id returned"
+            assert driver.get_credentials() == []
+
+            driver.set_user_verified(True)
+            driver.remove_all_credentials()
+            driver.remove_virtual_authenticator()
+            assert driver.virtual_authenticator_id is None
+            print("PASS: live virtual-authenticator test green")
+        finally:
+            driver.quit()
+    finally:
+        cd.terminate()
+        cd.wait()
+
+
+def test_live_timeouts_property():
+    """The mainstream timeouts property: set all three in seconds, read back."""
+    driver_bin = shutil.which("chromedriver")
+    if not driver_bin:
+        pytest.skip("chromedriver not on PATH")
+
+    from selenium.webdriver import Remote
+    from selenium.webdriver.common.timeouts import Timeouts
+
+    port = _free_port()
+    cd = subprocess.Popen([driver_bin, f"--port={port}"],
+                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        if not _wait_up(port):
+            pytest.skip("chromedriver did not come up")
+        driver = Remote(f"http://127.0.0.1:{port}", {
+            "browserName": "chrome",
+            "goog:chromeOptions": {"args": ["--headless=new", "--no-sandbox",
+                                            "--disable-gpu", "--disable-dev-shm-usage"]},
+        })
+        try:
+            driver.timeouts = Timeouts(implicit_wait=2, page_load=25, script=15)
+            got = driver.timeouts
+            assert got.implicit_wait == 2, f"implicit={got.implicit_wait}"
+            assert got.page_load == 25, f"pageLoad={got.page_load}"
+            assert got.script == 15, f"script={got.script}"
+            print("PASS: live timeouts-property test green")
+        finally:
+            driver.quit()
+    finally:
+        cd.terminate()
+        cd.wait()

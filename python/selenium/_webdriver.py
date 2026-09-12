@@ -374,6 +374,29 @@ class WebElement:
         return True
 
     @property
+    def parent(self) -> "WebDriver":
+        """The WebDriver instance this element was found from (mainstream)."""
+        return self._driver
+
+    @property
+    def session_id(self) -> str:
+        """The session id of the driver this element belongs to (mainstream)."""
+        return self._driver.session_id
+
+    @property
+    def location_once_scrolled_into_view(self) -> dict:
+        """The element's {"x","y"} on screen AFTER scrolling it into view.
+
+        Mainstream semantics: this scrolls as a side effect and rounds the
+        bounding-rect coordinates.
+        """
+        rect = self._driver.execute_script(
+            "arguments[0].scrollIntoView(true); return arguments[0].getBoundingClientRect()",
+            self,
+        )
+        return {"x": round(rect["x"]), "y": round(rect["y"])}
+
+    @property
     def shadow_root(self) -> "ShadowRoot":
         """This element's shadow root as a search context (mainstream:
         ``.shadow_root``). Raises :class:`NoSuchShadowRootException` if the
@@ -400,6 +423,174 @@ class WebElement:
 
     def __repr__(self):
         return f"<WebElement id={self._id!r}>"
+
+
+def _urlsafe_b64(raw: bytes) -> str:
+    """Base64url-encode without padding — how WebAuthn ids travel on the wire."""
+    import base64
+
+    return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+
+
+class Timeouts:
+    """The three W3C session timeouts, in SECONDS.
+
+    Mainstream import path:
+    ``from selenium.webdriver.common.timeouts import Timeouts``. The wire form is
+    milliseconds; this converts on the way in and out, so a script says
+    ``Timeouts(implicit_wait=10)`` and means ten seconds.
+    """
+
+    def __init__(self, implicit_wait: float = 0, page_load: float = 0, script: float = 0):
+        self._implicit_wait = implicit_wait
+        self._page_load = page_load
+        self._script = script
+
+    @property
+    def implicit_wait(self) -> float:
+        return self._implicit_wait
+
+    @implicit_wait.setter
+    def implicit_wait(self, value: float) -> None:
+        self._implicit_wait = value
+
+    @property
+    def page_load(self) -> float:
+        return self._page_load
+
+    @page_load.setter
+    def page_load(self, value: float) -> None:
+        self._page_load = value
+
+    @property
+    def script(self) -> float:
+        return self._script
+
+    @script.setter
+    def script(self, value: float) -> None:
+        self._script = value
+
+    @classmethod
+    def _from_wire(cls, caps: dict) -> "Timeouts":
+        caps = caps or {}
+        return cls(
+            implicit_wait=caps.get("implicit", 0) / 1000,
+            page_load=caps.get("pageLoad", 0) / 1000,
+            script=(caps.get("script") or 0) / 1000,
+        )
+
+    def _to_wire(self) -> dict:
+        wire = {}
+        if self._implicit_wait:
+            wire["implicit"] = int(float(self._implicit_wait) * 1000)
+        if self._page_load:
+            wire["pageLoad"] = int(float(self._page_load) * 1000)
+        if self._script:
+            wire["script"] = int(float(self._script) * 1000)
+        return wire
+
+    def __eq__(self, other):
+        return (
+            isinstance(other, Timeouts)
+            and (self._implicit_wait, self._page_load, self._script)
+            == (other._implicit_wait, other._page_load, other._script)
+        )
+
+    def __repr__(self):
+        return (
+            f"Timeouts(implicit_wait={self._implicit_wait!r}, "
+            f"page_load={self._page_load!r}, script={self._script!r})"
+        )
+
+
+class Protocol:
+    """WebAuthn protocols a virtual authenticator can speak."""
+
+    CTAP2 = "ctap2"
+    U2F = "ctap1/u2f"
+
+
+class Transport:
+    """WebAuthn transports a virtual authenticator can present."""
+
+    BLE = "ble"
+    USB = "usb"
+    NFC = "nfc"
+    INTERNAL = "internal"
+
+
+class VirtualAuthenticatorOptions:
+    """Options for :meth:`WebDriver.add_virtual_authenticator`.
+
+    Mainstream import path:
+    ``selenium.webdriver.common.virtual_authenticator``.
+    """
+
+    def __init__(
+        self,
+        protocol: str = Protocol.CTAP2,
+        transport: str = Transport.USB,
+        has_resident_key: bool = False,
+        has_user_verification: bool = False,
+        is_user_consenting: bool = True,
+        is_user_verified: bool = False,
+    ):
+        self.protocol = protocol
+        self.transport = transport
+        self.has_resident_key = has_resident_key
+        self.has_user_verification = has_user_verification
+        self.is_user_consenting = is_user_consenting
+        self.is_user_verified = is_user_verified
+
+    def to_dict(self) -> dict:
+        return {
+            "protocol": self.protocol,
+            "transport": self.transport,
+            "hasResidentKey": self.has_resident_key,
+            "hasUserVerification": self.has_user_verification,
+            "isUserConsenting": self.is_user_consenting,
+            "isUserVerified": self.is_user_verified,
+        }
+
+
+class Credential:
+    """A WebAuthn credential to inject with :meth:`WebDriver.add_credential`."""
+
+    def __init__(
+        self,
+        credential_id: bytes,
+        is_resident_credential: bool,
+        rp_id: str,
+        user_handle: bytes | None,
+        private_key: bytes,
+        sign_count: int,
+    ):
+        self.id = credential_id
+        self.is_resident_credential = is_resident_credential
+        self.rp_id = rp_id
+        self.user_handle = user_handle
+        self.private_key = private_key
+        self.sign_count = sign_count
+
+    @classmethod
+    def create_non_resident_credential(cls, credential_id, rp_id, private_key, sign_count=0):
+        return cls(credential_id, False, rp_id, None, private_key, sign_count)
+
+    @classmethod
+    def create_resident_credential(cls, credential_id, rp_id, user_handle, private_key, sign_count=0):
+        return cls(credential_id, True, rp_id, user_handle, private_key, sign_count)
+
+    def to_dict(self) -> dict:
+        data = {
+            "credentialId": _urlsafe_b64(self.id),
+            "isResidentCredential": self.is_resident_credential,
+            "rpId": self.rp_id,
+            "privateKey": _urlsafe_b64(self.private_key),
+            "signCount": self.sign_count,
+        }
+        if self.user_handle is not None:
+            data["userHandle"] = _urlsafe_b64(self.user_handle)
+        return data
 
 
 class ShadowRoot:
@@ -429,6 +620,9 @@ class ShadowRoot:
 
     def __eq__(self, other):
         return isinstance(other, ShadowRoot) and other._id == self._id
+
+    def __hash__(self):
+        return hash(self._id)
 
     def __repr__(self):
         return f"<ShadowRoot id={self._id!r}>"
@@ -713,6 +907,103 @@ class WebDriver:
 
     def implicitly_wait(self, time_to_wait: float) -> None:
         self._execute("setTimeout", {"implicit": int(float(time_to_wait) * 1000)})
+
+    @property
+    def timeouts(self) -> "Timeouts":
+        """All three session timeouts, as a :class:`Timeouts` (seconds).
+
+        Mainstream property form: read it to inspect the session's timeouts,
+        assign a :class:`Timeouts` to set all three at once.
+        """
+        return Timeouts._from_wire(self._execute("getTimeout"))
+
+    @timeouts.setter
+    def timeouts(self, timeouts: "Timeouts") -> None:
+        self._execute("setTimeout", timeouts._to_wire())
+
+    # ---- virtual authenticator (WebAuthn) ----
+    # The W3C WebAuthn extension commands. The engine already routes every one
+    # of these; this is the ergonomic surface over them.
+
+    def add_virtual_authenticator(self, options) -> None:
+        """Add a virtual authenticator and remember its id for the credential
+        calls below. ``options`` is a :class:`VirtualAuthenticatorOptions` or a
+        plain dict of the W3C parameters."""
+        params = options.to_dict() if hasattr(options, "to_dict") else dict(options)
+        self._virtual_authenticator_id = self._execute("addVirtualAuthenticator", params)
+
+    @property
+    def virtual_authenticator_id(self) -> str | None:
+        """The id of the virtual authenticator added by
+        :meth:`add_virtual_authenticator`, or None."""
+        return getattr(self, "_virtual_authenticator_id", None)
+
+    def _require_authenticator(self) -> str:
+        auth_id = self.virtual_authenticator_id
+        if not auth_id:
+            raise WebDriverException("No virtual authenticator is set; call add_virtual_authenticator() first")
+        return auth_id
+
+    def remove_virtual_authenticator(self) -> None:
+        """Remove the current virtual authenticator."""
+        self._execute("removeVirtualAuthenticator", {"authenticatorId": self._require_authenticator()})
+        self._virtual_authenticator_id = None
+
+    def add_credential(self, credential) -> None:
+        """Inject a credential into the current virtual authenticator."""
+        params = credential.to_dict() if hasattr(credential, "to_dict") else dict(credential)
+        params["authenticatorId"] = self._require_authenticator()
+        self._execute("addCredential", params)
+
+    def get_credentials(self) -> list:
+        """Every credential the current virtual authenticator owns."""
+        return self._execute("getCredentials", {"authenticatorId": self._require_authenticator()})
+
+    def remove_credential(self, credential_id) -> None:
+        """Remove one credential by its (string or bytes) id."""
+        if isinstance(credential_id, (bytes, bytearray)):
+            credential_id = _urlsafe_b64(credential_id)
+        self._execute(
+            "removeCredential",
+            {"authenticatorId": self._require_authenticator(), "credentialId": credential_id},
+        )
+
+    def remove_all_credentials(self) -> None:
+        """Remove every credential from the current virtual authenticator."""
+        self._execute("removeAllCredentials", {"authenticatorId": self._require_authenticator()})
+
+    def set_user_verified(self, verified: bool) -> None:
+        """Make the authenticator report success (or failure) for user verification."""
+        self._execute(
+            "setUserVerified",
+            {"authenticatorId": self._require_authenticator(), "isUserVerified": verified},
+        )
+
+    # ---- downloads (Grid "se:downloadsEnabled" extension) ----
+
+    def get_downloadable_files(self) -> list[str]:
+        """The file names available to download from the remote end."""
+        result = self._execute("getDownloadableFiles")
+        if isinstance(result, dict):
+            return result.get("names", [])
+        return result
+
+    def download_file(self, file_name: str, target_directory: str) -> None:
+        """Download ``file_name`` from the remote end into ``target_directory``."""
+        import base64 as _b64
+        import os as _os
+
+        contents = self._execute("downloadFile", {"name": file_name})
+        if isinstance(contents, dict):
+            contents = contents.get("contents", "")
+        _os.makedirs(target_directory, exist_ok=True)
+        target = _os.path.join(target_directory, file_name + ".zip")
+        with open(target, "wb") as f:
+            f.write(_b64.b64decode(contents))
+
+    def delete_downloadable_files(self) -> None:
+        """Delete every downloadable file held for this session."""
+        self._execute("deleteDownloadableFiles")
 
     # ---- screenshots / print ----
 
