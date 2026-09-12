@@ -140,6 +140,44 @@ public class Select {
         }
     }
 
+    /** Select the first option whose visible text CONTAINS {@code text}. */
+    public void selectByContainsVisibleText(String text) {
+        for (WebElement o : getOptions()) {
+            String optionText = o.getText();
+            if (optionText != null && optionText.contains(text)) {
+                select(o);
+                return;
+            }
+        }
+        throw new NoSuchElementException("Cannot locate option containing text: " + text, 17);
+    }
+
+    /** Deselect every option whose visible text CONTAINS {@code text}. */
+    public void deSelectByContainsVisibleText(String text) {
+        requireMulti();
+        boolean matched = false;
+        for (WebElement o : getOptions()) {
+            String optionText = o.getText();
+            if (optionText != null && optionText.contains(text)) {
+                deselect(o);
+                matched = true;
+            }
+        }
+        if (!matched) {
+            throw new NoSuchElementException("Cannot locate option containing text: " + text, 17);
+        }
+    }
+
+    @Override
+    public boolean equals(Object other) {
+        return other instanceof Select && element.equals(((Select) other).element);
+    }
+
+    @Override
+    public int hashCode() {
+        return element.hashCode();
+    }
+
     private void requireMulti() {
         if (!isMulti) {
             throw new UnsupportedOperationException("You may only deselect options of a multi-select");

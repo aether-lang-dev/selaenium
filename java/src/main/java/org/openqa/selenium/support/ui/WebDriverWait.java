@@ -62,10 +62,7 @@ public class WebDriverWait {
             }
             sleep();
         }
-        throw new TimeoutException(
-                "waited " + timeout.toSeconds() + "s for condition"
-                        + (last == null ? "" : " (last error: " + last + ")"),
-                21);
+        throw timeoutException("waited " + timeout.toSeconds() + "s for condition", last);
     }
 
     /**
@@ -94,7 +91,16 @@ public class WebDriverWait {
             }
             sleep();
         }
-        throw new TimeoutException("waited " + timeout.toSeconds() + "s for condition to stop", 21);
+        throw timeoutException("waited " + timeout.toSeconds() + "s for condition to stop", null);
+    }
+
+    /**
+     * Build the exception thrown when the deadline passes. Overridable so a
+     * subclass can enrich the message (mainstream extension point).
+     */
+    protected RuntimeException timeoutException(String message, Throwable lastException) {
+        return new TimeoutException(
+                message + (lastException == null ? "" : " (last error: " + lastException + ")"), 21);
     }
 
     private void sleep() {

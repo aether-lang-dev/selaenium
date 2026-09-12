@@ -57,6 +57,19 @@ public interface Capabilities extends Serializable {
     return new ImmutableCapabilities(new MutableCapabilities(this).merge(other));
   }
 
+  /**
+   * The value of {@code capabilityName}, or an {@link IllegalArgumentException}
+   * if it is not set — for capabilities a caller cannot proceed without.
+   */
+  @SuppressWarnings("unchecked")
+  default <T> T required(String capabilityName) {
+    Object value = getCapability(capabilityName);
+    if (value == null) {
+      throw new IllegalArgumentException("Unable to find capability: " + capabilityName);
+    }
+    return (T) value;
+  }
+
   default Set<String> getCapabilityNames() {
     return Collections.unmodifiableSet(asMap().keySet());
   }

@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -550,6 +551,93 @@ class AbiSurfaceTest {
         assertTrue(d.sent("findElement"));
     }
 
+    // ---- ExpectedConditions: the Selenium 4.x set, not just a subset ----
+
+    /** A driver whose canned answers make the URL/title/count conditions decidable. */
+    private static RecordingDriver conditionDriver() {
+        return new RecordingDriver(Map.of(
+                "getCurrentUrl", "http://example.test/one",
+                "getTitle", "Page One",
+                "getWindowHandles", List.of("h1"),
+                "executeScript", 42L,
+                "findElements", List.of(
+                        new RemoteWebElement(null, "p-1"),
+                        new RemoteWebElement(null, "p-2"))));
+    }
+
+    @Test
+    void expectedConditionsCoversUrlTitleAndCounting() {
+        RecordingDriver d = conditionDriver();
+
+        assertTrue(ExpectedConditions.urlToBe("http://example.test/one").apply(d));
+        assertFalse(ExpectedConditions.urlToBe("http://nope.test/").apply(d));
+        assertTrue(ExpectedConditions.urlMatches("example\\.test").apply(d));
+        assertFalse(ExpectedConditions.urlMatches("^nope").apply(d));
+
+        By p = By.cssSelector("p");
+        assertNotNull(ExpectedConditions.numberOfElementsToBe(p, 2).apply(d));
+        assertNull(ExpectedConditions.numberOfElementsToBe(p, 3).apply(d));
+        assertNotNull(ExpectedConditions.numberOfElementsToBeMoreThan(p, 1).apply(d));
+        assertNull(ExpectedConditions.numberOfElementsToBeMoreThan(p, 2).apply(d));
+        assertNotNull(ExpectedConditions.numberOfElementsToBeLessThan(p, 3).apply(d));
+        assertTrue(ExpectedConditions.numberOfWindowsToBe(1).apply(d));
+        assertFalse(ExpectedConditions.numberOfWindowsToBe(2).apply(d));
+    }
+
+    @Test
+    void expectedConditionsComposeAndRunScripts() {
+        RecordingDriver d = conditionDriver();
+
+        assertTrue(ExpectedConditions.and(
+                ExpectedConditions.urlContains("example"),
+                ExpectedConditions.titleIs("Page One")).apply(d));
+        assertFalse(ExpectedConditions.and(
+                ExpectedConditions.urlContains("example"),
+                ExpectedConditions.titleIs("Nope")).apply(d));
+        assertTrue(ExpectedConditions.or(
+                ExpectedConditions.titleIs("Nope"),
+                ExpectedConditions.titleIs("Page One")).apply(d));
+        assertFalse(ExpectedConditions.or(ExpectedConditions.titleIs("Nope")).apply(d));
+
+        assertTrue(ExpectedConditions.javaScriptThrowsNoExceptions("return 1;").apply(d));
+        assertEquals(42L, ExpectedConditions.jsReturnsValue("return 42;").apply(d));
+        // refreshed passes the inner condition's value straight through
+        assertTrue(ExpectedConditions.refreshed(ExpectedConditions.titleIs("Page One")).apply(d));
+    }
+
+    @Test
+    void expectedConditionsElementStatePredicates() {
+        RecordingDriver d = conditionDriver();
+        RemoteWebElementStub el = new RemoteWebElementStub(d, "el-1");
+        el.attributes.put("value", "hello world");
+        el.attributes.put("data-x", "");
+
+        assertTrue(ExpectedConditions.attributeToBe(el, "value", "hello world").apply(d));
+        assertTrue(ExpectedConditions.attributeContains(el, "value", "world").apply(d));
+        assertFalse(ExpectedConditions.attributeContains(el, "value", "nope").apply(d));
+        assertTrue(ExpectedConditions.attributeToBeNotEmpty(el, "value").apply(d));
+        assertFalse(ExpectedConditions.attributeToBeNotEmpty(el, "data-x").apply(d));
+        assertTrue(ExpectedConditions.textToBePresentInElementValue(el, "hello").apply(d));
+
+        assertFalse(ExpectedConditions.elementToBeSelected(el).apply(d));
+        assertTrue(ExpectedConditions.elementSelectionStateToBe(el, false).apply(d));
+
+        assertNotNull(ExpectedConditions.visibilityOfAllElements(List.of(el)).apply(d));
+        assertFalse(ExpectedConditions.invisibilityOfAllElements(List.of(el)).apply(d));
+        assertFalse(ExpectedConditions.invisibilityOf(el).apply(d));
+
+        // a live element is not stale
+        assertFalse(ExpectedConditions.stalenessOf(el).apply(d));
+    }
+
+    @Test
+    void expectedConditionsAlertIsPresentYieldsTheAlert() {
+        RecordingDriver d = new RecordingDriver(Map.of("getAlertText", "hi"));
+        Alert alert = ExpectedConditions.alertIsPresent().apply(d);
+        assertNotNull(alert);
+        assertEquals("hi", alert.getText());
+    }
+
     // ---- Select drives <option> children ----
 
     @Test
@@ -560,6 +648,45 @@ class AbiSurfaceTest {
         Select s = new Select(select);
         s.selectByVisibleText("Spain");
         assertTrue(select.clickedOption != null && "Spain".equals(select.clickedOption.text));
+    }
+
+    @Test
+    void selectByContainsVisibleTextClicksPartialMatch() {
+        RecordingDriver d = new RecordingDriver();
+        RecordingSelectElement select = new RecordingSelectElement(d, "sel", false);
+        Select s = new Select(select);
+        s.selectByContainsVisibleText("pai"); // matches "Spain"
+        assertTrue(select.clickedOption != null && "Spain".equals(select.clickedOption.text));
+        assertThrows(NoSuchElementException.class, () -> s.selectByContainsVisibleText("zzz"));
+    }
+
+    @Test
+    void deSelectByContainsVisibleTextNeedsAMultiSelect() {
+        RecordingDriver d = new RecordingDriver();
+        Select single = new Select(new RecordingSelectElement(d, "sel", false));
+        assertThrows(UnsupportedOperationException.class,
+                () -> single.deSelectByContainsVisibleText("pai"));
+
+        RecordingSelectElement multi = new RecordingSelectElement(d, "multi", true);
+        Select s = new Select(multi);
+        s.selectByVisibleText("Spain"); // select it so there is something to clear
+        s.deSelectByContainsVisibleText("pai");
+        assertTrue(multi.clickedOption != null && "Spain".equals(multi.clickedOption.text));
+    }
+
+    @Test
+    void selectEqualityIsByWrappedElement() {
+        RecordingDriver d = new RecordingDriver();
+        RecordingSelectElement el = new RecordingSelectElement(d, "sel", false);
+        assertEquals(new Select(el), new Select(el));
+        assertEquals(new Select(el).hashCode(), new Select(el).hashCode());
+    }
+
+    @Test
+    void capabilitiesRequiredThrowsWhenAbsent() {
+        Capabilities caps = new ImmutableCapabilities(Map.of("browserName", "chrome"));
+        assertEquals("chrome", caps.required("browserName"));
+        assertThrows(IllegalArgumentException.class, () -> caps.required("nope"));
     }
 
     // A WebElement stand-in for Select tests: reports tag "select" and yields options.
