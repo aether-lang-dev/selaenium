@@ -180,9 +180,14 @@ test('firefox/edge/safari factories set the right browserName', () => {
 })
 
 test('live chrome + surface', async (t) => {
-  const driverBin = which('chromedriver')
-  if (!driverBin) {
-    t.skip('chromedriver not on PATH')
+  // Source the driver from the engine's Selenium-Manager port (a VERSION-MATCHED
+  // binary), not PATH — a PATH chromedriver can mismatch the installed Chrome
+  // (skew). This test still exercises the BYO-endpoint path (spawn a driver, then
+  // usingServer(url)/headlessChrome(url)) — distinct from the fully
+  // engine-managed 'driver orchestration' test; only the binary source changed.
+  const driverBin = s.resolveDriver('chrome') || which('chromedriver')
+  if (!driverBin || !fs.existsSync(driverBin)) {
+    t.skip('no chromedriver (engine could not resolve one, none on PATH)')
     return
   }
 
@@ -295,9 +300,14 @@ test('live chrome + surface', async (t) => {
 // as above: own chromedriver on an ephemeral port, self-skip if absent. All BiDi
 // calls are synchronous blocking FFI.
 test('live chrome + bidi', async (t) => {
-  const driverBin = which('chromedriver')
-  if (!driverBin) {
-    t.skip('chromedriver not on PATH')
+  // Source the driver from the engine's Selenium-Manager port (a VERSION-MATCHED
+  // binary), not PATH — a PATH chromedriver can mismatch the installed Chrome
+  // (skew). This test still exercises the BYO-endpoint path (spawn a driver, then
+  // usingServer(url)/headlessChrome(url)) — distinct from the fully
+  // engine-managed 'driver orchestration' test; only the binary source changed.
+  const driverBin = s.resolveDriver('chrome') || which('chromedriver')
+  if (!driverBin || !fs.existsSync(driverBin)) {
+    t.skip('no chromedriver (engine could not resolve one, none on PATH)')
     return
   }
 
@@ -423,9 +433,14 @@ test('live chrome + bidi', async (t) => {
 // content server is needed. The surface is async (Promise-returning), so every
 // command is awaited.
 test('live chrome + atoms', async (t) => {
-  const driverBin = which('chromedriver')
-  if (!driverBin) {
-    t.skip('chromedriver not on PATH')
+  // Source the driver from the engine's Selenium-Manager port (a VERSION-MATCHED
+  // binary), not PATH — a PATH chromedriver can mismatch the installed Chrome
+  // (skew). This test still exercises the BYO-endpoint path (spawn a driver, then
+  // usingServer(url)/headlessChrome(url)) — distinct from the fully
+  // engine-managed 'driver orchestration' test; only the binary source changed.
+  const driverBin = s.resolveDriver('chrome') || which('chromedriver')
+  if (!driverBin || !fs.existsSync(driverBin)) {
+    t.skip('no chromedriver (engine could not resolve one, none on PATH)')
     return
   }
 
