@@ -13,7 +13,8 @@
     "native/"
   ],
   "scripts": {
-    "test": "node --test test/ffi_test.js test/live_test.js"
+    "test": "node --test test/abi_test.js test/ffi_test.js test/live_test.js",
+    "typecheck": "tsc --noEmit test/types_test.ts"
   },
   "dependencies": {
     "koffi": "^2.16.3"

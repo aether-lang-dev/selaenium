@@ -369,12 +369,21 @@ class FacadeTest < Minitest::Test
   # (+ vendor-options key/args for the headless variants). Intercept Driver.new
   # to capture the caps a factory would hand to the session constructor.
   def capture_factory_caps(&block)
+    # The module-level factories reference Driver directly, so a subclass cannot
+    # intercept them the way CapsRecorder does for Driver.chrome. Shadow
+    # Driver.new with a singleton method for the duration of the block and
+    # remove it afterwards, which restores the inherited Class#new. Stdlib only:
+    # minitest 6 dropped Object#stub along with the whole mock library.
     captured = {}
-    stub = lambda do |_executor, caps, **_kw|
+    M::Driver.define_singleton_method(:new) do |_executor, caps, **_kw|
       captured[:caps] = caps
       :fake
     end
-    M::Driver.stub(:new, stub) { block.call }
+    begin
+      block.call
+    ensure
+      M::Driver.singleton_class.send(:remove_method, :new)
+    end
     captured[:caps]
   end
 
