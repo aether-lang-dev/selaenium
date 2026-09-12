@@ -53,31 +53,18 @@ error, and closes. Anything smarter than marshalling belongs in `selenium_core/`
 
 ## Bindings
 
-Eighteen language bindings drive the byte-identical `libselenium_core.so`.
-Classic Selenium shipped five official clients (Java, Python, Ruby, JavaScript,
-.NET), each a full reimplementation of the protocol. Here all five are re-glued
-as thin FFI layers over the shared engine — and thirteen new languages come
-along, several of them essentially free: the three BEAM languages share one
-Erlang NIF, and the three extra JVM languages share one Java FFM jar.
+**Twenty-eight** language bindings drive the byte-identical
+`libselenium_core.so` (one `.tests.ae` node each). Classic Selenium shipped five
+official clients (Java, Python, Ruby, JavaScript, .NET), each a full
+reimplementation of the protocol. Here all five are re-glued as thin FFI layers
+over the shared engine — and twenty-three more come along, several of them
+essentially free, because a runtime family only has to be bridged once:
 
-### New languages (13 — not in classic Selenium)
-
-| Language | FFI mechanism                          |
-|----------|----------------------------------------|
-| Go       | cgo (link-time)                        |
-| Rust     | `extern "C"` + `build.rs` (link-time)  |
-| Dart     | `dart:ffi`                             |
-| Erlang   | Erlang NIF                             |
-| Elixir   | rides the Erlang NIF (BEAM)            |
-| Gleam    | rides the Erlang NIF (BEAM)            |
-| Nim      | `importc` (link-time)                  |
-| Zig      | `@extern` (link-time)                  |
-| D        | `extern(C)` (link-time, dmd)           |
-| Lua      | Lua 5.4 C extension                    |
-| Kotlin   | JVM interop over the Java FFM jar      |
-| Clojure  | JVM interop over the Java FFM jar      |
-| Groovy   | JVM interop over the Java FFM jar      |
-| Haskell  | `foreign import ccall` (link-time)     |
+| Family | Bridged once as | Languages riding it |
+|--------|-----------------|---------------------|
+| BEAM   | one Erlang NIF (`selenium_nif`) | Erlang, Elixir, Gleam, LFE |
+| JVM    | one Panama FFM jar              | Java, Kotlin, Clojure, Groovy, Scala |
+| .NET   | one P/Invoke assembly           | C#, F# |
 
 ### Carried over from classic (5 — now thin FFI bindings)
 
@@ -89,8 +76,37 @@ Erlang NIF, and the three extra JVM languages share one Java FFM jar.
 | JavaScript (Node) | koffi / N-API (runtime load)         |
 | .NET (C#)         | P/Invoke                             |
 
-Twelve distinct FFI mechanisms in all — the BEAM three share the NIF and the
-JVM family shares the jar, so one engine reaches eighteen languages.
+### New languages (23 — not in classic Selenium)
+
+| Language | FFI mechanism                          |
+|----------|----------------------------------------|
+| C        | the C ABI directly (header + link)     |
+| C++      | header-only wrapper over the C ABI     |
+| Go       | cgo (link-time)                        |
+| Rust     | `extern "C"` + `build.rs` (link-time)  |
+| Dart     | `dart:ffi`                             |
+| Swift    | C interop via a module map             |
+| Crystal  | `@[Link]` + `lib` (link-time)          |
+| Nim      | `importc` (link-time)                  |
+| Zig      | `@extern` (link-time)                  |
+| D        | `extern(C)` + dlopen                   |
+| Haskell  | `foreign import ccall` (link-time)     |
+| Julia    | `ccall`                                |
+| Lua      | Lua 5.4 C extension                    |
+| PHP      | PHP FFI (`FFI\CData`)                  |
+| Erlang   | Erlang NIF                             |
+| Elixir   | rides the Erlang NIF (BEAM)            |
+| Gleam    | rides the Erlang NIF (BEAM)            |
+| LFE      | rides the Erlang NIF (BEAM)            |
+| Kotlin   | JVM interop over the Java FFM jar      |
+| Clojure  | JVM interop over the Java FFM jar      |
+| Groovy   | JVM interop over the Java FFM jar      |
+| Scala    | JVM interop over the Java FFM jar      |
+| F#       | .NET interop over the P/Invoke assembly |
+
+Nineteen distinct FFI mechanisms in all — the BEAM four share the NIF, the JVM
+five share the jar, and the two .NET languages share the assembly, so one engine
+reaches twenty-eight languages.
 
 ## Layout
 
@@ -105,13 +121,19 @@ selenium_core/tests/
   probe.ae           pure-Aether engine probe (no browser, no FFI)
   .tests.ae          aeb node that builds + runs the probe
 python/
-  selenium_core/     the Python binding (ctypes over the .so — runtime load)
+  selenium/          the Python binding, at the MAINSTREAM import paths
     _native.py       library loader + ctypes prototypes (1:1 with embed.ae)
-    _webdriver.py    the ergonomic surface: WebDriver, WebElement, By, errors
-    __init__.py
+    _webdriver.py    the one implementation: WebDriver, WebElement, ShadowRoot,
+                     Timeouts, By, errors
+    webdriver/       selenium.webdriver.{common,remote,chrome,support}.* — the
+                     Selenium 4.x module tree, re-exporting from _webdriver
+    common/          selenium.common.exceptions
   test/
     test_ffi.py         no-browser FFI test (loads the .so, marshals, error path)
-    test_live_chrome.py live headless-Chrome end-to-end smoke test
+    test_abi_surface.py no-browser parity facts (the mainstream surface, no .so)
+    test_live_chrome.py live headless Chrome: smoke, atoms, BiDi, shadow DOM,
+                        virtual authenticator, timeouts
+    test_live_surface.py live surface coverage (cookies/windows/actions/...)
   setup.py           wheel packaging; bundles native/*.so via package_data
   .package.ae        aeb node → builds the wheel with the engine .so inside
   .example.ae        aeb node → installs the wheel into a clean site + runs it
@@ -126,26 +148,33 @@ go/
   .example.ae        aeb node → a consumer module with NO selenium_core/ sibling go-runs it
   example/           the standalone consumer program (go.mod + main.go)
 ruby/
-  lib/selenium_core.rb            the require entry point
-  lib/selenium_core/native.rb     Fiddle loader + prototypes (1:1 with embed.ae)
-  lib/selenium_core/webdriver.rb  the ergonomic surface: WebDriver, WebElement, By
-  selenium_core.gemspec           gem packaging; bundles lib/**/* incl. native/*.so
-  spec/{ffi_test,live_test}.rb    minitest suites (no-browser + live Chrome)
+  lib/selenium-webdriver.rb       the require entry point (mainstream gem name)
+  lib/selenium/native.rb          Fiddle loader + prototypes (1:1 with embed.ae)
+  lib/selenium/webdriver.rb       the surface: Driver, Element, By, Select, Wait
+  selenium-webdriver.gemspec      gem packaging; bundles lib/**/* incl. native/*.so
+                                  — NO runtime gem dependencies (stdlib only)
+  spec/*.rb                       minitest suites (ffi / facade / convenience /
+                                  surface / live Chrome)
   .tests.ae / .package.ae / .example.ae   aeb nodes
   example/consumer_example.rb     runs from the INSTALLED gem (ffi/discovery/live)
 javascript/
   index.js                        the require entry point
   lib/native.js                   koffi loader + prototypes (1:1 with embed.ae)
-  lib/webdriver.js                the ergonomic surface (synchronous; see note)
+  lib/webdriver.js                the surface — async/Promise-returning, matching
+                                  mainstream selenium-webdriver (see note)
   package.json                    npm packaging; bundles native/ + lib/; koffi dep
-  test/{ffi_test,live_test}.js    node:test suites (no-browser + live+surface)
+  test/{abi,ffi,live}_test.js     node:test suites (surface parity / no-browser /
+                                  live+surface)
   test/content_server.js          out-of-process content server for the live test
   .tests.ae / .package.ae / .example.ae   aeb nodes
   example/consumer_example.js     runs from the INSTALLED package (ffi/discovery/live)
 java/
-  src/org/seleniumhq/aether/*.java  Panama FFM binding: Native, Json (dep-free),
-                                    WebDriver, WebElement, By, WebDriverError
-  test/{TestFfi,TestLive}.java      JUnit-free main() harnesses (no-browser + live)
+  src/main/java/org/openqa/selenium/**  Panama FFM binding at the MAINSTREAM
+                                    package: WebDriver, WebElement, By, Keys,
+                                    Cookie, Actions, support.ui.{Select,
+                                    WebDriverWait,ExpectedConditions}, print.*,
+                                    plus Native + a dependency-free Json
+  src/test/java/**                  JUnit 5: FfiTest, LiveTest, AbiSurfaceTest
   .tests.ae / .package.ae / .example.ae   aeb nodes (plain javac + jar, no Maven)
   example/ConsumerExample.java      runs from the INSTALLED jar (ffi/discovery/live)
 dotnet/
@@ -164,6 +193,47 @@ rust/
   .tests.ae / .package.ae / .example.ae   aeb nodes
   example/                          consumer crate (path dep + rpath-propagating build.rs)
 ```
+
+## Selenium 4.x parity
+
+The engine is *ahead* of classic Selenium in protocol coverage and *behind* it in
+binding ergonomics — those are separate axes, so they are measured separately.
+
+**Protocol (the engine).** The route table in `selenium_core/selenium_core.ae`
+carries the full W3C command set plus the extensions Selenium 4 ships: shadow
+root, print-to-PDF, computed role/label, WebAuthn virtual authenticators, FedCM,
+the Grid download endpoints, and `se:` log/file extensions. Nothing in the W3C
+spec is missing.
+
+**Surface (the bindings).** Measured by diffing the binding's public API against
+the real Selenium 4.44 packages (`pip install selenium==4.44`; `selenium-api` +
+`selenium-support` jars read with `javap`):
+
+| Binding | Public names present | Notes |
+|---------|---------------------|-------|
+| Python  | 312 / 362 (86%) | `WebElement`, `Keys`, `ActionChains`, `Select`, `SwitchTo`, `Alert`, `WebDriverWait` and `selenium.common.exceptions` are at 100%; `ChromeOptions` 97% |
+| Java    | 191 / 198 (96%) | `WebDriver`, `WebElement`, `Select`, `WebDriverWait` and `ExpectedConditions` are at 100% |
+
+**Still behind, and deliberately so.** The remaining gaps are mostly things a
+W3C-pure engine has no business emulating, or that upstream has deprecated:
+
+- **CDP** (`execute_cdp_cmd`, `start_devtools`, the generated `devtools/vNNN/`
+  trees — ~250 modules of upstream's wheel). BiDi is the supported path here.
+- **Pinned scripts** (`pin_script` / `unpin` / `get_pinned_scripts`, and Java's
+  `JavascriptExecutor.pin`) — deprecated upstream.
+- **Driver lifecycle internals** (`start_session`, `start_client`, `stop_client`,
+  `Service`, `SeleniumManager`): this engine owns driver resolution and launch
+  itself, through `ensure_driver` / `resolve_driver` on the C ABI.
+- **`mobile` / `orientation`**: legacy JSON-Wire-Protocol, not W3C.
+
+Genuinely missing and worth doing: the BiDi *module* accessors Python exposes
+(`driver.network`, `driver.script`, `driver.browsing_context`, …) over the BiDi
+that already works; `file_detector` for local-file upload to a remote Grid (the
+engine already routes `uploadFile`); and the FedCM dialog wrapper (the engine
+already routes all eight FedCM commands). Until those land, every one of them is
+reachable through the public generic hatch — `driver.execute("<command>", params)`
+in Python, `execute(...)` in Java — which goes through the same route table, so
+no functionality is actually locked away.
 
 ## Two test layers, and what each proves
 
@@ -192,34 +262,46 @@ aeb selenium_core/.build.ae        # -> selenium_core/native/libselenium_core.so
 aeb selenium_core/tests/.tests.ae  # pure-Aether engine probe (fast, no browser)
 
 # Python binding (needs the .so via SELENIUM_CORE_LIB during dev):
-SELENIUM_CORE_LIB="$PWD/selenium_selenium_core/native/libselenium_core.so" python3 python/test/test_ffi.py
-SELENIUM_CORE_LIB="$PWD/selenium_selenium_core/native/libselenium_core.so" python3 python/test/test_live_chrome.py
+SELENIUM_CORE_LIB="$PWD/selenium_core/native/libselenium_core.so" python3 python/test/test_ffi.py
+SELENIUM_CORE_LIB="$PWD/selenium_core/native/libselenium_core.so" python3 python/test/test_live_chrome.py
 ```
 
 ## Status — end-to-end green ✅
 
-Needs **Aether ≥ 0.558** (the `std.http.client` `Connection: close` framing fix;
-without it the client hangs on chromedriver responses).
+Needs **Aether ≥ 0.638** — the floor recorded in [`ci/versions.env`](ci/versions.env),
+which pins `ae` 0.650.0 and `aeb` v0.300. 0.638 is where `std.http.ws_connect`
+(the BiDi WebSocket client) and the single-file-module fix that this repo's
+`aether.toml` depends on both land. Building with an older `aeb` than the pin
+fails early with `unresolved import 'cache'`.
 
 - **Engine** (`selenium_core/selenium_core.ae`): full W3C command map, path templating,
   By normalization, W3C error decode, HTTP round-trip. ✅ builds, ✅ 31/31 probes.
 - **ABI** (`selenium_core/embed.ae`) + C bridge: ✅ builds to `libselenium_core.so`,
-  13 exports.
+  49 exports — the command seam plus driver orchestration (`resolve_driver` /
+  `ensure_driver` / `stop_driver`), the atoms (`is_displayed`, `get_attribute`,
+  `find_relative`) and the full BiDi surface (`bidi_*`, including network
+  interception).
 - **Python binding** (ctypes, runtime load): ✅ FFI marshalling + error path
-  (`test_ffi.py`, 7 cases), ✅ **live headless Chrome** (`test_live_chrome.py`).
+  (`test_ffi.py`, 7 cases), ✅ surface parity (`test_abi_surface.py`, 43 cases),
+  ✅ **live headless Chrome** (`test_live_chrome.py`, `test_live_surface.py`) —
+  smoke, atoms, BiDi, shadow DOM, virtual authenticator, timeouts. 59 tests.
 - **Go binding** (cgo, link-time): ✅ FFI (`ffi_test.go`, 5 cases), ✅ **live
   headless Chrome** (`live_test.go`).
 - **Ruby binding** (Fiddle, runtime load): ✅ FFI (`spec/ffi_test.rb`, 5 cases),
-  ✅ **live headless Chrome** (`spec/live_test.rb`).
-- **Node binding** (koffi / N-API, runtime load): ✅ FFI (`test/ffi_test.js`,
-  5 cases), ✅ **live headless Chrome + surface** (`test/live_test.js`). The API
-  is synchronous (the engine's FFI round-trip blocks) — the honest shape for a
-  linked-in synchronous core; a note in `lib/webdriver.js` explains it, and the
-  live test runs its content server out-of-process so a blocking `get()` can't
-  freeze the server the browser fetches from.
-- **Java binding** (Panama FFM — `java.lang.foreign`, no JNI/C shim): ✅ FFI
-  (`test/TestFfi.java`, 7 checks), ✅ **live headless Chrome + surface**
-  (`test/TestLive.java`). Pure `javac` (no Maven); a tiny dependency-free JSON
+  ✅ facade + convenience surface, ✅ **live headless Chrome** (`spec/live_test.rb`,
+  `spec/surface_test.rb`). Stdlib only — no runtime *or test* gem dependencies,
+  so it runs on a bare Ruby ≥ 3.4 (where `base64` and `webrick` are no longer
+  default gems).
+- **Node binding** (koffi / N-API, runtime load): ✅ surface parity
+  (`test/abi_test.js`), ✅ FFI (`test/ffi_test.js`), ✅ **live headless Chrome +
+  surface** (`test/live_test.js`). 29 tests. The public API is **async**
+  (Promise-returning), matching mainstream `selenium-webdriver`; the underlying
+  FFI round-trip still blocks the event loop while it runs, so the live test runs
+  its content server out-of-process — an in-process server could not answer while
+  an `await driver.get()` sits inside that blocking call.
+- **Java binding** (Panama FFM — `java.lang.foreign`, no JNI/C shim): ✅ FFI,
+  ✅ surface parity (`AbiSurfaceTest`), ✅ **live headless Chrome + surface**.
+  46 JUnit 5 tests, at the real `org.openqa.selenium` package names. Pure `javac` (no Maven); a tiny dependency-free JSON
   codec keeps it library-free. Needs a JDK ≥ 22 and `--enable-native-access`.
 - **.NET binding** (P/Invoke — `System.Runtime.InteropServices`): ✅ FFI
   (7 checks), ✅ **live headless Chrome + surface**. Uses `System.Text.Json`; a
@@ -261,17 +343,15 @@ without it the client hangs on chromedriver responses).
 - **Haskell binding** (`foreign import ccall` + link-time): FFI + live surface.
   Dependency-light (base + bytestring; params/values as JSON strings). Authored
   here; verified on a box with GHC (skips green without it).
-- Fifteen languages across eleven FFI mechanisms (ctypes / cgo / Fiddle / koffi /
-  Panama FFM / P/Invoke / Rust extern-C / dart:ffi / Erlang NIF / Nim importc /
-  Zig extern / Lua C-extension — the BEAM three share the NIF, the JVM family
-  shares the Java jar) all drive the byte-identical `libselenium_core.so`.
-  Thirteen are live-verified here; the two BEAM wrappers (Elixir, Gleam) are
-  authored here and verified on a box with their compilers (catchyos).
-- **Consumer install** (all three): ✅ the packaged wheel / Go module / gem
+- Twenty-eight languages across nineteen FFI mechanisms all drive the
+  byte-identical `libselenium_core.so` — see the Bindings table above for the
+  per-language mechanism and the three runtime families (BEAM / JVM / .NET) that
+  are each bridged only once.
+- **Consumer install**: ✅ the packaged wheel / Go module / gem / jar / NuGet
   stands alone with the `.so` bundled inside — clean-env install, no source tree,
   no env var — and drives real headless Chrome from the installed artifact
   (`*/.example.ae`).
-- **Live browser** (all three bindings): ✅ a real headless Chrome session driven
+- **Live browser**: ✅ a real headless Chrome session driven
   entirely through the pure-Aether core. The whole pipeline: {Python ctypes | Go
   cgo | Ruby Fiddle} → libselenium_core.so → std.http.client → chromedriver →
   Chrome.
