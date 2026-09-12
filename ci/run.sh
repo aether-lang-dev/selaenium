@@ -12,6 +12,7 @@
 #   ci/run.sh                 # toolchain + full presubmit
 #   ci/run.sh --offline       # engine probe only (fast, no per-binding toolchain)
 #   ci/run.sh --no-toolchain  # assume ae/aeb already on PATH (skip install)
+#   ci/run.sh --strict        # ALSO fail if this box could not test every binding
 #   TARGET=php/.tests.ae ci/run.sh --no-toolchain   # run one node
 #
 # Exit non-zero iff a node actually FAILED (a skip never fails the run).
@@ -23,10 +24,12 @@ cd "$ROOT"
 
 OFFLINE=0
 DO_TOOLCHAIN=1
+STRICT=0
 for arg in "$@"; do
   case "$arg" in
     --offline)      OFFLINE=1 ;;
     --no-toolchain) DO_TOOLCHAIN=0 ;;
+    --strict)       STRICT=1 ;;
     *) echo "ci/run: unknown arg '$arg'"; exit 2 ;;
   esac
 done
@@ -99,10 +102,29 @@ if [ -n "$FAILS" ]; then
     grep -iE 'FAILED|Error|No module|not found' "$f" | sed 's/^/      /' | head -4
   done
 fi
+
+# A node whose toolchain is absent can report "tests PASSED" with no marker at
+# all (see ci/coverage.sh and asks/aeb-missing-toolchain-reports-tests-passed.md),
+# so the grep above cannot see it. Ask coverage.sh what this box could actually
+# have tested, independently of what aeb said.
+echo "  --- coverage (what this box could actually test) ---"
+"$HERE/coverage.sh" | tail -4 | sed 's/^/  /'
+COVERAGE_RC=0
+"$HERE/coverage.sh" --strict >/dev/null 2>&1 || COVERAGE_RC=1
 echo "------------------------------------------------------------------"
 
 if [ "$RC" -ne 0 ] || [ -n "$FAILS" ]; then
   echo "ci/run: FAILED (aeb exit $RC; failed node logs: ${fail_ct})"
   exit 1
 fi
-echo "ci/run: GREEN (all nodes passed or skipped)"
+if [ "$COVERAGE_RC" -ne 0 ]; then
+  if [ "$STRICT" = "1" ]; then
+    echo "ci/run: FAILED — --strict and this box could not test every binding"
+    echo "        (run ci/coverage.sh for the per-node table)"
+    exit 1
+  fi
+  echo "ci/run: GREEN, but INCOMPLETE — some bindings could not be tested here."
+  echo "        Run ci/coverage.sh to see which; use --strict in CI to make this fail."
+  exit 0
+fi
+echo "ci/run: GREEN (every binding on this box was actually tested)"
