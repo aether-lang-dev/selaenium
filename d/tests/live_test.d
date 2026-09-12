@@ -222,6 +222,24 @@ void main() {
         }
     }
 
+    // Grid client: drive a session THROUGH a real Selenium Grid hub (the
+    // grid/run-grid-test.sh harness stands one up in a container and exports
+    // SEL_GRID_URL). openSession(hubUrl) -> HTTP -> router -> node -> browser.
+    // Self-skips when SEL_GRID_URL is unset (the no-Grid `aeb d/.tests.ae` run).
+    {
+        string gridUrl = environment.get("SEL_GRID_URL", "");
+        if (gridUrl.length == 0) {
+            writeln("  skip grid — SEL_GRID_URL unset");
+        } else {
+            auto gd = chrome(gridUrl);
+            scope(exit) gd.quit();
+            check(gd.sessionId().length > 0, "grid: session established via hub");
+            gd.get("data:text/html,<title>Grid</title><h1 id=h>Hello Grid</h1>");
+            check(gd.title() == "Grid", "grid: nav+title through the hub");
+            check(gd.findElement(By.id("h")).text() == "Hello Grid", "grid: find+text through the hub");
+        }
+    }
+
     writeln(failures == 0 ? "ALL PASSED" : "FAILURES");
     import core.stdc.stdlib : exit;
     exit(failures == 0 ? 0 : 1);
