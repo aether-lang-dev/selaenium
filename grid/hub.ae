@@ -1,0 +1,196 @@
+// hub.ae — selaenium's own Selenium Grid hub, STANDALONE mode.
+//
+// Until now selaenium was a Grid CLIENT only (point openSession at somebody
+// else's hub). This is the server half: a W3C endpoint that accepts newSession,
+// provisions a driver for the requested browser, and proxies every subsequent
+// session-scoped request to the driver that owns that session — the job the
+// `selenium/standalone-chromium` container does, without the container.
+//
+// It is standalone mode only: router + node + local drivers in ONE process.
+// Distributed Grid (a separate Router / Distributor / SessionQueue / SessionMap
+// over an event bus, with remote Nodes registering) is deliberately NOT here;
+// see docs/Grid.md for where the line is drawn and why.
+//
+// ---- why there is no session map -------------------------------------------
+//
+// std.http dispatches HTTP/1.1 handlers on a worker pool (cores * 2), so any
+// shared mutable session map would need a lock, and Aether's concurrency story
+// is actors rather than mutexes. We sidestep the problem instead of guarding it:
+// the hub is STATELESS. The routing facts a later request needs — which driver
+// process owns this session, on which port — are encoded INTO the session id the
+// hub hands back (see encode_session_id). Decoding is pure string work on the
+// request's own path, so two requests never touch shared state and the hub is
+// trivially safe under the worker pool.
+//
+// The cost is that an abandoned session (a client that never calls quit) leaves
+// its driver running, because nothing is tracking it to time out. Real Grid
+// reaps those; see docs/Grid.md "Known limitations".
+import std.http
+import std.http.client
+import std.string
+import std.json
+import std.os
+import driver
+import hubcore
+
+// ---- proxying ---------------------------------------------------------------
+
+// One request to a driver on 127.0.0.1:<port>, returned as "OK <status> <body>"
+// or "ERR <message>" — the same tagged shape the engine's http_roundtrip uses,
+// so the two speak one convention.
+proxy(port: int, method: string, path: string, body: string) -> string {
+    url = string.concat("http://127.0.0.1:", string.concat(string.from_int(port), path))
+    req = client.request(method, url)
+    _h1 = client.set_header(req, "Accept", "application/json")
+    if string.equals(method, "POST") == 1 {
+        b = body
+        if string.length(b) == 0 { b = "{}" }
+        _sb = client.set_body(req, b, string.length(b), "application/json; charset=utf-8")
+    }
+    _to = client.set_timeout(req, 300s)
+    resp, err = client.send_request(req)
+    client.request_free(req)
+    if err != "" { return string.concat("ERR ", err) }
+    status = client.response_status(resp)
+    rbody = client.response_body(resp)
+    client.response_free(resp)
+    return string.concat(string.concat("OK ", string.from_int(status)), string.concat(" ", rbody))
+}
+
+send_json(res: ptr, status: int, body: string) {
+    http.response_set_status(res, status)
+    http.response_set_header(res, "Content-Type", "application/json; charset=utf-8")
+    http.response_set_body(res, body)
+}
+
+// ---- handlers ---------------------------------------------------------------
+
+// GET /status — the readiness probe every Grid client (and our own
+// grid/run-grid-test.sh) polls before handing work over.
+status_handler(req: ptr, res: ptr, ud: ptr) {
+    out = json.obj()
+    inner = json.obj()
+    _r = json.set(inner, "ready", json.str("true"))
+    _m = json.set(inner, "message", json.str("selaenium standalone hub"))
+    _v = json.set(out, "value", inner)
+    encoded, _e = json.encode(out)
+    json.free(out)
+    // "ready" is a JSON boolean on the wire, not the string json.str gives us.
+    send_json(res, 200, string.replace_all(encoded, "\"true\"", "true"))
+}
+
+// POST /session — provision a driver for the requested browser, forward the
+// newSession verbatim, and hand back the driver's own answer with the session id
+// rewritten to carry its routing (see encode_session_id).
+new_session_handler(req: ptr, res: ptr, ud: ptr) {
+    body = http.request_body(req)
+    browser = hubcore.browser_of_caps(body)
+
+    dp = driver.ensure(browser, "", 20000)
+    if dp == null {
+        send_json(res, 500, hubcore.w3c_error("session not created",
+            string.concat("no driver could be provisioned for browser: ", browser)))
+        return
+    }
+    port = driver.port_of(dp)
+    pid = driver.pid_of(dp)
+
+    tagged = proxy(port, "POST", "/session", body)
+    status, rbody = hubcore.split_tagged(tagged)
+    if status == 0 {
+        driver.stop(dp)
+        send_json(res, 500, hubcore.w3c_error("session not created",
+            string.concat("driver transport failure: ", rbody)))
+        return
+    }
+    if status >= 400 {
+        // The driver refused (bad caps, say). It owns no session, so reap it and
+        // pass its own error envelope through untouched.
+        driver.stop(dp)
+        send_json(res, status, rbody)
+        return
+    }
+
+    real_id = hubcore.session_id_of_response(rbody)
+    if string.length(real_id) == 0 {
+        driver.stop(dp)
+        send_json(res, 500, hubcore.w3c_error("session not created",
+            "driver returned no session id"))
+        return
+    }
+
+    // Free the handle WITHOUT killing the process: the driver must outlive this
+    // request, and DELETE /session/<id> reaps it by the pid we just encoded.
+    driver.release(dp)
+
+    hub_id = hubcore.encode_session_id(pid, port, real_id)
+    send_json(res, status, string.replace_all(rbody, real_id, hub_id))
+}
+
+// Everything else under /session/... — decode the owner out of the id, replay the
+// request against that driver, and hand the answer straight back.
+forward_handler(req: ptr, res: ptr, ud: ptr) {
+    path = http.request_path(req)
+    method = http.request_method(req)
+    hub_id = hubcore.session_id_of_path(path)
+    pid, port, real_id = hubcore.decode_session_id(hub_id)
+    if port < 0 {
+        send_json(res, 404, hubcore.w3c_error("invalid session id",
+            string.concat("not a hub session id: ", hub_id)))
+        return
+    }
+
+    // Rewrite the hub id back to the driver's own id, in the path and in any body
+    // that echoes it.
+    driver_path = string.replace_all(path, hub_id, real_id)
+    body = http.request_body(req)
+    if string.length(body) > 0 { body = string.replace_all(body, hub_id, real_id) }
+
+    tagged = proxy(port, method, driver_path, body)
+    status, rbody = hubcore.split_tagged(tagged)
+    if status == 0 {
+        send_json(res, 500, hubcore.w3c_error("unknown error",
+            string.concat("driver transport failure: ", rbody)))
+        return
+    }
+
+    // A successful DELETE of the session itself ends it: reap the process, or it
+    // would outlive the hub's knowledge of it entirely.
+    if string.equals(method, "DELETE") == 1 {
+        if string.equals(path, string.concat("/session/", hub_id)) == 1 {
+            if status < 400 { driver.reap(pid) }
+        }
+    }
+
+    send_json(res, status, string.replace_all(rbody, real_id, hub_id))
+}
+
+main() {
+    // SEL_HUB_PORT overrides the conventional Grid port.
+    port = 4444
+    env_port_s = os.getenv("SEL_HUB_PORT")
+    if string.length(env_port_s) > 0 {
+        p, e = string.to_int(env_port_s)
+        if e == "" {
+            if p > 0 { port = p }
+        }
+    }
+
+    server = http.server_create(port)
+    if server == 0 {
+        println("hub: could not bind ${port}")
+        return
+    }
+
+    http.server_get(server, "/status", status_handler, 0)
+    http.server_post(server, "/session", new_session_handler, 0)
+    // Session-scoped traffic. `*` matches the rest of the path, so one handler
+    // per method covers every W3C command without re-listing the route table.
+    http.server_get(server, "/session/*", forward_handler, 0)
+    http.server_post(server, "/session/*", forward_handler, 0)
+    http.server_delete(server, "/session/*", forward_handler, 0)
+    http.server_put(server, "/session/*", forward_handler, 0)
+
+    println("hub: selaenium standalone Grid hub listening on ${port}")
+    http.server_start(server)
+}

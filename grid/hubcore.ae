@@ -1,0 +1,134 @@
+// hubcore.ae — the PURE half of the standalone Grid hub: the session-id codec,
+// capability reading, and response shaping. No sockets, no processes, no shared
+// state — so grid/tests/hub_probe.ae can prove all of it with no browser, no
+// driver and no listening port, exactly the way selenium_core/tests/probe.ae
+// proves the engine's route table.
+//
+// hub.ae imports this and adds the server, the handlers and main().
+import std.string
+import std.json
+
+// ---- session-id codec -------------------------------------------------------
+//
+// A hub session id is "<pid>-<port>-<driver session id>". The driver's own id is
+// opaque hex to the client, so wrapping it is invisible; what it buys is that
+// every later request carries its own routing information.
+
+encode_session_id(pid: int, port: int, real_id: string) -> string {
+    p = string.concat(string.from_int(pid), "-")
+    q = string.concat(string.from_int(port), "-")
+    return string.concat(p, string.concat(q, real_id))
+}
+
+// The three fields back out, or (-1, -1, "") when `sid` is not one of ours.
+decode_session_id(sid: string) -> (int, int, string) {
+    d1 = string.index_of(sid, "-")
+    if d1 <= 0 { return (-1, -1, "") }
+    pid_s = string.substring(sid, 0, d1)
+    rest = string.substring(sid, d1 + 1, string.length(sid))
+    d2 = string.index_of(rest, "-")
+    if d2 <= 0 { return (-1, -1, "") }
+    port_s = string.substring(rest, 0, d2)
+    real_id = string.substring(rest, d2 + 1, string.length(rest))
+    if string.length(real_id) == 0 { return (-1, -1, "") }
+    pid, e1 = string.to_int(pid_s)
+    if e1 != "" { return (-1, -1, "") }
+    port, e2 = string.to_int(port_s)
+    if e2 != "" { return (-1, -1, "") }
+    if port <= 0 { return (-1, -1, "") }
+    return (pid, port, real_id)
+}
+
+// The hub session id out of a request path, i.e. the segment after "/session/".
+// "" when the path is not session-scoped.
+session_id_of_path(path: string) -> string {
+    if string.starts_with(path, "/session/") == 0 { return "" }
+    rest = string.substring(path, 9, string.length(path))
+    slash = string.index_of(rest, "/")
+    if slash < 0 { return rest }
+    return string.substring(rest, 0, slash)
+}
+
+// ---- capability reading -----------------------------------------------------
+
+// browserName out of a W3C newSession body, defaulting to "chrome".
+// Looks in alwaysMatch first, then the first firstMatch entry, then the legacy
+// top-level desiredCapabilities — the three places a real client puts it.
+browser_of_caps(body: string) -> string {
+    if string.length(body) == 0 { return "chrome" }
+    root, err = json.parse(body)
+    if err != "" { return "chrome" }
+    name = ""
+    caps, _ce = json.object_get(root, "capabilities")
+    if caps != null {
+        always, _ae = json.object_get(caps, "alwaysMatch")
+        if always != null {
+            name = str_field(always, "browserName")
+        }
+        if string.length(name) == 0 {
+            // firstMatch is an ARRAY of capability objects; the first entry is
+            // the one a single-browser client sends.
+            first, _fe = json.object_get(caps, "firstMatch")
+            if first != null {
+                entry, _ee = json.array_get(first, 0)
+                if entry != null { name = str_field(entry, "browserName") }
+            }
+        }
+    }
+    if string.length(name) == 0 {
+        desired, _de = json.object_get(root, "desiredCapabilities")
+        if desired != null { name = str_field(desired, "browserName") }
+    }
+    json.free(root)
+    if string.length(name) == 0 { return "chrome" }
+    return name
+}
+
+str_field(obj: ptr, key: string) -> string {
+    v, verr = json.object_get(obj, key)
+    if verr != "" { return "" }
+    if v == null { return "" }
+    s, serr = json.get_string(v)
+    if serr != "" { return "" }
+    return s
+}
+
+// The driver's own session id out of ITS newSession response.
+// W3C puts it at value.sessionId; some remote ends still answer flat.
+session_id_of_response(body: string) -> string {
+    root, err = json.parse(body)
+    if err != "" { return "" }
+    sid = ""
+    value, _ve = json.object_get(root, "value")
+    if value != null { sid = str_field(value, "sessionId") }
+    if string.length(sid) == 0 { sid = str_field(root, "sessionId") }
+    json.free(root)
+    return sid
+}
+
+// Split a tagged proxy reply into (status, body); status 0 marks a transport
+// failure, with the message as the body.
+split_tagged(tagged: string) -> (int, string) {
+    if string.starts_with(tagged, "ERR ") == 1 {
+        return (0, string.substring(tagged, 4, string.length(tagged)))
+    }
+    rest = string.substring(tagged, 3, string.length(tagged))
+    sp = string.index_of(rest, " ")
+    if sp < 0 { return (0, rest) }
+    status, _e = string.to_int(string.substring(rest, 0, sp))
+    return (status, string.substring(rest, sp + 1, string.length(rest)))
+}
+
+// A W3C error envelope, so a client sees a typed failure rather than a bare 500.
+w3c_error(err: string, detail: string) -> string {
+    out = json.obj()
+    inner = json.obj()
+    _e = json.set(inner, "error", json.str(err))
+    _m = json.set(inner, "message", json.str(detail))
+    _s = json.set(inner, "stacktrace", json.str(""))
+    _v = json.set(out, "value", inner)
+    encoded, _ee = json.encode(out)
+    json.free(out)
+    return encoded
+}
+

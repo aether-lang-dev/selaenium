@@ -136,6 +136,30 @@ pid_of(dp: ptr) -> int {
     return d.token
 }
 
+// The port the driver was launched on. A caller that outlives the handle (the
+// Grid hub encodes it into its session ids) needs this alongside pid_of.
+port_of(dp: ptr) -> int {
+    if dp == null { return -1 }
+    d = dp as *Driver
+    return d.port
+}
+
+// Free the handle WITHOUT touching the process. For a caller that has recorded
+// the pid/port elsewhere and wants the driver to outlive this handle — the
+// opposite of stop(), which kills. NULL-safe.
+release(dp: ptr) {
+    if dp == null { return }
+    heap.free(dp)
+}
+
+// Kill + reap a driver process by pid, for a caller holding no handle (one that
+// used release() earlier). No-op for a non-positive pid.
+reap(pid: int) {
+    if pid <= 0 { return }
+    _k = os.kill(pid, 15)
+    _e, _we = os.wait(pid)
+}
+
 // Kill + reap the driver process and free the handle. NULL-safe; safe once.
 stop(dp: ptr) {
     if dp == null { return }

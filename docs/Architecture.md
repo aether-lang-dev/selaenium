@@ -70,8 +70,11 @@ These are genuine capability gaps, not residue — tracked as the remaining
 - **WebDriver-BiDi** — the engine is W3C-classic-HTTP only; no BiDi (WebSocket,
   event-driven) surface yet. See the parked WASM sketches in this dir for where
   BiDi would tie in.
-- **Grid** — the distributed server; out of scope for a client reboot unless
-  explicitly revisited.
+- **Grid** — *revisited*: standalone mode now exists (`grid/hub.ae` →
+  `selaenium-hub`: router + node + local drivers in one process, graded against
+  the reference container by `grid/run-grid-test.sh --hub`). The **distributed**
+  server — Router / Distributor / SessionQueue / SessionMap with remote Nodes
+  over an event bus — remains out of scope. See `docs/Grid.md`.
 - **Publish** — bindings build + test, but there is no `pip`/gem/npm/NuGet/Maven
   publish story (aeb's publish side is itself a TODO upstream).
 - **CI** — GitHub Actions still to be rebuilt around `aeb .presubmit.ae`.

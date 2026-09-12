@@ -235,6 +235,36 @@ reachable through the public generic hatch — `driver.execute("<command>", para
 in Python, `execute(...)` in Java — which goes through the same route table, so
 no functionality is actually locked away.
 
+## Grid — client *and* server
+
+selaenium has always been a Grid **client**: point a session at a hub URL and the
+engine drives through it. It is now also a Grid **server**, in standalone mode —
+`grid/hub.ae` builds `selaenium-hub`, a W3C endpoint that provisions drivers via
+the engine's own driver manager and proxies sessions to them. Router, node and
+local drivers in one process: the job the `selenium/standalone-chromium`
+container does, with no container and no driver to install.
+
+```sh
+aeb grid/.build.ae                  # -> selaenium-hub
+SEL_HUB_PORT=4444 selaenium-hub     # any Selenium client can now point here
+```
+
+It is standalone only. Distributed Grid — a separate Router / Distributor /
+SessionQueue / SessionMap with remote Nodes over an event bus — is deliberately
+out of scope, as are session reaping and slot limits. The hub keeps **no session
+map**: it encodes the owning driver's pid and port into the session id it hands
+back, which makes it stateless and so safe under `std.http`'s worker pool without
+a lock. [`docs/Grid.md`](docs/Grid.md) has the reasoning and the limitations.
+
+It is graded against the real thing rather than against itself —
+`grid/run-grid-test.sh --hub` swaps the reference container for our hub and runs
+the *identical* per-binding Grid legs:
+
+```sh
+grid/run-grid-test.sh       <cmd>   # real Selenium Grid, in a container
+grid/run-grid-test.sh --hub <cmd>   # our hub, no container
+```
+
 ## Two test layers, and what each proves
 
 - **`.tests.ae`** (per binding): the binding works against the source tree with

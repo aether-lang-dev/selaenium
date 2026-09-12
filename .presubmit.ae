@@ -20,6 +20,12 @@ aeb(cap) {
         dep("selenium_core/.build.ae")
         dep("selenium_core/tests/.tests.ae")
 
+        // the standalone Grid hub (server side) + its pure routing probe. The
+        // LIVE hub is proven separately by `grid/run-grid-test.sh --hub`, which
+        // needs a driver and so is not part of a toolchain-only presubmit.
+        dep("grid/.build.ae")
+        dep("grid/.tests.ae")
+
         // the native Aether client (no FFI — drives the engine in-process)
         dep("aether/.tests.ae")
 

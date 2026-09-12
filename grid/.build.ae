@@ -1,0 +1,21 @@
+// The selaenium standalone Grid hub — a real W3C endpoint that provisions
+// drivers and proxies sessions to them (router + node + local drivers in ONE
+// process). lib("../selenium_core") resolves `driver`; lib(".../drivermgr") the
+// resolve/browser/version/cft/cache modules it imports by bare name.
+// caps: net (serve + proxy to the driver), os (spawn/kill drivers), fs (the
+// driver cache).
+import bldr
+import aether
+
+aeb(cap) {
+    bldr.build() {
+        aether.program() {
+            source("hub.ae")
+            lib(".")
+            lib("../selenium_core")
+            lib("../selenium_core/drivermgr")
+            caps("net,os,fs")
+            output("selaenium-hub")
+        }
+    }
+}

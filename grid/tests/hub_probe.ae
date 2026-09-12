@@ -1,0 +1,129 @@
+// grid/tests/hub_probe.ae — pure unit test for the standalone hub's routing
+// logic (hubcore.ae). No browser, no driver, no listening port: this proves the
+// part the hub's correctness actually hinges on — that a session id round-trips
+// its routing, that a malformed one is rejected rather than mis-routed, and that
+// browserName is found wherever a real client puts it.
+//
+// The live behaviour (provisioning a driver, proxying a whole session) is proven
+// separately by grid/run-grid-test.sh --hub against the per-binding Grid legs.
+import hubcore
+import std.string
+import std.spec
+
+_gt0(n: int) -> int { if n > 0 { return 1 } return 0 }
+
+main() {
+    fw = spec.init()
+
+    spec.describe(fw, "session-id codec") {
+        spec.it("round-trips pid, port and the driver's own id") callback {
+            sid = hubcore.encode_session_id(4321, 9515, "abc123")
+            spec.assert_str_eq(sid, "4321-9515-abc123", "encoded")
+            pid, port, real = hubcore.decode_session_id(sid)
+            spec.assert_eq(pid, 4321, "pid")
+            spec.assert_eq(port, 9515, "port")
+            spec.assert_str_eq(real, "abc123", "real id")
+        }
+        spec.it("keeps a driver id that itself contains dashes intact") callback {
+            // chromedriver ids are hex, but geckodriver hands out UUIDs — the
+            // codec must only split on the FIRST two dashes.
+            uuid = "6f3a1b2c-9d4e-4f50-8a11-2b3c4d5e6f70"
+            pid, port, real = hubcore.decode_session_id(
+                hubcore.encode_session_id(77, 4444, uuid))
+            spec.assert_eq(pid, 77, "pid")
+            spec.assert_eq(port, 4444, "port")
+            spec.assert_str_eq(real, uuid, "uuid survives")
+        }
+        spec.it("rejects ids that are not ours rather than mis-routing") callback {
+            _p1, port1, _r1 = hubcore.decode_session_id("abc123")
+            spec.assert_eq(port1, -1, "no dashes")
+            _p2, port2, _r2 = hubcore.decode_session_id("4321-abc")
+            spec.assert_eq(port2, -1, "one dash only")
+            _p3, port3, _r3 = hubcore.decode_session_id("nope-9515-abc")
+            spec.assert_eq(port3, -1, "non-numeric pid")
+            _p4, port4, _r4 = hubcore.decode_session_id("4321-nope-abc")
+            spec.assert_eq(port4, -1, "non-numeric port")
+            _p5, port5, _r5 = hubcore.decode_session_id("4321-9515-")
+            spec.assert_eq(port5, -1, "empty driver id")
+            _p6, port6, _r6 = hubcore.decode_session_id("4321-0-abc")
+            spec.assert_eq(port6, -1, "port zero")
+        }
+    }
+
+    spec.describe(fw, "session id out of a request path") {
+        spec.it("reads the segment after /session/") callback {
+            spec.assert_str_eq(hubcore.session_id_of_path("/session/1-2-abc/url"), "1-2-abc", "with tail")
+            spec.assert_str_eq(hubcore.session_id_of_path("/session/1-2-abc"), "1-2-abc", "bare")
+            spec.assert_str_eq(
+                hubcore.session_id_of_path("/session/1-2-abc/element/e1/text"), "1-2-abc", "deep path")
+        }
+        spec.it("is empty for a non-session path") callback {
+            spec.assert_str_eq(hubcore.session_id_of_path("/status"), "", "status")
+            spec.assert_str_eq(hubcore.session_id_of_path("/session"), "", "bare /session")
+        }
+    }
+
+    spec.describe(fw, "browserName out of a newSession body") {
+        spec.it("reads alwaysMatch") callback {
+            spec.assert_str_eq(
+                hubcore.browser_of_caps("{\"capabilities\":{\"alwaysMatch\":{\"browserName\":\"firefox\"}}}"),
+                "firefox", "alwaysMatch")
+        }
+        spec.it("falls back to the first firstMatch entry") callback {
+            spec.assert_str_eq(
+                hubcore.browser_of_caps("{\"capabilities\":{\"firstMatch\":[{\"browserName\":\"edge\"}]}}"),
+                "edge", "firstMatch")
+        }
+        spec.it("still reads the legacy desiredCapabilities") callback {
+            spec.assert_str_eq(
+                hubcore.browser_of_caps("{\"desiredCapabilities\":{\"browserName\":\"firefox\"}}"),
+                "firefox", "desiredCapabilities")
+        }
+        spec.it("defaults to chrome for empty or unparseable input") callback {
+            spec.assert_str_eq(hubcore.browser_of_caps(""), "chrome", "empty")
+            spec.assert_str_eq(hubcore.browser_of_caps("not json"), "chrome", "garbage")
+            spec.assert_str_eq(hubcore.browser_of_caps("{\"capabilities\":{}}"), "chrome", "no name")
+        }
+    }
+
+    spec.describe(fw, "driver response shaping") {
+        spec.it("finds the W3C value.sessionId") callback {
+            spec.assert_str_eq(
+                hubcore.session_id_of_response("{\"value\":{\"sessionId\":\"deadbeef\",\"capabilities\":{}}}"),
+                "deadbeef", "w3c")
+        }
+        spec.it("accepts a flat sessionId too") callback {
+            spec.assert_str_eq(
+                hubcore.session_id_of_response("{\"sessionId\":\"cafe\"}"), "cafe", "flat")
+        }
+        spec.it("is empty when there is no session id") callback {
+            spec.assert_str_eq(hubcore.session_id_of_response("{\"value\":null}"), "", "none")
+            spec.assert_str_eq(hubcore.session_id_of_response("garbage"), "", "unparseable")
+        }
+    }
+
+    spec.describe(fw, "tagged proxy replies") {
+        spec.it("splits status from body") callback {
+            st, body = hubcore.split_tagged("OK 200 {\"value\":null}")
+            spec.assert_eq(st, 200, "status")
+            spec.assert_str_eq(body, "{\"value\":null}", "body")
+        }
+        spec.it("reports a transport failure as status 0") callback {
+            st, body = hubcore.split_tagged("ERR connection refused")
+            spec.assert_eq(st, 0, "status")
+            spec.assert_str_eq(body, "connection refused", "message")
+        }
+    }
+
+    spec.describe(fw, "W3C error envelope") {
+        spec.it("carries error, message and stacktrace") callback {
+            env = hubcore.w3c_error("invalid session id", "not a hub session id: x")
+            spec.assert_true(_gt0(string.length(env)), "non-empty")
+            spec.assert_true(string.contains(env, "\"error\":\"invalid session id\""), "error field")
+            spec.assert_true(string.contains(env, "not a hub session id: x"), "message field")
+            spec.assert_true(string.contains(env, "\"stacktrace\""), "stacktrace field")
+        }
+    }
+
+    return spec.run_summary(fw)
+}

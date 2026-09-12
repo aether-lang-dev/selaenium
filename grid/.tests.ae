@@ -1,0 +1,16 @@
+// Pure unit test for the hub's routing logic (hubcore.ae) — the session-id
+// codec, capability reading and response shaping. No browser, no driver and no
+// listening port, so it runs anywhere. The LIVE hub (provisioning a driver and
+// proxying a whole session) is proven by grid/run-grid-test.sh --hub driving the
+// per-binding Grid legs.
+import bldr
+import aether
+
+aeb(cap) {
+    bldr.build() {
+        aether.program_test() {
+            source("tests/hub_probe.ae")
+            lib(".")
+        }
+    }
+}
