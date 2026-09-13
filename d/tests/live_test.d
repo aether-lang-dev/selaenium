@@ -89,11 +89,11 @@ private string resolveChromedriver() {
 }
 import std.array : split;
 
-void main() {
+int main() {
     string driverBin = resolveChromedriver();
     if (driverBin.length == 0) {
         writeln("SKIPPED: chromedriver could not be resolved");
-        return;
+        return 0;   // a skip is success
     }
 
     ushort port = freePort();
@@ -104,7 +104,7 @@ void main() {
     auto proc = launchDriver(driverBin);
     if (proc is null) {
         writeln("SKIPPED: chromedriver did not launch");
-        return;
+        return 0;   // a skip is success
     }
     scope(exit) proc.stop();
 
@@ -241,6 +241,11 @@ void main() {
     }
 
     writeln(failures == 0 ? "ALL PASSED" : "FAILURES");
-    import core.stdc.stdlib : exit;
-    exit(failures == 0 ? 0 : 1);
+    // RETURN, never core.stdc.stdlib.exit(): a C exit() terminates the process
+    // without unwinding, so every scope(exit) above it is skipped — the driver
+    // is never stopped and the session never quit. The orphaned chromedriver +
+    // Chrome then keep this process's inherited stdout pipe open, and whatever
+    // is reading it (aeb) blocks forever on a test that itself finished in
+    // seconds. An int main() sets the same exit status and still unwinds.
+    return failures == 0 ? 0 : 1;
 }

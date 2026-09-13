@@ -1141,7 +1141,14 @@ _ensure_bidi(sp: ptr) -> ptr {
 }
 
 // _bidi_id(session) — a fresh monotonic BiDi command id.
-_bidi_id(s: *WdSession) -> int {
+// Takes an untyped `ptr` and casts, like every other function in this file.
+// It is also the shape that compiles: a module-level function with a TYPED
+// struct-pointer parameter gets an export wrapper whose parameter is erased to
+// AetherValue*, which then calls the real WdSession* function — an incompatible
+// pointer, and a hard error on GCC 14+. Filed as
+// ../aether/asks/typed-struct-pointer-param-erased-in-export-wrapper.md.
+_bidi_id(sp: ptr) -> int {
+    s = sp as *WdSession
     id = s.next_bidi_id
     s.next_bidi_id = id + 1
     return id

@@ -213,9 +213,31 @@ final class WebDriver {
         quit();
     }
 
-    /// Close the session and release the engine handle. Idempotent.
+    /// End the session (W3C `DELETE /session`) and release the engine handle.
+    /// Idempotent.
+    ///
+    /// The `execute("quit")` is the part that actually stops the browser.
+    /// Releasing the engine handle alone only forgets the session locally: the
+    /// remote end keeps it, so Chrome stays up, and when the driver process is
+    /// later stopped the whole browser tree is orphaned onto init. (That was
+    /// this binding's behaviour until 2026-09-13 — a live test leaked ~14
+    /// processes per run, and those orphans held the inherited stdout pipe open,
+    /// which wedged `aeb d/.tests.ae` for as long as you let it run.)
+    ///
+    /// The catch mirrors python's try/finally and go's ignored error: a session
+    /// the remote end has already dropped must not stop us releasing the
+    /// handle, and `~this()` calls this.
     void quit() {
         if (handle !is null) {
+            if (_bidi !is null) {
+                _bidi.close();
+                _bidi = null;
+            }
+            try {
+                execute("quit", emptyObj);
+            } catch (Exception) {
+                // already gone remotely — still release the handle below
+            }
             aether_sel_embed_close(handle);
             handle = null;
         }

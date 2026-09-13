@@ -1090,8 +1090,12 @@ module Selenium
     # desync the other's ticks.
     private def sync_lengths
       n = Math.max(@pointer.size, @key.size)
-      @pointer << pause_action(0) while @pointer.size < n
-      @key << pause_action(0) while @key.size < n
+      while @pointer.size < n
+        @pointer << pause_action(0)
+      end
+      while @key.size < n
+        @key << pause_action(0)
+      end
     end
 
     # ---- pointer gestures ----
