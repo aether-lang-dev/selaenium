@@ -1,5 +1,13 @@
 # aeb: a node whose toolchain is missing reports "tests PASSED"
 
+> **FIXED upstream in aeb v0.308** — commit `2734bf5` *"nine test runners
+> reported PASS on a failing suite (`| tee` ate the exit code)"*. Re-verified
+> here on aeb v0.309 / ae 0.666.0: `d/.tests.ae` pointed at a `dmd` that always
+> fails now reports `0/1 FAIL` + `FAILED: 1 target`, where it previously
+> reported `2/2 PASS` in 0.01s. `ci/coverage.sh` stays useful regardless — it
+> answers "could this box test X at all", which is a different question from
+> "did the run go red".
+
 Found 2026-09-12 running the full presubmit on a dev box. Upstream bug in
 **aeb**, not in this repo. This is the one that matters most of the three asks
 here, because it makes a green presubmit mean less than it looks like it means.

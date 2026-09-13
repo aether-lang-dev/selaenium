@@ -1,5 +1,14 @@
 # aeb: the binary release omits aeb-resolve.jar, so every JVM node fails
 
+> **FIXED upstream in aeb v0.309** — `72db50c` builds aeb-resolve.jar as a
+> single fat jar (bld folded in, no runtime sibling) and `f05035d` publishes it
+> as a release asset that binary installs fetch; upstream marked it IMPLEMENTED
+> in `97793a2`. v0.308 `938faa9` separately stopped `make install` wiping the
+> jar, which is what had broken java and scala on this box. The suggestion this
+> ask led with — build it on demand, since anything needing the resolver already
+> has a JDK — was not taken; shipping it as an asset (suggestion 2) solves the
+> same problem without a build step at first use.
+
 Found 2026-09-12 after installing the pinned toolchain per the README.
 Upstream gap in **aeb's release packaging**, not in this repo.
 
