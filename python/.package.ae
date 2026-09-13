@@ -1,5 +1,5 @@
 // Python consumer package (the wheel). Bundles the engine .so into the package
-// tree (selenium_core/native/, where setup.py's package_data ships it) then
+// tree (selenium/native/, where setup.py's package_data ships it) then
 // builds the wheel from the hand-written setup.py via python.package_existing,
 // which publishes the dist dir on the "wheel_dir" edge for the consumer-install
 // proof (python/.example.ae). The .so staging is declarative (copy.file) into
@@ -15,10 +15,13 @@ aeb(cap) {
         dep("selenium_core/.build.ae")
         lib = dep_artifact("selenium_core/.build.ae", "shared_lib")
         // Bundle the engine .so where setup.py's package_data expects it (in the
-        // source package, so it lands inside the wheel under selenium_core/native/).
+        // source package, so it lands inside the wheel under selenium/native/).
+        // This path MUST track the package name: it was left at selenium_core/
+        // after the package was renamed to the mainstream `selenium`, so the .so
+        // was staged outside the package and the wheel shipped with NO engine.
         copy.file() {
             from(lib)
-            to("selenium_core/native/libselenium_core.so")
+            to("selenium/native/libselenium_core.so")
         }
         python.package_existing() {
         }

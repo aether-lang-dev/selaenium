@@ -1,7 +1,7 @@
 // Python consumer-install proof: prove the packaged wheel installs + runs from
 // a CLEAN environment for a third party. python.consumer_example unpacks the
 // dep's wheel into a bare site dir (no source tree, no dev deps), asserts the
-// bundled engine .so shipped (selenium_core/native/*.so), then runs the consumer
+// bundled engine .so shipped (selenium/native/*.so), then runs the consumer
 // with PYTHONPATH = ONLY that site and SELENIUM_CORE_LIB unset — so only the
 // bundled .so can satisfy the load. Three modes: ffi (no browser), discovery
 // (driver-manager), live (real chrome, self-skips). Skipped by preflight when
@@ -16,7 +16,7 @@ aeb(cap) {
         dep("python/.package.ae")
         python.consumer_example() {
             consumer_script("example/consumer_example.py")
-            asset_glob("selenium_core/native/*.so")
+            asset_glob("selenium/native/*.so")
             consumer_arg("ffi")
             consumer_arg("discovery")
             consumer_arg("live")

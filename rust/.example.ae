@@ -18,8 +18,16 @@ aeb(cap) {
             // the bundled crate (from the packaged rust/ tree).
             stage("Cargo.toml", "rust-pkg/Cargo.toml")
             stage("build.rs", "rust-pkg/build.rs")
+            // EVERY module lib.rs declares must be staged, or the packaged
+            // crate cannot compile for a consumer even though the in-tree build
+            // is green — actions/keys/select/wait were added to the binding and
+            // left out here, which is exactly the drift this proof exists for.
             stage("src/lib.rs", "rust-pkg/src/lib.rs")
             stage("src/json.rs", "rust-pkg/src/json.rs")
+            stage("src/actions.rs", "rust-pkg/src/actions.rs")
+            stage("src/keys.rs", "rust-pkg/src/keys.rs")
+            stage("src/select.rs", "rust-pkg/src/select.rs")
+            stage("src/wait.rs", "rust-pkg/src/wait.rs")
             stage("native/libselenium_core.so", "rust-pkg/native/libselenium_core.so")
             // the consumer crate (path-deps ../pkg).
             stage("example/Cargo.toml", "rust-consumer/Cargo.toml")

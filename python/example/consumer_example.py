@@ -1,4 +1,4 @@
-"""Third-party consumer example. Imports the INSTALLED `selenium_core` package
+"""Third-party consumer example. Imports the INSTALLED `selenium` package
 (from a clean venv — NOT the source tree) and proves the bundled engine .so
 loads and drives the protocol, with SELENIUM_CORE_LIB unset so only the wheel's
 own native/ dir can satisfy the load.
@@ -24,22 +24,22 @@ import time
 
 
 def _check_import_is_installed():
-    import selenium_core
-    path = os.path.dirname(os.path.abspath(selenium_core.__file__))
+    import selenium
+    path = os.path.dirname(os.path.abspath(selenium.__file__))
     # Must resolve to the clean installed location (a venv's site-packages, or
     # the clean-site dir the wheel was unpacked into), NOT the repo source tree
-    # at .../python/selenium_core. The .example.ae harness points PYTHONPATH at
+    # at .../python/selenium. The .example.ae harness points PYTHONPATH at
     # the install dir only; if we somehow imported the source tree, the whole
     # "does the packaged wheel stand alone" proof is void.
     installed = ("site-packages" in path) or ("consumer-site" in path)
     if not installed:
-        raise SystemExit(f"FAIL: imported selenium_core from {path}, not the installed wheel")
-    return selenium_core
+        raise SystemExit(f"FAIL: imported selenium from {path}, not the installed wheel")
+    return selenium
 
 
 def mode_ffi():
     sc = _check_import_is_installed()
-    from selenium_core import _native
+    from selenium import _native
 
     # Pure engine helpers cross the FFI.
     assert _native.take_string(_native.route(_native.encode("get"))) == "POST /session/:sessionId/url"
@@ -49,11 +49,12 @@ def mode_ffi():
     assert _native.error_code(_native.encode("no such element")) == 17
 
     # A transport failure round-trips cleanly (proves execute + the .so path).
-    from selenium_core import WebDriverError
+    from selenium import WebDriverException
+    from selenium.webdriver import Chrome
     try:
-        sc.Chrome("http://127.0.0.1:1")  # dead port
+        Chrome("http://127.0.0.1:1")  # dead port
         raise SystemExit("FAIL: expected transport failure")
-    except WebDriverError as e:
+    except WebDriverException as e:
         assert e.w3c_code == -1, e.w3c_code
     print("consumer(ffi): OK — installed wheel loaded its bundled .so and marshalled")
 
@@ -63,7 +64,7 @@ def mode_discovery():
     if os.environ.get("SELENIUM_CORE_LIB"):
         raise SystemExit("FAIL: SELENIUM_CORE_LIB is set; discovery mode must run without it")
     sc = _check_import_is_installed()
-    from selenium_core import _native
+    from selenium import _native
     _native._ensure_loaded()
     # The loaded library must be the one bundled inside the installed package.
     pkg_native = os.path.join(os.path.dirname(os.path.abspath(sc.__file__)), "native")
@@ -98,7 +99,7 @@ def mode_live():
         print("consumer(live): SKIPPED — chromedriver not on PATH")
         return
     sc = _check_import_is_installed()
-    from selenium_core import By
+    from selenium.webdriver import By
 
     port = _free_port()
     proc = subprocess.Popen([driver, f"--port={port}"],
@@ -108,7 +109,9 @@ def mode_live():
             print("consumer(live): SKIPPED — chromedriver did not come up")
             return
         opts = {"goog:chromeOptions": {"args": ["--headless=new", "--no-sandbox", "--disable-gpu"]}}
-        d = sc.Chrome(f"http://127.0.0.1:{port}", options=opts)
+        from selenium.webdriver import Remote
+        d = Remote(f"http://127.0.0.1:{port}",
+                   {"browserName": "chrome", **opts})
         try:
             import urllib.parse
             html = '<html><head><title>Installed</title></head><body><h1 id="h">Hi</h1></body></html>'
