@@ -9,7 +9,7 @@ status.
 
 ```
 selenium_core/          ONE engine, pure Aether — the whole protocol brain
-  selenium_core.ae        143 W3C routes, path templating, By/capabilities
+  selenium_core.ae        83 W3C routes, path templating, By/capabilities
                           normalization, W3C error decode, the std.http.client
                           round-trip to the driver/Grid
   embed.ae                the flat C ABI (aether_sel_embed_*), handle-based
@@ -17,7 +17,7 @@ selenium_core/          ONE engine, pure Aether — the whole protocol brain
   .build.ae               aeb node → selenium_core/native/libselenium_core.so
   tests/probe.ae          pure-Aether engine probe (no browser, no FFI)
 
-<lang>/                  18 thin bindings, each re-gluing to the ONE .so over that
+<lang>/                  28 thin bindings, each re-gluing to the ONE .so over that
                         language's FFI (see the README matrix). No protocol logic.
 
 aether/                 reserved for the Aether-LANGUAGE client (stub for now)
@@ -65,18 +65,28 @@ that pivot; that work is superseded by the reboot and lives only in git history.
 These are genuine capability gaps, not residue — tracked as the remaining
 "perfect reboot" work:
 
-- **Selenium Manager** — classic auto-downloads the right driver; our bindings
-  assume a driver is already running.
-- **WebDriver-BiDi** — the engine is W3C-classic-HTTP only; no BiDi (WebSocket,
-  event-driven) surface yet. See the parked WASM sketches in this dir for where
-  BiDi would tie in.
+- **Selenium Manager** — *done*: `selenium_core/drivermgr/` is the port. It
+  detects the installed browser and version, resolves the matching driver
+  (chromedriver via Chrome-for-Testing, geckodriver via the SeleniumHQ table +
+  GitHub releases, msedgedriver via the microsoft.com endpoints), and downloads
+  into a cache — and will fetch a Chrome-for-Testing browser too when none is
+  installed. `driver.ae` adds launch/stop. Exposed on the ABI as
+  `resolve_driver` / `ensure_driver` / `launch_driver` / `stop_driver`. See
+  `docs/Selenium-Manager-Port.md`.
+- **WebDriver-BiDi** — *done*: `selenium_bidi.ae` + `bidi_demux.ae` over
+  `std.http.ws_connect`, with the frame router unit-tested (`bidi_demux_probe`)
+  and a live slice (`bidi_slice.ae`). The ABI carries the whole surface
+  (`bidi_*`), network interception included. See `docs/WebDriver-BiDi.md`.
 - **Grid** — *revisited*: standalone mode now exists (`grid/hub.ae` →
   `selaenium-hub`: router + node + local drivers in one process, graded against
   the reference container by `grid/run-grid-test.sh --hub`). The **distributed**
   server — Router / Distributor / SessionQueue / SessionMap with remote Nodes
   over an event bus — remains out of scope. See `docs/Grid.md`.
-- **Publish** — bindings build + test, but there is no `pip`/gem/npm/NuGet/Maven
-  publish story (aeb's publish side is itself a TODO upstream).
+- **Publish** — partly: each binding builds a distributable and proves it
+  installs and works from clean (`.package.ae` + `.example.ae`, eleven of them,
+  all in `.presubmit.ae` — see `docs/Consumer-Install.md`). What is still
+  missing is pushing those artifacts to `pip`/gem/npm/NuGet/Maven (aeb's publish
+  side is itself a TODO upstream).
 - **CI** — GitHub Actions still to be rebuilt around `aeb .presubmit.ae`.
 
 ## Cross-compiled release — the engine `.so`/`.dylib` (three tiers)

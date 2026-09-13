@@ -1,5 +1,9 @@
 # aeb: `python.pip("pytest")` does not install into the venv it then runs
 
+> **Filed upstream** where the fix belongs, as
+> `../aeb/asks/python-pip-does-not-install-into-the-venv.md`. Kept here so the
+> symptom is searchable from this repo.
+
 Found 2026-09-13 on aeb v0.309 / ae 0.666.0. Upstream bug in **aeb's python
 SDK**, not in this repo.
 

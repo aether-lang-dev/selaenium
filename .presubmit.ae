@@ -4,7 +4,7 @@
 // engine + drives every binding's test node (each skips green where its
 // toolchain is absent).
 //
-// 24 language bindings over ONE pure-Aether engine (libselenium_core.so, the flat
+// 28 language bindings over ONE pure-Aether engine (libselenium_core.so, the flat
 // aether_sel_embed_* C ABI) — see README.md for the whole picture. The native
 // Aether client is the only no-FFI binding; the JVM/CLR/BEAM families ride one
 // shared binding each (Java jar / C# P/Invoke / Erlang NIF).

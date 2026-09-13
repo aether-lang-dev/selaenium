@@ -171,9 +171,11 @@ against Chrome for the WebAuthn and log-type commands.
 - **Live tests leak browsers, and that is how you OOM the box.** A test whose
   session is never quit leaves chromedriver + Chrome alive. 28 of them plus a
   pile of background waiters exhausted memory in one session. After a live run:
-  `pkill -f 'cache/selenium'`. Also: `aeb d/.tests.ae` currently HANGS forever
-  after its tests print `ALL PASSED`, with ~3s of CPU — almost certainly waiting
-  on exactly those orphaned children. Unfixed; see the open list.
+  `pkill -f 'cache/selenium'`. This is also how a "hang" happens: orphans inherit
+  the test's stdout pipe and hold the write end open, so whoever is reading it
+  (aeb) blocks forever on a test that finished in seconds. That was `aeb
+  d/.tests.ae` for a while — the cause was the D binding's `quit()` not issuing
+  the W3C `DELETE /session`, so **check teardown before blaming the runner**.
 - **`ci/versions.env` is sourced.** When editing it programmatically, note that
   `AETHER_REF=` appears inside the header comment BEFORE the real assignment —
   slicing on the first match mangles the file into invalid shell. (Done. Caught
@@ -185,19 +187,36 @@ against Chrome for the WebAuthn and log-type commands.
 
 Keep this list honest — delete an entry when it is fixed, not before.
 
-- `aether/webdriver.ae` does not compile on the pinned ae 0.666.0 —
-  `expected 'WdSession *' but argument is of type 'AetherValue *'`. The native
-  Aether client is therefore red at the pin.
-- `crystal/src` uses a trailing `while` that Crystal 1.17.1 rejects.
-- `aeb d/.tests.ae` hangs after its tests pass (above).
-- aeb's scala node resolves a compiler classpath missing `scala3-compiler`, so
-  it dies with `Could not find or load main class dotty.tools.dotc.Main`. The
-  `scalac` on PATH is fine and unused — aeb runs the jars on the JDK.
-- `python.pip("pytest")` installs nothing into aeb's own venv; the node fails
-  with `No module named pytest` buried in `target/tests/python/test_output.log`.
-  See `asks/`.
-- `docs/Architecture.md` and `.presubmit.ae` carry stale binding/route counts
-  (143 routes claimed; the table has 83).
+- **`aeb aether/.tests.ae` fails at the LINK step.** The five
+  `aether_pure_tls_client_*` entry points are emitted non-static into every TU
+  that transitively imports `std.http.client`, so the two TUs aeb links collide.
+  305 definitions are shared between those TUs and only these five clash; the
+  rest are static. Filed as
+  `../aether/asks/pure-tls-client-defined-non-static-in-every-tu.md`. **Not
+  worked around here** — there is no honest selaenium-side fix, and
+  restructuring the repo to dodge a codegen bug would only hide it.
+- **`aeb scala/.tests.ae` fails.** `scala.scalac_test` compiles with an EMPTY
+  compiler classpath, so `java -cp '' dotty.tools.dotc.Main` cannot find its own
+  main class; with an `env()` declared, the export prefix lands in that empty
+  slot instead. The `scalac` on PATH is fine and unused — aeb runs the resolved
+  jars on the JDK. Filed as `../aeb/asks/scalac-test-compiler-classpath-empty.md`.
+  Removing the `env()` is NOT a fix: a JVM-family binding needs
+  `SELENIUM_CORE_LIB` to find the engine at run time.
+- **`aeb python/.tests.ae` fails.** `python.pip("pytest")` installs nothing into
+  aeb's own venv — after `rm -rf .aeb/venv`, site-packages contains only `pip`.
+  Install pytest there by hand and the node is 65/65. Filed as
+  `../aeb/asks/python-pip-does-not-install-into-the-venv.md`.
+- **`swift/` has no `.example.ae`**, and swift is exactly where a consumer-only
+  bug was found by hand (a relative `-L` in `Package.swift`). Worth adding.
+  Swift on this box also needs `libncurses.so.6` and `libxml2.so.2`, sonames
+  Arch does not ship.
+
+Fixed since this file was written, kept as a record of what the symptoms looked
+like: the D binding's `quit()` never issued the W3C `DELETE /session` (leaked
+~14 processes a run, and the orphans wedged `aeb d/.tests.ae` for as long as you
+let it run — it now finishes in 17s); `core.stdc.stdlib.exit()` in the D test
+skipped every `scope(exit)`, which hid that; crystal's trailing `while`;
+`aether/webdriver.ae`'s typed struct-pointer parameter.
 
 ## The `asks/` convention
 
