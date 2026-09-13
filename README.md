@@ -272,10 +272,17 @@ grid/run-grid-test.sh --hub <cmd>   # our hub, no container
 - **`.tests.ae`** (per binding): the binding works against the source tree with
   the engine `.so` handed in via `SELENIUM_CORE_LIB`. Proves the *binding*.
 - **`.package.ae` + `.example.ae`** (per binding): the distributable — a wheel /
-  a Go module — with the engine `.so` **bundled inside**, installed into a clean
-  environment (no source tree on the path, `SELENIUM_CORE_LIB` unset), then run.
-  Proves a naive `pip install` / `go get` actually works. Both drive real
-  headless Chrome from the *installed* artifact.
+  gem / npm package / jar / crate / module — with the engine `.so` **bundled
+  inside**, installed into a clean environment (no source tree on the path,
+  `SELENIUM_CORE_LIB` unset), then run. Proves a naive `pip install` / `go get`
+  actually works. All drive real headless Chrome from the *installed* artifact.
+  Eleven bindings have one, and they are part of `aeb .presubmit.ae`.
+
+  This layer is not optional: a `.tests.ae` runs against the SOURCE tree, so it
+  cannot see a packaging break. When these were first run (2026-09-13) four were
+  failing — including a Python wheel that shipped no engine `.so` at all — while
+  every corresponding `.tests.ae` was green. See
+  [`docs/Consumer-Install.md`](docs/Consumer-Install.md).
 
 ## The C ABI (`aether_sel_embed_*`)
 

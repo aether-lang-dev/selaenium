@@ -9,9 +9,15 @@
 // Aether client is the only no-FFI binding; the JVM/CLR/BEAM families ride one
 // shared binding each (Java jar / C# P/Invoke / Erlang NIF).
 //
-// The .example.ae consumer-install proofs are NOT yet migrated to bldr (they
-// remain on the old build.* API pending an aeb consumer_example() builder) and
-// are therefore omitted here; add them back once migrated.
+// The .example.ae consumer-install proofs ARE wired in (bottom of the list).
+// They had been omitted on the belief that they still needed an aeb
+// consumer_example() builder; they do not — all eleven run under aeb v0.309.
+// Leaving them out had a cost: `.tests.ae` proves the binding against the
+// SOURCE tree, so nothing was checking that the thing we publish actually
+// works. Four were broken when first run (2026-09-13) — the python wheel
+// shipped no engine .so at all, the packaged rust crate could not compile, and
+// the javascript consumer was on a renamed package plus the pre-async API —
+// none of which any `.tests.ae` can see. See docs/Consumer-Install.md.
 import bldr
 
 aeb(cap) {
@@ -61,5 +67,28 @@ aeb(cap) {
         dep("gleam/.tests.ae")
         dep("elixir/.tests.ae")
         dep("lfe/.tests.ae")
+
+        // Consumer-install proofs: build the distributable (wheel / gem / npm
+        // package / jar / crate / module), install it into a CLEAN environment
+        // with no source tree and no SELENIUM_CORE_LIB, and drive the engine
+        // from it. This is the only layer that can catch a packaging break —
+        // a relative -L that resolves against the consumer's directory, an
+        // asset that never made it into the archive, a module the staging list
+        // forgot. All eleven green as of 2026-09-13.
+        //
+        // swift/ has NO .example.ae, and that is exactly where a
+        // consumer-only bug was found by hand (a relative "-L native" in
+        // Package.swift); worth adding.
+        dep("python/.example.ae")
+        dep("ruby/.example.ae")
+        dep("javascript/.example.ae")
+        dep("java/.example.ae")
+        dep("go/.example.ae")
+        dep("rust/.example.ae")
+        dep("dart/.example.ae")
+        dep("nim/.example.ae")
+        dep("zig/.example.ae")
+        dep("lua/.example.ae")
+        dep("d/.example.ae")
     }
 }
