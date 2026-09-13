@@ -1,4 +1,4 @@
-// Third-party consumer example. Requires the INSTALLED `selenium-core` package
+// Third-party consumer example. Requires the INSTALLED `selenium-webdriver` package
 // (from a clean node_modules — NOT the source tree) and proves the bundled
 // engine .so loads and drives the protocol, with SELENIUM_CORE_LIB unset so only
 // the package's own bundled native/ can satisfy the load.
@@ -15,14 +15,14 @@ const path = require('node:path')
 const fs = require('node:fs')
 
 // Resolve the INSTALLED package (from this example dir's node_modules), not the
-// repo source. require('selenium-core') resolves via node_modules here.
-const s = require('selenium-core')
+// repo source. require('selenium-webdriver') resolves via node_modules here.
+const s = require('selenium-webdriver')
 
 function checkInstalled() {
-  const resolved = require.resolve('selenium-core')
+  const resolved = require.resolve('selenium-webdriver')
   if (resolved.includes(`${path.sep}javascript${path.sep}index.js`) &&
       !resolved.includes('node_modules')) {
-    console.error(`FAIL: resolved selenium-core from source (${resolved}), not the installed package`)
+    console.error(`FAIL: resolved selenium-webdriver from source (${resolved}), not the installed package`)
     process.exit(1)
   }
   return path.dirname(resolved)
@@ -32,7 +32,7 @@ function modeFfi() {
   checkInstalled()
   if (s.route('get') !== 'POST /session/:sessionId/url') throw new Error('route mismatch')
   if (s.errorCode('no such element') !== 17) throw new Error('errorCode mismatch')
-  const loc = JSON.parse(s.locator(s.By.ID, 'main'))
+  const loc = JSON.parse(s.locator('id', 'main'))
   if (loc.value !== '*[id="main"]') throw new Error(`locator mismatch: ${JSON.stringify(loc)}`)
   try {
     s.WebDriver.chrome('http://127.0.0.1:1')
@@ -122,12 +122,13 @@ async function modeLive() {
       '<!doctype html><title>Installed</title><h1 id="h">Hi</h1>'
     const d = s.WebDriver.headlessChrome(`http://127.0.0.1:${port}`)
     try {
-      d.get('data:text/html;charset=utf-8,' + encodeURIComponent(html))
-      if (d.title !== 'Installed') throw new Error(`title=${d.title}`)
-      if (d.findElement(s.By.ID, 'h').text !== 'Hi') throw new Error('text mismatch')
+      await d.get('data:text/html;charset=utf-8,' + encodeURIComponent(html))
+      const title = await d.getTitle()
+      if (title !== 'Installed') throw new Error(`title=${title}`)
+      if ((await d.findElement(s.By.id('h')).getText()) !== 'Hi') throw new Error('text mismatch')
       console.log('consumer(live): OK — installed package drove real headless Chrome')
     } finally {
-      d.quit()
+      await d.quit()
     }
   } finally {
     cd.kill()

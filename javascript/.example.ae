@@ -2,7 +2,7 @@
 // a CLEAN project for a third party. javascript.consumer_example makes a bare
 // consumer project (minimal package.json), `npm install <tarball>` (unpacks our
 // package + koffi into node_modules with the bundled .so), asserts the .so
-// shipped under node_modules/selenium-core/native/, then runs the consumer with
+// shipped under node_modules/selenium-webdriver/native/, then runs the consumer with
 // SELENIUM_CORE_LIB unset (only the bundled .so can satisfy the load). Modes:
 // ffi/discovery/live (live self-skips). Skipped by preflight when node is absent
 // (prereq node:18).
@@ -16,7 +16,7 @@ aeb(cap) {
         dep("javascript/.package.ae")
         javascript.consumer_example() {
             consumer_script("example/consumer_example.js")
-            asset_glob("node_modules/selenium-core/native/*.so")
+            asset_glob("node_modules/selenium-webdriver/native/*.so")
             consumer_arg("ffi")
             consumer_arg("discovery")
             consumer_arg("live")
