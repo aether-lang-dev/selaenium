@@ -25,7 +25,7 @@ bindings resolve their Maven deps on a fresh binary install:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/aether-lang-dev/aeb/main/get.sh \
-  | AE_PIN=0.666.0 AEB_REF=v0.309 sh
+  | AE_PIN=0.668.0 AEB_REF=v0.309 sh
 ```
 
 `get.sh` is also a sourceable library — a CI step can source it (set
@@ -33,7 +33,7 @@ curl -fsSL https://raw.githubusercontent.com/aether-lang-dev/aeb/main/get.sh \
 
 ```bash
 AEBGET_SOURCE_ONLY=1 . <(curl -fsSL https://raw.githubusercontent.com/aether-lang-dev/aeb/main/get.sh)
-AE_PIN=0.666.0 AEB_REF=v0.309 aeb_bootstrap
+AE_PIN=0.668.0 AEB_REF=v0.309 aeb_bootstrap
 ```
 
 Then build the engine (the one thing every binding needs) and, for a given
@@ -308,7 +308,7 @@ SELENIUM_CORE_LIB="$PWD/selenium_core/native/libselenium_core.so" python3 python
 ## Status — end-to-end green ✅
 
 Needs **Aether ≥ 0.638** — the floor recorded in [`ci/versions.env`](ci/versions.env),
-which pins `ae` 0.666.0 and `aeb` v0.309. 0.638 is where `std.http.ws_connect`
+which pins `ae` 0.668.0 and `aeb` v0.309. 0.638 is where `std.http.ws_connect`
 (the BiDi WebSocket client) and the single-file-module fix that this repo's
 `aether.toml` depends on both land. Building with an older `aeb` than the pin
 fails early with `unresolved import 'cache'`.

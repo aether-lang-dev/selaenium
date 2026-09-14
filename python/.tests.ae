@@ -6,14 +6,21 @@
 // chain. Skipped cleanly by preflight when python is absent (prereq python:3).
 import bldr
 import python
+import python (pip)
 
 aeb(cap) {
     bldr.build() {
         prereq("python:3")
         dep("selenium_core/.build.ae")
         lib = dep_artifact("selenium_core/.build.ae", "shared_lib")
-        python.pip("pytest")
-        python.install()
+        // pip() is a BLOCK SETTER of install(), not a node. Called at top level
+        // it writes onto the graph ctx instead of install()'s block, so install()
+        // never sees the dep and the venv gets only base pip — the suite then
+        // fails with "No module named pytest". aeb v0.310 makes that misuse a
+        // hard error; on v0.309 and earlier it is silent.
+        python.install() {
+            pip("pytest")
+        }
         python.pytest() {
             env("SELENIUM_CORE_LIB", lib)
             env("PYTEST_DISABLE_PLUGIN_AUTOLOAD", "1")

@@ -182,6 +182,15 @@ against Chrome for the WebAuthn and log-type commands.
   by trying to source it.)
 - **The engine normalizes; the binding does not.** See "The one rule". Tests
   that assert otherwise are testing the wrong layer.
+- **A block setter called at node level silently does nothing.**
+  `python.pip("pytest")` at the top of a `bldr.build()` writes onto the GRAPH
+  ctx, not `install()`'s block, so the dep vanishes and the venv gets only base
+  pip — the suite then fails with "No module named pytest" and sends you looking
+  at aeb. Correct grammar is `python.install() { pip("pytest") }`. Same family as
+  ruby's `bundle()`. aeb v0.310 hard-errors on the misuse; before that it is
+  silent. To audit: cross-check every top-level `<sdk>.<fn>(` in a node against
+  `builder <fn>(` in `~/.local/share/aeb/lib/<sdk>/module.ae` — allowing for
+  builders that take arguments, e.g. `kotlin_test(test_class)`.
 
 ## Open, known-broken
 
@@ -197,15 +206,11 @@ Keep this list honest — delete an entry when it is fixed, not before.
   restructuring the repo to dodge a codegen bug would only hide it.
 - **`aeb scala/.tests.ae` fails.** `scala.scalac_test` compiles with an EMPTY
   compiler classpath, so `java -cp '' dotty.tools.dotc.Main` cannot find its own
-  main class; with an `env()` declared, the export prefix lands in that empty
-  slot instead. The `scalac` on PATH is fine and unused — aeb runs the resolved
-  jars on the JDK. Filed as `../aeb/asks/scalac-test-compiler-classpath-empty.md`.
-  Removing the `env()` is NOT a fix: a JVM-family binding needs
+  main class. The `scalac` on PATH is fine and unused — aeb runs the resolved
+  jars on the JDK. Filed as `../aeb/asks/scalac-test-compiler-classpath-empty.md`;
+  aeb main (`0959a64`, unreleased) makes it fail with a message naming the real
+  cause instead. Removing the `env()` is NOT a fix: a JVM-family binding needs
   `SELENIUM_CORE_LIB` to find the engine at run time.
-- **`aeb python/.tests.ae` fails.** `python.pip("pytest")` installs nothing into
-  aeb's own venv — after `rm -rf .aeb/venv`, site-packages contains only `pip`.
-  Install pytest there by hand and the node is 65/65. Filed as
-  `../aeb/asks/python-pip-does-not-install-into-the-venv.md`.
 - **`swift/` has no `.example.ae`**, and swift is exactly where a consumer-only
   bug was found by hand (a relative `-L` in `Package.swift`). Worth adding.
   Swift on this box also needs `libncurses.so.6` and `libxml2.so.2`, sonames
@@ -216,7 +221,8 @@ like: the D binding's `quit()` never issued the W3C `DELETE /session` (leaked
 ~14 processes a run, and the orphans wedged `aeb d/.tests.ae` for as long as you
 let it run — it now finishes in 17s); `core.stdc.stdlib.exit()` in the D test
 skipped every `scope(exit)`, which hid that; crystal's trailing `while`;
-`aether/webdriver.ae`'s typed struct-pointer parameter.
+`aether/webdriver.ae`'s typed struct-pointer parameter; and `python.pip()` being
+called at node level (ours, not aeb's — see the gotcha above).
 
 ## The `asks/` convention
 
