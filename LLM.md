@@ -207,7 +207,7 @@ Keep this list honest — delete an entry when it is fixed, not before.
   that transitively imports `std.http.client`, so the two TUs aeb links collide.
   305 definitions are shared between those TUs and only these five clash; the
   rest are static. Filed as
-  `../aether/asks/pure-tls-client-defined-non-static-in-every-tu.md`. **Not
+  `asks/aether-pure-tls-client-defined-non-static-in-every-tu.md`. **Not
   worked around here** — there is no honest selaenium-side fix, and
   restructuring the repo to dodge a codegen bug would only hide it.
 - **`aeb scala/.tests.ae` fails** — still, on aeb v0.310. `scalac_test` splices
@@ -217,7 +217,7 @@ Keep this list honest — delete an entry when it is fixed, not before.
   environment assignment. There are two `-cp` in that command; the second
   (scalac's own) is correct. v0.310's new empty-classpath guard does not fire
   precisely because the slot is not empty. Re-filed as
-  `../aeb/asks/scalac-test-env-prefix-lands-in-the-compiler-classpath.md` after
+  `asks/aeb-scalac-test-env-prefix-lands-in-the-compiler-classpath.md` after
   the original was closed as satisfied. Removing the `env()` is NOT a fix: a
   JVM-family binding needs `SELENIUM_CORE_LIB` to find the engine at run time.
 - **`swift/` has no `.example.ae`**, and swift is exactly where a consumer-only
@@ -235,10 +235,18 @@ called at node level (ours, not aeb's — see the gotcha above).
 
 ## The `asks/` convention
 
-Upstream bugs in `ae` / `aeb` get written up in `asks/` as a markdown file:
-symptom with real output, cause, workaround, suggested fix. Mark one **FIXED**
-in place with the upstream commit when it lands — do not delete it, so the
-symptom stays searchable. Two filed this way were fixed in aeb v0.308/v0.309.
+Upstream bugs in `ae` / `aeb` get written up as a markdown file: symptom with
+real output, cause, workaround, suggested fix. Mark one **FIXED** in place with
+the upstream commit when it lands — do not delete it, so the symptom stays
+searchable. Two filed this way were fixed in aeb v0.308/v0.309.
+
+**File it where the fix belongs** — `~/scm/aeb/asks/` or `~/scm/aether/asks/`,
+both checked out alongside this repo — and keep a copy here under `asks/`,
+prefixed `aeb-` / `aether-`, with a header naming the upstream path and whether
+it is still open. Filing only locally means the people who can fix it never see
+it. Note the upstream may DELETE an ask it considers satisfied (aeb `909bc88`
+removed eight), so the local copy is also the durable record: when one is closed
+wrongly, re-file under a new name rather than editing a deleted file.
 
 ## Repo geography
 
