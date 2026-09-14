@@ -164,6 +164,12 @@ against Chrome for the WebAuthn and log-type commands.
   loop, which is why the live test's content server runs out-of-process — an
   in-process one cannot answer while an `await d.get()` is inside its blocking
   round-trip.
+- **A live test that fails in a back-to-back sweep may just be contention.**
+  Ten nodes in a row, each driving real browsers, is enough to make a
+  `new session: recv timeout or I/O error` appear — `rust` did exactly that, then
+  passed 6/6 run alone a minute later. Re-run the node on its own before calling
+  it a regression, especially right after a toolchain bump where a real
+  regression is what you are expecting to see.
 - **Chrome / chromedriver version skew is the usual cause of a live-test
   failure.** `~/.cache/selenium` accumulates drivers; a 153 driver against a
   152 browser fails with a clear message that is easy to miss inside a wall of
@@ -204,13 +210,16 @@ Keep this list honest — delete an entry when it is fixed, not before.
   `../aether/asks/pure-tls-client-defined-non-static-in-every-tu.md`. **Not
   worked around here** — there is no honest selaenium-side fix, and
   restructuring the repo to dodge a codegen bug would only hide it.
-- **`aeb scala/.tests.ae` fails.** `scala.scalac_test` compiles with an EMPTY
-  compiler classpath, so `java -cp '' dotty.tools.dotc.Main` cannot find its own
-  main class. The `scalac` on PATH is fine and unused — aeb runs the resolved
-  jars on the JDK. Filed as `../aeb/asks/scalac-test-compiler-classpath-empty.md`;
-  aeb main (`0959a64`, unreleased) makes it fail with a message naming the real
-  cause instead. Removing the `env()` is NOT a fix: a JVM-family binding needs
-  `SELENIUM_CORE_LIB` to find the engine at run time.
+- **`aeb scala/.tests.ae` fails** — still, on aeb v0.310. `scalac_test` splices
+  the `env()` export prefix into the COMPILER-classpath slot:
+  `java -cp 'SELENIUM_CORE_LIB=/…/libselenium_core.so' dotty.tools.dotc.Main …`,
+  so the JVM looks for `dotty.tools.dotc.Main` on a classpath that is an
+  environment assignment. There are two `-cp` in that command; the second
+  (scalac's own) is correct. v0.310's new empty-classpath guard does not fire
+  precisely because the slot is not empty. Re-filed as
+  `../aeb/asks/scalac-test-env-prefix-lands-in-the-compiler-classpath.md` after
+  the original was closed as satisfied. Removing the `env()` is NOT a fix: a
+  JVM-family binding needs `SELENIUM_CORE_LIB` to find the engine at run time.
 - **`swift/` has no `.example.ae`**, and swift is exactly where a consumer-only
   bug was found by hand (a relative `-L` in `Package.swift`). Worth adding.
   Swift on this box also needs `libncurses.so.6` and `libxml2.so.2`, sonames
