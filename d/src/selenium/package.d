@@ -52,6 +52,9 @@ private extern (C) nothrow @nogc {
     void  aether_sel_embed_timer_stop(void* h, const(char)* name);
     char* aether_sel_embed_timers_json(void* h);
 
+    // Runner: the interactive shell (one line -> a JSON result)
+    char* aether_sel_embed_shell_eval(void* h, const(char)* line);
+
     // atom-backed element commands
     int   aether_sel_embed_execute_atom(void* h, const(char)* atom_name, const(char)* elem_id, const(char)* extra_json);
     int   aether_sel_embed_is_displayed(void* h, const(char)* elem_id);
@@ -442,6 +445,14 @@ final class WebDriver {
     /// Drain the stopped-timer spans as a JSON array (and reset).
     JSONValue timers() {
         return parseJSON(takeString(aether_sel_embed_timers_json(handle)));
+    }
+
+    /// Runner shell: evaluate ONE shell line (e.g. `open <url>`, `click #go`,
+    /// `text #hdr`, `eval return 6*7`, `trace on`, `events`) against this
+    /// session; returns the engine's JSON result (`{ok,value|info|error}`).
+    /// The grammar + dispatch are engine-side (shell.ae) — this is a thin call.
+    JSONValue shell(string line) {
+        return parseJSON(takeString(aether_sel_embed_shell_eval(handle, line.toStringz)));
     }
 
     // --- logs (Selenium `se/log` vendor extension) ---

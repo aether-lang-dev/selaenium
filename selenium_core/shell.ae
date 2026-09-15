@@ -1,0 +1,248 @@
+// shell.ae — the engine-side interactive shell interpreter (Runner: the "wee
+// shell language" for driving + inspecting a live session interactively).
+//
+// A single pure entry point, shell_eval(session, line) -> result JSON, parses a
+// terse human-first line into (verb, args) and dispatches through the SAME
+// command catalog every binding uses (execute / by_locator / the Phase-0 trace
+// hooks). Because it lives in the engine, ALL 27 bindings — and every future
+// front-end (a terminal REPL, an SUT-adjacent iframe, VS Code, Tauri) — become
+// a shell by shipping a line down and rendering the result up; none re-implement
+// the grammar. This is the interactive cousin of the .side runner: same command
+// vocabulary, one typed live, one loaded from a file, one dispatch core.
+//
+// Informed by webautoma's SAM ("Step-Aside Mode") console (Apache-2.0); see
+// NOTICE. Step/inspect/continue/jump debug verbs ride the same seam and land as
+// front-ends drain the runner control lane (the named-channel demux) — this
+// module is the language + immediate-execution half.
+//
+// Result shape (always JSON, so every front-end parses one thing):
+//   {"ok":true,"value":<json>}      a command ran; value is its result payload
+//   {"ok":true,"info":"<text>"}     a meta command (help, trace on) with no value
+//   {"ok":false,"error":"<text>","code":<n>}   a failure (parse or W3C error)
+import std.string
+import std.json
+import selenium_core
+
+// shell_eval(sp, line) — parse and run one shell line against session `sp`.
+// Never throws; every outcome is a JSON string. `sp` may be null (returns an
+// error result rather than crashing).
+shell_eval(sp: ptr, line: string) -> string {
+    trimmed = string.trim(line)
+    if string.length(trimmed) == 0 { return _info("") }         // blank line: no-op
+    if string.starts_with(trimmed, "#") == 1 { return _info("") } // comment
+
+    verb = _word(trimmed, 0)
+    rest = _after(trimmed, verb)
+
+    // ---- navigation ----
+    if verb == "open" { return _cmd(sp, "get", _obj1("url", rest)) }
+    if verb == "title" { return _cmd(sp, "getTitle", "{}") }
+    if verb == "url" { return _cmd(sp, "getCurrentUrl", "{}") }
+    if verb == "source" { return _cmd(sp, "getPageSource", "{}") }
+    if verb == "back" { return _cmd(sp, "goBack", "{}") }
+    if verb == "forward" { return _cmd(sp, "goForward", "{}") }
+    if verb == "refresh" { return _cmd(sp, "refresh", "{}") }
+
+    // ---- element actions: <verb> <selector> [text] ----
+    if verb == "click" { return _el_action(sp, "clickElement", rest, "") }
+    if verb == "clear" { return _el_action(sp, "clearElement", rest, "") }
+    if verb == "text" { return _el_text(sp, rest) }
+    if verb == "type" {
+        sel = _word(rest, 0)
+        txt = _after(rest, sel)
+        return _el_action(sp, "sendKeysToElement", sel, txt)
+    }
+
+    // ---- scripts ----
+    if verb == "eval" { return _cmd(sp, "executeScript", _script_obj(rest)) }
+
+    // ---- raw escape hatch: `exec <command> <params-json>` ----
+    if verb == "exec" {
+        cmd = _word(rest, 0)
+        params = string.trim(_after(rest, cmd))
+        if string.length(params) == 0 { params = "{}" }
+        return _cmd(sp, cmd, params)
+    }
+
+    // ---- Phase-0 trace + timers (the inspect surface) ----
+    if verb == "trace" {
+        arg = string.trim(rest)
+        if arg == "on" { selenium_core.session_set_trace(sp, 1); return _info("trace on") }
+        if arg == "off" { selenium_core.session_set_trace(sp, 0); return _info("trace off") }
+        return _err("usage: trace on|off", 0)
+    }
+    if verb == "events" {
+        return _ok_value(selenium_core.trace_json_of(sp))
+    }
+    if verb == "timer" {
+        sub = _word(rest, 0)
+        name = string.trim(_after(rest, sub))
+        if sub == "start" { selenium_core.timer_start(sp, name); return _info(string.concat("timer start ", name)) }
+        if sub == "stop" { selenium_core.timer_stop(sp, name); return _info(string.concat("timer stop ", name)) }
+        return _err("usage: timer start|stop <name>", 0)
+    }
+    if verb == "timers" {
+        return _ok_value(selenium_core.timers_json_of(sp))
+    }
+
+    // ---- meta ----
+    if verb == "help" { return _info(_help_text()) }
+    if verb == "sid" { return _info(selenium_core.session_id_of(sp)) }
+
+    return _err(string.concat("unknown command: ", verb), 0)
+}
+
+// ---- dispatch helpers ------------------------------------------------------
+
+// _cmd — run a W3C command by name with a params-JSON string; wrap last_value or
+// the typed error as a result object.
+_cmd(sp: ptr, name: string, params_json: string) -> string {
+    if sp == null { return _err("no session", -1) }
+    rc = selenium_core.execute(sp, name, params_json)
+    if rc != 0 {
+        return _err(selenium_core.last_error_of(sp), selenium_core.last_error_code_of(sp))
+    }
+    return _ok_value(selenium_core.last_value_of(sp))
+}
+
+// _el_action — find the element named by `sel`, then run an element-scoped
+// command (click/clear/sendKeys) with the found id (+ optional text).
+_el_action(sp: ptr, command: string, sel: string, text: string) -> string {
+    eid = _find(sp, sel)
+    if string.length(eid) == 0 { return _err(_find_err(sp, sel), selenium_core.last_error_code_of(sp)) }
+    body = string.concat("{\"id\":", string.concat(_qs(eid), ""))
+    if command == "sendKeysToElement" {
+        body = string.concat(body, string.concat(",\"text\":", _qs(text)))
+        body = string.concat(body, string.concat(",\"value\":[", string.concat(_qs(text), "]")))
+    }
+    body = string.concat(body, "}")
+    return _cmd(sp, command, body)
+}
+
+// _el_text — find + getElementText.
+_el_text(sp: ptr, sel: string) -> string {
+    eid = _find(sp, string.trim(sel))
+    if string.length(eid) == 0 { return _err(_find_err(sp, sel), selenium_core.last_error_code_of(sp)) }
+    return _cmd(sp, "getElementText", string.concat("{\"id\":", string.concat(_qs(eid), "}")))
+}
+
+// _find(sp, sel) — resolve a selector shorthand to an element id, or "" on
+// no-such-element. Shorthand: "#id" / ".class" / "css=<sel>" / "xpath=<x>" /
+// "//..." (xpath) / bare token (css selector).
+_find(sp: ptr, sel: string) -> string {
+    s = string.trim(sel)
+    strategy = "css selector"
+    value = s
+    if string.starts_with(s, "css=") == 1 { value = string.substring(s, 4, string.length(s)) }
+    else { if string.starts_with(s, "xpath=") == 1 { strategy = "xpath"; value = string.substring(s, 6, string.length(s)) }
+    else { if string.starts_with(s, "//") == 1 { strategy = "xpath"; value = s }
+    else { if string.starts_with(s, "#") == 1 { strategy = "id"; value = string.substring(s, 1, string.length(s)) }
+    else { value = s } } } }
+
+    loc = selenium_core.by_locator(strategy, value)  // {"using":..,"value":..}
+    rc = selenium_core.execute(sp, "findElement", loc)
+    if rc != 0 { return "" }
+    v = selenium_core.last_value_of(sp)
+    return _json_field(v, "element-6066-11e4-a52e-4f735466cecf")
+}
+
+_find_err(sp: ptr, sel: string) -> string {
+    e = selenium_core.last_error_of(sp)
+    if string.length(e) > 0 { return e }
+    return string.concat("no such element: ", sel)
+}
+
+// ---- result constructors ---------------------------------------------------
+
+_ok_value(value_json: string) -> string {
+    v = value_json
+    if string.length(v) == 0 { v = "null" }
+    return string.concat("{\"ok\":true,\"value\":", string.concat(v, "}"))
+}
+_info(text: string) -> string {
+    return string.concat("{\"ok\":true,\"info\":", string.concat(_qs(text), "}"))
+}
+_err(text: string, code: int) -> string {
+    return string.concat("{\"ok\":false,\"error\":", string.concat(_qs(text),
+        string.concat(",\"code\":", string.concat(string.from_int(code), "}"))))
+}
+
+// ---- tiny string/JSON helpers (pure) ---------------------------------------
+
+// _qs(s) — JSON-quote+escape a string (the fields we emit: text/errors/urls).
+_qs(v: string) -> string {
+    out = "\""
+    n = string.length(v)
+    i = 0
+    while i < n {
+        c = string.substring(v, i, i + 1)
+        if c == "\"" { out = string.concat(out, "\\\"") }
+        else { if c == "\\" { out = string.concat(out, "\\\\") }
+        else { if c == "\n" { out = string.concat(out, "\\n") }
+        else { if c == "\r" { out = string.concat(out, "\\r") }
+        else { if c == "\t" { out = string.concat(out, "\\t") }
+        else { out = string.concat(out, c) } } } } }
+        i = i + 1
+    }
+    return string.concat(out, "\"")
+}
+
+// _obj1(k, v) — a one-field JSON object {"k":"v"} (v string-escaped).
+_obj1(k: string, v: string) -> string {
+    return string.concat("{", string.concat(_qs(k), string.concat(":", string.concat(_qs(string.trim(v)), "}"))))
+}
+
+// _script_obj(js) — {"script":<js>,"args":[]} for executeScript.
+_script_obj(js: string) -> string {
+    return string.concat("{\"script\":", string.concat(_qs(string.trim(js)), ",\"args\":[]}"))
+}
+
+// _word(s, i) — the i-th whitespace-separated word (i==0 → first). "" if absent.
+_word(s: string, i: int) -> string {
+    rest = string.trim(s)
+    k = 0
+    while k < i {
+        sp = string.index_of(rest, " ")
+        if sp < 0 { return "" }
+        rest = string.trim(string.substring(rest, sp + 1, string.length(rest)))
+        k = k + 1
+    }
+    sp2 = string.index_of(rest, " ")
+    if sp2 < 0 { return rest }
+    return string.substring(rest, 0, sp2)
+}
+
+// _after(s, word) — everything after the first occurrence of `word` (trimmed).
+_after(s: string, word: string) -> string {
+    t = string.trim(s)
+    if string.length(word) == 0 { return t }
+    at = string.index_of(t, word)
+    if at < 0 { return "" }
+    return string.trim(string.substring(t, at + string.length(word), string.length(t)))
+}
+
+// _json_field(json, key) — the string value of a flat "<key>":"<val>" field,
+// or "". Thin scan sufficient for the element-ref payload.
+_json_field(json: string, key: string) -> string {
+    pat = string.concat("\"", string.concat(key, "\""))
+    at = string.index_of(json, pat)
+    if at < 0 { return "" }
+    p = at + string.length(pat)
+    // skip ": and whitespace to the opening quote
+    while p < string.length(json) {
+        c = string.substring(json, p, p + 1)
+        if c == "\"" { p = p + 1; break }
+        p = p + 1
+    }
+    start = p
+    while p < string.length(json) {
+        c = string.substring(json, p, p + 1)
+        if c == "\"" { break }
+        p = p + 1
+    }
+    return string.substring(json, start, p)
+}
+
+_help_text() -> string {
+    return "commands: open <url> | title | url | source | back | forward | refresh | click <sel> | clear <sel> | text <sel> | type <sel> <text> | eval <js> | exec <cmd> <json> | trace on|off | events | timer start|stop <name> | timers | sid | help.  selectors: #id, .class, css=<sel>, xpath=<x> or //, bare=css"
+}

@@ -248,6 +248,20 @@ int main() {
         d.setTrace(false);
     }
 
+    // Runner shell: drive the session through the engine-side "wee shell language"
+    // (shell.ae, exposed over the C ABI as shell_eval). Front-end-agnostic — the
+    // same lines a REPL / SUT-adjacent iframe / editor would send.
+    {
+        auto ro = d.shell("open data:text/html,<title>Sh</title><h1 id=q>hey</h1>");
+        check(ro["ok"].boolean, "shell: open ok");
+        check(d.shell("title")["value"].str == "Sh", "shell: title through the shell");
+        check(d.shell("text #q")["value"].str == "hey", "shell: text #q through the shell");
+        check(d.shell("eval return 6*7;")["value"].integer == 42, "shell: eval");
+        auto err = d.shell("bogusverb");
+        check(!err["ok"].boolean && err["error"].str.indexOf("unknown command") >= 0,
+              "shell: unknown verb -> ok:false with error");
+    }
+
     // Grid client: drive a session THROUGH a real Selenium Grid hub (the
     // grid/run-grid-test.sh harness stands one up in a container and exports
     // SEL_GRID_URL). openSession(hubUrl) -> HTTP -> router -> node -> browser.

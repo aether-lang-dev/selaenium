@@ -1,2 +1,7 @@
 Copyright 2011-2026 Software Freedom Conservancy
 Copyright 2004-2011 Selenium committers
+
+The interactive shell / step-debug console (the "runner" shell language and its
+step/inspect/continue/jump control model) is informed by the SAM ("Step-Aside
+Mode") console design of webautoma (github.com/markel1974/webautoma, Apache-2.0).
+Portions copyright Marcello Russo.

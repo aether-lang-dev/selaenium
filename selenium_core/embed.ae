@@ -35,6 +35,7 @@ import selenium_core
 import selenium_core (Session)
 import driver
 import selenium_bidi
+import shell
 import std.string
 
 // Caller-owned-string helper (core/_embed_strdup.c): malloc/strdup a C string
@@ -98,6 +99,16 @@ sel_embed_timer_stop(h: ptr, name: string) {
 }
 sel_embed_timers_json(h: ptr) -> string {
     return sel_embed_dup(selenium_core.timers_json_of(h))
+}
+
+// ---- Runner: the interactive shell ----
+// Evaluate ONE shell line against the session and return a JSON result
+// ({"ok":true,"value":…} / {"ok":true,"info":…} / {"ok":false,"error":…,"code":N}).
+// The grammar + dispatch live in shell.ae (engine-side), so every front-end — a
+// terminal REPL, an SUT-adjacent iframe, VS Code, Tauri — is just "send a line,
+// render the result JSON". Caller-owned string.
+sel_embed_shell_eval(h: ptr, line: string) -> string {
+    return sel_embed_dup(shell.shell_eval(h, line))
 }
 
 // ---- the one workhorse ----
