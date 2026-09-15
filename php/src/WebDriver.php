@@ -126,6 +126,37 @@ final class WebDriver
         $this->execute('newSession', ['capabilities' => ['alwaysMatch' => $capabilities]]);
     }
 
+    /**
+     * Resolve the driver binary for $browser ("chrome"/"firefox"/"edge"/...),
+     * downloading and caching it if need be. '' when the engine cannot provide
+     * one. The resolution rules live in the engine, not here.
+     */
+    public static function resolveDriver(string $browser = 'chrome', string $hint = ''): string
+    {
+        $ffi = Native::ffi();
+        return Native::takeString($ffi, $ffi->aether_sel_embed_resolve_driver($browser, $hint));
+    }
+
+    /**
+     * Resolve + launch a driver for $browser on a free port and wait for it to
+     * answer. null when none could be started — the cue to skip a live test.
+     * Lets a test drive a real browser with no driver on PATH and no Grid.
+     */
+    public static function ensureDriver(string $browser = 'chrome', string $hint = '', int $timeoutMs = 15000): ?DriverProcess
+    {
+        $ffi = Native::ffi();
+        $h = $ffi->aether_sel_embed_ensure_driver($browser, $hint, $timeoutMs);
+        return FFI::isNull($h) ? null : new DriverProcess($ffi, $h);
+    }
+
+    /** Launch an explicit driver binary on a free port. null if it never came up. */
+    public static function launchDriver(string $driverPath, int $timeoutMs = 15000): ?DriverProcess
+    {
+        $ffi = Native::ffi();
+        $h = $ffi->aether_sel_embed_launch_driver($driverPath, $timeoutMs);
+        return FFI::isNull($h) ? null : new DriverProcess($ffi, $h);
+    }
+
     public static function chrome(string $commandExecutor, array $options = []): self
     {
         return new self($commandExecutor, \array_merge(['browserName' => 'chrome'], $options));
@@ -290,5 +321,53 @@ final class WebDriver
     {
         $ffi = Native::ffi();
         return Native::takeString($ffi, $ffi->aether_sel_embed_by_locator($by, $value));
+    }
+}
+
+/**
+ * A driver process (chromedriver/geckodriver/...) launched by the engine.
+ *
+ * Lifecycle: ensureDriver -> url() -> WebDriver::chrome(url) -> ... -> quit() ->
+ * stop(). The engine's stop_driver heap-frees the handle and is safe ONCE, so
+ * stop() clears it first and is itself idempotent — the same contract every
+ * other binding's DriverProcess honours.
+ */
+final class DriverProcess
+{
+    private ?FFI\CData $handle;
+
+    public function __construct(private FFI $ffi, FFI\CData $handle)
+    {
+        $this->handle = $handle;
+    }
+
+    /** The "http://127.0.0.1:<port>" to pass to a WebDriver factory. '' once stopped. */
+    public function url(): string
+    {
+        return $this->handle === null
+            ? ''
+            : Native::takeString($this->ffi, $this->ffi->aether_sel_embed_driver_url($this->handle));
+    }
+
+    /** The driver's pid (diagnostics). 0 once stopped. */
+    public function pid(): int
+    {
+        return $this->handle === null ? 0 : $this->ffi->aether_sel_embed_driver_pid($this->handle);
+    }
+
+    /** Kill + reap the driver process. Idempotent. */
+    public function stop(): void
+    {
+        if ($this->handle === null) {
+            return;
+        }
+        $h = $this->handle;
+        $this->handle = null;
+        $this->ffi->aether_sel_embed_stop_driver($h);
+    }
+
+    public function __destruct()
+    {
+        $this->stop();
     }
 }

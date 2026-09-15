@@ -49,12 +49,46 @@ final class LiveTest extends TestCase
         return false;
     }
 
+    /**
+     * Live Firefox over the engine-managed geckodriver: resolve + spawn one
+     * in-binding (no geckodriver on PATH, no Grid), open a headless session
+     * through the firefox() factory and drive a data: page. The factory was
+     * covered only by no-browser surface facts before this.
+     */
+    public function testLiveFirefox(): void
+    {
+        if (WebDriver::resolveDriver('firefox') === '') {
+            $this->markTestSkipped('engine cannot resolve a geckodriver');
+        }
+        $proc = WebDriver::ensureDriver('firefox', '', 20000);
+        $this->assertNotNull($proc, 'ensureDriver(firefox)');
+        try {
+            $this->assertStringStartsWith('http', $proc->url(), 'geckodriver url');
+            $d = WebDriver::headlessFirefox($proc->url());
+            try {
+                $this->assertGreaterThan(0, \strlen($d->sessionId()), 'firefox session started');
+                $d->get('data:text/html,<!doctype html><title>Aether Firefox</title>'
+                        . '<h1 id="hdr">Hello FF</h1>');
+                $this->assertSame('Aether Firefox', $d->title(), 'firefox title');
+                $this->assertSame('Hello FF', $d->findElement(By::ID, 'hdr')->text(), 'firefox element text');
+            } finally {
+                $d->quit();
+            }
+        } finally {
+            $proc->stop();
+        }
+    }
+
     public function testLiveChromeSurface(): void
     {
-        $driverBin = self::which('chromedriver');
-        if ($driverBin === null) {
-            $this->markTestSkipped('chromedriver not on PATH');
+        // Resolve + launch chromedriver through the engine's driver ABI rather
+        // than requiring one on PATH — an absent PATH entry used to skip this
+        // whole leg, shadow DOM included, and report the same green as a pass.
+        if (WebDriver::resolveDriver('chrome') === '') {
+            $this->markTestSkipped('engine cannot resolve a chromedriver');
         }
+        $proc = WebDriver::ensureDriver('chrome', '', 20000);
+        $this->assertNotNull($proc, 'ensureDriver(chrome)');
 
         // Content server: php built-in server over a router that serves two pages.
         $router = \sys_get_temp_dir() . '/sel_php_router_' . \getmypid() . '.php';
@@ -75,19 +109,12 @@ PHP);
         );
         $base = "http://127.0.0.1:$webPort";
 
-        $cdPort = self::freePort();
-        $cd = \proc_open(
-            [$driverBin, "--port=$cdPort"],
-            [['pipe', 'r'], ['file', '/dev/null', 'w'], ['file', '/dev/null', 'w']],
-            $cdPipes
-        );
-
         try {
-            if (!self::waitUp($cdPort, 10000) || !self::waitUp($webPort, 5000)) {
-                $this->markTestSkipped('chromedriver/server did not come up');
+            if (!self::waitUp($webPort, 5000)) {
+                $this->markTestSkipped('content server did not come up');
             }
 
-            $d = WebDriver::headlessChrome("http://127.0.0.1:$cdPort");
+            $d = WebDriver::headlessChrome($proc->url());
             try {
                 $this->assertGreaterThan(0, \strlen($d->sessionId()), 'session started');
 
@@ -169,9 +196,7 @@ PHP);
                 $d->quit();
             }
         } finally {
-            if (\is_resource($cd)) {
-                \proc_terminate($cd);
-            }
+            $proc->stop();
             if (\is_resource($web)) {
                 \proc_terminate($web);
             }

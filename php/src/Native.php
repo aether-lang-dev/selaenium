@@ -37,6 +37,12 @@ final class Native
         char* aether_sel_embed_build_request(const char* name, const char* session_id, const char* params_json);
         int   aether_sel_embed_error_code(const char* w3c_error);
         void  aether_sel_embed_free_string(char* s);
+        char* aether_sel_embed_resolve_driver(const char* browser, const char* hint);
+        void* aether_sel_embed_launch_driver(const char* driver_path, int timeout_ms);
+        void* aether_sel_embed_ensure_driver(const char* browser, const char* hint, int timeout_ms);
+        char* aether_sel_embed_driver_url(void* dh);
+        int   aether_sel_embed_driver_pid(void* dh);
+        void  aether_sel_embed_stop_driver(void* dh);
         C;
 
     private static ?FFI $ffi = null;
