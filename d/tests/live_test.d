@@ -262,6 +262,29 @@ int main() {
               "shell: unknown verb -> ok:false with error");
     }
 
+    // Runner controller: the interactive run/step/continue surface the terminal
+    // REPL (and the iframe/editor front-ends) drive. Same session.
+    {
+        auto r = d.runner();
+        scope(exit) r.close();
+        // run mode: eval executes immediately, reply carries the shell result
+        auto rr = r.eval("open data:text/html,<title>Run</title><h1 id=z>go</h1>");
+        check(("result" in rr) !is null && rr["result"]["ok"].boolean, "runner: run-mode eval ok");
+        check(r.eval("title")["result"]["value"].str == "Run", "runner: title via runner");
+        // a command-finished event fired
+        bool sawFinished = false;
+        for (auto ev = r.nextEvent(); ev.type == JSONType.object; ev = r.nextEvent())
+            if (ev["method"].str == "command-finished") sawFinished = true;
+        check(sawFinished, "runner: command-finished event emitted");
+        // step mode: queue then step
+        check(r.mode("step")["result"]["mode"].str == "step", "runner: mode step");
+        auto q = r.eval("text #z");
+        check(("queued" in q["result"]) !is null, "runner: step-mode eval queues");
+        auto st = r.step()["result"];   // unwrap the runner-lane frame's result
+        check(st["stepped"].boolean && st["result"]["value"].str == "go",
+              "runner: step runs the queued line -> 'go'");
+    }
+
     // Grid client: drive a session THROUGH a real Selenium Grid hub (the
     // grid/run-grid-test.sh harness stands one up in a container and exports
     // SEL_GRID_URL). openSession(hubUrl) -> HTTP -> router -> node -> browser.

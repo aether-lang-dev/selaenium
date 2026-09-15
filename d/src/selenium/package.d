@@ -55,6 +55,13 @@ private extern (C) nothrow @nogc {
     // Runner: the interactive shell (one line -> a JSON result)
     char* aether_sel_embed_shell_eval(void* h, const(char)* line);
 
+    // Runner: the interactive controller (run/step/continue over the lane)
+    void* aether_sel_embed_runner_new(void* h);
+    void  aether_sel_embed_runner_free(void* rp);
+    int   aether_sel_embed_runner_ingest(void* rp, const(char)* request_json);
+    char* aether_sel_embed_runner_poll_reply(void* rp, int id);
+    char* aether_sel_embed_runner_poll_event(void* rp);
+
     // atom-backed element commands
     int   aether_sel_embed_execute_atom(void* h, const(char)* atom_name, const(char)* elem_id, const(char)* extra_json);
     int   aether_sel_embed_is_displayed(void* h, const(char)* elem_id);
@@ -454,6 +461,11 @@ final class WebDriver {
     JSONValue shell(string line) {
         return parseJSON(takeString(aether_sel_embed_shell_eval(handle, line.toStringz)));
     }
+
+    /// An interactive runner controller over this session (run/step/continue with
+    /// replies + paused/finished events over the multiplexed runner lane). The
+    /// substrate a REPL / SUT-adjacent iframe / editor front-end drives.
+    Runner runner() { return new Runner(aether_sel_embed_runner_new(handle)); }
 
     // --- logs (Selenium `se/log` vendor extension) ---
     /// The available log types, e.g. `["browser", "driver"]`.
@@ -1258,5 +1270,56 @@ final class BiDi {
         string raw = takeString(aether_sel_embed_bidi_navigate(
             handle, takeId(), contextId.toStringz, url.toStringz, timeoutMs));
         return raw.length == 0 ? JSONValue(null) : parseJSON(raw);
+    }
+}
+
+/// An interactive runner controller (mirrors the engine's runner.ae over the C
+/// ABI): drive a session with run/step/continue, correlate replies by id, and
+/// drain paused/command-finished events — all over the multiplexed runner lane.
+/// Obtain one with `driver.runner()`. This is the surface a terminal REPL, an
+/// SUT-adjacent iframe, or an editor front-end sits on.
+final class Runner {
+    private void* rp;
+    private int nextId = 1;
+
+    package this(void* rp) {
+        if (rp is null) throw new WebDriverException(-1, "failed to create runner");
+        this.rp = rp;
+    }
+    ~this() { close(); }
+    void close() {
+        if (rp !is null) { aether_sel_embed_runner_free(rp); rp = null; }
+    }
+
+    private int takeId() { return nextId++; }
+
+    /// Send a control request (auto-assigned id); returns its correlated reply.
+    /// `method` ∈ eval/mode/step/continue/inspect; `params` a JSON object ("" = none).
+    JSONValue send(string method, string paramsJson = "") {
+        int id = takeId();
+        string req = `{"id":` ~ to!string(id) ~ `,"method":` ~ JSONValue(method).toString();
+        if (paramsJson.length) req ~= `,"params":` ~ paramsJson;
+        req ~= `}`;
+        aether_sel_embed_runner_ingest(rp, req.toStringz);
+        string rep = takeString(aether_sel_embed_runner_poll_reply(rp, id));
+        return rep.length == 0 ? JSONValue(null) : parseJSON(rep);
+    }
+
+    // --- ergonomic verbs ---
+    /// Run a shell line (immediately in run mode; queued in step mode).
+    JSONValue eval(string line) { return send("eval", `{"line":` ~ JSONValue(line).toString() ~ `}`); }
+    /// Set "run" or "step" mode.
+    JSONValue mode(string m) { return send("mode", `{"mode":` ~ JSONValue(m).toString() ~ `}`); }
+    /// Run the next queued line (step mode).
+    JSONValue step() { return send("step"); }
+    /// Drain the queue and return to run mode.
+    JSONValue cont() { return send("continue"); }
+    /// Inspect "trace" | "timers" | "sid" without running a command.
+    JSONValue inspect(string what) { return send("inspect", `{"what":` ~ JSONValue(what).toString() ~ `}`); }
+
+    /// The next runner event (command-finished / paused / …), or JSONValue null.
+    JSONValue nextEvent() {
+        string e = takeString(aether_sel_embed_runner_poll_event(rp));
+        return e.length == 0 ? JSONValue(null) : parseJSON(e);
     }
 }
