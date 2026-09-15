@@ -1,7 +1,7 @@
-# Out-of-process content server for the Zig live test, started by .tests.ae.
-# Zig 0.16 reworked std.net around the new Io interface; rather than track that
-# churn in a test harness, the server lives here and the Zig program just does
-# WebDriver calls against the URL passed in via SEL_BASE_URL. Prints "PORT <n>".
+# Out-of-process content server for the Haskell live test, spawned by test/Live.hs
+# (which reads the "PORT <n>" line below and builds its own base URL). It runs in
+# its own process because the binding's FFI calls are synchronous — an in-process
+# server would deadlock behind a blocking get(). Serves /one and /two.
 import http.server
 import socketserver
 import sys

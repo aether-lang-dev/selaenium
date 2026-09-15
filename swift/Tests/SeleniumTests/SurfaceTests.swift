@@ -176,6 +176,11 @@ final class SurfaceTests: XCTestCase {
         if let proc = DriverProcess.ensure("chrome", timeoutMs: 500) {
             XCTAssertFalse(proc.url.isEmpty)
             proc.stop()
+            // The engine heap-frees the handle and is safe ONCE, so stop() must
+            // clear it: a second stop() (and the one in deinit) must not re-free.
+            proc.stop()
+            XCTAssertEqual(proc.pid, -1)
+            XCTAssertTrue(proc.url.isEmpty)
         }
     }
 

@@ -1,18 +1,21 @@
 -- FFI + live surface test for the Haskell binding — links the one engine .so
--- (no dlopen). Run by haskell/.tests.ae. chromedriver + a content server are
--- started by the harness, which passes their URLs via env (SEL_CHROMEDRIVER_URL,
--- SEL_BASE_URL); the test self-skips if they're absent.
---
--- NOTE: authored on a box without GHC; verified on a box with GHC + the engine
--- (catchyos). The engine underneath is fully live-verified through the other
--- bindings.
+-- (no dlopen). Run by haskell/.tests.ae. The live leg is SELF-ORCHESTRATED: the
+-- engine resolves + launches chromedriver through the driver ABI
+-- (ensureDriver, docs/Driver-Orchestration-ABI.md) and the content server runs
+-- out-of-process (content_server.py), the same shape dart/php use. It used to
+-- wait on SEL_CHROMEDRIVER_URL / SEL_BASE_URL that no caller ever set, so the
+-- live leg — shadow DOM included — could never actually run.
 module Main (main) where
 
-import Control.Exception (try)
+import Control.Exception (finally, try)
+import Control.Monad (void)
 import Data.IORef
 import Data.List (isInfixOf)
-import System.Environment (lookupEnv)
 import System.Exit (exitFailure)
+import System.IO (hGetLine)
+import System.Process
+  (CreateProcess (std_out), StdStream (CreatePipe), createProcess, proc,
+   terminateProcess, waitForProcess)
 
 import Selenium
 
@@ -89,16 +92,63 @@ main = do
     Right ch -> do bidiClose ch; check False "bidiOpen should have failed"
 
   -- ---- live surface ----
-  mcd <- lookupEnv "SEL_CHROMEDRIVER_URL"
-  mbase <- lookupEnv "SEL_BASE_URL"
-  case (mcd, mbase) of
-    (Just cdUrl, Just base) -> liveSurface check cdUrl base
-    _ -> putStrLn "  (live) SKIPPED: SEL_CHROMEDRIVER_URL / SEL_BASE_URL not set (no chromedriver)"
+  runLive check
+  runLiveFirefox check
 
   n <- readIORef fails
   if n == 0
     then putStrLn "PASS: Haskell tests green"
     else do putStrLn ("FAILED: " ++ show n ++ " Haskell test(s)"); exitFailure
+
+-- Bring up the driver (engine-managed) and the content server, run the live
+-- surface, then tear both down. Only a driver that genuinely cannot be resolved
+-- or launched skips — and it says so on its own line.
+runLive :: (Bool -> String -> IO ()) -> IO ()
+runLive check = do
+  mproc <- ensureDriver "chrome" "" 20000
+  case mproc of
+    Nothing -> putStrLn "  (live) SKIPPED: no chromedriver resolved/launched by the engine"
+    Just dp -> do
+      cdUrl <- driverUrl dp
+      -- The content server is out-of-process: the FFI calls below are
+      -- synchronous, so an in-process server would deadlock the same runtime.
+      (_, mout, _, ph) <- createProcess (proc "python3" ["content_server.py"])
+                            { std_out = CreatePipe }
+      out <- maybe (fail "content_server.py: no stdout pipe") pure mout
+      portLine <- hGetLine out          -- "PORT <n>"
+      base <- case words portLine of
+                ["PORT", n] -> pure ("http://127.0.0.1:" ++ n)
+                _           -> fail ("content_server.py: bad port line: " ++ portLine)
+      liveSurface check cdUrl base
+        `finally` (terminateProcess ph >> void (waitForProcess ph) >> stopDriver dp)
+
+-- Live Firefox over the engine-managed geckodriver: resolve + spawn a
+-- geckodriver in-binding (none on PATH, no Grid), open a headless Firefox
+-- session against it, drive a data: page and assert title + element text —
+-- headlessFirefox against real Firefox, not just the factory's transport shape.
+runLiveFirefox :: (Bool -> String -> IO ()) -> IO ()
+runLiveFirefox check = do
+  gecko <- resolveDriver "firefox" ""
+  if null gecko
+    then putStrLn "  (live firefox) SKIPPED: engine cannot resolve a geckodriver"
+    else do
+      mproc <- ensureDriver "firefox" "" 20000
+      case mproc of
+        Nothing -> putStrLn "  (live firefox) SKIPPED: geckodriver did not come up"
+        Just dp -> do
+          url <- driverUrl dp
+          d <- headlessFirefox url
+          (do sid <- sessionId d
+              check (not (null sid)) "firefox session started"
+              get d ("data:text/html,"
+                     ++ "%3C!doctype%20html%3E%3Ctitle%3EAether%20Firefox%3C/title%3E"
+                     ++ "%3Ch1%20id=%22hdr%22%3EHello%20FF%3C/h1%3E")
+              t <- title d
+              check (t == "Aether Firefox") "firefox title"
+              h <- findElement d (byId "hdr")
+              txt <- elementText d h
+              check (txt == "Hello FF") "firefox element text")
+            `finally` (quit d >> stopDriver dp)
 
 liveSurface :: (Bool -> String -> IO ()) -> String -> String -> IO ()
 liveSurface check cdUrl base = do

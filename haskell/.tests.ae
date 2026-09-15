@@ -4,9 +4,11 @@
 // link_dir passes the engine's ABSOLUTE dir as --extra-lib-dirs + an rpath
 // ghc-option; the dir is derived from the engine's shared_lib artifact (not
 // hardcoded). SELENIUM_CORE_LIB is injected for the run. The test:live binary
-// self-skips the live-surface leg when chromedriver is absent (the live
-// orchestration moves to the driver ABI in the retrofit pass). Skipped by
-// preflight when GHC/cabal is absent (prereq ghc); verified on catchyos (GHC).
+// SELF-ORCHESTRATES its live legs through the engine's driver ABI (ensureDriver
+// for chromedriver and geckodriver) plus an out-of-process content_server.py —
+// it no longer waits on SEL_* env that nothing set, which had left the live
+// shadow-DOM and Firefox legs permanently skipped. Skipped by preflight when
+// GHC/cabal is absent (prereq ghc); run live on cachyos (GHC 9.6.6).
 import bldr
 import haskell
 import haskell (link_dir, target)

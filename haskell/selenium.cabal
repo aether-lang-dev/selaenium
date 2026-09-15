@@ -29,6 +29,7 @@ test-suite live
   hs-source-dirs:   test
   main-is:          Live.hs
   build-depends:    base
+                  , process    >=1.6 && <1.7
                   , selenium
   default-language: Haskell2010
   ghc-options:      -threaded -rtsopts

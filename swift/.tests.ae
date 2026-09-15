@@ -6,9 +6,9 @@
 // + rpath resolve it. swift.build_pkg compiles the SwiftPM package; swift.test
 // runs the no-browser XCTest FFI facts.
 //
-// Skipped by preflight when Swift is absent (prereq swift) — authored here,
-// verified on a box with the Swift toolchain; this box (catchyos) has no swiftc,
-// so it SKIPs cleanly.
+// Skipped by preflight when Swift is absent (prereq swift). Run live on cachyos
+// with the Swift 6.0.3 toolchain; ci/coverage.sh --strict proves the toolchain is
+// genuinely present rather than silently skipped.
 import bldr
 import swift
 import copy

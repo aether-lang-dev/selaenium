@@ -1209,7 +1209,9 @@ public final class Wait {
 /// A driver process (chromedriver/geckodriver/…) launched by the engine. Owns the
 /// opaque driver handle; the process is killed + reaped on `stop()` / deinit.
 public final class DriverProcess {
-    let handle: UnsafeMutableRawPointer?
+    // Cleared by stop() so the engine frees the handle exactly once: the engine's
+    // stop_driver heap-frees it and is safe ONCE, not idempotent on its own.
+    private(set) var handle: UnsafeMutableRawPointer?
 
     init(handle: UnsafeMutableRawPointer?) { self.handle = handle }
 
@@ -1229,13 +1231,18 @@ public final class DriverProcess {
     }
 
     /// The "http://127.0.0.1:<port>" to pass to `WebDriver(commandExecutor:)`.
-    public var url: String { take(aether_sel_embed_driver_url(handle)) }
+    /// Empty once stopped.
+    public var url: String { handle == nil ? "" : take(aether_sel_embed_driver_url(handle)) }
     /// The driver's spawn token / pid (diagnostics). -1 if the handle is null.
-    public var pid: Int32 { aether_sel_embed_driver_pid(handle) }
+    public var pid: Int32 { handle == nil ? -1 : aether_sel_embed_driver_pid(handle) }
 
     /// Kill + reap the driver process. Idempotent; also runs on deinit.
-    public func stop() { aether_sel_embed_stop_driver(handle) }
-    deinit { aether_sel_embed_stop_driver(handle) }
+    public func stop() {
+        guard let h = handle else { return }
+        handle = nil
+        aether_sel_embed_stop_driver(h)
+    }
+    deinit { stop() }
 }
 
 /// Resolve the driver binary path for `browser` (v1: the conventional driver on
