@@ -25,10 +25,21 @@ ELEMENT_KEY() -> string { return "element-6066-11e4-a52e-4f735466cecf" }
 // isDisplayed: the visibility algorithm. Compact form of bot.dom.isShown —
 // covers the cases that actually differ from naive checks: detached nodes,
 // display:none / visibility:hidden / hidden attribute up the ancestor chain,
-// zero-size without overflow, opacity 0, and <option>/<input hidden>. Returns a
-// boolean.
+// zero AREA, opacity 0, and <option>/<optgroup> (which take the enclosing
+// <select>'s shownness) / <input hidden>. Returns a boolean.
+//
+// The zero-area rule is the subtle one, and it was wrong until 2026-09-15: the
+// old guard fired only when offsetWidth <= 0 AND offsetHeight <= 0, so an empty
+// block <div> (764 x 0 — positive WIDTH, zero height) reported as displayed
+// where mainstream reports hidden. That made every binding's
+// waitForVisible/visibilityOf return an element the moment it existed, so a
+// "wait for the late-populated div" test read its text as "" and failed. An
+// element is shown when it has POSITIVE AREA — height AND width > 0, on the
+// bounding box or on any client rect. A zero-area element still counts when a
+// descendant has area (an absolutely-positioned child, say), UNLESS overflow
+// clips it. Calibrated case-by-case against real Selenium 4.44.
 _ATOM_IS_DISPLAYED() -> string {
-    return "function(el){if(!el||!el.ownerDocument||!el.ownerDocument.documentElement.contains(el))return false;if(el.nodeType!==1)return false;var tag=el.tagName.toLowerCase();if(tag==='input'&&el.type==='hidden')return false;if(tag==='noscript'||tag==='script'||tag==='style')return false;function css(e,p){var v=e.ownerDocument.defaultView.getComputedStyle(e);return v?v.getPropertyValue(p):null;}function shown(e){if(e.nodeType===9)return true;if(css(e,'display')==='none')return false;if(css(e,'visibility')==='hidden'||css(e,'visibility')==='collapse')return false;if(parseFloat(css(e,'opacity')||'1')===0)return false;var p=e.parentNode;if(p&&p.nodeType===1&&!shown(p))return false;return true;}if(!shown(el))return false;var r=el.getClientRects();if(el.offsetWidth<=0&&el.offsetHeight<=0&&(!r||r.length===0)){if(css(el,'display')!=='inline'&&(css(el,'overflow')||'visible')!=='visible')return false;}return true;}"
+    return "function(el){if(!el||!el.ownerDocument||!el.ownerDocument.documentElement.contains(el))return false;if(el.nodeType!==1)return false;var tag=el.tagName.toLowerCase();if(tag==='input'&&el.type==='hidden')return false;if(tag==='noscript'||tag==='script'||tag==='style')return false;function css(e,p){var v=e.ownerDocument.defaultView.getComputedStyle(e);return v?v.getPropertyValue(p):null;}function shown(e){if(e.nodeType===9)return true;if(css(e,'display')==='none')return false;if(css(e,'visibility')==='hidden'||css(e,'visibility')==='collapse')return false;if(parseFloat(css(e,'opacity')||'1')===0)return false;var p=e.parentNode;if(p&&p.nodeType===1&&!shown(p))return false;return true;}if(tag==='option'||tag==='optgroup'){var sel=el.parentNode;while(sel&&sel.nodeType===1&&sel.tagName.toLowerCase()!=='select'){sel=sel.parentNode;}return !!(sel&&sel.nodeType===1)&&arguments.callee(sel);}if(!shown(el))return false;function area(e){var b=e.getBoundingClientRect();if(b.height>0&&b.width>0)return true;var rs=e.getClientRects();for(var i=0;i<(rs?rs.length:0);i++){if(rs[i].height>0&&rs[i].width>0)return true;}var ov=(css(e,'overflow')||'visible');if(ov==='hidden'||ov==='scroll'||ov==='auto')return false;for(var c=e.firstElementChild;c;c=c.nextElementSibling){if(area(c))return true;}return false;}if(!area(el))return false;return true;}"
 }
 
 // getAttribute: the property-or-attribute atom (bot.dom.getAttribute). W3C's
