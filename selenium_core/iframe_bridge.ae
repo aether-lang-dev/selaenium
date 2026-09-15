@@ -1,0 +1,208 @@
+// iframe_bridge.ae — the SUT-adjacent console bridge. An in-page console (an
+// iframe injected next to the site-under-test) is on the WRONG side of the wire:
+// it runs IN the browser, while the runner controller (runner.ae) lives in the
+// DRIVING CLIENT. There is no direct call path from the page to the engine. So
+// the page itself is the mailbox, and executeScript — the one channel the engine
+// has into page state — is the transport:
+//
+//   console (iframe)  --postMessage-->  in-page shim  --> window.__selaenium.out[]
+//        ^                                                        |
+//        |  postMessage                              executeScript SPLICE (drain)
+//   in-page shim <-- window.__selaenium.in[] <-- executeScript PUSH   |
+//        ^                                                        v
+//        +------------------- driving client (this bridge) -------+
+//                     runner_ingest / runner-lane poll
+//
+// The engine holds no thread: the driving client loops bridge_pump(), which does
+// ONE cycle — drain the page's outbox via executeScript, feed each request to
+// the runner controller, drain the correlated replies + events off the runner
+// lane, and push that envelope back into the page's inbox via executeScript. The
+// in-page shim (BRIDGE_SHIM_JS) is idempotent-installed each pump, so it survives
+// navigations to a fresh document (the whole point of "SUT-adjacent": the console
+// keeps working as the site under test navigates).
+//
+// Testability: the impure page I/O (executeScript) is isolated to bridge_pump;
+// the CORRELATION core — parse a batch of outbox requests, run each through the
+// runner, collect {replies, events} — is bridge_process(runner, requests_json)
+// -> envelope_json, PURE over a null/real session, unit-tested with fed-in JSON
+// exactly like runner_probe drives runner_ingest.
+//
+// Informed by webautoma's in-page SAM console (Apache-2.0); see NOTICE.
+import std.string
+import std.json
+import selenium_core
+import runner
+import bidi_demux
+
+// The in-page shim: a tiny window.__selaenium mailbox + a postMessage relay to
+// the console iframe. Installed idempotently (guarded by __selaenium) so a
+// re-inject after navigation is a no-op on an already-wired document. The
+// console posts {selaenium:"req", body:<control-request-obj>}; the shim queues
+// its JSON into .out. The bridge pushes an envelope into .in; the shim relays
+// each item down to the iframe as {selaenium:"rep", body:<obj>}. `origin` is "*"
+// deliberately: the console iframe is same-origin-injected by us, but a SUT that
+// document.domain-rewrites or sandboxes would otherwise silently drop messages —
+// this is a debug tool the human opted into, not a security boundary.
+_bridge_shim_js() -> string {
+    return "(function(){if(window.__selaenium)return 'already';var M={out:[],in:[]};window.__selaenium=M;window.addEventListener('message',function(e){var d=e&&e.data;if(!d||d.selaenium!=='req')return;try{M.out.push(JSON.stringify(d.body));}catch(_){}} );M.__deliver=function(items){for(var i=0;i<items.length;i++){try{window.postMessage({selaenium:'rep',body:items[i]},'*');}catch(_){}}};return 'installed';})()"
+}
+
+// bridge_new(session) — a bridge is just a runner controller; the runner OWNS the
+// demux whose runner lane carries replies/events. We keep the pairing explicit so
+// bridge_pump reads naturally.
+bridge_new(session: ptr) -> ptr {
+    return runner.runner_new(session)
+}
+
+bridge_free(bp: ptr) {
+    runner.runner_free(bp)
+}
+
+// bridge_install(session) — inject the in-page shim once. Returns 0 on success
+// (executeScript ran), non-zero on the underlying W3C error. Safe to call every
+// pump: the shim self-guards. Call it after each navigation, or just every pump.
+bridge_install(session: ptr) -> int {
+    return selenium_core.execute(session, "executeScript", _script(string.concat("return ", string.concat(_bridge_shim_js(), ";")), "[]"))
+}
+
+// bridge_pump(bp, session) — ONE bridge cycle. Returns the number of control
+// requests processed this cycle (0 = the console sent nothing), or -1 on a page
+// I/O error (executeScript failed — e.g. the tab is gone). The driving client
+// loops this on a timer (or after each user keystroke round-trips). Steps:
+//   1. re-install the shim (idempotent; survives navigation)
+//   2. executeScript: splice window.__selaenium.out -> a JSON array of requests
+//   3. bridge_process: feed each to the runner, collect replies + events
+//   4. executeScript: window.__selaenium.__deliver(<envelope items>)
+bridge_pump(bp: ptr, session: ptr) -> int {
+    if bp == null { return -1 }
+    _ins = bridge_install(session)                       // step 1 (idempotent)
+
+    // step 2: atomically drain the outbox to a JSON array of request strings.
+    drain_js = "var m=window.__selaenium; if(!m) return '[]'; var o=m.out; m.out=[]; return JSON.stringify(o);"
+    rc = selenium_core.execute(session, "executeScript", _script(drain_js, "[]"))
+    if rc != 0 { return -1 }
+    // last_value is a JSON string whose content is itself a JSON array of request
+    // JSON strings (double-encoded by the JSON.stringify above); unwrap one level.
+    outbox_json = _json_unstring(selenium_core.last_value_of(session))
+    if string.length(string.trim(outbox_json)) == 0 { outbox_json = "[]" }
+
+    // step 3: pure correlation core.
+    envelope, n = bridge_process(bp, outbox_json)
+    if n == 0 { return 0 }
+
+    // step 4: hand the envelope items down to the console via the shim. The
+    // engine spreads the executeScript "args" array as arguments[0], arguments[1]
+    // …, so the envelope (itself an array) must be wrapped in an outer array to
+    // arrive whole as arguments[0].
+    deliver_js = "window.__selaenium.__deliver(arguments[0]); return arguments[0].length;"
+    args = string.concat("[", string.concat(envelope, "]"))
+    _rc2 = selenium_core.execute(session, "executeScript", _script(deliver_js, args))
+    return n
+}
+
+// bridge_process(bp, requests_json) — PURE core. `requests_json` is a JSON ARRAY
+// whose items are control-request objects (or JSON strings of them, as the
+// double-encoded outbox produces). For each: feed runner_ingest, then drain the
+// runner lane for that id's reply plus any events emitted, tagging each envelope
+// item with {kind:"reply"|"event", ...frame}. Returns (envelope_json_array, n).
+// No executeScript here, so it is unit-testable with fed-in JSON.
+bridge_process(bp: ptr, requests_json: string) -> (string, int) {
+    demux = runner.runner_demux(bp)
+    arr, perr = json.parse(requests_json)
+    if string.length(perr) > 0 { return ("[]", 0) }
+    items = ""     // "," joiner accumulation
+    n = 0
+    i = 0
+    // std.json has no array-length wrapper; array_get returns null past the end.
+    el, _e0 = json.array_get(arr, i)
+    while el != null {
+        // Each item may be a JSON string of a request, or the request object.
+        req = _as_request_json(el)
+        id = _req_id(req)
+        _rc = runner.runner_ingest(bp, req)
+
+        // reply for this id (correlated), then all pending events.
+        reply_ = bidi_demux.demux_poll_reply_runner(demux, id)
+        if string.length(reply_) > 0 {
+            items = _append_item(items, _tag(reply_, "reply"))
+            n = n + 1
+        }
+        ev = bidi_demux.demux_poll_event_runner(demux)
+        while string.length(ev) > 0 {
+            items = _append_item(items, _tag(ev, "event"))
+            n = n + 1
+            ev = bidi_demux.demux_poll_event_runner(demux)
+        }
+        i = i + 1
+        el, _en = json.array_get(arr, i)
+    }
+    return (string.concat("[", string.concat(items, "]")), n)
+}
+
+// ---- helpers ----------------------------------------------------------------
+
+// _tag(frame_json, kind) — splice "kind":"reply"|"event" as the first field into
+// an object frame ({"channel":... } -> {"kind":"reply","channel":...}). The
+// console reads .kind to route a reply (by id) vs. an event (broadcast).
+_tag(frame_json: string, kind: string) -> string {
+    t = string.trim(frame_json)
+    if string.starts_with(t, "{") == 0 { return t }           // not an object: pass through
+    rest = string.substring(t, 1, string.length(t))
+    return string.concat("{\"kind\":\"", string.concat(kind, string.concat("\",", rest)))
+}
+
+_append_item(acc: string, item: string) -> string {
+    if string.length(acc) == 0 { return item }
+    return string.concat(acc, string.concat(",", item))
+}
+
+// _as_request_json(el) — the outbox double-encodes each request as a JSON STRING;
+// unwrap to the object JSON. If el is already an object, re-serialize it.
+_as_request_json(el: ptr) -> string {
+    s, serr = json.get_string(el)
+    if string.length(serr) == 0 { return s }   // el was a JSON string: its content
+    obj, _oe = json.stringify(el)               // el was an object: re-serialize
+    return obj
+}
+
+_req_id(req_json: string) -> int {
+    root, perr = json.parse(req_json)
+    if string.length(perr) > 0 { return 0 }
+    idv, _i = json.object_get(root, "id")
+    if idv == null { return 0 }
+    return json.get_int(idv)
+}
+
+// _json_unstring(s) — s is a JSON string literal ("..."); return its decoded
+// content. Used to peel the outer JSON.stringify of the outbox drain. A non-
+// string (already-bare) value passes through unchanged.
+_json_unstring(s: string) -> string {
+    v, perr = json.parse(s)
+    if string.length(perr) > 0 { return s }
+    out, serr = json.get_string(v)
+    if string.length(serr) == 0 { return out }
+    return s
+}
+
+// _script(js, args_json) — {"script":<js>,"args":<args_json>} for executeScript.
+_script(js: string, args_json: string) -> string {
+    return string.concat("{\"script\":", string.concat(_qs(js),
+        string.concat(",\"args\":", string.concat(args_json, "}"))))
+}
+
+_qs(v: string) -> string {
+    out = "\""
+    n = string.length(v)
+    i = 0
+    while i < n {
+        c = string.substring(v, i, i + 1)
+        if c == "\"" { out = string.concat(out, "\\\"") }
+        else { if c == "\\" { out = string.concat(out, "\\\\") }
+        else { if c == "\n" { out = string.concat(out, "\\n") }
+        else { if c == "\r" { out = string.concat(out, "\\r") }
+        else { if c == "\t" { out = string.concat(out, "\\t") }
+        else { out = string.concat(out, c) } } } } }
+        i = i + 1
+    }
+    return string.concat(out, "\"")
+}

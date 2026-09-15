@@ -62,6 +62,12 @@ private extern (C) nothrow @nogc {
     char* aether_sel_embed_runner_poll_reply(void* rp, int id);
     char* aether_sel_embed_runner_poll_event(void* rp);
 
+    // SUT-adjacent iframe console bridge (executeScript-transported runner lane)
+    void* aether_sel_embed_bridge_new(void* h);
+    void  aether_sel_embed_bridge_free(void* bp);
+    int   aether_sel_embed_bridge_install(void* h);
+    int   aether_sel_embed_bridge_pump(void* bp, void* h);
+
     // atom-backed element commands
     int   aether_sel_embed_execute_atom(void* h, const(char)* atom_name, const(char)* elem_id, const(char)* extra_json);
     int   aether_sel_embed_is_displayed(void* h, const(char)* elem_id);
@@ -466,6 +472,13 @@ final class WebDriver {
     /// replies + paused/finished events over the multiplexed runner lane). The
     /// substrate a REPL / SUT-adjacent iframe / editor front-end drives.
     Runner runner() { return new Runner(aether_sel_embed_runner_new(handle)); }
+
+    /// The SUT-adjacent console bridge: injects a floating console iframe next to
+    /// the page under test, then shuttles its commands down to the engine's
+    /// runner and results back up (over executeScript — the page is the mailbox).
+    /// Call `bridge().serve()` to inject + pump on a timer, or drive pump()
+    /// yourself from an existing loop. See selenium_core/console/console.html.
+    Bridge bridge() { return new Bridge(this, aether_sel_embed_bridge_new(handle)); }
 
     // --- logs (Selenium `se/log` vendor extension) ---
     /// The available log types, e.g. `["browser", "driver"]`.
@@ -1321,5 +1334,68 @@ final class Runner {
     JSONValue nextEvent() {
         string e = takeString(aether_sel_embed_runner_poll_event(rp));
         return e.length == 0 ? JSONValue(null) : parseJSON(e);
+    }
+}
+
+/// The SUT-adjacent console bridge (mirrors the engine's iframe_bridge.ae). It
+/// injects a floating console iframe next to the site under test, then relays
+/// the console's commands DOWN to the engine's runner and results/events back UP
+/// — all over executeScript, the one channel into the page (the page's
+/// window.__selaenium is the mailbox). The engine holds no thread: `serve()`
+/// loops pump() on a timer, or a caller with its own loop can call pump()
+/// directly. Obtain one with `driver.bridge()`. The console UI is shipped as
+/// selenium_core/console/console.html and string-imported here, so the binding
+/// injects it with no external file at run time.
+final class Bridge {
+    private WebDriver d;
+    private void* bp;
+    private bool injected = false;
+
+    // The console page, embedded at compile time (dmd -J<dir>). Injected as an
+    // iframe srcdoc so it needs no server and no same-origin file.
+    private enum consoleHtml = import("console.html");
+
+    package this(WebDriver d, void* bp) {
+        if (bp is null) throw new WebDriverException(-1, "failed to create bridge");
+        this.d = d; this.bp = bp;
+    }
+    ~this() { close(); }
+    void close() {
+        if (bp !is null) { aether_sel_embed_bridge_free(bp); bp = null; }
+    }
+
+    /// Inject the shim + the console iframe into the current page (idempotent).
+    /// Call after a navigation to re-attach the console to a fresh document.
+    void inject() {
+        aether_sel_embed_bridge_install(d.handle);   // window.__selaenium mailbox
+        // A floating iframe pinned bottom-right, srcdoc = the console page. Guard
+        // so a re-inject after navigation replaces a stale frame rather than
+        // stacking. postMessage from a srcdoc iframe still reaches window.parent.
+        d.executeScript(
+            "var id='__selaenium_console';var old=document.getElementById(id);if(old)old.remove();"
+            ~ "var f=document.createElement('iframe');f.id=id;f.srcdoc=arguments[0];"
+            ~ "f.style.cssText='position:fixed;right:12px;bottom:12px;width:420px;height:300px;"
+            ~ "z-index:2147483647;border:1px solid #333;border-radius:6px;box-shadow:0 6px 24px rgba(0,0,0,.4);"
+            ~ "resize:both;overflow:hidden;background:#1e1e1e';document.documentElement.appendChild(f);return 'ok';",
+            JSONValue([JSONValue(consoleHtml)]));
+        injected = true;
+    }
+
+    /// One bridge cycle: drain the console's outbox, run each request through the
+    /// runner, push replies+events back. Returns the number of requests handled
+    /// (0 = idle), or -1 on a page I/O error (tab gone). Cheap to call on a timer.
+    int pump() { return aether_sel_embed_bridge_pump(bp, d.handle); }
+
+    /// Inject once, then pump on a fixed interval until `until` returns true (or
+    /// forever if null). The simple "just give me a console" entry point — for a
+    /// harness that wants to hand a human the wheel mid-run. `intervalMs` is the
+    /// poll cadence; 100–150ms feels live without hammering executeScript.
+    void serve(int intervalMs = 120, bool delegate() until = null) {
+        if (!injected) inject();
+        for (;;) {
+            if (until !is null && until()) break;
+            if (pump() < 0) break;                    // page/tab gone
+            Thread.sleep(intervalMs.msecs);
+        }
     }
 }

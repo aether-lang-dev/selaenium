@@ -16,6 +16,15 @@ aeb(cap) {
             from(lib)
             to("native/libselenium_core.so")
         }
+        // The SUT-adjacent console page is string-imported by package.d
+        // (Bridge.consoleHtml via `import("console.html")`), so a consumer that
+        // recompiles the module needs it on the dmd -J path. Ship it inside the
+        // module (src/selenium/) so it travels with the package rather than
+        // depending on the selenium_core sibling being present downstream.
+        copy.file() {
+            from("../selenium_core/console/console.html")
+            to("src/selenium/console.html")
+        }
         publish_artifact("package_dir", bldr._get(builder_context(), "source_dir"))
     }
 }

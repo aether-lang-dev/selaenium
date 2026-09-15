@@ -1,0 +1,81 @@
+// iframe_bridge_probe.ae — pure unit test for the SUT-adjacent console bridge
+// (iframe_bridge.ae), using std.spec. Proves the CORRELATION CORE, bridge_process,
+// with NO browser and NO executeScript: the page-I/O half (executeScript drain /
+// push) is the only impure part and lives in bridge_pump, which a live browser
+// test covers; here we feed bridge_process the exact JSON array the page outbox
+// would yield and assert the envelope it hands back.
+//
+// A null session means shell_eval errors, but the CONTROLLER mechanics are intact
+// (same basis as runner_probe): an eval still produces an id-correlated reply on
+// the runner lane plus a command-finished event, which is all the envelope shape
+// depends on. We assert: reply/event tagging (kind), id correlation, event
+// inclusion, batch handling of multiple requests, and the outbox's double-encoded
+// (array-of-JSON-strings) shape. Run via tests/.tests.ae.
+import iframe_bridge
+import runner
+import std.string
+import std.spec
+
+main() {
+    fw = spec.init()
+
+    spec.describe(fw, "bridge_process: one request -> tagged reply + event envelope") {
+        spec.it("a single eval yields a reply item and a command-finished event item") callback {
+            bp = runner.runner_new(null)
+            // the outbox is a JSON array whose items are JSON STRINGS of requests
+            reqs = "[\"{\\\"id\\\":1,\\\"method\\\":\\\"eval\\\",\\\"params\\\":{\\\"line\\\":\\\"title\\\"}}\"]"
+            env, n = iframe_bridge.bridge_process(bp, reqs)
+            spec.assert_true(n >= 2, "at least a reply + a command-finished event")
+            spec.assert_true(string.index_of(env, "\"kind\":\"reply\"") >= 0, "a reply item is tagged kind=reply")
+            spec.assert_true(string.index_of(env, "\"kind\":\"event\"") >= 0, "an event item is tagged kind=event")
+            spec.assert_true(string.index_of(env, "\"id\":1") >= 0, "the reply is correlated to id 1")
+            spec.assert_true(string.index_of(env, "command-finished") >= 0, "the event is command-finished")
+            runner.runner_free(bp)
+        }
+    }
+
+    spec.describe(fw, "bridge_process: batch + empty + object-form items") {
+        spec.it("multiple requests are each correlated in the envelope") callback {
+            bp = runner.runner_new(null)
+            reqs = string.concat(
+                "[\"{\\\"id\\\":10,\\\"method\\\":\\\"eval\\\",\\\"params\\\":{\\\"line\\\":\\\"title\\\"}}\",",
+                "\"{\\\"id\\\":11,\\\"method\\\":\\\"eval\\\",\\\"params\\\":{\\\"line\\\":\\\"url\\\"}}\"]")
+            env, n = iframe_bridge.bridge_process(bp, reqs)
+            spec.assert_true(string.index_of(env, "\"id\":10") >= 0, "reply for id 10")
+            spec.assert_true(string.index_of(env, "\"id\":11") >= 0, "reply for id 11")
+            spec.assert_true(n >= 4, "two replies + two events")
+            runner.runner_free(bp)
+        }
+        spec.it("an empty outbox yields an empty envelope, n=0") callback {
+            bp = runner.runner_new(null)
+            env, n = iframe_bridge.bridge_process(bp, "[]")
+            spec.assert_true(n == 0, "nothing processed")
+            spec.assert_true(string.index_of(env, "[") >= 0, "still a JSON array")
+            runner.runner_free(bp)
+        }
+        spec.it("a request given as a bare object (not a JSON string) also works") callback {
+            bp = runner.runner_new(null)
+            // items are request OBJECTS here, not strings — _as_request_json re-serializes
+            reqs = "[{\"id\":20,\"method\":\"mode\",\"params\":{\"mode\":\"step\"}}]"
+            env, n = iframe_bridge.bridge_process(bp, reqs)
+            spec.assert_true(string.index_of(env, "\"id\":20") >= 0, "reply for the object-form request")
+            spec.assert_true(string.index_of(env, "\"mode\":\"step\"") >= 0, "mode step acknowledged")
+            runner.runner_free(bp)
+        }
+    }
+
+    spec.describe(fw, "bridge_process: step-mode framing survives the envelope") {
+        spec.it("eval in step mode yields a queued reply + a paused event") callback {
+            bp = runner.runner_new(null)
+            _e1, _n1 = iframe_bridge.bridge_process(bp, "[{\"id\":30,\"method\":\"mode\",\"params\":{\"mode\":\"step\"}}]")
+            env, _n2 = iframe_bridge.bridge_process(bp, "[{\"id\":31,\"method\":\"eval\",\"params\":{\"line\":\"open http://x\"}}]")
+            spec.assert_true(string.index_of(env, "queued") >= 0, "the step-mode eval is queued")
+            spec.assert_true(string.index_of(env, "paused") >= 0, "a paused event is in the envelope")
+            spec.assert_true(string.index_of(env, "\"kind\":\"event\"") >= 0, "paused is tagged as an event")
+            runner.runner_free(bp)
+        }
+    }
+
+    _rc = spec.run_summary(fw)
+    return _rc
+}

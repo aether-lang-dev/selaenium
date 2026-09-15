@@ -36,6 +36,15 @@ aeb(cap) {
             source("runner_probe.ae")
             lib("..")
         }
+        // iframe console bridge unit test — the pure correlation core
+        // (bridge_process): feed the JSON the in-page outbox would yield, assert
+        // the reply/event envelope (tagging, id correlation, batching, step-mode
+        // framing). The executeScript page-I/O half is covered live. lib("..")
+        // resolves iframe_bridge + runner + shell + bidi_demux.
+        aether.program_test() {
+            source("iframe_bridge_probe.ae")
+            lib("..")
+        }
         // BiDi live slice — drives real Chrome through the shape-C demux:
         // commands, concurrency, AND the event round-trip (session.subscribe →
         // navigate → async browsingContext.load via the event queue). Self-skips

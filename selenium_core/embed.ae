@@ -37,6 +37,7 @@ import driver
 import selenium_bidi
 import shell
 import runner
+import iframe_bridge
 import bidi_demux
 import std.string
 
@@ -139,6 +140,33 @@ sel_embed_runner_poll_reply(rp: ptr, id: int) -> string {
 // Drain the next runner event ("" if none): command-finished / paused / ….
 sel_embed_runner_poll_event(rp: ptr) -> string {
     return sel_embed_dup(bidi_demux.demux_poll_event_runner(runner.runner_demux(rp)))
+}
+
+// ---- SUT-adjacent iframe console bridge (iframe_bridge.ae) ----
+// A bridge shuttles control frames between an in-page console (an iframe next to
+// the site under test) and a runner controller, using executeScript as the
+// transport (the page is the mailbox). The engine holds no thread: a driving
+// client injects the shim once, then loops sel_embed_bridge_pump on a timer —
+// each pump drains the page outbox, runs the requests through the runner, and
+// pushes replies+events back into the page. See iframe_bridge.ae for the shape.
+
+// New bridge over session `h` (a runner controller paired with executeScript I/O).
+sel_embed_bridge_new(h: ptr) -> ptr {
+    return iframe_bridge.bridge_new(h)
+}
+sel_embed_bridge_free(bp: ptr) {
+    iframe_bridge.bridge_free(bp)
+}
+// Inject the in-page shim (window.__selaenium mailbox). Idempotent; safe every
+// pump and after navigation. Returns 0 / a W3C error code.
+sel_embed_bridge_install(h: ptr) -> int {
+    return iframe_bridge.bridge_install(h)
+}
+// One bridge cycle against session `h`: drain the page outbox, run each request
+// through the runner, push replies+events back into the page. Returns the number
+// of requests processed (0 = nothing queued), or -1 on a page I/O error.
+sel_embed_bridge_pump(bp: ptr, h: ptr) -> int {
+    return iframe_bridge.bridge_pump(bp, h)
 }
 
 // ---- the one workhorse ----

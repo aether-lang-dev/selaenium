@@ -1,0 +1,192 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>selaenium console</title>
+<!--
+  The SUT-adjacent console. This page runs as an iframe injected next to the
+  site under test; it never talks to a driver directly. It speaks the mailbox
+  protocol of the in-page shim (iframe_bridge.ae's BRIDGE_SHIM_JS) over
+  window.postMessage: it posts control requests UP to the parent window
+    { selaenium:"req", body:{ id, method, params } }
+  and receives replies + events DOWN
+    { selaenium:"rep", body:{ kind:"reply"|"event", ... } }
+  which the parent's shim relays after the driving client's bridge_pump has run
+  each request through the engine's runner controller. So: type a line here ->
+  postMessage up -> shim queues -> driving client pumps -> runner runs it in the
+  session -> reply/event pushed back down -> rendered here. The round trip is the
+  point ("down to the driving client and back up").
+
+  Zero dependencies, single file, no build. Informed by webautoma's in-page SAM
+  console (Apache-2.0); portions copyright Marcello Russo. See the repo NOTICE.
+-->
+<style>
+  :root { color-scheme: light dark; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    display: flex; flex-direction: column; background: #1e1e1e; color: #d4d4d4;
+  }
+  header {
+    display: flex; align-items: center; gap: .6em; padding: .4em .7em;
+    background: #252526; border-bottom: 1px solid #333; font-size: 12px;
+  }
+  header .dot { width: 8px; height: 8px; border-radius: 50%; background: #4ec9b0; }
+  header .mode { margin-left: auto; opacity: .8; }
+  header button {
+    font: inherit; background: #333; color: #d4d4d4; border: 1px solid #444;
+    border-radius: 3px; padding: .1em .5em; cursor: pointer;
+  }
+  header button:hover { background: #3a3a3a; }
+  #log { flex: 1 1 auto; overflow-y: auto; padding: .5em .7em; white-space: pre-wrap; word-break: break-word; }
+  .line { margin: 0 0 .15em; }
+  .in    { color: #9cdcfe; }
+  .in::before  { content: "› "; color: #569cd6; }
+  .out   { color: #ce9178; }
+  .info  { color: #6a9955; }
+  .err   { color: #f48771; }
+  .event { color: #c586c0; }
+  .event::before { content: "· "; }
+  form { display: flex; border-top: 1px solid #333; }
+  #cmd {
+    flex: 1 1 auto; font: inherit; background: #1e1e1e; color: #d4d4d4;
+    border: 0; padding: .5em .7em; outline: none;
+  }
+  #cmd::placeholder { color: #666; }
+</style>
+
+<header>
+  <span class="dot" id="dot" title="bridge lane"></span>
+  <strong>selaenium</strong>
+  <button id="stepBtn" title="run the next queued line">step</button>
+  <button id="contBtn" title="drain the queue, back to run mode">continue</button>
+  <button id="modeBtn" title="toggle run/step mode">mode: run</button>
+  <span class="mode" id="hint">type a command · ? for help</span>
+</header>
+<div id="log" aria-live="polite"></div>
+<form id="form" autocomplete="off">
+  <input id="cmd" placeholder="open https://example.com   ·   :step   :mode step   ?help" autofocus>
+</form>
+
+<script>
+(function () {
+  "use strict";
+  var log = document.getElementById("log");
+  var form = document.getElementById("form");
+  var cmd = document.getElementById("cmd");
+  var modeBtn = document.getElementById("modeBtn");
+  var hint = document.getElementById("hint");
+  var stepBtn = document.getElementById("stepBtn");
+  var contBtn = document.getElementById("contBtn");
+
+  var nextId = 1;
+  var pending = {};           // id -> callback(replyBody)
+  var mode = "run";
+  var history = [];
+  var histIdx = -1;
+
+  function print(text, cls) {
+    var el = document.createElement("div");
+    el.className = "line " + (cls || "out");
+    el.textContent = text;
+    log.appendChild(el);
+    log.scrollTop = log.scrollHeight;
+  }
+
+  // Post a control request UP to the shim; resolve when its reply comes back.
+  function send(method, params, onReply) {
+    var id = nextId++;
+    if (onReply) pending[id] = onReply;
+    var body = { id: id, method: method };
+    if (params !== undefined) body.params = params;
+    try { window.parent.postMessage({ selaenium: "req", body: body }, "*"); }
+    catch (e) { print("cannot reach the parent frame: " + e, "err"); }
+    return id;
+  }
+
+  // Replies + events arrive DOWN from the shim (the driving client pumped them).
+  window.addEventListener("message", function (e) {
+    var d = e && e.data;
+    if (!d || d.selaenium !== "rep" || !d.body) return;
+    var b = d.body;
+    if (b.kind === "event") { renderEvent(b); return; }
+    // a reply: correlate by id, run its callback
+    var cb = pending[b.id];
+    if (cb) { delete pending[b.id]; cb(b); }
+  });
+
+  function renderEvent(ev) {
+    var m = ev.method || "?";
+    var p = ev.params ? JSON.stringify(ev.params) : "";
+    if (m === "paused") {
+      var n = ev.params && ev.params.pending;
+      hint.textContent = "paused — " + n + " queued · press step / continue";
+    }
+    print(m + (p ? " " + p : ""), "event");
+  }
+
+  // Render a runner reply. Runner-lane frames wrap the shell result in .result.
+  function renderReply(b) {
+    if (b.error) { print("error: " + b.error, "err"); return; }
+    var r = b.result;
+    if (r === undefined) { print(JSON.stringify(b), "out"); return; }
+    if (r && typeof r === "object") {
+      if (r.queued) { print("queued (step mode)", "info"); return; }
+      if ("stepped" in r) {                                   // a step() reply
+        if (!r.stepped) { print("nothing queued", "info"); return; }
+        return renderShell(r.result);
+      }
+      if ("continued" in r) { print("ran " + r.continued + " queued line(s)", "info"); return; }
+      if (r.mode) { setMode(r.mode); print("mode: " + r.mode, "info"); return; }
+      if (r.trace || r.timers || r.sid !== undefined) { print(JSON.stringify(r, null, 2), "out"); return; }
+      return renderShell(r);                                  // a plain eval reply
+    }
+    print(String(r), "out");
+  }
+
+  // Render one shell result object {ok, value|info|error}.
+  function renderShell(res) {
+    if (!res || typeof res !== "object") { print(String(res), "out"); return; }
+    if (res.ok === false) { print("error: " + (res.error || "?") + (res.code ? " (" + res.code + ")" : ""), "err"); return; }
+    if ("value" in res) { print(typeof res.value === "string" ? res.value : JSON.stringify(res.value), "out"); return; }
+    if ("info" in res)  { print(res.info || "ok", "info"); return; }
+    print(JSON.stringify(res), "out");
+  }
+
+  function setMode(m) { mode = m; modeBtn.textContent = "mode: " + m; }
+
+  // ---- input handling ----
+  function run(text) {
+    text = text.trim();
+    if (!text) return;
+    print(text, "in");
+    history.push(text); histIdx = history.length;
+
+    if (text === "?" || text === "?help" || text === "help") {
+      send("eval", { line: "help" }, function (b) { renderReply(b); });
+      return;
+    }
+    if (text === ":step")     { send("step", undefined, renderReply); return; }
+    if (text === ":continue" || text === ":c") { send("continue", undefined, renderReply); return; }
+    if (text.indexOf(":mode") === 0) {
+      var m = text.slice(5).trim() || (mode === "run" ? "step" : "run");
+      send("mode", { mode: m }, renderReply); return;
+    }
+    if (text.indexOf(":inspect") === 0) {
+      send("inspect", { what: text.slice(8).trim() || "sid" }, renderReply); return;
+    }
+    // a bare line is a shell command (queued in step mode)
+    send("eval", { line: text }, renderReply);
+  }
+
+  form.addEventListener("submit", function (e) { e.preventDefault(); var t = cmd.value; cmd.value = ""; run(t); });
+  stepBtn.addEventListener("click", function () { run(":step"); });
+  contBtn.addEventListener("click", function () { run(":continue"); });
+  modeBtn.addEventListener("click", function () { run(":mode " + (mode === "run" ? "step" : "run")); });
+
+  cmd.addEventListener("keydown", function (e) {
+    if (e.key === "ArrowUp")   { if (histIdx > 0) { cmd.value = history[--histIdx]; e.preventDefault(); } }
+    if (e.key === "ArrowDown") { if (histIdx < history.length - 1) { cmd.value = history[++histIdx]; } else { histIdx = history.length; cmd.value = ""; } }
+  });
+
+  print("selaenium console — driving the session next door. Type ? for help.", "info");
+})();
+</script>

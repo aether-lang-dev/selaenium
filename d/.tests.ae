@@ -17,6 +17,8 @@ aeb(cap) {
         dep("selenium_core/.build.ae")
         d.test() {
             d_flag("-Isrc")
+            // string-import path for the shipped console page (Bridge.consoleHtml)
+            d_flag("-J../selenium_core/console")
             // Link the engine .so from its in-tree staged location + bake rpath
             // so the test binary finds it at run time (dmd forwards -L<x> to ld).
             d_flag("-L-L../selenium_core/native")

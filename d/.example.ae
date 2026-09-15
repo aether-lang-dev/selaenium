@@ -20,7 +20,7 @@ aeb(cap) {
             stage("example/consumer.d", "d-consumer/consumer.d")
             assert_file("d-pkg/native/libselenium_core.so")
             run_in("d-consumer")
-            consumer_run_cmd("dmd -I../d-pkg/src -L-L../d-pkg/native -L-lselenium_core -L-rpath -L../d-pkg/native ../d-pkg/src/selenium/package.d -run consumer.d")
+            consumer_run_cmd("dmd -I../d-pkg/src -J../d-pkg/src/selenium -L-L../d-pkg/native -L-lselenium_core -L-rpath -L../d-pkg/native ../d-pkg/src/selenium/package.d -run consumer.d")
             run_arg("ffi")
             run_arg("live")
         }

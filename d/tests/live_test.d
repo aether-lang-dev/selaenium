@@ -285,6 +285,44 @@ int main() {
               "runner: step runs the queued line -> 'go'");
     }
 
+    // SUT-adjacent console bridge: the executeScript transport half (the unit
+    // probe covers the pure correlation core). Inject the shim, simulate the
+    // console posting a request into the page outbox, pump once, and assert the
+    // driving client ran it through the runner and pushed a reply back into the
+    // page inbox — the full "down to the driving client and back up" round trip
+    // against a real browser.
+    {
+        d.get(base ~ "/one");                 // Page One: <h1 id=hdr>One</h1>
+        auto br = d.bridge();
+        scope(exit) br.close();
+        br.inject();                          // installs window.__selaenium + console iframe
+        // The console would postMessage this up; simulate by pushing straight
+        // into the outbox the shim drains (bypassing the iframe for the test).
+        d.executeScript(
+            "window.__selaenium.out.push(JSON.stringify("
+            ~ "{id:7001,method:'eval',params:{line:'text #hdr'}}));"
+            ~ "window.__selaenium.__replies=[];"
+            ~ "window.addEventListener('message',function(e){"
+            ~ "  if(e.data&&e.data.selaenium==='rep')window.__selaenium.__replies.push(e.data.body);});");
+        check(br.pump() >= 1, "bridge: pump processed the queued console request");
+        // the shim delivered the reply via postMessage; it lands in __replies
+        // asynchronously, so poll briefly for it.
+        JSONValue captured = JSONValue(null);
+        foreach (_; 0 .. 20) {
+            auto reps = d.executeScript("return JSON.stringify(window.__selaenium.__replies||[]);");
+            auto arr = parseJSON(reps.str);
+            if (arr.type == JSONType.array && arr.array.length > 0) {
+                foreach (item; arr.array)
+                    if (item.type == JSONType.object && ("result" in item) !is null) captured = item;
+                if (captured.type == JSONType.object) break;
+            }
+            Thread.sleep(50.msecs);
+        }
+        check(captured.type == JSONType.object, "bridge: a reply was delivered back into the page");
+        check(captured.type == JSONType.object && captured["result"]["value"].str == "One",
+              "bridge: the round-tripped 'text #hdr' returned 'One'");
+    }
+
     // Grid client: drive a session THROUGH a real Selenium Grid hub (the
     // grid/run-grid-test.sh harness stands one up in a container and exports
     // SEL_GRID_URL). openSession(hubUrl) -> HTTP -> router -> node -> browser.

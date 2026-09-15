@@ -249,6 +249,9 @@ entities.json
 /d/native/
 /d/*.o
 /d/tests/*.o
+# console.html is staged into the module by d/.package.ae from the canonical
+# selenium_core/console/console.html; the in-tree copy is a build artifact.
+/d/src/selenium/console.html
 
 # Nim
 /nim/native/
