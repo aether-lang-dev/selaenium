@@ -25,11 +25,28 @@ import std.heap
 // event loop keeps well under it.
 EVENT_QUEUE_MAX() -> int { return 1024 }
 
+// The Demux carries TWO independent lanes over one reader/socket, so a single
+// WebSocket can multiplex BiDi browser traffic AND the runner control channel
+// (the "wee shell" step/inspect/continue verbs + its events) without a second
+// connection. A frame's LANE is chosen by demux_ingest's classifier:
+//   - untagged frames (no top-level "channel", or "channel":"bidi") -> the bidi
+//     lane, EXACTLY the legacy behaviour (BiDi callers are unchanged);
+//   - {"channel":"runner", ...} -> the runner lane.
+// Each lane is the same correlation-table + bounded-event-queue shape. The
+// legacy demux_*(dp,...) functions operate on the bidi lane (back-compat); the
+// runner lane is reached via the demux_*_runner(dp,...) variants. Adding a third
+// lane later is the same additive move (or generalise to a name->lane map).
 struct Demux {
+    // --- bidi lane (the legacy fields; unqualified funcs use these) ---
     replies: ptr       // map: id-string -> reply JSON (a completed command)
     events: ptr        // list of event JSON strings (FIFO, bounded)
     lost: int          // events dropped by the bound since last lost_count()
     pending: ptr       // map: id-string -> "1" for ids a caller is awaiting
+    // --- runner lane (the control channel; demux_*_runner funcs use these) ---
+    r_replies: ptr
+    r_events: ptr
+    r_lost: int
+    r_pending: ptr
 }
 
 demux_new() -> ptr {
@@ -38,6 +55,10 @@ demux_new() -> ptr {
     d.events = list.new()
     d.lost = 0
     d.pending = map.new()
+    d.r_replies = map.new()
+    d.r_events = list.new()
+    d.r_lost = 0
+    d.r_pending = map.new()
     return d as ptr
 }
 
@@ -54,22 +75,40 @@ demux_register(dp: ptr, id: int) {
     _e = map.put(d.pending, string.from_int(id), "1")
 }
 
-// ingest(frame_json) — classify one frame and route it. Returns:
+// ingest(frame_json) — classify one frame by LANE (a top-level "channel":
+// "runner" routes to the runner lane; anything else — no channel, or
+// "channel":"bidi" — to the bidi lane), then route WITHIN the lane by shape
+// (id -> reply table, no-id -> bounded event queue). Returns:
 //   1 routed as a reply, 2 routed as an event, 0 dropped (unknown/uncorrelated),
-//   -1 unparseable. PURE — the single-reader loop calls this per frame.
+//   -1 unparseable. PURE — the single-reader loop calls this per frame. Adding a
+//   lane never changes this signature; a binding still calls ingest once per
+//   frame off the one socket.
 demux_ingest(dp: ptr, frame_json: string) -> int {
     if dp == null { return -1 }
     d = dp as *Demux
     root, perr = json.parse(frame_json)
     if string.length(perr) > 0 { return -1 }
 
+    // Lane classification: the runner lane is opt-in via an explicit channel tag.
+    chv, _c = json.object_get(root, "channel")
+    is_runner = 0
+    if chv != null {
+        ch, _cs = json.get_string(chv)
+        if ch == "runner" { is_runner = 1 }
+    }
+
     idv, _i = json.object_get(root, "id")
     if idv != null {
-        // A command reply (result or error), keyed by id.
         id = json.get_int(idv)
         idkey = string.from_int(id)
-        // Only keep it if a caller is (or was) awaiting this id; else drop a
-        // late/uncorrelated reply rather than mis-route it.
+        if is_runner == 1 {
+            if map.has(d.r_pending, idkey) == 1 {
+                _rr = map.put(d.r_replies, idkey, string.concat(frame_json, ""))
+                return 1
+            }
+            return 0
+        }
+        // bidi lane (legacy path, unchanged).
         if map.has(d.pending, idkey) == 1 {
             _r = map.put(d.replies, idkey, string.concat(frame_json, ""))
             return 1
@@ -77,10 +116,17 @@ demux_ingest(dp: ptr, frame_json: string) -> int {
         return 0
     }
 
-    // No id -> an event (type:"event"). Enqueue, bounded.
+    // No id -> an event. Enqueue on the classified lane, bounded (drop-oldest +
+    // count).
+    if is_runner == 1 {
+        if list.size(d.r_events) >= EVENT_QUEUE_MAX() {
+            list.remove(d.r_events, 0)
+            d.r_lost = d.r_lost + 1
+        }
+        _ar = list.add(d.r_events, string.concat(frame_json, ""))
+        return 2
+    }
     if list.size(d.events) >= EVENT_QUEUE_MAX() {
-        // drop oldest, count the loss.
-        _drop, _de = list.get(d.events, 0)
         list.remove(d.events, 0)
         d.lost = d.lost + 1
     }
@@ -140,4 +186,58 @@ demux_event_count(dp: ptr) -> int {
     if dp == null { return 0 }
     d = dp as *Demux
     return list.size(d.events)
+}
+
+// ---- runner lane: the same operations on the control channel ----------------
+// Identical shape to the bidi-lane functions above, on the r_* tables. A runner
+// front-end (REPL, iframe, editor) awaits/drains these; BiDi is untouched.
+
+demux_register_runner(dp: ptr, id: int) {
+    if dp == null { return }
+    d = dp as *Demux
+    _e = map.put(d.r_pending, string.from_int(id), "1")
+}
+
+demux_poll_reply_runner(dp: ptr, id: int) -> string {
+    if dp == null { return "" }
+    d = dp as *Demux
+    idkey = string.from_int(id)
+    if map.has(d.r_replies, idkey) == 0 { return "" }
+    r, _ = map.get(d.r_replies, idkey)
+    out = string.concat(r, "")
+    map.remove(d.r_replies, idkey)
+    map.remove(d.r_pending, idkey)
+    return out
+}
+
+demux_poll_event_runner(dp: ptr) -> string {
+    if dp == null { return "" }
+    d = dp as *Demux
+    if list.size(d.r_events) == 0 { return "" }
+    e, _ = list.get(d.r_events, 0)
+    out = string.concat(e, "")
+    list.remove(d.r_events, 0)
+    return out
+}
+
+demux_lost_count_runner(dp: ptr) -> int {
+    if dp == null { return 0 }
+    d = dp as *Demux
+    n = d.r_lost
+    d.r_lost = 0
+    return n
+}
+
+demux_cancel_runner(dp: ptr, id: int) {
+    if dp == null { return }
+    d = dp as *Demux
+    idkey = string.from_int(id)
+    map.remove(d.r_pending, idkey)
+    map.remove(d.r_replies, idkey)
+}
+
+demux_event_count_runner(dp: ptr) -> int {
+    if dp == null { return 0 }
+    d = dp as *Demux
+    return list.size(d.r_events)
 }

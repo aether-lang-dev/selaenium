@@ -81,6 +81,49 @@ main() {
         }
     }
 
+    // The runner lane multiplexed over the SAME demux: a "channel":"runner"
+    // frame routes to the runner tables, is drained by the _runner accessors,
+    // and is ISOLATED from the bidi lane (neither leaks into the other).
+    spec.describe(fw, "runner lane (multiplexed control channel)") {
+        spec.it("drain both lanes' event queues (prior tests left the bidi queue full)") callback {
+            while string.length(bidi_demux.demux_poll_event(d)) > 0 { }
+            while string.length(bidi_demux.demux_poll_event_runner(d)) > 0 { }
+            spec.assert_eq(bidi_demux.demux_event_count(d), 0, "bidi queue drained")
+            spec.assert_eq(bidi_demux.demux_event_count_runner(d), 0, "runner queue drained")
+        }
+        spec.it("a runner reply routes to the runner lane, not bidi") callback {
+            bidi_demux.demux_register_runner(d, 1)
+            spec.assert_eq(bidi_demux.demux_ingest(d, "{\"channel\":\"runner\",\"id\":1,\"result\":{\"paused\":true}}"), 1, "runner reply -> 1")
+            // the bidi lane must NOT see it (its id-1 was already consumed earlier;
+            // a fresh bidi poll(1) is empty)
+            spec.assert_str_eq(bidi_demux.demux_poll_reply(d, 1), "", "bidi poll(1) empty — no leak")
+            spec.assert_str_eq(bidi_demux.demux_poll_reply_runner(d, 1), "{\"channel\":\"runner\",\"id\":1,\"result\":{\"paused\":true}}", "runner poll(1) has it")
+        }
+        spec.it("a runner event routes to the runner event queue only") callback {
+            spec.assert_eq(bidi_demux.demux_ingest(d, "{\"channel\":\"runner\",\"type\":\"event\",\"method\":\"paused-at-step\"}"), 2, "runner event -> 2")
+            spec.assert_eq(bidi_demux.demux_event_count(d), 0, "bidi event queue untouched")
+            spec.assert_eq(bidi_demux.demux_event_count_runner(d), 1, "runner event queue has 1")
+            spec.assert_str_eq(bidi_demux.demux_poll_event_runner(d), "{\"channel\":\"runner\",\"type\":\"event\",\"method\":\"paused-at-step\"}", "runner poll_event returns it")
+        }
+        spec.it("an untagged frame still goes to the bidi lane (back-compat)") callback {
+            spec.assert_eq(bidi_demux.demux_ingest(d, "{\"type\":\"event\",\"method\":\"log.entryAdded\"}"), 2, "untagged event -> 2")
+            spec.assert_eq(bidi_demux.demux_event_count(d), 1, "landed in the bidi queue")
+            spec.assert_eq(bidi_demux.demux_event_count_runner(d), 0, "not the runner queue")
+            _drain = bidi_demux.demux_poll_event(d)
+        }
+        spec.it("channel:bidi tag is treated as the bidi lane") callback {
+            bidi_demux.demux_register(d, 30)
+            spec.assert_eq(bidi_demux.demux_ingest(d, "{\"channel\":\"bidi\",\"id\":30,\"result\":{}}"), 1, "channel:bidi reply -> 1")
+            spec.assert_str_eq(bidi_demux.demux_poll_reply(d, 30), "{\"channel\":\"bidi\",\"id\":30,\"result\":{}}", "bidi lane has it")
+        }
+        spec.it("runner lane: cancel + bounded queue behave independently") callback {
+            bidi_demux.demux_register_runner(d, 5)
+            bidi_demux.demux_cancel_runner(d, 5)
+            spec.assert_eq(bidi_demux.demux_ingest(d, "{\"channel\":\"runner\",\"id\":5,\"result\":{}}"), 0, "cancelled runner id -> 0")
+            spec.assert_str_eq(bidi_demux.demux_poll_reply_runner(d, 5), "", "runner poll(5) empty after cancel")
+        }
+    }
+
     _rc = spec.run_summary(fw)
     bidi_demux.demux_free(d)
     return _rc
