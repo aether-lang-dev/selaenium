@@ -224,6 +224,11 @@ entities.json
 /dotnet/**/bin/
 /dotnet/**/obj/
 /dotnet/SeleniumCore/native/
+# F# is a CLR-family binding: dotnet builds into fsharp/bin + fsharp/obj and the
+# test node stages the engine .so into fsharp/native (copy.file).
+/fsharp/bin/
+/fsharp/obj/
+/fsharp/native/
 /dotnet/SeleniumCore/nupkg/
 
 # Rust

@@ -27,5 +27,23 @@ aeb(cap) {
             pa(ebin)
             run_main("ffi_test")
         }
+        // run_main takes one module, so each suite gets its own block.
+        // surface_test was authored but never wired — it had never run.
+        lfe.test() {
+            env("ERL_LIBS", libs)
+            src("src/selenium_lfe.lfe")
+            test_src("test/surface_test.lfe")
+            pa(ebin)
+            run_main("surface_test")
+        }
+        // The live leg: the suites above only prove the shadow finders and the
+        // firefox factory are EXPORTED. This drives real Chrome + Firefox.
+        lfe.test() {
+            env("ERL_LIBS", libs)
+            src("src/selenium_lfe.lfe")
+            test_src("test/live_test.lfe")
+            pa(ebin)
+            run_main("live_test")
+        }
     }
 }

@@ -12,6 +12,9 @@
   <ItemGroup>
     <Compile Include="SeleniumCore.fs" />
     <Compile Include="FfiTest.fs" />
+    <!-- The live leg: FfiTest only proves the shadow finders and the firefox
+         factory exist; LiveTest drives real Chrome + Firefox through them. -->
+    <Compile Include="LiveTest.fs" />
   </ItemGroup>
 
   <ItemGroup>
