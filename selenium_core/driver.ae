@@ -16,6 +16,7 @@
 import std.os
 import std.net
 import std.list
+import std.mem
 import std.string
 import std.heap
 import resolve
@@ -102,8 +103,7 @@ launch(driver_path: string, timeout_ms: int) -> ptr {
 
     if wait_ready(port, timeout_ms) == 0 {
         // Never came up — kill + reap so we don't leak the process.
-        _k = os.kill(token, 15)
-        _e, _we = os.wait(token)
+        _kill_and_reap(token)
         return null
     }
 
@@ -156,16 +156,37 @@ release(dp: ptr) {
 // used release() earlier). No-op for a non-positive pid.
 reap(pid: int) {
     if pid <= 0 { return }
-    _k = os.kill(pid, 15)
-    _e, _we = os.wait(pid)
+    _kill_and_reap(pid)
+}
+
+// Kill + reap one spawned token without ever blocking forever.
+//
+// A child forked from inside a managed runtime inherits that runtime's BLOCKED
+// signal mask. Julia blocks SIGTERM in its threads, so a chromedriver spawned
+// from the Julia binding never receives the SIGTERM below and an unbounded
+// os.wait() on it hangs the caller for good (observed: SigBlk 0x4206 on the
+// child, bit 14 = SIGTERM, vs 0x0 for the same binary spawned from a shell).
+// The real fix is for the spawn to reset the child's mask — filed as an ask
+// against the Aether stdlib (asks/aether-spawn-child-inherits-blocked-signal-mask.md).
+// A process supervisor must escalate regardless: a wedged driver may decline
+// SIGTERM for its own reasons, and SIGKILL can be neither blocked nor ignored.
+_kill_and_reap(token: int) {
+    _k = os.kill(token, 15)
+    toks = list.new()
+    list.add(toks, mem.long_to_ptr(token))
+    _t, _e, timed_out, _err = os.wait_any_timeout(toks, 5)
+    list.free(toks)
+    if timed_out == 1 {
+        _k2 = os.kill(token, 9)
+        _e2, _we2 = os.wait(token)
+    }
 }
 
 // Kill + reap the driver process and free the handle. NULL-safe; safe once.
 stop(dp: ptr) {
     if dp == null { return }
     d = dp as *Driver
-    _k = os.kill(d.token, 15)
-    _e, _we = os.wait(d.token)
+    _kill_and_reap(d.token)
     heap.free(dp)
 }
 

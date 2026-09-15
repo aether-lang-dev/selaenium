@@ -20,5 +20,12 @@ aeb(cap) {
             env("SELENIUM_CORE_LIB", lib)
             script("test/ffi_test.jl")
         }
+        // The live leg: ffi_test only proves the shadow finders and the firefox
+        // factory EXIST. live_test drives real Chrome + Firefox through the
+        // engine's driver ABI so those paths are actually executed.
+        julia.test() {
+            env("SELENIUM_CORE_LIB", lib)
+            script("test/live_test.jl")
+        }
     }
 }

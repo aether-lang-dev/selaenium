@@ -59,6 +59,10 @@ export By, Locator, WebDriver, WebElement, ShadowRoot, Keys, Select, Actions, Wa
     quit, sessionid, chrome, chrome_tls, headless_chrome, local_chrome,
     firefox, headless_firefox, edge, headless_edge, safari,
     resolve_driver, launch_driver, ensure_driver,
+    # ensure_driver/launch_driver hand back a DriverProcess; its accessors have to
+    # be exported too or the caller cannot use the value (url for the command
+    # executor, stop_driver to reap it).
+    DriverProcess, driver_url, driver_pid, stop_driver,
     # bidi
     bidi, bidi_available, subscribe, unsubscribe, next_event, command,
     get_tree, top_context, evaluate, evaluate_value, navigate,
