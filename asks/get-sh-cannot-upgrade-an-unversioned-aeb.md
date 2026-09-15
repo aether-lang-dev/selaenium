@@ -1,5 +1,9 @@
 # aeb `get.sh`: an unversioned (source-built) aeb on PATH can never be upgraded
 
+> **STATUS: FIXED upstream (2026-09-15)** in aeb `0d686d8` — the `0.0.0`
+> (source-build) path honours an explicit `AEB_REF`/`AEB_FORCE` and falls through
+> to the install, instead of returning and claiming the pin was satisfied.
+
 Found 2026-09-12 while bringing a dev box onto the repo's pinned toolchain by
 following the README one-liner. Upstream bug in **aeb's `get.sh`**, not in this
 repo. Related to — and not fixed by — the earlier

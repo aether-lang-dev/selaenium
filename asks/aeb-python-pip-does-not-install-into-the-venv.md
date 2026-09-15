@@ -1,5 +1,11 @@
 # aeb: `python.pip("pytest")` does not install into the venv it then runs
 
+> **STATUS: FIXED upstream (2026-09-15)** in aeb `0d686d8` — every pip call in
+> `python.install()` checks its exit code now, names the package that failed and
+> reddens the node. The original symptom here was our own misuse (`pip()` is a
+> block setter of `install()`, not a node); what stayed broken upstream, and is
+> now fixed, was that the failure reported NOTHING.
+
 > **Filed upstream** where the fix belongs, as
 > `../aeb/asks/python-pip-does-not-install-into-the-venv.md`. Kept here so the
 > symptom is searchable from this repo.

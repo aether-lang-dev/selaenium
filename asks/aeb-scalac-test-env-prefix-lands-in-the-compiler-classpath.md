@@ -1,5 +1,9 @@
 # REOPENED: `scala.scalac_test`'s `env()` still lands in the compiler-classpath slot (v0.310)
 
+> **STATUS: FIXED — shipped in aeb v0.311** (`9a1c520`, "cache an OWNED copy").
+> Re-verified 2026-09-15: `aeb scala/.tests.ae` is **1/1 PASS**, and the whole
+> JVM family (java, scala, kotlin, clojure, groovy) is green.
+
 > **Upstream copy**: `~/scm/aeb/asks/scalac-test-env-prefix-lands-in-the-compiler-classpath.md`
 > (pushed as `e385ee9`). Kept here so the symptom is searchable from this repo.
 >
