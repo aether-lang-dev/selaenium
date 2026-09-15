@@ -1,5 +1,17 @@
 # os.spawn_proc: the child inherits the parent's BLOCKED signal mask
 
+> **STATUS: FIXED upstream (2026-09-15)** in aether `8335661f` (PR #2038) —
+> `aether_child_reset_signals()` runs in the forked child before exec in all
+> seven POSIX spawn paths (empty mask, and inherited `SIG_IGN` reset to
+> `SIG_DFL`). Verified here on the exact path the engine uses: a C harness
+> blocking SIGTERM/INT/QUIT in the parent and driving `os_spawn_raw`
+> (`os.spawn_proc`) now sees the child's `SigBlk: 0000000000000000`, where it
+> was `0x4206`. Upstream ask copy is on the `asks/selaenium-findings` branch.
+>
+> `selenium_core/driver.ae`'s SIGTERM -> bounded wait -> SIGKILL escalation
+> STAYS: a supervisor must escalate regardless of why a driver declines
+> SIGTERM. It is no longer what makes signals work at all.
+
 Found porting Selenium (selaenium): a driver process spawned from inside a
 managed runtime could not be killed, and the reap blocked forever.
 
