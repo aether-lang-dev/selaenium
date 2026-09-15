@@ -74,6 +74,32 @@ sel_embed_set_insecure(h: ptr, on: int) {
     selenium_core.session_set_insecure(h, on)
 }
 
+// ---- Runner Phase 0: opt-in structured trace + named timers ----
+// Shared by every binding (all commands funnel through execute()). Turn tracing
+// on, drive the session, then drain the JSON. Off by default (zero overhead).
+
+// Enable (on=1) / disable (0) per-command Event recording for this session.
+sel_embed_set_trace(h: ptr, on: int) {
+    selenium_core.session_set_trace(h, on)
+}
+// The accumulated command Events as a JSON array, then RESET (drain). "[]" when
+// none. Each event: {command,timestamp,duration_ms,status,errorCode,passed}.
+// Caller-owned string.
+sel_embed_trace_json(h: ptr) -> string {
+    return sel_embed_dup(selenium_core.trace_json_of(h))
+}
+// Begin / end a named timing span. timer_stop appends {name,duration_ms} to the
+// timers buffer, drained (with reset) by sel_embed_timers_json.
+sel_embed_timer_start(h: ptr, name: string) {
+    selenium_core.timer_start(h, name)
+}
+sel_embed_timer_stop(h: ptr, name: string) {
+    selenium_core.timer_stop(h, name)
+}
+sel_embed_timers_json(h: ptr) -> string {
+    return sel_embed_dup(selenium_core.timers_json_of(h))
+}
+
 // ---- the one workhorse ----
 
 // Execute a WebDriver command by name with JSON parameters (params_json may be

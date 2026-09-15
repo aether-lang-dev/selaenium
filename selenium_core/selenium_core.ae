@@ -17,6 +17,7 @@ import std.http.client
 import std.json
 import std.string
 import std.heap
+import std.time
 import atoms
 
 // ---- Session handle ------------------------------------------------------
@@ -36,6 +37,15 @@ struct Session {
     last_error: string      // human-readable error / transport-failure message
     ca_file: string         // TLS: pin the peer cert against THIS CA (""=system store)
     insecure: int           // TLS: 1 = skip verification (self-signed dev Grid); 0 = verify
+    // --- Runner Phase 0: opt-in structured trace + named timers (shared by all
+    // bindings). trace_on=1 makes execute() append a JSON Event per command to
+    // trace_json; timers_json accumulates named spans. Both are drained + reset
+    // via the trace_json/timers_json accessors. Off by default (zero overhead).
+    trace_on: int           // 1 = record an Event per command; 0 = off (default)
+    trace_json: string      // accumulated "[{event},{event},...]" or "" when empty
+    trace_count: int        // number of events accumulated (for the array commas)
+    timers_json: string     // accumulated "[{timer},...]" of stopped named spans
+    timers_open: string     // "name\tstart_ms\n..." of currently-open timers
 }
 
 // Create a session bound to `base_url` (e.g. "http://127.0.0.1:9515" or a
@@ -56,6 +66,11 @@ session_new(base_url: string) -> ptr {
     s.last_error = ""
     s.ca_file = ""
     s.insecure = 0
+    s.trace_on = 0
+    s.trace_json = ""
+    s.trace_count = 0
+    s.timers_json = ""
+    s.timers_open = ""
     return s as ptr
 }
 
@@ -81,6 +96,137 @@ session_free(sp: ptr) {
         return
     }
     heap.free(sp)
+}
+
+// ---- Runner Phase 0: structured trace + named timers ----------------------
+// Opt-in, session-scoped, shared by every binding (they all funnel commands
+// through execute()). A binding turns tracing on, drives its session, then
+// drains the JSON. Off by default; a disabled session pays one int-compare.
+
+// session_set_trace(sp, on) — 1 enables per-command Event recording, 0 disables.
+session_set_trace(sp: ptr, on: int) {
+    if sp == null { return }
+    s = sp as *Session
+    s.trace_on = on
+}
+
+// _json_str(s) — minimal JSON string escaping for the small fields we emit
+// (command names, timer labels). Handles the quote/backslash/control cases a
+// WebDriver command name or label realistically hits.
+_json_str(v: string) -> string {
+    out = "\""
+    n = string.length(v)
+    i = 0
+    while i < n {
+        c = string.substring(v, i, i + 1)
+        if c == "\"" { out = string.concat(out, "\\\"") }
+        else { if c == "\\" { out = string.concat(out, "\\\\") }
+        else { out = string.concat(out, c) } }
+        i = i + 1
+    }
+    return string.concat(out, "\"")
+}
+
+// _trace_record(s, command, rc, dur_ms) — append one Event to trace_json. Shape:
+// {"command","timestamp","duration_ms","status","errorCode","passed"}. `passed`
+// is rc==0; `status` is the HTTP status the command saw; `errorCode` the decoded
+// W3C code. Timestamp is epoch seconds (wall clock). Called only when trace_on.
+_trace_record(s: *Session, command: string, rc: int, dur_ms: long) {
+    dt = time.now()
+    ts = dt.epoch
+    passed = "false"
+    if rc == 0 { passed = "true" }
+    ev = "{"
+    ev = string.concat(ev, string.concat("\"command\":", _json_str(command)))
+    ev = string.concat(ev, string.concat(",\"timestamp\":", string.from_long(ts)))
+    ev = string.concat(ev, string.concat(",\"duration_ms\":", string.from_long(dur_ms)))
+    ev = string.concat(ev, string.concat(",\"status\":", string.from_int(s.last_status)))
+    ev = string.concat(ev, string.concat(",\"errorCode\":", string.from_int(s.last_error_code)))
+    ev = string.concat(ev, string.concat(",\"passed\":", passed))
+    ev = string.concat(ev, "}")
+    if s.trace_count == 0 {
+        s.trace_json = ev
+    } else {
+        s.trace_json = string.concat(s.trace_json, string.concat(",", ev))
+    }
+    s.trace_count = s.trace_count + 1
+}
+
+// trace_json_of(sp) — the accumulated events as a JSON array "[...]" ("[]" when
+// none), then RESET the buffer (drain semantics — a binding polls periodically
+// or once at the end). Owned string; the C ABI dups it.
+trace_json_of(sp: ptr) -> string {
+    if sp == null { return "[]" }
+    s = sp as *Session
+    out = string.concat("[", string.concat(s.trace_json, "]"))
+    s.trace_json = ""
+    s.trace_count = 0
+    return out
+}
+
+// timer_start(sp, name) — begin a named span (records name + now_ms). Repeated
+// starts of the same name overwrite (last start wins). No-op if tracing state
+// is unavailable (null session).
+timer_start(sp: ptr, name: string) {
+    if sp == null { return }
+    s = sp as *Session
+    // epoch-ms is a long (~1.7e12) — NEVER store it as int (32-bit overflow).
+    s.timers_open = string.concat(s.timers_open,
+        string.concat(name, string.concat("\t", string.concat(string.from_long(time.now_ms()), "\n"))))
+}
+
+// timer_stop(sp, name) — close the most-recent open span of `name`, appending
+// {"name","duration_ms"} to timers_json. Silently ignores an unknown name.
+timer_stop(sp: ptr, name: string) {
+    if sp == null { return }
+    s = sp as *Session
+    start_ms = _timers_open_take(s, name)
+    if start_ms < 0 { return }
+    dur = time.now_ms() - start_ms
+    tm = string.concat("{\"name\":", string.concat(_json_str(name),
+        string.concat(",\"duration_ms\":", string.concat(string.from_long(dur), "}"))))
+    if string.length(s.timers_json) == 0 {
+        s.timers_json = tm
+    } else {
+        s.timers_json = string.concat(s.timers_json, string.concat(",", tm))
+    }
+}
+
+// _timers_open_take(s, name) — find the LAST "name\tstart\n" line for `name`,
+// return its start_ms and remove that line; -1 if none open. Simple line scan
+// (the open set is tiny — a handful of concurrently-timed spans).
+_timers_open_take(s: *Session, name: string) -> long {
+    pat = string.concat(name, "\t")
+    body = s.timers_open
+    found = -1 as long
+    kept = ""
+    rest = body
+    while string.length(rest) > 0 {
+        nl = string.index_of(rest, "\n")
+        if nl < 0 { nl = string.length(rest) }
+        line = string.substring(rest, 0, nl)
+        rest = string.substring(rest, nl + 1, string.length(rest))
+        if string.length(line) == 0 { continue }
+        if string.starts_with(line, pat) == 1 {
+            v = string.substring(line, string.length(pat), string.length(line))
+            lv, _e = string.to_long(v)
+            found = lv           // last match wins
+        } else {
+            kept = string.concat(kept, string.concat(line, "\n"))
+        }
+    }
+    s.timers_open = kept
+    return found
+}
+
+// timers_json_of(sp) — the accumulated stopped-timer spans as a JSON array,
+// then reset. "[]" when none.
+timers_json_of(sp: ptr) -> string {
+    if sp == null { return "[]" }
+    s = sp as *Session
+    out = string.concat("[", string.concat(s.timers_json, "]"))
+    s.timers_json = ""
+    return out
 }
 
 session_id_of(sp: ptr) -> string {
@@ -164,7 +310,28 @@ build_request(name: string, session_id: string, params_json: string) -> string {
 }
 
 // Returns 0 on success, non-zero = the decoded error code (or -1 transport).
+// execute(sp, name, params_json) — the single command chokepoint every binding
+// funnels through. A thin tracing wrapper over _execute_inner: when the session
+// has trace_on=1 it records a structured Event (command/timestamp/duration_ms/
+// status/errorCode/passed) per call into trace_json — the Runner Phase 0 hook,
+// shared by all 27 bindings for zero per-binding work. Off by default: one int
+// test, no allocation, when tracing is disabled.
 execute(sp: ptr, name: string, params_json: string) -> int {
+    if sp == null {
+        return -1
+    }
+    s = sp as *Session
+    if s.trace_on == 0 {
+        return _execute_inner(sp, name, params_json)
+    }
+    t0 = time.now_ms()
+    rc = _execute_inner(sp, name, params_json)
+    dur = time.now_ms() - t0
+    _trace_record(s, name, rc, dur)
+    return rc
+}
+
+_execute_inner(sp: ptr, name: string, params_json: string) -> int {
     if sp == null {
         return -1
     }

@@ -222,6 +222,32 @@ int main() {
         }
     }
 
+    // Runner Phase 0: structured trace + named timers (engine-backed, opt-in).
+    {
+        d.setTrace(true);
+        d.timerStart("phase0");
+        d.get("data:text/html,<title>Trace</title><h1 id=x>t</h1>");
+        d.findElement(By.id("x")).text();
+        d.timerStop("phase0");
+        auto ev = d.traceEvents();
+        check(ev.type == JSONType.array && ev.array.length >= 2, "trace: records an Event per command");
+        bool hasGet = false, allPassed = true;
+        long durSum = 0;
+        foreach (e; ev.array) {
+            if (e["command"].str == "get") hasGet = true;
+            if (!e["passed"].boolean) allPassed = false;
+            durSum += e["duration_ms"].integer;
+        }
+        check(hasGet, "trace: the 'get' command is in the trace");
+        check(allPassed, "trace: successful commands mark passed=true");
+        check(durSum >= 0, "trace: duration_ms is a real (long) number, no int32 overflow");
+        check(d.traceEvents().array.length == 0, "trace: draining resets the buffer");
+        auto tm = d.timers();
+        check(tm.type == JSONType.array && tm.array.length == 1 && tm[0]["name"].str == "phase0",
+              "timers: a named span is recorded with its duration");
+        d.setTrace(false);
+    }
+
     // Grid client: drive a session THROUGH a real Selenium Grid hub (the
     // grid/run-grid-test.sh harness stands one up in a container and exports
     // SEL_GRID_URL). openSession(hubUrl) -> HTTP -> router -> node -> browser.

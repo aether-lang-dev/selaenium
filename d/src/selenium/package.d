@@ -45,6 +45,13 @@ private extern (C) nothrow @nogc {
     void  aether_sel_embed_set_ca(void* h, const(char)* ca_path);
     void  aether_sel_embed_set_insecure(void* h, int on);
 
+    // Runner Phase 0: opt-in structured trace + named timers
+    void  aether_sel_embed_set_trace(void* h, int on);
+    char* aether_sel_embed_trace_json(void* h);
+    void  aether_sel_embed_timer_start(void* h, const(char)* name);
+    void  aether_sel_embed_timer_stop(void* h, const(char)* name);
+    char* aether_sel_embed_timers_json(void* h);
+
     // atom-backed element commands
     int   aether_sel_embed_execute_atom(void* h, const(char)* atom_name, const(char)* elem_id, const(char)* extra_json);
     int   aether_sel_embed_is_displayed(void* h, const(char)* elem_id);
@@ -419,6 +426,23 @@ final class WebDriver {
 
     /// A fresh Actions builder bound to this driver.
     Actions actions() { return new Actions(this); }
+
+    // --- Runner Phase 0: structured trace + named timers (engine-backed) ---
+    /// Enable/disable per-command Event recording for this session. Off by default.
+    void setTrace(bool on) { aether_sel_embed_set_trace(handle, on ? 1 : 0); }
+    /// Drain the accumulated command Events as a JSON array (and reset). Each:
+    /// `{command,timestamp,duration_ms,status,errorCode,passed}`.
+    JSONValue traceEvents() {
+        return parseJSON(takeString(aether_sel_embed_trace_json(handle)));
+    }
+    /// Begin a named timing span.
+    void timerStart(string name) { aether_sel_embed_timer_start(handle, name.toStringz); }
+    /// End a named span (appends `{name,duration_ms}` to the timers buffer).
+    void timerStop(string name) { aether_sel_embed_timer_stop(handle, name.toStringz); }
+    /// Drain the stopped-timer spans as a JSON array (and reset).
+    JSONValue timers() {
+        return parseJSON(takeString(aether_sel_embed_timers_json(handle)));
+    }
 
     // --- logs (Selenium `se/log` vendor extension) ---
     /// The available log types, e.g. `["browser", "driver"]`.
