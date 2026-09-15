@@ -1,0 +1,83 @@
+// runner_probe.ae — pure unit test for the interactive runner controller
+// (runner.ae), using std.spec. Proves the control-flow state machine and the
+// runner-lane framing with NO socket and NO browser: run vs step mode, the
+// step queue (FIFO), continue draining it, reply correlation by id over the
+// runner lane, and the paused/command-finished events. The shell dispatch is
+// driven with a null session (shell_eval returns an error result), which is
+// fine — this tests the CONTROLLER mechanics; the shell language itself is
+// live-tested separately (d/tests/live_test.d). Run via tests/.tests.ae.
+import runner
+import bidi_demux
+import std.string
+import std.spec
+
+// helpers to read the runner lane
+_reply(rp: ptr, id: int) -> string { return bidi_demux.demux_poll_reply_runner(runner.runner_demux(rp), id) }
+_event(rp: ptr) -> string { return bidi_demux.demux_poll_event_runner(runner.runner_demux(rp)) }
+
+main() {
+    fw = spec.init()
+    r = runner.runner_new(null)   // null session: shell_eval errors, controller still works
+
+    spec.describe(fw, "run mode: eval executes immediately + replies by id") {
+        spec.it("eval posts an id-correlated reply on the runner lane") callback {
+            _ig = runner.runner_ingest(r, "{\"id\":1,\"method\":\"eval\",\"params\":{\"line\":\"title\"}}")
+            rep = _reply(r, 1)
+            spec.assert_true(string.length(rep) > 0, "reply present for id 1")
+            spec.assert_true(string.index_of(rep, "\"id\":1") >= 0, "reply correlated to id 1")
+        }
+        spec.it("eval emits a command-finished event") callback {
+            ev = _event(r)
+            spec.assert_true(string.index_of(ev, "command-finished") >= 0, "command-finished event")
+        }
+    }
+
+    spec.describe(fw, "step mode: eval queues, step runs one, events fire") {
+        spec.it("mode step is acknowledged") callback {
+            _ig = runner.runner_ingest(r, "{\"id\":2,\"method\":\"mode\",\"params\":{\"mode\":\"step\"}}")
+            spec.assert_true(string.index_of(_reply(r, 2), "\"mode\":\"step\"") >= 0, "mode set to step")
+        }
+        spec.it("eval in step mode queues (does not run) + emits paused") callback {
+            _ig = runner.runner_ingest(r, "{\"id\":3,\"method\":\"eval\",\"params\":{\"line\":\"open http://x/1\"}}")
+            spec.assert_true(string.index_of(_reply(r, 3), "queued") >= 0, "reply says queued")
+            spec.assert_true(string.index_of(_event(r), "paused") >= 0, "paused event with pending count")
+        }
+        spec.it("a second eval queues too (pending grows)") callback {
+            _ig = runner.runner_ingest(r, "{\"id\":4,\"method\":\"eval\",\"params\":{\"line\":\"open http://x/2\"}}")
+            spec.assert_true(string.index_of(_reply(r, 4), "queued") >= 0, "second queued")
+            spec.assert_true(string.index_of(_event(r), "pending\":2") >= 0, "pending == 2")
+        }
+        spec.it("step runs the FIRST queued line (FIFO) + re-pauses") callback {
+            _ig = runner.runner_ingest(r, "{\"id\":5,\"method\":\"step\"}")
+            rep = _reply(r, 5)
+            spec.assert_true(string.index_of(rep, "\"stepped\":true") >= 0, "stepped true")
+            spec.assert_true(string.index_of(_event(r), "command-finished") >= 0, "command-finished for the stepped line")
+            spec.assert_true(string.index_of(_event(r), "pending\":1") >= 0, "re-paused with 1 remaining")
+        }
+        spec.it("continue drains the rest + returns to run mode") callback {
+            _ig = runner.runner_ingest(r, "{\"id\":6,\"method\":\"continue\"}")
+            rep = _reply(r, 6)
+            spec.assert_true(string.index_of(rep, "\"continued\":1") >= 0, "continued 1 remaining line")
+            spec.assert_true(string.index_of(rep, "\"mode\":\"run\"") >= 0, "back to run mode")
+        }
+        spec.it("step with an empty queue is a no-op") callback {
+            _ig = runner.runner_ingest(r, "{\"id\":7,\"method\":\"step\"}")
+            spec.assert_true(string.index_of(_reply(r, 7), "\"stepped\":false") >= 0, "nothing to step")
+        }
+    }
+
+    spec.describe(fw, "inspect + errors") {
+        spec.it("inspect sid replies (empty for a null session)") callback {
+            _ig = runner.runner_ingest(r, "{\"id\":8,\"method\":\"inspect\",\"params\":{\"what\":\"sid\"}}")
+            spec.assert_true(string.index_of(_reply(r, 8), "\"sid\":") >= 0, "sid field present")
+        }
+        spec.it("an unknown method yields an error reply") callback {
+            _ig = runner.runner_ingest(r, "{\"id\":9,\"method\":\"bogus\"}")
+            spec.assert_true(string.index_of(_reply(r, 9), "unknown runner method") >= 0, "error reply for unknown method")
+        }
+    }
+
+    _rc = spec.run_summary(fw)
+    runner.runner_free(r)
+    return _rc
+}

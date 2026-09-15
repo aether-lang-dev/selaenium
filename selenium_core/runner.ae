@@ -1,0 +1,230 @@
+// runner.ae — the interactive runner controller: the bridge between the shell
+// language (shell.ae) and the multiplexed control channel (bidi_demux's runner
+// lane). This is the piece that turns "type a line, get a result" into an
+// interactive DEBUG session a front-end drives asynchronously: run / step /
+// continue / inspect, with replies correlated by id and step-pause events
+// emitted — all over the runner lane, so a terminal REPL, an SUT-adjacent
+// iframe, or an editor front-end are interchangeable clients of one channel.
+//
+// PURE + transport-agnostic: a front-end's transport (a loopback pipe, the
+// engine's WebSocket, stdio) feeds control requests in via runner_ingest and
+// drains replies/events via the demux runner-lane poll calls. No socket here,
+// so the control-flow state machine is unit-testable with fed-in JSON — exactly
+// like bidi_demux_probe tests the router.
+//
+// Control request (what a front-end sends), JSON:
+//   {"id":N,"method":"eval","params":{"line":"open https://x"}}   run a shell line
+//   {"id":N,"method":"mode","params":{"mode":"step"|"run"}}       set run/step mode
+//   {"id":N,"method":"step"}                                       run the next queued line (step mode)
+//   {"id":N,"method":"continue"}                                   run all queued lines + return to run
+//   {"id":N,"method":"inspect","params":{"what":"trace"|"timers"|"sid"}}
+// Reply (correlated by id) on the runner lane:
+//   {"channel":"runner","id":N,"result":{…}}
+// Event (uncorrelated) on the runner lane:
+//   {"channel":"runner","type":"event","method":"command-finished","params":{…}}
+//   {"channel":"runner","type":"event","method":"paused","params":{"pending":K}}
+//
+// Informed by webautoma's SAM step/continue console (Apache-2.0); see NOTICE.
+import std.string
+import std.json
+import std.heap
+import selenium_core
+import shell
+import bidi_demux
+
+// A runner controller wraps a W3C session + a demux (for the runner lane) + the
+// step state machine. mode: "run" executes an eval line immediately; "step"
+// queues it and executes one line per step()/continue().
+struct Runner {
+    session: ptr       // the *Session commands run against
+    demux: ptr         // bidi_demux.Demux — the runner lane carries our frames
+    mode: string       // "run" (default) | "step"
+    queue: string      // "\n"-joined pending lines (step mode), FIFO
+    qn: int            // number of queued lines
+}
+
+// runner_new(session) — a controller over an existing W3C session. Owns its own
+// demux (the runner lane); the bidi lane of that demux is unused here (a runner
+// front-end's transport is separate from any browser BiDi socket).
+runner_new(session: ptr) -> ptr {
+    r = heap.new(Runner)
+    r.session = session
+    r.demux = bidi_demux.demux_new()
+    r.mode = "run"
+    r.queue = ""
+    r.qn = 0
+    return r as ptr
+}
+
+runner_free(rp: ptr) {
+    if rp == null { return }
+    r = rp as *Runner
+    if r.demux != null { bidi_demux.demux_free(r.demux) }
+    heap.free(rp)
+}
+
+// runner_demux(rp) — the demux whose runner lane carries this controller's
+// replies/events, so a front-end drains via demux_poll_reply_runner /
+// demux_poll_event_runner.
+runner_demux(rp: ptr) -> ptr {
+    if rp == null { return null }
+    r = rp as *Runner
+    return r.demux
+}
+
+// runner_ingest(rp, request_json) — handle ONE control request. Parses
+// {id, method, params}, acts, and posts a reply (correlated by id) — and any
+// events — onto the runner lane. Returns 0 on a handled request, -1 on a
+// malformed one (a best-effort error reply is still posted when an id is known).
+runner_ingest(rp: ptr, request_json: string) -> int {
+    if rp == null { return -1 }
+    r = rp as *Runner
+    root, perr = json.parse(request_json)
+    if string.length(perr) > 0 { return -1 }
+
+    idv, _i = json.object_get(root, "id")
+    id = 0
+    if idv != null { id = json.get_int(idv) }
+    mv, _m = json.object_get(root, "method")
+    method = ""
+    if mv != null { method, _ms = json.get_string(mv) }
+
+    // A caller awaits this id on the runner lane.
+    bidi_demux.demux_register_runner(r.demux, id)
+
+    if method == "eval" {
+        line = _param_str(root, "line")
+        return _do_eval(r, id, line)
+    }
+    if method == "mode" {
+        m = _param_str(root, "mode")
+        if m == "step" { r.mode = "step" } else { r.mode = "run" }
+        return _reply_ok(r, id, string.concat("{\"mode\":\"", string.concat(r.mode, "\"}")))
+    }
+    if method == "step" {
+        return _do_step(r, id)
+    }
+    if method == "continue" {
+        return _do_continue(r, id)
+    }
+    if method == "inspect" {
+        return _do_inspect(r, id, _param_str(root, "what"))
+    }
+
+    return _reply_err(r, id, string.concat("unknown runner method: ", method))
+}
+
+// _do_eval — run mode: execute the line now. step mode: queue it (deferred to
+// step/continue) and emit a `paused` event so the front-end knows to step.
+_do_eval(r: *Runner, id: int, line: string) -> int {
+    if r.mode == "step" {
+        _enqueue(r, line)
+        _event(r, "paused", string.concat("{\"pending\":", string.concat(string.from_int(r.qn), "}")))
+        return _reply_ok(r, id, "{\"queued\":true}")
+    }
+    res = shell.shell_eval(r.session, line)
+    _event(r, "command-finished", string.concat("{\"line\":", string.concat(_qs(line), "}")))
+    return _reply_ok(r, id, res)
+}
+
+// _do_step — execute the next queued line (step mode). Emits command-finished,
+// and a fresh `paused` (with remaining count) if more are queued.
+_do_step(r: *Runner, id: int) -> int {
+    if r.qn == 0 {
+        return _reply_ok(r, id, "{\"stepped\":false,\"pending\":0}")
+    }
+    line = _dequeue(r)
+    res = shell.shell_eval(r.session, line)
+    _event(r, "command-finished", string.concat("{\"line\":", string.concat(_qs(line), "}")))
+    if r.qn > 0 {
+        _event(r, "paused", string.concat("{\"pending\":", string.concat(string.from_int(r.qn), "}")))
+    }
+    return _reply_ok(r, id, string.concat("{\"stepped\":true,\"result\":", string.concat(res, "}")))
+}
+
+// _do_continue — drain the queue, running each line, then return to run mode.
+_do_continue(r: *Runner, id: int) -> int {
+    ran = 0
+    while r.qn > 0 {
+        line = _dequeue(r)
+        _res = shell.shell_eval(r.session, line)
+        _event(r, "command-finished", string.concat("{\"line\":", string.concat(_qs(line), "}")))
+        ran = ran + 1
+    }
+    r.mode = "run"
+    return _reply_ok(r, id, string.concat("{\"continued\":", string.concat(string.from_int(ran), ",\"mode\":\"run\"}")))
+}
+
+// _do_inspect — surface the Phase-0 trace / timers / session id without running
+// a command (the debugger's "what happened / where am I" view).
+_do_inspect(r: *Runner, id: int, what: string) -> int {
+    if what == "trace" { return _reply_ok(r, id, string.concat("{\"trace\":", string.concat(selenium_core.trace_json_of(r.session), "}"))) }
+    if what == "timers" { return _reply_ok(r, id, string.concat("{\"timers\":", string.concat(selenium_core.timers_json_of(r.session), "}"))) }
+    if what == "sid" { return _reply_ok(r, id, string.concat("{\"sid\":", string.concat(_qs(selenium_core.session_id_of(r.session)), "}"))) }
+    return _reply_err(r, id, string.concat("unknown inspect target: ", what))
+}
+
+// ---- queue helpers ----------------------------------------------------------
+_enqueue(r: *Runner, line: string) {
+    if r.qn == 0 { r.queue = line } else { r.queue = string.concat(r.queue, string.concat("\n", line)) }
+    r.qn = r.qn + 1
+}
+_dequeue(r: *Runner) -> string {
+    nl = string.index_of(r.queue, "\n")
+    if nl < 0 {
+        out = r.queue; r.queue = ""; r.qn = 0; return out
+    }
+    out = string.substring(r.queue, 0, nl)
+    r.queue = string.substring(r.queue, nl + 1, string.length(r.queue))
+    r.qn = r.qn - 1
+    return out
+}
+
+// ---- runner-lane emit -------------------------------------------------------
+// A reply is a runner-lane frame {"channel":"runner","id":N,"result":<json>}.
+// We route it THROUGH demux_ingest so the same correlation path the transport
+// would use is exercised (register happened in runner_ingest), and a front-end
+// drains it with demux_poll_reply_runner.
+_reply_ok(r: *Runner, id: int, result_json: string) -> int {
+    frame = string.concat("{\"channel\":\"runner\",\"id\":", string.concat(string.from_int(id),
+        string.concat(",\"result\":", string.concat(result_json, "}"))))
+    _x = bidi_demux.demux_ingest(r.demux, frame)
+    return 0
+}
+_reply_err(r: *Runner, id: int, msg: string) -> int {
+    frame = string.concat("{\"channel\":\"runner\",\"id\":", string.concat(string.from_int(id),
+        string.concat(",\"error\":", string.concat(_qs(msg), "}"))))
+    _x = bidi_demux.demux_ingest(r.demux, frame)
+    return -1
+}
+_event(r: *Runner, method: string, params_json: string) {
+    frame = string.concat("{\"channel\":\"runner\",\"type\":\"event\",\"method\":",
+        string.concat(_qs(method), string.concat(",\"params\":", string.concat(params_json, "}"))))
+    _x = bidi_demux.demux_ingest(r.demux, frame)
+}
+
+// ---- tiny helpers -----------------------------------------------------------
+_param_str(root: ptr, key: string) -> string {
+    pv, _p = json.object_get(root, "params")
+    if pv == null { return "" }
+    vv, _v = json.object_get(pv, key)
+    if vv == null { return "" }
+    s, _s = json.get_string(vv)
+    return s
+}
+_qs(v: string) -> string {
+    out = "\""
+    n = string.length(v)
+    i = 0
+    while i < n {
+        c = string.substring(v, i, i + 1)
+        if c == "\"" { out = string.concat(out, "\\\"") }
+        else { if c == "\\" { out = string.concat(out, "\\\\") }
+        else { if c == "\n" { out = string.concat(out, "\\n") }
+        else { if c == "\r" { out = string.concat(out, "\\r") }
+        else { if c == "\t" { out = string.concat(out, "\\t") }
+        else { out = string.concat(out, c) } } } } }
+        i = i + 1
+    }
+    return string.concat(out, "\"")
+}

@@ -36,6 +36,8 @@ import selenium_core (Session)
 import driver
 import selenium_bidi
 import shell
+import runner
+import bidi_demux
 import std.string
 
 // Caller-owned-string helper (core/_embed_strdup.c): malloc/strdup a C string
@@ -109,6 +111,34 @@ sel_embed_timers_json(h: ptr) -> string {
 // render the result JSON". Caller-owned string.
 sel_embed_shell_eval(h: ptr, line: string) -> string {
     return sel_embed_dup(shell.shell_eval(h, line))
+}
+
+// ---- Runner: the interactive controller (run/step/continue over one lane) ----
+// A front-end (terminal REPL, SUT-adjacent iframe, editor) creates a runner over
+// a session, feeds control requests as JSON via runner_ingest, and drains
+// replies/events off the runner lane. The controller + step state machine live
+// in runner.ae (engine-side). The runner handle is separate from the session (a
+// session outlives its debug controllers).
+
+// New runner controller over session `h`. Returns an opaque runner handle.
+sel_embed_runner_new(h: ptr) -> ptr {
+    return runner.runner_new(h)
+}
+sel_embed_runner_free(rp: ptr) {
+    runner.runner_free(rp)
+}
+// Feed one control request ({id,method,params} JSON). Returns 0 handled / -1
+// malformed; the reply + any events are posted to the runner lane.
+sel_embed_runner_ingest(rp: ptr, request_json: string) -> int {
+    return runner.runner_ingest(rp, request_json)
+}
+// Drain the id-correlated reply for a control request ("" if not ready).
+sel_embed_runner_poll_reply(rp: ptr, id: int) -> string {
+    return sel_embed_dup(bidi_demux.demux_poll_reply_runner(runner.runner_demux(rp), id))
+}
+// Drain the next runner event ("" if none): command-finished / paused / ….
+sel_embed_runner_poll_event(rp: ptr) -> string {
+    return sel_embed_dup(bidi_demux.demux_poll_event_runner(runner.runner_demux(rp)))
 }
 
 // ---- the one workhorse ----

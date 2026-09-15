@@ -28,6 +28,14 @@ aeb(cap) {
             source("atoms_probe.ae")
             lib("..")
         }
+        // Runner controller unit test — the interactive run/step/continue state
+        // machine + runner-lane framing (reply correlation, paused/finished
+        // events), pure (null session, no browser/FFI). lib("..") resolves
+        // runner + shell + bidi_demux.
+        aether.program_test() {
+            source("runner_probe.ae")
+            lib("..")
+        }
         // BiDi live slice — drives real Chrome through the shape-C demux:
         // commands, concurrency, AND the event round-trip (session.subscribe →
         // navigate → async browsingContext.load via the event queue). Self-skips
