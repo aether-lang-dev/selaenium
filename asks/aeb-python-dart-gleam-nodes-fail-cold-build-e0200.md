@@ -1,5 +1,9 @@
 # aeb: python/dart/gleam nodes cannot COLD-build under ae 0.675 (E0200 narrowing)
 
+> **STATUS: FIXED upstream (2026-09-15)** in aeb `1415206` — the mtime
+> accumulators in the python/dart/gleam/moonbit SDK modules are `long` now.
+> Mirrored as aeb `asks/mtime-accumulators-narrow-to-32-bit-e0200.md`.
+
 The pinned pair in `ci/versions.env` — `AEB_REF=v0.311`, `AETHER_REF=v0.675.0` —
 cannot build the python, dart or gleam nodes **from a clean tree**. A warm tree
 hides it completely, which is why it went unnoticed: the generated node objects
@@ -59,6 +63,5 @@ gets inlined into every generated node.
 
 ## Status
 
-Filed from selaenium only; NOT mirrored into ~/scm/aeb/asks, because the task
-that found it was explicitly scoped "don't touch the aeb repo". Worth copying
-upstream — it blocks cold builds.
+Fixed upstream in aeb `1415206` once that scope was lifted, and mirrored into
+~/scm/aeb/asks/ as `mtime-accumulators-narrow-to-32-bit-e0200.md`.

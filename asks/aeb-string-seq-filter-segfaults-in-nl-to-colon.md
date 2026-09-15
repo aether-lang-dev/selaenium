@@ -1,5 +1,10 @@
 # aeb: SIGSEGV in string.seq_filter via bldr._nl_to_colon when building the Java node
 
+> **STATUS: FIXED upstream (2026-09-15)** in aeb `1415206` — `_nl_to_colon`
+> passed a bare function name where `seq_filter` wants a closure literal, so
+> it read `_drop_empty`'s machine code as an `AeSeqClosure {fn, env}` and
+> called it. Mirrored as aeb `asks/seq-filter-predicate-must-be-a-closure-literal.md`.
+
 Reproducible crash in aeb's own build binary. Not a selaenium source problem:
 it reproduces on a clean checkout (commit 77dc4b2, before any of the live-run
 work) in a fresh `git worktree`.
@@ -69,6 +74,5 @@ other binding node in the repo is unaffected.
 
 ## Status
 
-Filed from selaenium; NOT mirrored into ~/scm/aeb/asks this time, because the
-task that found it was explicitly scoped "don't touch the aeb repo". Worth
-copying upstream.
+Fixed upstream in aeb `1415206` once that scope was lifted, and mirrored into
+~/scm/aeb/asks/ as `seq-filter-predicate-must-be-a-closure-literal.md`.
