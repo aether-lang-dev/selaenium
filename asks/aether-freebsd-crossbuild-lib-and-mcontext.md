@@ -27,10 +27,13 @@
 > #2049 aether tree; exports the SAME 66 aether_sel_embed_* symbols as the
 > released linux v0.8.0 .so (zero name diff), so it's a true peer of the shipping
 > targets. scripts/fetch-engine.sh now maps FreeBSD, so a FreeBSD dev fetches it.
+> (b) RESOLVED: 0.680.0 published (2026-09-16) with #2047+#2049; the freebsd-
+> x86_64 .so re-cut from the PUBLISHED 0.680 binary is BYTE-IDENTICAL (sha
+> f605f53f…) to the ahead-of-release one, so the artifact on v0.8.0 is provenance-
+> clean by equivalence — no re-upload needed. Pin bumped 0.678 -> 0.680.
 > Still owed: (a) a live load on real FreeBSD hardware to fully close it (only ELF
-> shape + ABI parity verified off-box); (b) re-cut this artifact from a PUBLISHED
-> 0.680.0+ ae once it tags (this one is ahead-of-release); (c) aarch64-freebsd
-> (still the mcontext_t arch issue).
+> shape + ABI parity verified off-box); (c) aarch64-freebsd (still the mcontext_t
+> arch issue).
 >
 > --- earlier: x86_64 FIXED in source — aether #2049, pending release ---
 > The
