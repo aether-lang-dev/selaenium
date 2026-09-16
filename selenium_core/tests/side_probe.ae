@@ -1,11 +1,11 @@
 // side_probe.ae — pure unit test for the .side (Selenium IDE) playback engine
-// (shell.side_run, folded into shell.ae). std.spec, no browser: a null session
+// (side_run.side_run). std.spec, no browser: a null session
 // makes every browser-touching step fail, but the PLAYBACK MECHANICS — project
 // parsing, per-test/per-command iteration, report shaping, locator translation
 // reaching the shell, and the pass/fail bookkeeping — are all exercised with
 // fed-in .side JSON. The live pass path (commands actually succeeding) is
 // covered against real Chrome in d/tests/live_test.d. Run via tests/.tests.ae.
-import shell
+import side_run
 import std.string
 import std.spec
 
@@ -14,16 +14,16 @@ main() {
 
     spec.describe(fw, "project parsing + report shape") {
         spec.it("a malformed project yields an error report, not a crash") callback {
-            r = shell.side_run(null, "{ not json")
+            r = side_run.side_run(null, "{ not json")
             spec.assert_true(string.index_of(r, "\"error\"") >= 0, "error field present")
         }
         spec.it("a project with no tests[] reports the name + an error") callback {
-            r = shell.side_run(null, "{\"name\":\"Empty\"}")
+            r = side_run.side_run(null, "{\"name\":\"Empty\"}")
             spec.assert_true(string.index_of(r, "\"name\":\"Empty\"") >= 0, "name echoed")
             spec.assert_true(string.index_of(r, "no tests") >= 0, "explains the missing tests[]")
         }
         spec.it("an empty tests[] reports zero tests, zero passed/failed") callback {
-            r = shell.side_run(null, "{\"name\":\"P\",\"tests\":[]}")
+            r = side_run.side_run(null, "{\"name\":\"P\",\"tests\":[]}")
             spec.assert_true(string.index_of(r, "\"tests\":0") >= 0, "tests == 0")
             spec.assert_true(string.index_of(r, "\"passed\":0") >= 0, "passed == 0")
             spec.assert_true(string.index_of(r, "\"failed\":0") >= 0, "failed == 0")
@@ -36,7 +36,7 @@ main() {
         // the per-step report entry get built.
         spec.it("a test's commands are turned into step entries") callback {
             side = "{\"name\":\"P\",\"tests\":[{\"name\":\"t1\",\"commands\":[{\"command\":\"open\",\"target\":\"http://x/\",\"value\":\"\"}]}]}"
-            r = shell.side_run(null, side)
+            r = side_run.side_run(null, side)
             spec.assert_true(string.index_of(r, "\"test\":\"t1\"") >= 0, "test name in results")
             spec.assert_true(string.index_of(r, "\"command\":\"open\"") >= 0, "step records the command")
             spec.assert_true(string.index_of(r, "\"target\":\"http://x/\"") >= 0, "step records the target")
@@ -44,12 +44,12 @@ main() {
         }
         spec.it("a no-op command (pause) passes without a session") callback {
             side = "{\"name\":\"P\",\"tests\":[{\"name\":\"t\",\"commands\":[{\"command\":\"pause\",\"target\":\"300\",\"value\":\"\"}]}]}"
-            r = shell.side_run(null, side)
+            r = side_run.side_run(null, side)
             spec.assert_true(string.index_of(r, "\"passed\":1") >= 0, "pause-only test passes")
         }
         spec.it("an unknown command is skipped (not a hard fail)") callback {
             side = "{\"name\":\"P\",\"tests\":[{\"name\":\"t\",\"commands\":[{\"command\":\"mouseFlail\",\"target\":\"\",\"value\":\"\"}]}]}"
-            r = shell.side_run(null, side)
+            r = side_run.side_run(null, side)
             spec.assert_true(string.index_of(r, "unsupported command") >= 0, "records it as unsupported")
             spec.assert_true(string.index_of(r, "\"passed\":1") >= 0, "does not sink the test")
         }
@@ -59,7 +59,7 @@ main() {
         spec.it("a failing command aborts the rest of the test") callback {
             // click needs a session -> fails; a following pause must NOT run.
             side = "{\"name\":\"P\",\"tests\":[{\"name\":\"t\",\"commands\":[{\"command\":\"click\",\"target\":\"id=go\",\"value\":\"\"},{\"command\":\"pause\",\"target\":\"1\",\"value\":\"\"}]}]}"
-            r = shell.side_run(null, side)
+            r = side_run.side_run(null, side)
             spec.assert_true(string.index_of(r, "\"failed\":1") >= 0, "test counted as failed")
             // the click step should be present; the pause step should be absent.
             spec.assert_true(string.index_of(r, "\"command\":\"click\"") >= 0, "the failing click is recorded")

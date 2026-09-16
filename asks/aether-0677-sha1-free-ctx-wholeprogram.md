@@ -1,6 +1,13 @@
 # ae 0.677 codegen: whole-program build emits an unresolved `sha1.free_ctx`
 
-> **STATUS: FIXED upstream — aether PR #2045 (2026-09-16), lands in 0.678.0+.**
+> **STATUS: FIXED + RELEASED — aether PR #2045, shipped in v0.678.0 (2026-09-16).**
+> selaenium bumped `AETHER_REF=v0.678.0` and moved `.side` playback back out of
+> shell.ae into its own side_run.ae module; verified on the released binary
+> (fresh `ae version install 0.678.0`), full matrix green. This ask can be closed.
+>
+> ---- original (FIXED-pending-release) note ----
+>
+> **aether PR #2045 (2026-09-16), lands in 0.678.0+.**
 > Root cause: the typechecker tracked imported namespaces in a FIXED
 > `char* imported_namespaces[64]` and `register_namespace` guarded
 > `if (namespace_count < 64)`, so a merged `--emit=lib` unit registering >64
