@@ -19,12 +19,28 @@
 >   Verified upstream: `--emit=lib` → ELF shared object exporting `aether_*`, no
 >   main.
 >
-> WHEN 0.679.0+ tags: re-run `TARGETS=x86_64-freebsd release/build.sh` (with
-> AETHER_SYSROOT set to a FreeBSD base sysroot) to add the freebsd `.so` to a
-> release. ONE open item neither box could do: run the linked `.so` under actual
-> FreeBSD (only ELF shape + exported symbols verified, not a live load) — smoke-
-> test a fetched freebsd `.so` on real FreeBSD after the tag to fully close it.
-> Blocks only the FreeBSD leg; v0.8.0 shipped the other 6 artifacts.
+> **UPDATE (0.679.0 released + tested): #2047 fixed the link-as-exe, but a NEW
+> object-compile bug remains.** On the RELEASED 0.679.0 the `undefined symbol:
+> main` is gone (the final link line correctly carries `-shared -fPIC`), but the
+> freebsd `--emit=lib` now fails at link with:
+>   ld.lld: R_X86_64_TPOFF32 against tls_depth cannot be used with -shared
+>   ld.lld: R_X86_64_PC32 against '_aether_sandbox_checker'; recompile with -fPIC
+>   ld.lld: R_X86_64_32 / R_X86_64_32S against local symbol; recompile with -fPIC (×many)
+> Root cause (isolated from the verbose log): #2047 put `-shared -fPIC` only on
+> the LINK line; the runtime objects that make up libaether.a are compiled earlier
+> by `zig cc -c <runtime>.c` WITHOUT `-fPIC` for the freebsd target, so the
+> archive's .o's carry absolute relocations no shared object can take. The fix is
+> `-fPIC` (+ a `-shared`-compatible TLS model for `tls_depth`) on the runtime
+> OBJECT compiles for the freebsd `--emit=lib` path, not just the link.
+> (aarch64-freebsd separately still hits `mcontext_t`; nail x86_64 first.)
+> Filed with the sibling. Native linux/macos/windows engine builds + our full
+> suite are green on 0.679 (engine 60 unit tests), so this blocks ONLY the freebsd
+> release leg. Pin stays at 0.678 until an ae builds the freebsd cross-lib clean.
+>
+> WHEN that ae tags: re-run `TARGETS=x86_64-freebsd release/build.sh` (with
+> AETHER_SYSROOT set) to add the freebsd `.so` to a release, then smoke-test the
+> linked `.so` under actual FreeBSD (only ELF shape + exports verifiable off-box).
+> v0.8.0 shipped the other 6 artifacts.
 
 Found cutting selaenium v0.8.0: `release/build.sh` cross-compiles the pure-Aether
 engine (`libselenium_core`) for the whole matrix from one Linux host via zig. The
