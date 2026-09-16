@@ -15,6 +15,7 @@
 #   driver.quit
 
 require_relative 'selenium/native'
+require_relative 'selenium/engine_fetcher'
 require_relative 'selenium/webdriver'
 
 module Selenium
@@ -47,6 +48,18 @@ module Selenium
     # Pin the native library path (wins over discovery / SELENIUM_CORE_LIB).
     def self.configure_native_lib(path)
       Native.configure(path)
+    end
+
+    # The engine gh-release tag this gem downloads its prebuilt libselenium_core
+    # from (see EngineFetcher; distinct from VERSION, the gem's own version).
+    ENGINE_VERSION = EngineFetcher::ENGINE_VERSION
+
+    # Download + cache the prebuilt engine for this platform from the project's
+    # GitHub releases, so no Aether toolchain is needed. Explicit + one-time —
+    # what `rake selenium:fetch_engine` calls. Returns the cached library path.
+    # +tag:+ pins a different engine release; +force:+ re-downloads.
+    def self.fetch_engine!(tag: ENGINE_VERSION, force: false)
+      EngineFetcher.fetch!(tag: tag, force: force)
     end
   end
 end

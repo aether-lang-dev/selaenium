@@ -1,0 +1,28 @@
+# frozen_string_literal: true
+
+# Rake tasks for the selenium-webdriver gem. The headline one is
+# `rake selenium:fetch_engine` — the one command a Ruby dev runs after
+# `gem install selenium-webdriver` to pull the prebuilt pure-Aether engine
+# (libselenium_core) for their platform from GitHub releases. No Aether
+# toolchain, no compiler: `gem install` then `rake selenium:fetch_engine`.
+
+require_relative 'lib/selenium-webdriver'
+
+namespace :selenium do
+  desc 'Download + cache the prebuilt engine (libselenium_core) for this platform ' \
+       'from GitHub releases. Set TAG=vX.Y.Z to pin an engine release, FORCE=1 to re-fetch.'
+  task :fetch_engine do
+    tag   = ENV.fetch('TAG', Selenium::WebDriver::ENGINE_VERSION)
+    force = ENV.fetch('FORCE', '') != ''
+    fetcher = Selenium::WebDriver::EngineFetcher
+    warn "selenium: fetching engine #{fetcher.asset_name(tag)} (#{tag}) …"
+    path = Selenium::WebDriver.fetch_engine!(tag: tag, force: force)
+    warn "selenium: engine ready at #{path}"
+    warn "selenium: `require 'selenium-webdriver'` will now load it automatically."
+  end
+
+  desc 'Print where the engine is (or would be) cached for this platform.'
+  task :engine_path do
+    puts Selenium::WebDriver::EngineFetcher.cached_path
+  end
+end

@@ -33,8 +33,20 @@ module Selenium
       override = ENV.fetch('SELENIUM_CORE_LIB', nil)
       candidates << override if override && !override.empty?
       candidates << File.join(__dir__, 'native', library_filename)
+      # The per-user cache a `rake selenium:fetch_engine` download lands in
+      # (EngineFetcher.cached_path). Lets a fetched engine load with no config.
+      candidates << engine_fetcher_cached_path
       candidates << library_filename
-      candidates
+      candidates.compact
+    end
+
+    # The path EngineFetcher caches a downloaded engine at, or nil if the
+    # fetcher isn't loaded (it's required lazily so Native has no hard dep on it).
+    def engine_fetcher_cached_path
+      require_relative 'engine_fetcher'
+      EngineFetcher.cached_path
+    rescue StandardError
+      nil
     end
 
     def library_filename
@@ -53,8 +65,13 @@ module Selenium
         last_error = e
       end
       raise LoadError,
-            "could not load native Selenium core library " \
-            "(tried: #{library_candidates.join(', ')}): #{last_error}"
+            "could not load the native Selenium engine (libselenium_core). " \
+            "No prebuilt engine was found — fetch it once with:\n" \
+            "    rake selenium:fetch_engine\n" \
+            "  (or:  ruby -r selenium-webdriver -e 'Selenium::WebDriver.fetch_engine!')\n" \
+            "This downloads the engine for your platform from the project's " \
+            "GitHub releases and caches it; no Aether toolchain needed. " \
+            "Tried: #{library_candidates.join(', ')}. Last error: #{last_error}"
     end
 
     VOIDP = Fiddle::TYPE_VOIDP
