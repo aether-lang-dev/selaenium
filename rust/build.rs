@@ -4,10 +4,17 @@
 //      dir becomes the link search path;
 //   2. the crate's own bundled native/ dir (a published crate ships the .so
 //      there and rpaths to it);
-//   3. ../selenium_core/native — the monorepo layout (this crate next to core/).
+//   3. the shared fetch cache a `scripts/fetch-engine.sh` (or any binding's
+//      fetch task) populates: $XDG_CACHE_HOME/selaenium/<tag>/ — so a dev with
+//      no Aether toolchain runs that once, then `cargo build` just works;
+//   4. ../selenium_core/native — the monorepo layout (this crate next to core/).
 // An rpath to the resolved dir lets the built binary/tests find the .so at run
 // time without LD_LIBRARY_PATH.
 use std::path::{Path, PathBuf};
+
+// The engine gh-release tag whose fetch-cache this crate searches (matches
+// scripts/fetch-engine.sh's default TAG + the runtime bindings' ENGINE_VERSION).
+const ENGINE_VERSION: &str = "v0.8.0";
 
 fn main() {
     let dir = resolve_dir();
@@ -38,6 +45,13 @@ fn resolve_dir() -> PathBuf {
     if bundled.join("libselenium_core.so").exists() {
         return bundled;
     }
+    // The shared fetch cache (scripts/fetch-engine.sh): $XDG_CACHE_HOME (or the
+    // OS default) /selaenium/<tag>/libselenium_core.so.
+    if let Some(cache) = fetch_cache_dir() {
+        if cache.join("libselenium_core.so").exists() {
+            return cache;
+        }
+    }
     let mono = manifest.join("..").join("selenium_core").join("native");
     if mono.join("libselenium_core.so").exists() {
         return mono;
@@ -49,4 +63,23 @@ fn resolve_dir() -> PathBuf {
     } else {
         mono
     }
+}
+
+// $XDG_CACHE_HOME/selaenium/<tag>/ (or the OS default), matching
+// scripts/fetch-engine.sh and the runtime bindings' cache convention.
+fn fetch_cache_dir() -> Option<PathBuf> {
+    let base = if let Ok(x) = std::env::var("XDG_CACHE_HOME") {
+        if x.is_empty() { return home_cache(); }
+        PathBuf::from(x)
+    } else {
+        return home_cache();
+    };
+    Some(base.join("selaenium").join(ENGINE_VERSION))
+}
+
+fn home_cache() -> Option<PathBuf> {
+    let home = std::env::var("HOME").ok()?;
+    // macOS uses ~/Library/Caches; Linux/other use ~/.cache. cfg picks at build.
+    let sub = if cfg!(target_os = "macos") { "Library/Caches" } else { ".cache" };
+    Some(PathBuf::from(home).join(sub).join("selaenium").join(ENGINE_VERSION))
 }
