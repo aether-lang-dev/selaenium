@@ -68,6 +68,9 @@ private extern (C) nothrow @nogc {
     int   aether_sel_embed_bridge_install(void* h);
     int   aether_sel_embed_bridge_pump(void* bp, void* h);
 
+    // runner control server (out-of-process hosts over ws://…/runner) — blocks
+    int   aether_sel_embed_runner_server_start(void* h, int port);
+
     // atom-backed element commands
     int   aether_sel_embed_execute_atom(void* h, const(char)* atom_name, const(char)* elem_id, const(char)* extra_json);
     int   aether_sel_embed_is_displayed(void* h, const(char)* elem_id);
@@ -479,6 +482,14 @@ final class WebDriver {
     /// Call `bridge().serve()` to inject + pump on a timer, or drive pump()
     /// yourself from an existing loop. See selenium_core/console/console.html.
     Bridge bridge() { return new Bridge(this, aether_sel_embed_bridge_new(handle)); }
+
+    /// Run the runner control server over this session, BLOCKING in the request
+    /// loop until the process ends. Out-of-process hosts (the dashboard page, a
+    /// VS Code extension, a Tauri webview, a DAP adapter) connect to
+    /// ws://127.0.0.1:<port>/runner and drive the session with the runner
+    /// protocol. Use `RunnerServer` to run this on a background thread instead.
+    /// Returns non-zero if the port cannot bind. SEL_RUNNER_PORT overrides port.
+    int serveRunner(int port = 8787) { return aether_sel_embed_runner_server_start(handle, port); }
 
     // --- logs (Selenium `se/log` vendor extension) ---
     /// The available log types, e.g. `["browser", "driver"]`.
@@ -1398,4 +1409,32 @@ final class Bridge {
             Thread.sleep(intervalMs.msecs);
         }
     }
+}
+
+/// Runs the runner control server (runner_server.ae) on a background thread, so
+/// a harness can hand a human the dashboard (or any ws://…/runner host) mid-run
+/// without blocking its own flow. `driver.serveRunner()` blocks; this wraps it.
+/// The server shares the driver's session — one debug channel at a time — and
+/// keeps running until the process ends (the engine's request loop has no clean
+/// stop hook, matching the Grid hub), so start it once when you want the console
+/// available. `url` / `wsUrl` give the endpoints to point a host at.
+final class RunnerServer {
+    private WebDriver d;
+    private int port_;
+    private Thread thread;
+
+    /// Start the server for `d` on `port` (0 lets SEL_RUNNER_PORT or the 8787
+    /// default decide). Returns once the listener thread is spawned; poll
+    /// /health or just connect — the socket is up within milliseconds.
+    this(WebDriver d, int port = 8787) {
+        this.d = d; this.port_ = port;
+        thread = new Thread({ d.serveRunner(port); });
+        thread.isDaemon = true;            // don't keep the process alive on its own
+        thread.start();
+    }
+
+    /// The dashboard/host base URL and the WebSocket control endpoint.
+    int port() { return port_; }
+    string url()   { return "http://127.0.0.1:" ~ to!string(port_); }
+    string wsUrl() { return "ws://127.0.0.1:"   ~ to!string(port_) ~ "/runner"; }
 }

@@ -1,0 +1,152 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>selaenium dashboard</title>
+<!--
+  The reference out-of-process host for the runner control server
+  (runner_server.ae). Unlike the SUT-adjacent console (which lives inside the
+  page under test and rides executeScript), this is a plain browser page that
+  connects to the runner lane over a WebSocket: ws://<host>:<port>/runner.
+
+  The wire is identical to every other runner host — it sends
+    { id, method, params }      (control requests)
+  and receives
+    { channel:"runner", id, result }              (id-correlated replies)
+    { channel:"runner", type:"event", method, params }   (paused / command-finished / hello)
+
+  Any host — a VS Code extension, a Tauri webview, a DAP adapter — is the same
+  WebSocket client; this page is just the one that needs no toolchain. Point it
+  at a running server with ?ws=ws://127.0.0.1:PORT/runner (defaults to the
+  page's own origin's /runner).
+
+  Informed by webautoma's server-mode console (Apache-2.0); portions copyright
+  Marcello Russo. See the repo NOTICE.
+-->
+<style>
+  :root { color-scheme: light dark; }
+  html, body { margin: 0; height: 100%; }
+  body { font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+         display: flex; flex-direction: column; background: #1e1e1e; color: #d4d4d4; height: 100vh; }
+  header { display: flex; align-items: center; gap: .6em; padding: .5em .8em;
+           background: #252526; border-bottom: 1px solid #333; }
+  header .dot { width: 9px; height: 9px; border-radius: 50%; background: #f48771; transition: background .2s; }
+  header .dot.on { background: #4ec9b0; }
+  header .sid { margin-left: auto; opacity: .7; font-size: 11px; }
+  header button { font: inherit; background: #333; color: #d4d4d4; border: 1px solid #444;
+                  border-radius: 3px; padding: .15em .6em; cursor: pointer; }
+  header button:hover { background: #3a3a3a; }
+  #log { flex: 1 1 auto; overflow-y: auto; padding: .6em .8em; white-space: pre-wrap; word-break: break-word; }
+  .line { margin: 0 0 .15em; }
+  .in { color: #9cdcfe; } .in::before { content: "\203a "; color: #569cd6; }
+  .out { color: #ce9178; } .info { color: #6a9955; } .err { color: #f48771; }
+  .event { color: #c586c0; } .event::before { content: "\b7 "; }
+  .sys { color: #808080; font-style: italic; }
+  form { display: flex; border-top: 1px solid #333; }
+  #cmd { flex: 1 1 auto; font: inherit; background: #1e1e1e; color: #d4d4d4; border: 0; padding: .6em .8em; outline: none; }
+  #cmd::placeholder { color: #666; }
+</style>
+
+<header>
+  <span class="dot" id="dot" title="connection"></span>
+  <strong>selaenium</strong> <span class="sys" id="ep"></span>
+  <button id="stepBtn">step</button>
+  <button id="contBtn">continue</button>
+  <button id="modeBtn">mode: run</button>
+  <span class="sid" id="sid">not attached</span>
+</header>
+<div id="log" aria-live="polite"></div>
+<form id="form" autocomplete="off">
+  <input id="cmd" placeholder="open https://example.com   ·   :step   :mode step   ·   ?help" autofocus>
+</form>
+
+<script>
+(function () {
+  "use strict";
+  var log = document.getElementById("log"), form = document.getElementById("form"),
+      cmd = document.getElementById("cmd"), dot = document.getElementById("dot"),
+      sidEl = document.getElementById("sid"), epEl = document.getElementById("ep"),
+      modeBtn = document.getElementById("modeBtn"),
+      stepBtn = document.getElementById("stepBtn"), contBtn = document.getElementById("contBtn");
+
+  function qs(k, d) { var m = new RegExp("[?&]" + k + "=([^&]+)").exec(location.search); return m ? decodeURIComponent(m[1]) : d; }
+  var wsUrl = qs("ws", (location.protocol === "https:" ? "wss://" : "ws://") + (location.host || "127.0.0.1:8787") + "/runner");
+  epEl.textContent = wsUrl;
+
+  var nextId = 1, pending = {}, mode = "run", ws = null, history = [], histIdx = -1;
+
+  function print(t, cls) { var el = document.createElement("div"); el.className = "line " + (cls || "out"); el.textContent = t; log.appendChild(el); log.scrollTop = log.scrollHeight; }
+  function setMode(m) { mode = m; modeBtn.textContent = "mode: " + m; }
+
+  function connect() {
+    print("connecting to " + wsUrl + " …", "sys");
+    try { ws = new WebSocket(wsUrl); } catch (e) { print("bad ws url: " + e, "err"); return; }
+    ws.onopen = function () { dot.classList.add("on"); print("connected", "sys"); };
+    ws.onclose = function () { dot.classList.remove("on"); print("disconnected — retrying in 2s", "sys"); setTimeout(connect, 2000); };
+    ws.onerror = function () { print("socket error", "err"); };
+    ws.onmessage = function (e) {
+      var f; try { f = JSON.parse(e.data); } catch (_) { return; }
+      if (f.type === "event") return renderEvent(f);
+      var cb = pending[f.id]; if (cb) { delete pending[f.id]; cb(f); }
+    };
+  }
+
+  function send(method, params, onReply) {
+    if (!ws || ws.readyState !== 1) { print("not connected", "err"); return; }
+    var id = nextId++; if (onReply) pending[id] = onReply;
+    var body = { id: id, method: method }; if (params !== undefined) body.params = params;
+    ws.send(JSON.stringify(body));
+  }
+
+  function renderEvent(ev) {
+    var m = ev.method || "?", p = ev.params || {};
+    if (m === "hello") { sidEl.textContent = "attached to " + (p.sid || "?"); return; }
+    if (m === "paused") { sidEl.textContent = "paused — " + p.pending + " queued"; }
+    print(m + (ev.params ? " " + JSON.stringify(p) : ""), m === "error" ? "err" : "event");
+  }
+
+  function renderReply(f) {
+    if (f.error) { print("error: " + f.error, "err"); return; }
+    var r = f.result;
+    if (r === undefined) { print(JSON.stringify(f), "out"); return; }
+    if (r && typeof r === "object") {
+      if (r.queued) { print("queued (step mode)", "info"); return; }
+      if ("stepped" in r) { if (!r.stepped) { print("nothing queued", "info"); return; } return renderShell(r.result); }
+      if ("continued" in r) { print("ran " + r.continued + " queued line(s)", "info"); return; }
+      if (r.mode) { setMode(r.mode); print("mode: " + r.mode, "info"); return; }
+      if (r.trace || r.timers || r.sid !== undefined) { print(JSON.stringify(r, null, 2), "out"); return; }
+      return renderShell(r);
+    }
+    print(String(r), "out");
+  }
+
+  function renderShell(res) {
+    if (!res || typeof res !== "object") { print(String(res), "out"); return; }
+    if (res.ok === false) { print("error: " + (res.error || "?") + (res.code ? " (" + res.code + ")" : ""), "err"); return; }
+    if ("value" in res) { print(typeof res.value === "string" ? res.value : JSON.stringify(res.value), "out"); return; }
+    if ("info" in res) { print(res.info || "ok", "info"); return; }
+    print(JSON.stringify(res), "out");
+  }
+
+  function run(text) {
+    text = text.trim(); if (!text) return;
+    print(text, "in"); history.push(text); histIdx = history.length;
+    if (text === "?" || text === "?help" || text === "help") { send("eval", { line: "help" }, renderReply); return; }
+    if (text === ":step") { send("step", undefined, renderReply); return; }
+    if (text === ":continue" || text === ":c") { send("continue", undefined, renderReply); return; }
+    if (text.indexOf(":mode") === 0) { send("mode", { mode: text.slice(5).trim() || (mode === "run" ? "step" : "run") }, renderReply); return; }
+    if (text.indexOf(":inspect") === 0) { send("inspect", { what: text.slice(8).trim() || "sid" }, renderReply); return; }
+    send("eval", { line: text }, renderReply);
+  }
+
+  form.addEventListener("submit", function (e) { e.preventDefault(); var t = cmd.value; cmd.value = ""; run(t); });
+  stepBtn.addEventListener("click", function () { run(":step"); });
+  contBtn.addEventListener("click", function () { run(":continue"); });
+  modeBtn.addEventListener("click", function () { run(":mode " + (mode === "run" ? "step" : "run")); });
+  cmd.addEventListener("keydown", function (e) {
+    if (e.key === "ArrowUp") { if (histIdx > 0) { cmd.value = history[--histIdx]; e.preventDefault(); } }
+    if (e.key === "ArrowDown") { if (histIdx < history.length - 1) { cmd.value = history[++histIdx]; } else { histIdx = history.length; cmd.value = ""; } }
+  });
+
+  print("selaenium dashboard — a WebSocket host of the runner lane. Type ? for help.", "info");
+  connect();
+})();
+</script>

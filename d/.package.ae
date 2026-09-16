@@ -25,6 +25,13 @@ aeb(cap) {
             from("../selenium_core/console/console.html")
             to("src/selenium/console.html")
         }
+        // The out-of-process dashboard host for the runner control server ships
+        // alongside so a consumer can serve it (or point any ws://…/runner host
+        // at it). Not string-imported by the binding — it's served/opened as-is.
+        copy.file() {
+            from("../selenium_core/console/dashboard.html")
+            to("src/selenium/dashboard.html")
+        }
         publish_artifact("package_dir", bldr._get(builder_context(), "source_dir"))
     }
 }

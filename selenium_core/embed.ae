@@ -38,6 +38,7 @@ import selenium_bidi
 import shell
 import runner
 import iframe_bridge
+import runner_server
 import bidi_demux
 import std.string
 
@@ -167,6 +168,18 @@ sel_embed_bridge_install(h: ptr) -> int {
 // of requests processed (0 = nothing queued), or -1 on a page I/O error.
 sel_embed_bridge_pump(bp: ptr, h: ptr) -> int {
     return iframe_bridge.bridge_pump(bp, h)
+}
+
+// ---- runner control server (out-of-process hosts: dashboard/VS Code/Tauri/DAP) ----
+// The runner lane over a WebSocket. A binding starts the server on a session,
+// and any host connects to ws://<host>:<port>/runner and exchanges the same
+// runner-protocol JSON the REPL and the iframe console use. See runner_server.ae.
+
+// Start the control server on `port` over session `h` (SEL_RUNNER_PORT
+// overrides port). BLOCKS in the request loop — a binding runs this on its own
+// thread. Returns non-zero if the port cannot bind.
+sel_embed_runner_server_start(h: ptr, port: int) -> int {
+    return runner_server.runner_server_start(h, port)
 }
 
 // ---- the one workhorse ----

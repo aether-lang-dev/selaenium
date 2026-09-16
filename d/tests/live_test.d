@@ -17,7 +17,72 @@ import std.string : indexOf, toLower, startsWith;
 import std.process : environment;
 import core.thread : Thread;
 import core.time : msecs, seconds;
+import std.digest.sha : sha1Of;
+import std.base64 : Base64;
 import selenium;
+
+// A minimal RFC 6455 text-only WebSocket client, just enough to prove the runner
+// control server end to end (handshake, one masked text frame out, one unmasked
+// text frame in). Not a general client — the test's own, kept tiny on purpose.
+private final class TinyWs {
+    private Socket sock;
+    private ubyte[] leftover;   // bytes read past the handshake's \r\n\r\n (a frame may share the segment)
+    this(string host, ushort port, string path) {
+        sock = new TcpSocket(new InternetAddress(host, port));
+        // client key is arbitrary bytes, base64'd; we don't verify the accept hash
+        // (the server is ours) but we do complete a valid handshake.
+        string key = Base64.encode(cast(ubyte[]) "selaenium-test-16");
+        string req = "GET " ~ path ~ " HTTP/1.1\r\nHost: " ~ host ~ "\r\n"
+            ~ "Upgrade: websocket\r\nConnection: Upgrade\r\n"
+            ~ "Sec-WebSocket-Key: " ~ key ~ "\r\nSec-WebSocket-Version: 13\r\n\r\n";
+        sock.send(req);
+        // read until the header terminator; KEEP any bytes past it — the server
+        // may have written the hello frame into the same TCP segment, and losing
+        // them here is exactly the flake that dropped the hello event.
+        ubyte[4096] buf; ubyte[] acc;
+        ptrdiff_t term = -1;
+        while (term < 0) {
+            auto n = sock.receive(buf[]); if (n <= 0) break; acc ~= buf[0 .. n];
+            term = (cast(string) acc.idup).indexOf("\r\n\r\n");
+        }
+        if (term >= 0 && term + 4 < acc.length) leftover = acc[term + 4 .. $].dup;
+    }
+    void sendText(string s) {
+        ubyte[] payload = cast(ubyte[]) s.dup;
+        ubyte[] f; f ~= 0x81;                       // FIN + text opcode
+        ubyte mask = 0x80;
+        if (payload.length < 126) f ~= cast(ubyte)(mask | payload.length);
+        else { f ~= cast(ubyte)(mask | 126); f ~= cast(ubyte)(payload.length >> 8); f ~= cast(ubyte)(payload.length & 0xff); }
+        ubyte[4] mk = [0x12, 0x34, 0x56, 0x78];
+        f ~= mk[];
+        foreach (i, b; payload) f ~= cast(ubyte)(b ^ mk[i % 4]);
+        sock.send(f);
+    }
+    /// Read one text frame's payload (server frames are unmasked). Blocks up to
+    /// `timeoutMs`; returns "" on timeout/close. Assumes payload < 65536.
+    string recvText(int timeoutMs) {
+        sock.setOption(SocketOptionLevel.SOCKET, SocketOption.RCVTIMEO, timeoutMs.msecs);
+        ubyte[2] h;
+        if (!readN(h[], 2)) return "";
+        size_t len = h[1] & 0x7f;
+        if (len == 126) { ubyte[2] e; if (!readN(e[], 2)) return ""; len = (e[0] << 8) | e[1]; }
+        auto pay = new ubyte[len];
+        if (len && !readN(pay, len)) return "";
+        return cast(string) pay.idup;
+    }
+    private bool readN(ubyte[] dst, size_t n) {
+        size_t got = 0;
+        // drain any handshake-segment leftover first, then the socket
+        if (leftover.length) {
+            auto take = leftover.length < n ? leftover.length : n;
+            dst[0 .. take] = leftover[0 .. take]; got = take;
+            leftover = leftover[take .. $];
+        }
+        while (got < n) { auto r = sock.receive(dst[got .. n]); if (r <= 0) return false; got += r; }
+        return true;
+    }
+    void close() { if (sock !is null) { sock.close(); sock = null; } }
+}
 
 // --- fixture pages ---
 enum pageOne =
@@ -321,6 +386,49 @@ int main() {
         check(captured.type == JSONType.object, "bridge: a reply was delivered back into the page");
         check(captured.type == JSONType.object && captured["result"]["value"].str == "One",
               "bridge: the round-tripped 'text #hdr' returned 'One'");
+    }
+
+    // Runner control server: the OUT-OF-PROCESS host path. Stand up the WS server
+    // on this session, connect a bare WebSocket client (as a dashboard / VS Code /
+    // Tauri / DAP host would), and drive the session over the wire — the same
+    // runner protocol, now across a socket. Proves the whole step-4 substrate.
+    {
+        d.get("data:text/html,<title>Srv</title><h1 id=hh>served</h1>");
+        ushort sp = freePort();
+        auto srv = new RunnerServer(d, sp);
+        // give the listener thread a moment to bind
+        TinyWs c = null;
+        foreach (_; 0 .. 40) {
+            try { c = new TinyWs("127.0.0.1", sp, "/runner"); break; }
+            catch (Exception) { Thread.sleep(50.msecs); }
+        }
+        check(c !is null, "server: WebSocket client connected to ws://…/runner");
+        if (c !is null) {
+            scope(exit) c.close();
+            // the server greets with a hello event carrying the session id; poll
+            // a few frames for it (don't assume it is literally the first read).
+            bool sawHello = false;
+            foreach (_; 0 .. 10) {
+                auto raw = c.recvText(3000);
+                if (raw.length == 0) break;
+                auto f = parseJSON(raw);
+                if (f.type == JSONType.object && ("method" in f) !is null && f["method"].str == "hello") { sawHello = true; break; }
+            }
+            check(sawHello, "server: hello event announces the session on connect");
+            // drive an eval over the wire; reply is the id-correlated runner frame
+            c.sendText(`{"id":42,"method":"eval","params":{"line":"text #hh"}}`);
+            JSONValue reply = JSONValue(null);
+            foreach (_; 0 .. 20) {
+                auto raw = c.recvText(3000);
+                if (raw.length == 0) break;
+                auto f = parseJSON(raw);
+                if (f.type == JSONType.object && ("id" in f) !is null && f["id"].integer == 42) { reply = f; break; }
+                // (may first read a command-finished event; keep reading for id 42)
+            }
+            check(reply.type == JSONType.object, "server: an id-correlated reply came back over the wire");
+            check(reply.type == JSONType.object && reply["result"]["value"].str == "served",
+                  "server: 'text #hh' over the socket returned 'served'");
+        }
     }
 
     // Grid client: drive a session THROUGH a real Selenium Grid hub (the

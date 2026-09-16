@@ -1,0 +1,164 @@
+// runner_server.ae — the runner control server: the runner lane over a real
+// wire, so a host in ANOTHER process (a browser dashboard, a VS Code extension,
+// a Tauri webview, a DAP adapter) drives a live session the same way the
+// terminal REPL and the SUT-adjacent iframe do. Those two hosts sit on
+// in-process transports (stdio, executeScript); this is the out-of-process one.
+//
+// Transport: a WebSocket. One debug session = one socket. The client sends
+// control requests as text frames and receives replies + events as text frames
+// — the SAME JSON the runner controller already speaks:
+//
+//   client --ws text-->  {"id":N,"method":"eval","params":{"line":"open …"}}
+//   server --ws text-->  {"channel":"runner","id":N,"result":{…}}         (reply)
+//   server --ws text-->  {"channel":"runner","type":"event","method":…}    (event)
+//
+// So every step-4 host is just a WebSocket client of one endpoint; none is
+// privileged, and the server is tied to no GUI toolkit. A plain browser page
+// (console/dashboard.html) is the reference host shipped with it.
+//
+// Model: single-session. The runner controller is carried as the WS route's
+// `user_data` (Aether has no module-level mutable state; the http server passes
+// the pointer straight through to the @c_callback handler, so no globals). The
+// WS handler owns its connection for the session's life — http's request loop
+// hands it over after the upgrade — and loops: receive a request →
+// runner_ingest → drain the runner lane (the id-correlated reply, then all
+// pending events) → send each frame back; when the client is briefly idle it
+// still drains events (a `paused`/`command-finished` that fired between
+// requests).
+//
+// Informed by webautoma's server-mode console (Apache-2.0); see NOTICE.
+import std.http
+import std.string
+import std.json
+import std.os
+import std.heap
+import selenium_core
+import runner
+import bidi_demux
+
+// The pointer the http server threads to the WS handler as user_data: the runner
+// controller plus the session it drives (for the hello frame's session id).
+struct ServerState {
+    rnr: ptr        // runner.Runner*
+    session: ptr    // *Session
+}
+
+// runner_server_start(session, port) — build a runner over `session`, then create
+// + bind an HTTP server exposing:
+//   GET  /health   → {"ok":true} readiness probe
+//   WS   /runner   → the control channel (the whole protocol)
+// Blocks in the request loop (like grid/hub.ae). Returns non-zero if the port
+// can't bind. SEL_RUNNER_PORT overrides `port` when set. The ServerState +
+// runner are owned for the process lifetime (the server never returns until the
+// process ends), so no explicit free path is needed.
+runner_server_start(session: ptr, port: int) -> int {
+    p = port
+    envp = os.getenv("SEL_RUNNER_PORT")
+    if string.length(envp) > 0 {
+        v, e = string.to_int(envp)
+        if e == "" { if v > 0 { p = v } }
+    }
+    st = heap.new(ServerState)
+    st.rnr = runner.runner_new(session)
+    st.session = session
+
+    server = http.server_create(p)
+    if server == 0 { return 1 }
+    http.server_get(server, "/health", _health_handler, 0)
+    http.server_websocket(server, "/runner", _ws_handler, st as ptr)
+    println("runner: control server listening on ${p} (ws://127.0.0.1:${p}/runner)")
+    http.server_start(server)
+    return 0
+}
+
+// _health_handler — a trivial readiness probe a host polls before connecting.
+_health_handler(req: ptr, res: ptr, ud: ptr) {
+    http.response_set_status(res, 200)
+    http.response_set_header(res, "Content-Type", "application/json; charset=utf-8")
+    http.response_set_body(res, "{\"ok\":true,\"service\":\"selaenium-runner\"}")
+}
+
+// _ws_handler — owns one control connection for its lifetime. `ud` is the
+// ServerState pointer registered on the route. Receive a request text frame, run
+// it through the runner, drain replies+events back; on an idle tick (recv
+// timeout) still drain events so a `paused`/`command-finished` that fired between
+// requests reaches the host promptly.
+_ws_handler(req: ptr, ws: ptr, ud: ptr) {
+    if ud == null {
+        _x = http.ws_send_text(ws, "{\"channel\":\"runner\",\"type\":\"event\",\"method\":\"error\",\"params\":{\"message\":\"server has no bound session\"}}")
+        http.ws_close(ws, 1011, "no session")
+        return
+    }
+    st = ud as *ServerState
+    // greet: hand the host the session id up front so it can label its UI.
+    _g = http.ws_send_text(ws, _hello_frame(st))
+    loop = 1
+    while loop == 1 {
+        kind = http.ws_recv_timeout(ws, 200)
+        if kind == -1 { loop = 0 }              // client closed
+        else {
+            if kind == 1 {                       // a text request frame
+                request = http.ws_message_data(ws)
+                _drain_after(ws, st, request)
+            } else {
+                // idle (0 = timeout) or a binary frame we ignore: still flush any
+                // events the runner emitted asynchronously.
+                _drain_events(ws, st)
+            }
+        }
+    }
+}
+
+// _drain_after — ingest one request, then send its id-correlated reply followed
+// by every pending event.
+_drain_after(ws: ptr, st: *ServerState, request: string) {
+    demux = runner.runner_demux(st.rnr)
+    id = _req_id(request)
+    _rc = runner.runner_ingest(st.rnr, request)
+    reply_ = bidi_demux.demux_poll_reply_runner(demux, id)
+    if string.length(reply_) > 0 { _s1 = http.ws_send_text(ws, reply_) }
+    _drain_events(ws, st)
+}
+
+// _drain_events — send every currently-queued runner event, oldest first.
+_drain_events(ws: ptr, st: *ServerState) {
+    demux = runner.runner_demux(st.rnr)
+    ev = bidi_demux.demux_poll_event_runner(demux)
+    while string.length(ev) > 0 {
+        _s = http.ws_send_text(ws, ev)
+        ev = bidi_demux.demux_poll_event_runner(demux)
+    }
+}
+
+// _hello_frame — an event announcing the session id, so a freshly-connected host
+// can render "attached to <sid>" without a round trip.
+_hello_frame(st: *ServerState) -> string {
+    sid = selenium_core.session_id_of(st.session)
+    return string.concat("{\"channel\":\"runner\",\"type\":\"event\",\"method\":\"hello\",\"params\":{\"sid\":",
+        string.concat(_qs(sid), "}}"))
+}
+
+_req_id(request_json: string) -> int {
+    root, perr = json.parse(request_json)
+    if string.length(perr) > 0 { return 0 }
+    idv, _i = json.object_get(root, "id")
+    if idv == null { return 0 }
+    return json.get_int(idv)
+}
+
+_qs(v: string) -> string {
+    out = "\""
+    n = string.length(v)
+    i = 0
+    while i < n {
+        c = string.substring(v, i, i + 1)
+        if c == "\"" { out = string.concat(out, "\\\"") }
+        else { if c == "\\" { out = string.concat(out, "\\\\") }
+        else { if c == "\n" { out = string.concat(out, "\\n") }
+        else { if c == "\r" { out = string.concat(out, "\\r") }
+        else { if c == "\t" { out = string.concat(out, "\\t") }
+        else { out = string.concat(out, c) } } } } }
+        i = i + 1
+    }
+    return string.concat(out, "\"")
+}
