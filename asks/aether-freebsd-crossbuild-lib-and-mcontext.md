@@ -1,10 +1,22 @@
 # FreeBSD cross-build (--emit=lib --target=*-freebsd): `--lib` module drops + mcontext_t
 
-> **STATUS: OPEN (2026-09-16).** Blocks the FreeBSD leg of selaenium's release
-> matrix. Linux, macOS, and Windows all cross-build fine from the same command;
-> only `*-freebsd` fails. Release v0.8.0 shipped without FreeBSD (core linux/macos
-> `.so`/`.dylib` + windows `.dll` are up); FreeBSD can be added to a follow-up
-> release once this is resolved.
+> **STATUS: NARROWED to a link-step bug (2026-09-16).** See REPLY-*.md alongside.
+> Symptom 1 (`--lib` "drop") was a MISDIAGNOSIS — a spurious warn-only prepass
+> message that prints for every cross target (linux included) while the build
+> still succeeds; fixed cosmetically in aether PR #2047 (prepass now forwards
+> `--lib`).
+> Symptom 2 (`mcontext_t`) was ALSO a red herring — a transient artifact of the
+> earlier full-matrix run. Re-verified in isolation: the exact `zig cc
+> -target x86_64-freebsd.15.0 --sysroot=<fbsd> …` line compiling embed.ae's
+> generated `.so.c` with `-c` produces a clean 528KB `.o`, ZERO errors, no
+> mcontext_t. The sysroot headers are fine.
+> THE REAL BLOCKER is at LINK: `ld.lld: error: undefined symbol: main` on
+> `ae build --emit=lib --target=x86_64-freebsd`. A shared lib needs no `main`, and
+> linux/macos/windows all link `--emit=lib` with no `main` and succeed — so the
+> freebsd link path is linking as an executable (crt1.o / default-PIE?) or not
+> passing `-shared`/the right freebsd link flags. Fix is in the link step, not the
+> ucontext headers. Blocks only the FreeBSD leg; v0.8.0 shipped the other 6
+> artifacts.
 
 Found cutting selaenium v0.8.0: `release/build.sh` cross-compiles the pure-Aether
 engine (`libselenium_core`) for the whole matrix from one Linux host via zig. The
