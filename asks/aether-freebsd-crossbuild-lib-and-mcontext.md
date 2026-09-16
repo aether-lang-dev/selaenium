@@ -1,22 +1,30 @@
 # FreeBSD cross-build (--emit=lib --target=*-freebsd): `--lib` module drops + mcontext_t
 
-> **STATUS: NARROWED to a link-step bug (2026-09-16).** See REPLY-*.md alongside.
-> Symptom 1 (`--lib` "drop") was a MISDIAGNOSIS — a spurious warn-only prepass
-> message that prints for every cross target (linux included) while the build
-> still succeeds; fixed cosmetically in aether PR #2047 (prepass now forwards
-> `--lib`).
-> Symptom 2 (`mcontext_t`) was ALSO a red herring — a transient artifact of the
-> earlier full-matrix run. Re-verified in isolation: the exact `zig cc
-> -target x86_64-freebsd.15.0 --sysroot=<fbsd> …` line compiling embed.ae's
-> generated `.so.c` with `-c` produces a clean 528KB `.o`, ZERO errors, no
-> mcontext_t. The sysroot headers are fine.
-> THE REAL BLOCKER is at LINK: `ld.lld: error: undefined symbol: main` on
-> `ae build --emit=lib --target=x86_64-freebsd`. A shared lib needs no `main`, and
-> linux/macos/windows all link `--emit=lib` with no `main` and succeed — so the
-> freebsd link path is linking as an executable (crt1.o / default-PIE?) or not
-> passing `-shared`/the right freebsd link flags. Fix is in the link step, not the
-> ucontext headers. Blocks only the FreeBSD leg; v0.8.0 shipped the other 6
-> artifacts.
+> **STATUS: FIXED upstream — aether PR #2047 (2026-09-16), lands in 0.679.0+.**
+> Both filed symptoms were red herrings; the real blocker was a link-step bug,
+> now fixed:
+> - Symptom 1 (`--lib` "drop"): spurious warn-only prepass message printing for
+>   every cross target while the build succeeds. Cosmetic; #2047 forwards `--lib`
+>   in the prepass so the noise is gone.
+> - Symptom 2 (`mcontext_t`): a transient artifact of the parallel full-matrix
+>   run. In isolation the exact `zig cc -target x86_64-freebsd.15.0 --sysroot=…`
+>   line compiling embed.ae's `.so.c` with `-c` produces a clean 528KB `.o`, no
+>   error. The sysroot headers are fine.
+> - REAL blocker (isolated here): `ld.lld: error: undefined symbol: main` on
+>   `ae build --emit=lib --target=x86_64-freebsd`. Root cause (sibling): the
+>   FreeBSD cross-link branch in aether tools/ae_cross.c was written for the exe
+>   path and never passed `-shared -fPIC` for `--emit=lib` (linux/macos/windows
+>   did); no `-shared` → crt1.o → ld demands `main`. #2047 makes the freebsd
+>   branch apply `-shared -fPIC` (+ strip) for `--emit=lib`; exe path untouched.
+>   Verified upstream: `--emit=lib` → ELF shared object exporting `aether_*`, no
+>   main.
+>
+> WHEN 0.679.0+ tags: re-run `TARGETS=x86_64-freebsd release/build.sh` (with
+> AETHER_SYSROOT set to a FreeBSD base sysroot) to add the freebsd `.so` to a
+> release. ONE open item neither box could do: run the linked `.so` under actual
+> FreeBSD (only ELF shape + exported symbols verified, not a live load) — smoke-
+> test a fetched freebsd `.so` on real FreeBSD after the tag to fully close it.
+> Blocks only the FreeBSD leg; v0.8.0 shipped the other 6 artifacts.
 
 Found cutting selaenium v0.8.0: `release/build.sh` cross-compiles the pure-Aether
 engine (`libselenium_core`) for the whole matrix from one Linux host via zig. The
