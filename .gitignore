@@ -323,6 +323,7 @@ __pycache__/
 
 # Julia
 /julia/native/
+/julia/Manifest.toml
 
 # Release build outputs
 /release/dist/

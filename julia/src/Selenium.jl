@@ -18,6 +18,8 @@ module Selenium
 
 export By, Locator, WebDriver, WebElement, ShadowRoot, Keys, Select, Actions, Wait,
     BiDi, BidiEvent, TlsConfig, WebDriverError,
+    # engine fetch (get the prebuilt engine, no Aether toolchain)
+    fetch_engine!, ENGINE_VERSION,
     route, errorcode, locator, execute,
     # navigation
     get_url, current_url, title, page_source, back, forward, refresh,
@@ -70,8 +72,197 @@ export By, Locator, WebDriver, WebElement, ShadowRoot, Keys, Select, Actions, Wa
     provide_response, continue_with_auth, set_cache_behavior, event_request_id,
     lost_events
 
-# The engine .so path — SELENIUM_CORE_LIB, or "libselenium_core" on the load path.
-const LIB = get(ENV, "SELENIUM_CORE_LIB", "libselenium_core")
+# ---- EngineFetcher — get the prebuilt engine, no Aether toolchain ---------
+# `Pkg.add("Selenium")` (or a git checkout) ships NO engine and needs NO Aether
+# compiler; then one explicit command
+#
+#     using Selenium; Selenium.fetch_engine!()
+#
+# downloads the prebuilt pure-Aether engine (libselenium_core) for this OS+arch
+# from the project's GitHub releases, verifies its published `.sha256`, and drops
+# it in the per-user cache where the loader below already looks. Explicit,
+# one-time, opt-in — nothing is downloaded behind the dev's back at `using` time.
+# Stdlib only (Downloads + SHA), matching the binding's zero-dependency contract.
+module EngineFetcher
+
+using Downloads: download
+using SHA: sha256
+
+# The engine release this binding targets. It tracks the gh-release TAG of the
+# shared engine (NOT the binding's own Project.toml version) — the tag whose
+# assets this fetcher downloads. Bump it when the binding is re-glued to a newer
+# engine.
+const ENGINE_VERSION = "v0.8.0"
+
+const REPO = "aether-lang-dev/selaenium"
+
+# GET https://github.com/<repo>/releases/download/<tag>/<asset> — the public,
+# unauthenticated asset URL `gh release create` publishes to (Downloads follows
+# the GitHub CDN redirect).
+const RELEASE_BASE = "https://github.com/$REPO/releases/download"
+
+struct FetchError <: Exception
+    msg::String
+end
+Base.showerror(io::IO, e::FetchError) = print(io, "Selenium.EngineFetcher.FetchError: ", e.msg)
+
+# --- platform mapping (matches release/build.sh's artifact names) ---
+
+function os_tag()
+    if Sys.iswindows()
+        "windows"
+    elseif Sys.isapple()
+        "macos"
+    elseif Sys.islinux()
+        "linux"
+    else
+        throw(FetchError("unsupported OS for a prebuilt engine: $(Sys.KERNEL)"))
+    end
+end
+
+function arch_tag()
+    m = String(Sys.ARCH)   # :x86_64, :aarch64, ...
+    if m in ("x86_64", "amd64", "x64")
+        "x86_64"
+    elseif m in ("aarch64", "arm64")
+        "arm64"
+    else
+        throw(FetchError("unsupported CPU for a prebuilt engine: $m"))
+    end
+end
+
+ext() = Sys.iswindows() ? "dll" : (Sys.isapple() ? "dylib" : "so")
+
+# The local filename the loader looks for (bare libselenium_core.<ext>, no
+# tag/platform — the cache dir already keys by tag). Note: no "lib" prefix on
+# Windows, matching the release artifact and the Ruby/Python bindings.
+library_filename() = Sys.iswindows() ? "selenium_core.dll" : "libselenium_core.$(ext())"
+
+# The gh-release asset for this platform, e.g.
+# libselenium_core-v0.8.0-linux-x86_64.so.
+asset_name(tag = ENGINE_VERSION) = "libselenium_core-$tag-$(os_tag())-$(arch_tag()).$(ext())"
+
+# $XDG_CACHE_HOME/selaenium (or the OS default): ~/.cache/selaenium on Linux,
+# ~/Library/Caches/selaenium on macOS, %LOCALAPPDATA%\selaenium on Windows. Kept
+# separate from the package depot so it survives package upgrades/reinstalls.
+function cache_dir()
+    xdg = get(ENV, "XDG_CACHE_HOME", "")
+    base = if !isempty(xdg)
+        xdg
+    elseif Sys.iswindows()
+        get(ENV, "LOCALAPPDATA", joinpath(homedir(), "AppData", "Local"))
+    elseif Sys.isapple()
+        joinpath(homedir(), "Library", "Caches")
+    else
+        joinpath(homedir(), ".cache")
+    end
+    joinpath(base, "selaenium")
+end
+
+# The absolute path the fetched engine is cached at (whether or not it exists
+# yet) — exactly the path the loader's candidate list adds, so a fetched engine
+# is found on the next load with no further config.
+cached_path(tag = ENGINE_VERSION) = joinpath(cache_dir(), tag, library_filename())
+
+# GET a URL into memory (binary-safe), following GitHub's redirect to the asset
+# CDN. Downloads.download handles redirects and TLS itself.
+function _download_bytes(url::AbstractString)
+    io = IOBuffer()
+    try
+        download(url, io; timeout = 120)
+    catch e
+        throw(FetchError("GET $url failed: $(sprint(showerror, e))"))
+    end
+    return take!(io)
+end
+
+# Fetch the published <asset>.sha256 sidecar (a "<hex>  <name>" line) and return
+# the hex. Returns nothing if the sidecar can't be fetched — the caller then
+# downloads without a checksum gate rather than failing hard, but a present
+# sidecar is always enforced.
+function expected_sha(tag = ENGINE_VERSION)
+    try
+        line = String(_download_bytes("$RELEASE_BASE/$tag/$(asset_name(tag)).sha256"))
+        parts = split(strip(line))
+        return isempty(parts) ? nothing : String(parts[1])
+    catch e
+        e isa FetchError && return nothing
+        rethrow()
+    end
+end
+
+_sha256_hex(bytes) = bytes2hex(sha256(bytes))
+
+function checksum_ok(path::AbstractString, want)
+    want === nothing && return false
+    isfile(path) || return false
+    return _sha256_hex(read(path)) == want
+end
+
+# Download (unless already cached + verified) the engine for this platform and
+# return the absolute path to the cached library. Idempotent: a present,
+# checksum-matching cached copy is returned without a network call. `tag`
+# overrides ENGINE_VERSION (e.g. to pin an older engine); `force` re-fetches.
+function fetch!(; tag::AbstractString = ENGINE_VERSION, force::Bool = false)
+    dest = cached_path(tag)
+    want = nothing
+    if !force && isfile(dest)
+        want = expected_sha(tag)
+        # A present sidecar is enforced; if the sidecar is unreachable, trust the
+        # existing file rather than re-downloading on every call.
+        (want === nothing || checksum_ok(dest, want)) && return dest
+    end
+
+    mkpath(dirname(dest))
+    asset = asset_name(tag)
+    body = _download_bytes("$RELEASE_BASE/$tag/$asset")
+
+    want === nothing && (want = expected_sha(tag))
+    if want !== nothing
+        got = _sha256_hex(body)
+        got == want || throw(FetchError("checksum mismatch for $asset: expected $want, got $got"))
+    end
+
+    # Write atomically so a half-written file is never left where the loader
+    # would try to dlopen it.
+    tmp = "$dest.$(getpid()).part"
+    write(tmp, body)
+    mv(tmp, dest; force = true)
+    return dest
+end
+
+end # module EngineFetcher
+
+# Re-export the engine tag on the top module (mirrors the Ruby/Python bindings).
+const ENGINE_VERSION = EngineFetcher.ENGINE_VERSION
+
+# Download + cache the prebuilt engine for this platform from the project's
+# GitHub releases, so no Aether toolchain is needed. Explicit + one-time. Returns
+# the cached library path. `tag` pins a different engine release; `force`
+# re-downloads. NOTE: to load an engine fetched in the SAME session, set
+# `ENV["SELENIUM_CORE_LIB"]` to the returned path before the first ccall, or
+# fetch before `using Selenium` in a fresh session — `LIB` is resolved once at
+# module load.
+fetch_engine!(; tag::AbstractString = ENGINE_VERSION, force::Bool = false) =
+    EngineFetcher.fetch!(tag = tag, force = force)
+
+# Resolve the engine library at module-load time. Precedence (first that exists
+# wins, mirroring the Ruby binding's candidate list):
+#   1. SELENIUM_CORE_LIB           — explicit absolute path override
+#   2. EngineFetcher.cached_path() — where `fetch_engine!` drops the engine
+#   3. "libselenium_core"          — the system loader's search path
+# The bare name is always the final fallback so a system-installed engine still
+# loads, and so ccall has a valid handle even before a fetch.
+function _resolve_lib()
+    override = get(ENV, "SELENIUM_CORE_LIB", "")
+    isempty(override) || return override
+    cached = EngineFetcher.cached_path()
+    isfile(cached) && return cached
+    return "libselenium_core"
+end
+
+# The engine .so path used by every ccall below.
+const LIB = _resolve_lib()
 
 # By: a factory returning a `Locator`, mirroring Java's `By.id("x")`. The
 # strategy-name constants remain (By.ID etc.) for the legacy two-arg locator
