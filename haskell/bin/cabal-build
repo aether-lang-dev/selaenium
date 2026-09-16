@@ -1,0 +1,66 @@
+#!/bin/sh
+# cabal-build — `cabal` wrapper that finds the shared Aether engine
+# (libselenium_core) the way the link-time reference (rust/build.rs) does, so a
+# Haskell dev with NO Aether toolchain can build the binding after one
+# `scripts/fetch-engine.sh`.
+#
+#   scripts/fetch-engine.sh                  # once: download + cache the engine
+#   haskell/bin/cabal-build build            # then build/test normally
+#   haskell/bin/cabal-build test             # (forwards all args to cabal)
+#
+# selenium.cabal only NAMES the library (extra-libraries: selenium_core); cabal
+# 9.x rejects a bare relative extra-lib-dirs and won't expand ${pkgroot}, so the
+# engine's ABSOLUTE dir must be supplied on the command line. This wrapper
+# resolves that dir, searching in order:
+#   1. SELENIUM_CORE_LIB — an explicit path to the .so; its parent dir is used;
+#   2. the binding's own bundled native/ (a published package ships the .so there);
+#   3. the shared fetch cache scripts/fetch-engine.sh populates —
+#      $XDG_CACHE_HOME/selaenium/<tag>/ (or ~/.cache | ~/Library/Caches /…) — so a
+#      dev with no Aether toolchain runs that once and then this just works;
+#   4. ../selenium_core/native — the monorepo layout (this binding next to core/).
+# It passes the resolved dir as --extra-lib-dirs (the link -L), an rpath ghc
+# linker option (so the built binary/tests locate the .so at run time with no
+# LD_LIBRARY_PATH), and SELENIUM_CORE_LIB for any run leg. All extra args are
+# forwarded to cabal unchanged.
+set -eu
+
+ENGINE_VERSION="${ENGINE_VERSION:-v0.8.0}"   # matches selenium.cabal note + scripts/fetch-engine.sh
+
+here="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"       # haskell/bin
+pkg="$(CDPATH= cd -- "$here/.." && pwd)"                  # haskell/
+repo="$(CDPATH= cd -- "$pkg/.." && pwd)"                  # repo root
+
+case "$(uname -s)" in
+  Darwin) libname="libselenium_core.dylib"
+          cache_base="${XDG_CACHE_HOME:-$HOME/Library/Caches}" ;;
+  *)      libname="libselenium_core.so"
+          cache_base="${XDG_CACHE_HOME:-$HOME/.cache}" ;;
+esac
+cache_dir="$cache_base/selaenium/$ENGINE_VERSION"
+
+# First candidate dir that actually holds the engine, in priority order.
+engine_dir=""
+for d in \
+  "${SELENIUM_CORE_LIB:+$(dirname -- "$SELENIUM_CORE_LIB")}" \
+  "$pkg/native" \
+  "$cache_dir" \
+  "$repo/selenium_core/native"
+do
+  [ -n "$d" ] || continue
+  if [ -f "$d/$libname" ]; then engine_dir="$d"; break; fi
+done
+
+if [ -z "$engine_dir" ]; then
+  echo "cabal-build: no $libname found." >&2
+  echo "  Fetch the prebuilt engine once, then retry:" >&2
+  echo "    scripts/fetch-engine.sh" >&2
+  echo "  (searched: \$SELENIUM_CORE_LIB, $pkg/native, $cache_dir, $repo/selenium_core/native)" >&2
+  exit 1
+fi
+
+# Make the .so discoverable to any run leg too (the test:live binary reads it).
+export SELENIUM_CORE_LIB="${SELENIUM_CORE_LIB:-$engine_dir/$libname}"
+
+exec cabal "$@" \
+  --extra-lib-dirs="$engine_dir" \
+  --ghc-options="-optl-Wl,-rpath,$engine_dir"

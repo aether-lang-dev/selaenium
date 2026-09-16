@@ -8,11 +8,20 @@ build-type:         Simple
 
 -- This binding LINKS the engine rather than dlopen'ing it, so
 -- libselenium_core.so must exist at BUILD time. The .so's directory and the
--- rpath are supplied on the cabal command line by haskell/run-tests.sh
--- (--extra-lib-dirs=<abs dir> and --ghc-options=-optl-Wl,-rpath,<abs dir>):
--- cabal 2.4/9.10 rejects a bare relative extra-lib-dirs at the register step
--- and does not expand ${pkgroot} at configure time, so absolute paths passed by
--- the harness are the portable choice. Only the library NAME lives here.
+-- rpath are supplied on the cabal command line (--extra-lib-dirs=<abs dir> and
+-- --ghc-options=-optl-Wl,-rpath,<abs dir>): cabal 2.4/9.10 rejects a bare
+-- relative extra-lib-dirs at the register step and does not expand ${pkgroot} at
+-- configure time, so absolute paths are the portable choice. Only the library
+-- NAME lives here.
+--
+-- A dev with no Aether toolchain builds via haskell/bin/cabal-build after one
+-- `scripts/fetch-engine.sh`: that wrapper resolves the engine dir (in order
+-- SELENIUM_CORE_LIB -> bundled native/ -> the shared fetch cache
+-- $XDG_CACHE_HOME/selaenium/v0.8.0/ -> monorepo ../selenium_core/native) and
+-- passes the --extra-lib-dirs / rpath flags above. ENGINE_VERSION pin: v0.8.0
+-- (the engine gh-release tag, matching scripts/fetch-engine.sh and the other
+-- bindings). The .tests.ae harness supplies the same flags from the aeb-built
+-- engine artifact for the toolchain path.
 
 library
   hs-source-dirs:   src
