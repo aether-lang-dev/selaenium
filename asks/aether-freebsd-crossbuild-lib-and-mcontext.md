@@ -19,8 +19,26 @@
 >   Verified upstream: `--emit=lib` → ELF shared object exporting `aether_*`, no
 >   main.
 >
-> **UPDATE (0.679.0 released + tested): #2047 fixed the link-as-exe, but a NEW
-> object-compile bug remains.** On the RELEASED 0.679.0 the `undefined symbol:
+> **UPDATE (x86_64 FIXED in source — aether #2049, pending release).** The
+> object-`-fPIC` fix landed as aether PR #2049 (`9f400cd2`): `-fPIC` is now on the
+> `zig cc -c` runtime/stdlib OBJECT compiles for a FreeBSD `--emit=lib` (gated on
+> emit_lib/staticlib for ELF/PE), not just the link — which also clears the TLS
+> `tls_depth` reloc (with `-fPIC`, clang honours its `tls_model("global-dynamic")`
+> instead of emitting initial-exec). VERIFIED HERE end to end: built `ae` from the
+> #2049 tree and ran our exact engine cross-command → a clean 927560-byte
+> `ELF 64-bit LSB shared object, x86-64, stripped` exporting the FULL
+> `aether_sel_embed_*` ABI (nm -D reads it fine — the "only 1 symbol" note was a
+> tool quirk). Exit 0, no reloc wall, no `main`. NOT yet in a published ae —
+> latest release is 0.679.0; when 0.680.0+ tags with #2049, bump AETHER_REF and
+> re-run the freebsd leg. aarch64-freebsd still hits `mcontext_t` (separate
+> arch-specific sysroot/include issue; x86_64 first). No aeb release needed — the
+> fix is entirely in `ae`, and release/build.sh's freebsd leg calls `ae build`
+> directly.
+>
+> --- earlier (0.679.0) note ---
+>
+> **#2047 fixed the link-as-exe, but a NEW object-compile bug remained.** On the
+> RELEASED 0.679.0 the `undefined symbol:
 > main` is gone (the final link line correctly carries `-shared -fPIC`), but the
 > freebsd `--emit=lib` now fails at link with:
 >   ld.lld: R_X86_64_TPOFF32 against tls_depth cannot be used with -shared
