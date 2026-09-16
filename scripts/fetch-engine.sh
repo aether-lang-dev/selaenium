@@ -32,8 +32,9 @@ uname_s="$(uname -s 2>/dev/null || echo unknown)"
 uname_m="$(uname -m 2>/dev/null || echo unknown)"
 
 case "$uname_s" in
-  Linux)  os=linux;   ext=so    ;;
-  Darwin) os=macos;   ext=dylib ;;
+  Linux)   os=linux;   ext=so    ;;
+  Darwin)  os=macos;   ext=dylib ;;
+  FreeBSD) os=freebsd; ext=so    ;;
   MINGW*|MSYS*|CYGWIN*|Windows*) os=windows; ext=dll ;;
   *) echo "fetch-engine: unsupported OS: $uname_s" >&2; exit 1 ;;
 esac

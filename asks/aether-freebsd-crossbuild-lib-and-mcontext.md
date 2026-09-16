@@ -19,7 +19,21 @@
 >   Verified upstream: `--emit=lib` → ELF shared object exporting `aether_*`, no
 >   main.
 >
-> **UPDATE (x86_64 FIXED in source — aether #2049, pending release).** The
+> **UPDATE (x86_64 SHIPPED on v0.8.0, 2026-09-16).** With #2049 verified end to
+> end (and Paul's OK to use the ahead-of-release ae for this one), the FreeBSD
+> x86_64 engine lib is now on the v0.8.0 gh-release:
+> `libselenium_core-v0.8.0-freebsd-x86_64.so` (+ .sha256, in SHA256SUMS.txt).
+> Built via the real release/build.sh (0 failed) with an `ae` built from the
+> #2049 aether tree; exports the SAME 66 aether_sel_embed_* symbols as the
+> released linux v0.8.0 .so (zero name diff), so it's a true peer of the shipping
+> targets. scripts/fetch-engine.sh now maps FreeBSD, so a FreeBSD dev fetches it.
+> Still owed: (a) a live load on real FreeBSD hardware to fully close it (only ELF
+> shape + ABI parity verified off-box); (b) re-cut this artifact from a PUBLISHED
+> 0.680.0+ ae once it tags (this one is ahead-of-release); (c) aarch64-freebsd
+> (still the mcontext_t arch issue).
+>
+> --- earlier: x86_64 FIXED in source — aether #2049, pending release ---
+> The
 > object-`-fPIC` fix landed as aether PR #2049 (`9f400cd2`): `-fPIC` is now on the
 > `zig cc -c` runtime/stdlib OBJECT compiles for a FreeBSD `--emit=lib` (gated on
 > emit_lib/staticlib for ELF/PE), not just the link — which also clears the TLS
