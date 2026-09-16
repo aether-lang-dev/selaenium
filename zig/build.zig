@@ -5,12 +5,16 @@
 //! it is AND bakes an rpath so the binary finds it at run time without
 //! LD_LIBRARY_PATH.
 //!
-//! Engine search order (first hit wins):
+//! Engine search order (first hit wins), mirroring rust/build.rs:
 //!   1. -Dengine=/abs/path/to/libselenium_core.so  — what .tests.ae passes
 //!      (the artifact path aeb published for core/.build.ae).
 //!   2. $SELENIUM_CORE_LIB — the same env var every other binding honours.
 //!   3. zig/native/  — a staged local copy (a distributable build).
-//!   4. ../selenium_core/native/ — the in-tree monorepo layout.
+//!   4. the shared fetch cache: $XDG_CACHE_HOME/selaenium/<tag>/ (or the OS
+//!      default — ~/Library/Caches on macOS, ~/.cache elsewhere), populated by
+//!      scripts/fetch-engine.sh so a dev with no Aether toolchain runs that
+//!      once, then `zig build` just works.
+//!   5. ../selenium_core/native/ — the in-tree monorepo layout.
 //!
 //! Both a directory and a full path to the .so are accepted for 1 and 2.
 //!
@@ -19,6 +23,10 @@
 //!     zig build live                        # run the live-Chrome test binary
 
 const std = @import("std");
+
+// The engine gh-release tag whose fetch-cache this binding searches (matches
+// scripts/fetch-engine.sh's default TAG and every other binding's ENGINE_VERSION).
+const ENGINE_VERSION = "v0.8.0";
 
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
@@ -108,9 +116,29 @@ fn engineSearchPath(b: *std.Build, engine_opt: ?[]const u8) []const []const u8 {
         if (e.len > 0) dirs.append(gpa, asDir(e)) catch @panic("OOM");
     }
     dirs.append(gpa, b.pathFromRoot("native")) catch @panic("OOM");
+    if (fetchCacheDir(b)) |cache| dirs.append(gpa, cache) catch @panic("OOM");
     dirs.append(gpa, b.pathFromRoot("../selenium_core/native")) catch @panic("OOM");
 
     return dirs.toOwnedSlice(gpa) catch @panic("OOM");
+}
+
+// The shared fetch cache dir: $XDG_CACHE_HOME/selaenium/<tag>/ (or the OS
+// default — ~/Library/Caches on macOS, ~/.cache elsewhere). Mirrors
+// scripts/fetch-engine.sh and rust/build.rs's fetch_cache_dir(). Returns null
+// when neither XDG_CACHE_HOME nor HOME is set.
+fn fetchCacheDir(b: *std.Build) ?[]const u8 {
+    const env = b.graph.environ_map;
+    if (env.get("XDG_CACHE_HOME")) |x| {
+        if (x.len > 0)
+            return std.fs.path.join(b.allocator, &.{ x, "selaenium", ENGINE_VERSION }) catch @panic("OOM");
+    }
+    const home = env.get("HOME") orelse return null;
+    if (home.len == 0) return null;
+    const sub: []const u8 = switch (@import("builtin").os.tag) {
+        .macos => "Library/Caches",
+        else => ".cache",
+    };
+    return std.fs.path.join(b.allocator, &.{ home, sub, "selaenium", ENGINE_VERSION }) catch @panic("OOM");
 }
 
 fn asDir(path: []const u8) []const u8 {

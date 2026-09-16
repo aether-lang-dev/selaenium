@@ -1,22 +1,92 @@
 // The C client's test binary: compiles test/selenium_test.c, links the C
-// client's object (from c/.objects.ae) and the engine .so (../selenium_core
-// /native, staged by selenium_core/.build.ae) with an rpath. Publishes the
-// binary on the program_binary edge for c/.tests.ae to run. Skipped by preflight
-// when a C compiler is absent (prereq gcc).
+// client's object (from c/.objects.ae) and the engine .so with an rpath.
+// Publishes the binary on the program_binary edge for c/.tests.ae to run.
+// Skipped by preflight when a C compiler is absent (prereq gcc).
+//
+// Engine resolution (mirrors rust/build.rs). The .so linked (absolute path +
+// rpath) is chosen in this order, so a dev who ran scripts/fetch-engine.sh
+// links the fetched engine without any env var:
+//   1. SELENIUM_CORE_LIB — an explicit path to the .so (dev/CI escape hatch);
+//   2. this binding's bundled native/libselenium_core.<ext> (a shipped copy);
+//   3. the shared fetch cache scripts/fetch-engine.sh populates:
+//      $XDG_CACHE_HOME/selaenium/<ENGINE_VERSION>/ (or the OS default);
+//   4. the aeb-built engine artifact (selenium_core/.build.ae's shared_lib).
+//
+// NB: aeb resolves dep() edges by STATIC text scan (tools/extract-deps), so the
+// unconditional dep("selenium_core/.build.ae") always schedules an engine build
+// when the Aether toolchain is present — that is aeb's model and is harmless
+// here. A dev with NO toolchain does not use aeb at all: they build with plain
+// gcc against the fetched engine — see c/AGENTS.md for that one-liner. This
+// resolver's payoff is that an aeb build with a populated fetch cache links the
+// fetched .so (step 3) instead of forcing a rebuilt-artifact rpath.
 import bldr
 import c
 import c (sources, include, link_flag, output_file)
+import std.os
+import std.file
+import std.string
+
+// The engine gh-release tag whose fetch-cache this node searches (matches
+// scripts/fetch-engine.sh's default TAG + rust/build.rs's ENGINE_VERSION).
+ENGINE_VERSION() -> string { return "v0.8.0" }
+
+// The shared fetch-cache dir: $XDG_CACHE_HOME/selaenium/<tag>/ (or the OS
+// default — ~/.cache on Linux, ~/Library/Caches on macOS). Same convention as
+// scripts/fetch-engine.sh and rust/build.rs. "" if HOME is unknown.
+_fetch_cache_dir() -> string {
+    xdg = os.getenv("XDG_CACHE_HOME")
+    if string.length(xdg) > 0 {
+        return string.concat(xdg, string.concat("/selaenium/", ENGINE_VERSION()))
+    }
+    home = os.getenv("HOME")
+    if string.length(home) == 0 { return "" }
+    // Probe macOS first (~/Library/Caches), then Linux (~/.cache).
+    mac = string.concat(home, string.concat("/Library/Caches/selaenium/", ENGINE_VERSION()))
+    if file.exists(string.concat(mac, "/libselenium_core.dylib")) == 1 { return mac }
+    return string.concat(home, string.concat("/.cache/selaenium/", ENGINE_VERSION()))
+}
+
+// Resolve a prebuilt engine .so WITHOUT the dep graph (steps 1–3). Returns an
+// absolute .so path, or "" when none of the toolchain-free sources have it (the
+// caller then uses the aeb-built artifact). Bundled paths are repo-root-
+// relative: the c.program link step runs from the repo root.
+_prebuilt_engine_lib() -> string {
+    env = os.getenv("SELENIUM_CORE_LIB")
+    if string.length(env) > 0 {
+        if file.exists(env) == 1 { return env }
+    }
+    bundled_so = "c/native/libselenium_core.so"
+    if file.exists(bundled_so) == 1 { return bundled_so }
+    bundled_dylib = "c/native/libselenium_core.dylib"
+    if file.exists(bundled_dylib) == 1 { return bundled_dylib }
+    cache = _fetch_cache_dir()
+    if string.length(cache) > 0 {
+        cso = string.concat(cache, "/libselenium_core.so")
+        if file.exists(cso) == 1 { return cso }
+        cdylib = string.concat(cache, "/libselenium_core.dylib")
+        if file.exists(cdylib) == 1 { return cdylib }
+    }
+    return ""
+}
 
 aeb(cap) {
     bldr.build() {
         prereq("gcc")
         dep("selenium_core/.build.ae")
         dep("c/.objects.ae")
-        // Link the engine .so by its ABSOLUTE artifact path (the c.program link
-        // step runs from the repo root, so a relative -L would misresolve); rpath
-        // its dir so the test binary finds it at run time.
-        lib = dep_artifact("selenium_core/.build.ae", "shared_lib")
+
+        // A prebuilt engine (env / bundled / fetch cache) wins the link; else
+        // the aeb-built artifact. dep_artifact() is safe either way — it reads
+        // the (statically-scheduled) engine node's published path.
+        lib = _prebuilt_engine_lib()
+        if string.length(lib) == 0 {
+            lib = dep_artifact("selenium_core/.build.ae", "shared_lib")
+        }
         libdir = bldr._dirname(lib)
+
+        // Link the engine .so by its ABSOLUTE path (the c.program link step runs
+        // from the repo root, so a relative -L would misresolve); rpath its dir
+        // so the test binary finds it at run time.
         c.program() {
             sources("test/selenium_test.c")
             include("include")

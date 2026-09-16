@@ -7,10 +7,14 @@
 ## below is marshalling: Nim values in, C scalars and cstrings out, and back.
 ##
 ## Why importc + a real link (not dynlib/dlopen): Nim is compiled and links by
-## default, like Go/cgo and Rust. `{.passL.}` points the linker at nim/native
-## and ../selenium_core/native and bakes both as rpath, so an in-tree binary finds the
-## `.so` with no LD_LIBRARY_PATH. `nim/.tests.ae` stages the engine into
-## nim/native/ before compiling. The engine must exist at BUILD time.
+## default, like Go/cgo and Rust. `{.passL.}` points the linker at, in order:
+## the SELENIUM_CORE_LIB env dir, nim/native (bundled), the shared fetch cache
+## ($XDG_CACHE_HOME/selaenium/<tag>/ — populated by scripts/fetch-engine.sh so a
+## dev with no Aether toolchain runs that once, then builds normally), and
+## ../selenium_core/native (the monorepo layout). Every candidate is baked as
+## rpath too, so an in-tree binary finds the `.so` with no LD_LIBRARY_PATH.
+## `nim/.tests.ae` stages the engine into nim/native/ before compiling. The
+## engine must exist at BUILD time. The search order mirrors rust/build.rs.
 ##
 ## Ownership: every cstring this ABI returns is caller-owned (malloc'd on the C
 ## side) and must be handed back to aether_sel_embed_free_string. Exactly one
@@ -21,13 +25,44 @@
 
 import std/[os, json, strutils, sequtils, unicode]
 
+# The engine gh-release tag whose fetch-cache this binding searches (matches
+# scripts/fetch-engine.sh's default TAG and every other binding's ENGINE_VERSION).
+const EngineVersion* = "v0.8.0"
+
+# The shared fetch cache dir: $XDG_CACHE_HOME/selaenium/<tag>/ (or the OS
+# default — ~/Library/Caches on macOS, ~/.cache elsewhere), computed at compile
+# time. Mirrors scripts/fetch-engine.sh and rust/build.rs's fetch_cache_dir().
+proc fetchCacheDir(): string {.compileTime.} =
+  let xdg = getEnv("XDG_CACHE_HOME")
+  let base =
+    if xdg.len > 0: xdg
+    elif defined(macosx): getHomeDir() / "Library" / "Caches"
+    else: getHomeDir() / ".cache"
+  base / "selaenium" / EngineVersion
+
 const
   srcDir = currentSourcePath().parentDir()
   nativeDir = srcDir & "/../native"
+  cacheDir = fetchCacheDir()
   coreNativeDir = srcDir & "/../../selenium_core/native"
 
-{.passL: "-L" & nativeDir & " -L" & coreNativeDir & " -lselenium_core" &
-         " -Wl,-rpath," & nativeDir & " -Wl,-rpath," & coreNativeDir.}
+# Search order matches rust/build.rs: SELENIUM_CORE_LIB env dir (its parent when
+# a full .so path is given), bundled native/, the fetch cache, then the monorepo
+# layout. Each is added to the link path AND baked as rpath.
+proc linkFlags(): string {.compileTime.} =
+  var dirs: seq[string] = @[]
+  let envLib = getEnv("SELENIUM_CORE_LIB")
+  if envLib.len > 0:
+    dirs.add(if envLib.endsWith(".so") or envLib.endsWith(".dylib"):
+               envLib.parentDir() else: envLib)
+  dirs.add(nativeDir)
+  dirs.add(cacheDir)
+  dirs.add(coreNativeDir)
+  for d in dirs: result.add("-L" & d & " ")
+  result.add("-lselenium_core")
+  for d in dirs: result.add(" -Wl,-rpath," & d)
+
+{.passL: linkFlags().}
 
 # ---- the C ABI (aether_sel_embed_*), linked at build time ----
 

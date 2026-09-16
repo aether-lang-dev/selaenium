@@ -1,25 +1,92 @@
 // C++ client tests: cpp.tests compiles test/selenium_test.cpp (C++17,
-// header-only over cpp/include/selenium.hpp) and links (1) the C client's object
-// from c/.objects.ae — compiled AS C so its `extern "C"` symbols aren't
-// C++-mangled — via cpp's dep-object collection, and (2) the engine .so from
-// ../selenium_core/native (staged by selenium_core/.build.ae) with an rpath.
-// The test exercises the pure helpers + transport-error→exception, then live
-// headless Chrome (find/text/aria/executeScript/shadow-root/NoSuchElement) and
-// live headless Firefox — self-skipping when a driver can't be resolved. Skipped
-// by preflight when a C++ compiler is absent (prereq gcc — g++ ships with it).
+// header-only over cpp/include/selenium.hpp) and links (1) the C client's
+// object from c/.objects.ae — compiled AS C so its `extern "C"` symbols aren't
+// C++-mangled — via cpp's dep-object collection, and (2) the engine .so with an
+// rpath. The test exercises the pure helpers + transport-error→exception, then
+// live headless Chrome and live headless Firefox — self-skipping when a driver
+// can't be resolved. Skipped by preflight when a C++ compiler is absent (prereq
+// gcc — g++ ships with it).
+//
+// Engine resolution (mirrors rust/build.rs + c/.build.ae). The .so linked
+// (absolute path + rpath) is chosen in this order, so a dev who ran
+// scripts/fetch-engine.sh links the fetched engine without any env var:
+//   1. SELENIUM_CORE_LIB — an explicit path to the .so (dev/CI escape hatch);
+//   2. this binding's bundled native/libselenium_core.<ext> (a shipped copy);
+//   3. the shared fetch cache scripts/fetch-engine.sh populates:
+//      $XDG_CACHE_HOME/selaenium/<ENGINE_VERSION>/ (or the OS default);
+//   4. the aeb-built engine artifact (selenium_core/.build.ae's shared_lib).
+//
+// NB: aeb resolves dep() edges by STATIC text scan, so the unconditional
+// dep("selenium_core/.build.ae") always schedules an engine build when the
+// Aether toolchain is present. A dev with NO toolchain does not use aeb: they
+// build with plain g++ against the fetched engine — see cpp/AGENTS.md for that
+// one-liner. This resolver lets an aeb build with a populated fetch cache link
+// the fetched .so (step 3).
 import bldr
 import cpp
 import cpp (source, include, std, link_flag)
+import std.os
+import std.file
+import std.string
+
+// The engine gh-release tag whose fetch-cache this node searches (matches
+// scripts/fetch-engine.sh's default TAG + rust/build.rs's ENGINE_VERSION).
+ENGINE_VERSION() -> string { return "v0.8.0" }
+
+// The shared fetch-cache dir: $XDG_CACHE_HOME/selaenium/<tag>/ (or the OS
+// default — ~/.cache on Linux, ~/Library/Caches on macOS). Same convention as
+// scripts/fetch-engine.sh and rust/build.rs. "" if HOME is unknown.
+_fetch_cache_dir() -> string {
+    xdg = os.getenv("XDG_CACHE_HOME")
+    if string.length(xdg) > 0 {
+        return string.concat(xdg, string.concat("/selaenium/", ENGINE_VERSION()))
+    }
+    home = os.getenv("HOME")
+    if string.length(home) == 0 { return "" }
+    mac = string.concat(home, string.concat("/Library/Caches/selaenium/", ENGINE_VERSION()))
+    if file.exists(string.concat(mac, "/libselenium_core.dylib")) == 1 { return mac }
+    return string.concat(home, string.concat("/.cache/selaenium/", ENGINE_VERSION()))
+}
+
+// Resolve a prebuilt engine .so WITHOUT the dep graph (steps 1–3). Returns an
+// absolute .so path, or "" when none is present (caller uses the aeb artifact).
+// Bundled paths are repo-root-relative: the cpp.tests link runs from the repo
+// root.
+_prebuilt_engine_lib() -> string {
+    env = os.getenv("SELENIUM_CORE_LIB")
+    if string.length(env) > 0 {
+        if file.exists(env) == 1 { return env }
+    }
+    bundled_so = "cpp/native/libselenium_core.so"
+    if file.exists(bundled_so) == 1 { return bundled_so }
+    bundled_dylib = "cpp/native/libselenium_core.dylib"
+    if file.exists(bundled_dylib) == 1 { return bundled_dylib }
+    cache = _fetch_cache_dir()
+    if string.length(cache) > 0 {
+        cso = string.concat(cache, "/libselenium_core.so")
+        if file.exists(cso) == 1 { return cso }
+        cdylib = string.concat(cache, "/libselenium_core.dylib")
+        if file.exists(cdylib) == 1 { return cdylib }
+    }
+    return ""
+}
 
 aeb(cap) {
     bldr.build() {
         prereq("gcc")
         dep("selenium_core/.build.ae")
         dep("c/.objects.ae")
-        // Engine .so by ABSOLUTE artifact path + rpath its dir (cpp.tests
-        // compiles from the module dir; an absolute path is layout-robust).
-        lib = dep_artifact("selenium_core/.build.ae", "shared_lib")
+
+        // A prebuilt engine (env / bundled / fetch cache) wins the link; else
+        // the aeb-built artifact.
+        lib = _prebuilt_engine_lib()
+        if string.length(lib) == 0 {
+            lib = dep_artifact("selenium_core/.build.ae", "shared_lib")
+        }
         libdir = bldr._dirname(lib)
+
+        // Engine .so by ABSOLUTE path + rpath its dir (cpp.tests compiles from
+        // the module dir; an absolute path is layout-robust).
         cpp.tests() {
             std("c++17")
             source("test/selenium_test.cpp")
