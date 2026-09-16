@@ -182,6 +182,16 @@ sel_embed_runner_server_start(h: ptr, port: int) -> int {
     return runner_server.runner_server_start(h, port)
 }
 
+// ---- .side (Selenium IDE) playback ----
+// Play a recorded .side project against session `h`. Returns a JSON report
+// {name, tests, passed, failed, results:[{test, ok, steps:[…]}]}. Every step
+// runs through the same shell verbs the interactive console uses. Lives in
+// shell.ae (folded there to dodge an ae codegen bug on a new module — see
+// asks/aether-0677-sha1-free-ctx-wholeprogram.md).
+sel_embed_side_run(h: ptr, side_json: string) -> string {
+    return sel_embed_dup(shell.side_run(h, side_json))
+}
+
 // ---- the one workhorse ----
 
 // Execute a WebDriver command by name with JSON parameters (params_json may be

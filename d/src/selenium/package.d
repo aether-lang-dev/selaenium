@@ -71,6 +71,9 @@ private extern (C) nothrow @nogc {
     // runner control server (out-of-process hosts over ws://…/runner) — blocks
     int   aether_sel_embed_runner_server_start(void* h, int port);
 
+    // .side (Selenium IDE) playback: play a project, return a JSON report
+    char* aether_sel_embed_side_run(void* h, const(char)* side_json);
+
     // atom-backed element commands
     int   aether_sel_embed_execute_atom(void* h, const(char)* atom_name, const(char)* elem_id, const(char)* extra_json);
     int   aether_sel_embed_is_displayed(void* h, const(char)* elem_id);
@@ -490,6 +493,15 @@ final class WebDriver {
     /// protocol. Use `RunnerServer` to run this on a background thread instead.
     /// Returns non-zero if the port cannot bind. SEL_RUNNER_PORT overrides port.
     int serveRunner(int port = 8787) { return aether_sel_embed_runner_server_start(handle, port); }
+
+    /// Play a Selenium IDE `.side` project against this session and return the
+    /// JSON report `{name, tests, passed, failed, results:[{test, ok, steps}]}`.
+    /// Each command runs through the same shell verbs the interactive console
+    /// uses (open/click/type/assert*/waitFor*). The playback engine is
+    /// engine-side (shell.ae's side_run) — this is a thin call.
+    JSONValue playSide(string sideJson) {
+        return parseJSON(takeString(aether_sel_embed_side_run(handle, sideJson.toStringz)));
+    }
 
     // --- logs (Selenium `se/log` vendor extension) ---
     /// The available log types, e.g. `["browser", "driver"]`.

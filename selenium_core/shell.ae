@@ -246,3 +246,220 @@ _json_field(json: string, key: string) -> string {
 _help_text() -> string {
     return "commands: open <url> | title | url | source | back | forward | refresh | click <sel> | clear <sel> | text <sel> | type <sel> <text> | eval <js> | exec <cmd> <json> | trace on|off | events | timer start|stop <name> | timers | sid | help.  selectors: #id, .class, css=<sel>, xpath=<x> or //, bare=css"
 }
+
+// ==== .side (Selenium IDE) playback — folded into shell.ae ====
+// A new top-level module currently trips an ae 0.677/near-threshold codegen bug
+// (asks/aether-0677-sha1-free-ctx-wholeprogram.md), so .side playback lives here
+// in shell.ae rather than its own file. It IS the shell in batch mode: every
+// step runs through shell_eval, the same verbs a human types. Move back to a
+// side_run.ae module once the compiler bug is fixed.
+// Informed by webautoma's .side executor (Apache-2.0); see NOTICE.
+
+side_run(session: ptr, side_json: string) -> string {
+    root, perr = json.parse(side_json)
+    if string.length(perr) > 0 {
+        return string.concat("{\"error\":\"unparseable .side project: ", string.concat(_side_esc(perr), "\"}"))
+    }
+    name = _side_obj_str(root, "name")
+    tests, _t = json.object_get(root, "tests")
+    if tests == null {
+        return string.concat("{\"name\":", string.concat(_qs(name), ",\"error\":\"no tests[] in project\"}"))
+    }
+
+    results = ""     // "," joined test-result objects
+    tn = 0
+    passed = 0
+    failed = 0
+    ti = 0
+    tv, _tv0 = json.array_get(tests, ti)
+    while tv != null {
+        tr, ok = _side_run_test(session, tv)
+        results = _side_append(results, tr)
+        tn = tn + 1
+        if ok == 1 { passed = passed + 1 } else { failed = failed + 1 }
+        ti = ti + 1
+        tv, _tvn = json.array_get(tests, ti)
+    }
+
+    return string.concat("{\"name\":", string.concat(_qs(name),
+        string.concat(",\"tests\":", string.concat(string.from_int(tn),
+        string.concat(",\"passed\":", string.concat(string.from_int(passed),
+        string.concat(",\"failed\":", string.concat(string.from_int(failed),
+        string.concat(",\"results\":[", string.concat(results, "]}"))))))))))
+}
+
+// _side_run_test(session, tv) — run one test's commands in order, stop-on-first-fail
+// (Selenium IDE assert semantics: assert* aborts the test; verify* would not, but
+// we treat both as hard here — a follow-up can split them). Returns (test_result
+// json, ok 1|0).
+_side_run_test(session: ptr, tv: ptr) -> (string, int) {
+    tname = _side_obj_str(tv, "name")
+    cmds, _c = json.object_get(tv, "commands")
+    steps = ""
+    ok = 1
+    ci = 0
+    cv, _cv0 = json.array_get(cmds, ci)
+    while cv != null {
+        step, sok = _side_run_command(session, cv)
+        steps = _side_append(steps, step)
+        if sok == 0 { ok = 0 }
+        ci = ci + 1
+        if sok == 0 { cv = null } else { cv, _cvn = json.array_get(cmds, ci) }  // abort test on failure
+    }
+    tr = string.concat("{\"test\":", string.concat(_qs(tname),
+        string.concat(",\"ok\":", string.concat(_side_bool(ok),
+        string.concat(",\"steps\":[", string.concat(steps, "]}"))))))
+    return (tr, ok)
+}
+
+// _side_run_command(session, cv) — translate one .side command to a shell action (or
+// an assertion) and run it. Returns (step json, ok 1|0).
+_side_run_command(session: ptr, cv: ptr) -> (string, int) {
+    command = _side_obj_str(cv, "command")
+    target = _side_obj_str(cv, "target")
+    value = _side_obj_str(cv, "value")
+
+    // control-only / no-op commands
+    if command == "" { return (_side_step(command, target, 1, "empty"), 1) }
+    if command == "pause" { return (_side_step(command, target, 1, "pause (no-op in playback)"), 1) }
+    if string.starts_with(command, "//") == 1 { return (_side_step(command, target, 1, "comment"), 1) }
+
+    // navigation + simple element actions -> a shell line the shell already runs
+    if command == "open" { return _side_via_shell(session, command, target, string.concat("open ", target)) }
+    if command == "click" { return _side_via_shell(session, command, target, string.concat("click ", _side_sel(target))) }
+    if command == "clickAndWait" { return _side_via_shell(session, command, target, string.concat("click ", _side_sel(target))) }
+    if command == "clear" { return _side_via_shell(session, command, target, string.concat("clear ", _side_sel(target))) }
+    if command == "type" {
+        return _side_via_shell(session, command, target, string.concat("type ", string.concat(_side_sel(target), string.concat(" ", value))))
+    }
+    if command == "sendKeys" {
+        return _side_via_shell(session, command, target, string.concat("type ", string.concat(_side_sel(target), string.concat(" ", value))))
+    }
+    if command == "setValue" {
+        return _side_via_shell(session, command, target, string.concat("type ", string.concat(_side_sel(target), string.concat(" ", value))))
+    }
+    if command == "runScript" { return _side_via_shell(session, command, target, string.concat("eval ", target)) }
+    if command == "executeScript" { return _side_via_shell(session, command, target, string.concat("eval ", target)) }
+
+    // assertions / waits — run a shell read then compare
+    if command == "assertText" { return _side_assert_text(session, command, target, value) }
+    if command == "verifyText" { return _side_assert_text(session, command, target, value) }
+    if command == "assertTitle" { return _side_assert_title(session, command, value) }
+    if command == "assertElementPresent" { return _side_assert_present(session, command, target, 1) }
+    if command == "assertElementNotPresent" { return _side_assert_present(session, command, target, 0) }
+    if command == "waitForElementPresent" { return _side_assert_present(session, command, target, 1) }
+    if command == "waitForElementVisible" { return _side_assert_present(session, command, target, 1) }
+
+    // unknown command: record it as a skipped step (not a hard fail — an
+    // unsupported IDE command shouldn't sink an otherwise-green test), but flag it.
+    return (_side_step(command, target, 1, string.concat("unsupported command (skipped): ", command)), 1)
+}
+
+// _side_via_shell — run a shell line; ok iff the shell result is ok:true.
+_side_via_shell(session: ptr, command: string, target: string, line: string) -> (string, int) {
+    res = shell_eval(session, line)
+    ok = _side_res_ok(res)
+    detail = _side_res_detail(res)
+    return (_side_step(command, target, ok, detail), ok)
+}
+
+// _side_assert_text — `text <sel>` then compare to the expected value (exact match;
+// Selenium IDE also supports glob/regex prefixes, a follow-up can add them).
+_side_assert_text(session: ptr, command: string, target: string, expected: string) -> (string, int) {
+    res = shell_eval(session, string.concat("text ", _side_sel(target)))
+    if _side_res_ok(res) == 0 { return (_side_step(command, target, 0, _side_res_detail(res)), 0) }
+    got = _side_res_value_str(res)
+    if got == expected { return (_side_step(command, target, 1, string.concat("text == ", _side_q(expected))), 1) }
+    return (_side_step(command, target, 0, string.concat("expected ", string.concat(_side_q(expected), string.concat(", got ", _side_q(got))))), 0)
+}
+
+_side_assert_title(session: ptr, command: string, expected: string) -> (string, int) {
+    res = shell_eval(session, "title")
+    if _side_res_ok(res) == 0 { return (_side_step(command, "", 0, _side_res_detail(res)), 0) }
+    got = _side_res_value_str(res)
+    if got == expected { return (_side_step(command, "", 1, string.concat("title == ", _side_q(expected))), 1) }
+    return (_side_step(command, "", 0, string.concat("expected title ", string.concat(_side_q(expected), string.concat(", got ", _side_q(got))))), 0)
+}
+
+// _side_assert_present — presence via `text <sel>`: ok:true means the element was
+// found. `want` 1 asserts present, 0 asserts absent.
+_side_assert_present(session: ptr, command: string, target: string, want: int) -> (string, int) {
+    res = shell_eval(session, string.concat("text ", _side_sel(target)))
+    found = _side_res_ok(res)
+    if found == want { return (_side_step(command, target, 1, "presence as expected"), 1) }
+    if want == 1 { return (_side_step(command, target, 0, string.concat("element not present: ", target)), 0) }
+    return (_side_step(command, target, 0, string.concat("element unexpectedly present: ", target)), 0)
+}
+
+// ---- .side locator -> shell selector ----------------------------------------
+// Selenium locators: id= / name= / css= / xpath= / linkText= / link= / //… .
+// The shell speaks #id / .class / css= / xpath= / // / bare-css, so translate the
+// ones it doesn't already take.
+_side_sel(target: string) -> string {
+    t = string.trim(target)
+    if string.starts_with(t, "id=") == 1 { return string.concat("#", string.substring(t, 3, string.length(t))) }
+    if string.starts_with(t, "name=") == 1 { return string.concat("css=[name=\"", string.concat(string.substring(t, 5, string.length(t)), "\"]")) }
+    if string.starts_with(t, "linkText=") == 1 { return _side_link_xpath(string.substring(t, 9, string.length(t))) }
+    if string.starts_with(t, "link=") == 1 { return _side_link_xpath(string.substring(t, 5, string.length(t))) }
+    if string.starts_with(t, "css=") == 1 { return t }        // shell takes css= as-is
+    if string.starts_with(t, "xpath=") == 1 { return t }      // and xpath=
+    if string.starts_with(t, "//") == 1 { return t }          // and raw xpath
+    return t                                                   // bare -> css (shell default)
+}
+_side_link_xpath(txt: string) -> string {
+    return string.concat("xpath=//a[normalize-space()=\"", string.concat(txt, "\"]"))
+}
+
+// ---- shell-result inspection -------------------------------------------------
+_side_res_ok(res_json: string) -> int {
+    root, perr = json.parse(res_json)
+    if string.length(perr) > 0 { return 0 }
+    okv, _o = json.object_get(root, "ok")
+    if okv == null { return 0 }
+    return json.get_bool(okv)
+}
+_side_res_value_str(res_json: string) -> string {
+    root, perr = json.parse(res_json)
+    if string.length(perr) > 0 { return "" }
+    vv, _v = json.object_get(root, "value")
+    if vv == null { return "" }
+    s, serr = json.get_string(vv)
+    if string.length(serr) == 0 { return s }
+    enc, _e = json.stringify(vv)
+    return enc
+}
+_side_res_detail(res_json: string) -> string {
+    root, perr = json.parse(res_json)
+    if string.length(perr) > 0 { return res_json }
+    ev, _e = json.object_get(root, "error")
+    if ev != null { s, _s = json.get_string(ev); return s }
+    iv, _i = json.object_get(root, "info")
+    if iv != null { s, _s2 = json.get_string(iv); return s }
+    return "ok"
+}
+
+// ---- json/report helpers -----------------------------------------------------
+_side_step(command: string, target: string, ok: int, detail: string) -> string {
+    return string.concat("{\"command\":", string.concat(_qs(command),
+        string.concat(",\"target\":", string.concat(_qs(target),
+        string.concat(",\"ok\":", string.concat(_side_bool(ok),
+        string.concat(",\"detail\":", string.concat(_qs(detail), "}"))))))))
+}
+_side_append(acc: string, item: string) -> string {
+    if string.length(acc) == 0 { return item }
+    return string.concat(acc, string.concat(",", item))
+}
+_side_bool(v: int) -> string { if v == 1 { return "true" } return "false" }
+_side_q(v: string) -> string { return string.concat("\"", string.concat(v, "\"")) }
+
+_side_obj_str(obj: ptr, key: string) -> string {
+    v, _v = json.object_get(obj, key)
+    if v == null { return "" }
+    s, serr = json.get_string(v)
+    if string.length(serr) == 0 { return s }
+    return ""
+}
+_side_esc(v: string) -> string {
+    // minimal: strip quotes so a parse-error message can't break the JSON.
+    return string.replace_all(v, "\"", "'")
+}

@@ -431,6 +431,30 @@ int main() {
         }
     }
 
+    // .side playback: play a real Selenium IDE project against this session and
+    // check the report. Two commands — open a data: page, assert its title — so
+    // the whole parse -> per-command shell dispatch -> pass/fail report path runs
+    // against a live browser. (The playback engine is shell.side_run, engine-side.)
+    {
+        string side =
+            `{"name":"demo","tests":[{"name":"opens-and-checks","commands":[` ~
+            `{"command":"open","target":"data:text/html,<title>SideOK</title><h1 id=z>hi</h1>","value":""},` ~
+            `{"command":"assertTitle","target":"","value":"SideOK"},` ~
+            `{"command":"assertText","target":"id=z","value":"hi"}]}]}`;
+        auto rep = d.playSide(side);
+        check(rep["tests"].integer == 1, "side: one test in the report");
+        check(rep["passed"].integer == 1 && rep["failed"].integer == 0,
+              "side: the .side test passed against live Chrome");
+        check(rep["results"][0]["ok"].boolean, "side: per-test ok flag set");
+        // a deliberately-wrong assertion must fail the test + stop it
+        string bad =
+            `{"name":"demo","tests":[{"name":"wrong-title","commands":[` ~
+            `{"command":"open","target":"data:text/html,<title>Real</title>","value":""},` ~
+            `{"command":"assertTitle","target":"","value":"NotReal"}]}]}`;
+        auto rep2 = d.playSide(bad);
+        check(rep2["failed"].integer == 1, "side: a wrong assertion fails the test");
+    }
+
     // Grid client: drive a session THROUGH a real Selenium Grid hub (the
     // grid/run-grid-test.sh harness stands one up in a container and exports
     // SEL_GRID_URL). openSession(hubUrl) -> HTTP -> router -> node -> browser.
