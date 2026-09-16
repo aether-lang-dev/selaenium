@@ -7,6 +7,12 @@ version: 0.1.0
 environment:
   sdk: ">=3.1.0 <4.0.0"
 
+# `dart run selenium:fetch_engine` — one explicit, opt-in command that downloads
+# + caches the prebuilt pure-Aether engine (libselenium_core) for this platform
+# from GitHub releases, so a Dart dev never needs the Aether toolchain.
+executables:
+  fetch_engine:
+
 dependencies:
   ffi: ^2.1.0
 

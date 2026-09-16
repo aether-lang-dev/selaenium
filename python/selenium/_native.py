@@ -61,7 +61,10 @@ def _candidate_paths():
     1. explicit path pinned via ``native_lib=`` / :func:`configure`;
     2. ``SELENIUM_CORE_LIB`` (env override — a fresh ``ae build`` artifact);
     3. the package's bundled ``native/`` directory (a shipped wheel's ``.so``);
-    4. the bare file name (let the OS loader / ``find_library`` try).
+    4. the per-user cache a ``python -m selenium.fetch_engine`` download lands
+       in (``engine_fetcher.cached_path``) — lets a fetched engine load with no
+       further config;
+    5. the bare file name (let the OS loader / ``find_library`` try).
     """
     if _explicit_path:
         yield _explicit_path
@@ -72,6 +75,23 @@ def _candidate_paths():
 
     here = os.path.dirname(os.path.abspath(__file__))
     yield os.path.join(here, "native", _file_name())
+
+    cached = _engine_fetcher_cached_path()
+    if cached:
+        yield cached
+
+
+def _engine_fetcher_cached_path() -> str | None:
+    """The path :mod:`engine_fetcher` caches a downloaded engine at, or ``None``
+    if the fetcher can't be imported (imported lazily so :mod:`_native` has no
+    hard dep on it and there is no import cycle).
+    """
+    try:
+        from . import engine_fetcher
+
+        return engine_fetcher.cached_path()
+    except Exception:  # pragma: no cover - defensive
+        return None
 
 
 def _load_library() -> ctypes.CDLL:
@@ -92,8 +112,13 @@ def _load_library() -> ctypes.CDLL:
             last_err = exc
 
     raise OSError(
-        f"could not load native Selenium core library '{_file_name()}'. Build it "
-        f"with `aeb core/.build.ae`, pass native_lib=<path>, or set "
+        f"could not load the native Selenium engine (libselenium_core). "
+        f"No prebuilt engine was found — fetch it once with:\n"
+        f"    python -m selenium.fetch_engine\n"
+        f"  (or:  python -c 'import selenium.webdriver as w; w.fetch_engine()')\n"
+        f"This downloads the engine for your platform from the project's GitHub "
+        f"releases and caches it; no Aether toolchain needed. Alternatively build "
+        f"it with `aeb selenium_core/.build.ae`, pass native_lib=<path>, or set "
         f"SELENIUM_CORE_LIB." + (f" (last error: {last_err})" if last_err else "")
     )
 

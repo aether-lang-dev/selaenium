@@ -59,3 +59,9 @@ export 'src/wait.dart'
 export 'src/select.dart' show Select;
 export 'src/actions.dart' show Actions;
 export 'src/keys.dart' show Keys;
+
+// The explicit engine-fetch task: `dart run selenium:fetch_engine` (or
+// EngineFetcher.fetch()) downloads + caches the prebuilt libselenium_core for
+// this platform from GitHub releases, so no Aether toolchain is needed. The
+// runtime loader (Native) then finds it in the cache with no further config.
+export 'src/engine_fetcher.dart' show EngineFetcher, FetchException;

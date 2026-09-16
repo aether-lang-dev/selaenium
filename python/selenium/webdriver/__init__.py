@@ -36,6 +36,7 @@ from .._webdriver import (
     RunnerServer,
 )
 from .._native import configure as configure_native_lib
+from ..engine_fetcher import ENGINE_VERSION, fetch as fetch_engine
 from .common.by import By
 from .common.proxy import Proxy, ProxyType
 from .common.keys import Keys
@@ -82,4 +83,6 @@ __all__ = [
     "Bridge",
     "RunnerServer",
     "configure_native_lib",
+    "fetch_engine",
+    "ENGINE_VERSION",
 ]

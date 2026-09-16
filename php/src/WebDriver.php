@@ -12,6 +12,10 @@ declare(strict_types=1);
 
 namespace SeleniumCore;
 
+// No composer autoloader (thin hand-written binding): pull in the fetcher so
+// WebDriver::ENGINE_VERSION / fetchEngine() resolve.
+require_once __DIR__ . '/EngineFetcher.php';
+
 use FFI;
 
 final class By
@@ -201,6 +205,24 @@ final class WebDriver
     }
 
     public static function configureNativeLib(string $path): void { Native::configure($path); }
+
+    /**
+     * The engine gh-release tag this binding downloads its prebuilt
+     * libselenium_core from (see EngineFetcher; distinct from the binding's own
+     * version).
+     */
+    public const ENGINE_VERSION = EngineFetcher::ENGINE_VERSION;
+
+    /**
+     * Download + cache the prebuilt engine for this platform from the project's
+     * GitHub releases, so no Aether toolchain is needed. Explicit + one-time —
+     * what `composer fetch-engine` calls. Returns the cached library path.
+     * $tag pins a different engine release; $force re-downloads.
+     */
+    public static function fetchEngine(string $tag = EngineFetcher::ENGINE_VERSION, bool $force = false): string
+    {
+        return EngineFetcher::fetch($tag, $force);
+    }
 
     /** The FFI seam: one command by name with a params array. */
     public function execute(string $command, array $params = []): mixed

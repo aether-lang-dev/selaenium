@@ -1,0 +1,23 @@
+{
+    "name": "selaenium/selenium-webdriver",
+    "description": "Selenium WebDriver for PHP over the shared pure-Aether engine (libselenium_core), reached through ext-ffi. Carries no protocol logic.",
+    "type": "library",
+    "license": "Apache-2.0",
+    "keywords": ["selenium", "webdriver", "w3c", "ffi", "aether"],
+    "require": {
+        "php": ">=8.1",
+        "ext-ffi": "*"
+    },
+    "autoload": {
+        "psr-4": {
+            "SeleniumCore\\": "src/"
+        }
+    },
+    "bin": ["bin/fetch-engine"],
+    "scripts": {
+        "fetch-engine": "@php bin/fetch-engine"
+    },
+    "scripts-descriptions": {
+        "fetch-engine": "Download + cache the prebuilt engine (libselenium_core) for this platform from GitHub releases; no Aether toolchain needed. Pass -- --tag=vX.Y.Z / --force."
+    }
+}

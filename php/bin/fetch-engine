@@ -1,0 +1,52 @@
+#!/usr/bin/env php
+<?php
+
+/**
+ * `composer fetch-engine` (or `php bin/fetch-engine`) — the one command a PHP
+ * dev runs after `composer install` to pull the prebuilt pure-Aether engine
+ * (libselenium_core) for their platform from GitHub releases. No Aether
+ * toolchain, no compiler. Downloads the right .so/.dylib/.dll, verifies its
+ * published .sha256, and caches it where Native's loader already looks.
+ *
+ *   php bin/fetch-engine [--tag=vX.Y.Z] [--force]
+ *
+ * --tag   pin a specific engine gh-release (default: EngineFetcher::ENGINE_VERSION)
+ * --force re-download even if a checksum-matching copy is already cached
+ */
+
+declare(strict_types=1);
+
+// No composer autoloader (thin hand-written binding): require the fetcher.
+require_once __DIR__ . '/../src/EngineFetcher.php';
+
+use SeleniumCore\EngineFetcher;
+
+$tag = EngineFetcher::ENGINE_VERSION;
+$force = false;
+
+foreach (\array_slice($argv, 1) as $arg) {
+    if ($arg === '--force') {
+        $force = true;
+    } elseif ($arg === '--help' || $arg === '-h') {
+        \fwrite(\STDOUT, "usage: fetch-engine [--tag=vX.Y.Z] [--force]\n");
+        exit(0);
+    } elseif (\str_starts_with($arg, '--tag=')) {
+        $tag = \substr($arg, \strlen('--tag='));
+    } elseif ($arg === '--tag') {
+        \fwrite(\STDERR, "fetch-engine: --tag needs a value, e.g. --tag=v0.8.0\n");
+        exit(2);
+    } else {
+        \fwrite(\STDERR, "fetch-engine: unknown argument '{$arg}'\n");
+        exit(2);
+    }
+}
+
+try {
+    \fwrite(\STDERR, 'selenium: fetching engine ' . EngineFetcher::assetName($tag) . " ({$tag}) ...\n");
+    $path = EngineFetcher::fetch($tag, $force);
+    \fwrite(\STDERR, "selenium: engine ready at {$path}\n");
+    \fwrite(\STDERR, "selenium: the PHP binding will now load it automatically.\n");
+} catch (\Throwable $e) {
+    \fwrite(\STDERR, 'fetch-engine: ' . $e->getMessage() . "\n");
+    exit(1);
+}

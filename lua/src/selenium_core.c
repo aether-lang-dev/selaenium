@@ -27,6 +27,10 @@
 #include <lua.h>
 #include <lauxlib.h>
 
+/* The engine gh-release tag the fetch cache is keyed by. MUST match
+   engine_fetcher.lua's F.ENGINE_VERSION so engine_load() finds a fetched engine. */
+#define ENGINE_VERSION "v0.8.0"
+
 /* ---- the ABI, dlsym'd once ---- */
 typedef void* (*fn_open)(const char*);
 typedef void  (*fn_close)(void*);
@@ -199,6 +203,30 @@ static int engine_load(lua_State* L, const char* explicit_path) {
     if (ENGINE.handle && !explicit_path) return 0;
 
     const char* candidates[8];
+    /* The per-user cache a `lua bin/fetch_engine.lua` download lands in
+       (engine_fetcher.lua's cached_path): $XDG_CACHE_HOME (or $HOME/.cache)
+       /selaenium/<ENGINE_VERSION>/libselenium_core.{so,dylib}. Built once here so
+       a fetched engine loads with no SELENIUM_CORE_LIB / no bundled native/. Keep
+       ENGINE_VERSION in sync with engine_fetcher.lua. */
+    static char cache_path[1024];
+    cache_path[0] = '\0';
+    {
+#if defined(__APPLE__)
+        const char* fname = "libselenium_core.dylib";
+        const char* dflt_sub = "/Library/Caches";
+#else
+        const char* fname = "libselenium_core.so";
+        const char* dflt_sub = "/.cache";
+#endif
+        const char* xdg = getenv("XDG_CACHE_HOME");
+        const char* home = getenv("HOME");
+        if (xdg && *xdg) {
+            snprintf(cache_path, sizeof cache_path, "%s/selaenium/%s/%s", xdg, ENGINE_VERSION, fname);
+        } else if (home && *home) {
+            snprintf(cache_path, sizeof cache_path, "%s%s/selaenium/%s/%s", home, dflt_sub, ENGINE_VERSION, fname);
+        }
+    }
+
     int n = 0;
     if (explicit_path && *explicit_path) {
         candidates[n++] = explicit_path;
@@ -207,6 +235,7 @@ static int engine_load(lua_State* L, const char* explicit_path) {
         if (env && *env) candidates[n++] = env;
         candidates[n++] = "native/libselenium_core.so";
         candidates[n++] = "../core/native/libselenium_core.so";
+        if (cache_path[0]) candidates[n++] = cache_path;
         candidates[n++] = "libselenium_core.so";
     }
 

@@ -1503,4 +1503,11 @@ function M.configure_native_lib(path) native.configure(path) end
 
 M.BiDi = BiDi
 
+-- Engine fetch: download + cache the prebuilt libselenium_core for this platform
+-- from GitHub releases, so no Aether toolchain is needed. Explicit + one-time —
+-- what `lua bin/fetch_engine.lua` calls. Returns the cached library path.
+local engine_fetcher = require("engine_fetcher")
+M.ENGINE_VERSION = engine_fetcher.ENGINE_VERSION
+function M.fetch_engine(opts) return engine_fetcher.fetch(opts) end
+
 return M

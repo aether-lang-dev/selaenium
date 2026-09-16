@@ -80,8 +80,13 @@ final class Native
             }
         }
         throw new RuntimeException(
-            'selenium_core: could not load libselenium_core.so (tried: '
-            . \implode(', ', $tried) . '). Last error: '
+            'selenium_core: could not load the native Selenium engine '
+            . '(libselenium_core). No prebuilt engine was found — fetch it once with:'
+            . "\n    composer fetch-engine"
+            . "\n  (or:  php bin/fetch-engine)"
+            . "\nThis downloads the engine for your platform from the project's "
+            . 'GitHub releases and caches it; no Aether toolchain needed. Tried: '
+            . \implode(', ', $tried) . '. Last error: '
             . ($last ? $last->getMessage() : 'none')
         );
     }
@@ -99,7 +104,34 @@ final class Native
         $dir = __DIR__;
         yield $dir . '/../native/libselenium_core.so';
         yield $dir . '/../../selenium_core/native/libselenium_core.so';
+        // The per-user cache a `composer fetch-engine` download lands in
+        // (EngineFetcher::cachedPath). Lets a fetched engine load with no config.
+        $cached = self::engineFetcherCachedPath();
+        if ($cached !== null) {
+            yield $cached;
+        }
         yield 'libselenium_core.so';
+    }
+
+    /**
+     * The path EngineFetcher caches a downloaded engine at, or null if the
+     * fetcher isn't available (it's required lazily so Native has no hard dep
+     * on it — the binding has no composer autoloader).
+     */
+    private static function engineFetcherCachedPath(): ?string
+    {
+        try {
+            if (!\class_exists(EngineFetcher::class, false)) {
+                $f = __DIR__ . '/EngineFetcher.php';
+                if (!\is_file($f)) {
+                    return null;
+                }
+                require_once $f;
+            }
+            return EngineFetcher::cachedPath();
+        } catch (\Throwable) {
+            return null;
+        }
     }
 
     /**

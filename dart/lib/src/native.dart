@@ -15,6 +15,8 @@ import 'dart:io' show Platform;
 
 import 'package:ffi/ffi.dart' as pkgffi;
 
+import 'engine_fetcher.dart';
+
 typedef _OpenC = ffi.Pointer<ffi.Void> Function(ffi.Pointer<pkgffi.Utf8>);
 typedef _Open = ffi.Pointer<ffi.Void> Function(ffi.Pointer<pkgffi.Utf8>);
 
@@ -375,16 +377,35 @@ class Native {
   }
 
   static ffi.DynamicLibrary _load() {
+    Object? lastError;
     for (final candidate in _candidates()) {
       try {
         return ffi.DynamicLibrary.open(candidate);
-      } catch (_) {
-        // try next
+      } catch (e) {
+        lastError = e;
       }
     }
     // Bare name (OS loader).
-    return ffi.DynamicLibrary.open(_fileName());
+    try {
+      return ffi.DynamicLibrary.open(_fileName());
+    } catch (e) {
+      lastError = e;
+    }
+    throw StateError(
+      'could not load the native Selenium engine (libselenium_core). '
+      'No prebuilt engine was found — fetch it once with:\n'
+      '    dart run selenium:fetch_engine\n'
+      '  (or:  EngineFetcher.fetch())\n'
+      'This downloads the engine for your platform from the project\'s '
+      'GitHub releases and caches it; no Aether toolchain needed. '
+      'Tried: ${_candidates().join(', ')}, ${_fileName()}. '
+      'Last error: $lastError',
+    );
   }
+
+  /// The ordered library-discovery candidate list — exposed for tests so the
+  /// fetch-cache path can be asserted present without triggering a load.
+  static List<String> candidatesForTest() => _candidates().toList();
 
   static Iterable<String> _candidates() sync* {
     if (_explicitPath != null && _explicitPath!.isNotEmpty) yield _explicitPath!;
@@ -393,6 +414,9 @@ class Native {
     // Bundled next to the package: <pkg>/native/<lib>. Resolve relative to the
     // script's package when possible; else a plain relative path.
     yield 'native/${_fileName()}';
+    // The per-user cache a `dart run selenium:fetch_engine` download lands in
+    // (EngineFetcher.cachedPath). Lets a fetched engine load with no config.
+    yield EngineFetcher.cachedPath();
   }
 
   /// Copy a caller-owned native char* into a Dart String, then free it.
