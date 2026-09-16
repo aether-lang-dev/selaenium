@@ -1,0 +1,64 @@
+#!/bin/sh
+# crystal-build — `crystal` wrapper that finds the shared Aether engine
+# (libselenium_core) the way the link-time reference (rust/build.rs) does, so a
+# dev with NO Aether toolchain can build the Crystal binding after one
+# `scripts/fetch-engine.sh`.
+#
+#   scripts/fetch-engine.sh                 # once: download + cache the engine
+#   crystal/bin/crystal-build spec/ffi_spec.cr   # then build/run normally
+#
+# Crystal's `@[Link(ldflags:)]` must be a string literal, so src/selenium.cr can
+# only bake in the dirs it computes from #{__DIR__} (the bundled native/ and the
+# monorepo ../selenium_core/native). The other two search locations depend on
+# runtime env, so this wrapper contributes them via CRYSTAL_LIBRARY_PATH (for the
+# `-L` search) and an rpath link flag (so the built binary finds the .so at run
+# time without LD_LIBRARY_PATH). Search order, highest priority first:
+#   1. SELENIUM_CORE_LIB — an explicit path to the .so; its parent dir is used;
+#   2. the shared fetch cache — $XDG_CACHE_HOME/selaenium/<tag>/ (or ~/.cache/…);
+#   (3/4 — bundled native/ and monorepo core/native — are already in the binary's
+#    baked-in @[Link] dirs, so they need nothing here.)
+# It forwards all its arguments to `crystal` unchanged, so it is a drop-in for
+# `crystal build` / `crystal spec` / `crystal run`.
+set -eu
+
+ENGINE_VERSION="${ENGINE_VERSION:-v0.8.0}"   # matches src/selenium.cr + scripts/fetch-engine.sh
+
+# The fetch cache dir (same convention as scripts/fetch-engine.sh and every binding).
+if [ -n "${XDG_CACHE_HOME:-}" ]; then
+  cache_dir="$XDG_CACHE_HOME/selaenium/$ENGINE_VERSION"
+elif [ "$(uname -s)" = "Darwin" ]; then
+  cache_dir="$HOME/Library/Caches/selaenium/$ENGINE_VERSION"
+else
+  cache_dir="$HOME/.cache/selaenium/$ENGINE_VERSION"
+fi
+
+# Build the priority-ordered dir list: SELENIUM_CORE_LIB's parent, then the cache.
+search=""
+add_dir() { # dir
+  [ -n "$1" ] || return 0
+  if [ -z "$search" ]; then search="$1"; else search="$1:$search"; fi
+}
+# Lowest priority appended first so the highest ends up leftmost in $search.
+add_dir "$cache_dir"
+if [ -n "${SELENIUM_CORE_LIB:-}" ]; then
+  add_dir "$(CDPATH= cd -- "$(dirname -- "$SELENIUM_CORE_LIB")" && pwd)"
+fi
+
+# Prepend to any CRYSTAL_LIBRARY_PATH the caller already set (theirs wins).
+if [ -n "${CRYSTAL_LIBRARY_PATH:-}" ]; then
+  export CRYSTAL_LIBRARY_PATH="$search:$CRYSTAL_LIBRARY_PATH"
+else
+  export CRYSTAL_LIBRARY_PATH="$search"
+fi
+
+# rpath each dir so the built artifact locates the engine at run time. Passed via
+# --link-flags, which Crystal forwards to the linker. Only meaningful for the
+# build/run subcommands; harmless (ignored) for others like `crystal tool`.
+link_flags=""
+oldIFS=$IFS; IFS=:
+for d in $search; do
+  [ -n "$d" ] && link_flags="$link_flags -Wl,-rpath,$d"
+done
+IFS=$oldIFS
+
+exec crystal "$@" ${link_flags:+--link-flags "$link_flags"}

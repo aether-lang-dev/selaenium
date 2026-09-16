@@ -319,7 +319,11 @@ __pycache__/
 # Crystal
 /crystal/native/
 /crystal/lib/
-/crystal/bin/
+# Ignore compiled binaries in crystal/bin/ but keep the committed build wrapper.
+# (Can't re-include a file under an ignored DIR, so ignore the contents, not the
+# dir, then negate the one tracked script.)
+/crystal/bin/*
+!/crystal/bin/crystal-build
 
 # Julia
 /julia/native/

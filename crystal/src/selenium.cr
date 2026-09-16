@@ -13,10 +13,25 @@
 
 require "json"
 
-# -L/-rpath are made self-locating from this source file's dir (../native holds
-# the staged libselenium_core.so) so the link works regardless of the linker's
-# cwd; %-interpolation expands __DIR__ at compile time.
-@[Link(ldflags: "-L#{__DIR__}/../native -Wl,-rpath,#{__DIR__}/../native -lselenium_core")]
+# The engine gh-release tag whose fetch-cache this binding searches (matches
+# scripts/fetch-engine.sh's default TAG and every other binding's ENGINE_VERSION).
+ENGINE_VERSION = "v0.8.0"
+
+# The engine .so is resolved at link time. Crystal's @[Link(ldflags:)] must be a
+# STRING LITERAL — it rejects a {{…}} macro expression and #{env(...)}
+# interpolation — so it can only bake in dirs computed from #{__DIR__}: the
+# binding's own bundled native/ (a published shard ships the .so there) and the
+# monorepo ../selenium_core/native (this binding next to core/). The other two
+# search locations from the link-time reference (rust/build.rs) — an explicit
+# SELENIUM_CORE_LIB and the shared fetch cache scripts/fetch-engine.sh populates
+# ($XDG_CACHE_HOME/selaenium/<tag>/ or ~/.cache/…) — depend on runtime env a
+# literal cannot express, so they reach the linker through CRYSTAL_LIBRARY_PATH.
+# The bin/crystal-build wrapper prepends both to CRYSTAL_LIBRARY_PATH, giving the
+# full env → bundled → fetch cache → monorepo order: a dev who runs
+# `scripts/fetch-engine.sh` once then `bin/crystal-build` links against the
+# fetched engine with no Aether toolchain. Plain `crystal build` still works via
+# the bundled/monorepo dirs baked in here.
+@[Link(ldflags: "-L#{__DIR__}/../native -Wl,-rpath,#{__DIR__}/../native -L#{__DIR__}/../../selenium_core/native -Wl,-rpath,#{__DIR__}/../../selenium_core/native -lselenium_core")]
 lib LibSel
   fun open = aether_sel_embed_open(base_url : LibC::Char*) : Void*
   fun close = aether_sel_embed_close(h : Void*) : Void
