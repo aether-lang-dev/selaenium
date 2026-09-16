@@ -251,6 +251,31 @@ def _ensure_loaded() -> None:
         [_HANDLE, ctypes.c_int, ctypes.c_char_p, ctypes.c_int],
     )
 
+    # ---- runner surface (interactive shell / runner controller / bridge) ----
+    # The substrate a REPL, an SUT-adjacent iframe console, or an editor
+    # front-end sits on. shell_eval is one line -> a JSON result; the runner
+    # handle drives run/step/continue over the multiplexed runner lane; the
+    # bridge shuttles a console iframe's commands down and results/events up.
+    g["shell_eval"] = _decl("aether_sel_embed_shell_eval", _CSTR, [_HANDLE, ctypes.c_char_p])
+    g["runner_new"] = _decl("aether_sel_embed_runner_new", _HANDLE, [_HANDLE])
+    g["runner_free"] = _decl("aether_sel_embed_runner_free", None, [_HANDLE])
+    g["runner_ingest"] = _decl(
+        "aether_sel_embed_runner_ingest", ctypes.c_int, [_HANDLE, ctypes.c_char_p]
+    )
+    g["runner_poll_reply"] = _decl(
+        "aether_sel_embed_runner_poll_reply", _CSTR, [_HANDLE, ctypes.c_int]
+    )
+    g["runner_poll_event"] = _decl("aether_sel_embed_runner_poll_event", _CSTR, [_HANDLE])
+    g["bridge_new"] = _decl("aether_sel_embed_bridge_new", _HANDLE, [_HANDLE])
+    g["bridge_free"] = _decl("aether_sel_embed_bridge_free", None, [_HANDLE])
+    g["bridge_install"] = _decl("aether_sel_embed_bridge_install", ctypes.c_int, [_HANDLE])
+    g["bridge_pump"] = _decl("aether_sel_embed_bridge_pump", ctypes.c_int, [_HANDLE, _HANDLE])
+    # BLOCKS in the request loop until the process ends.
+    g["runner_server_start"] = _decl(
+        "aether_sel_embed_runner_server_start", ctypes.c_int, [_HANDLE, ctypes.c_int]
+    )
+    g["side_run"] = _decl("aether_sel_embed_side_run", _CSTR, [_HANDLE, ctypes.c_char_p])
+
     # ---- string ownership ----
     g["free_string"] = _decl("aether_sel_embed_free_string", None, [ctypes.c_void_p])
 

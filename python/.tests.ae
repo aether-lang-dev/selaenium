@@ -7,12 +7,20 @@
 import bldr
 import python
 import python (pip)
+import copy
 
 aeb(cap) {
     bldr.build() {
         prereq("python:3")
         dep("selenium_core/.build.ae")
         lib = dep_artifact("selenium_core/.build.ae", "shared_lib")
+        // Stage the console page into the package so the Bridge live test
+        // exercises the packaged path (_console_html prefers selenium/console.html)
+        // rather than only the in-tree walk-up. Canonical source: selenium_core/.
+        copy.file() {
+            from("../selenium_core/console/console.html")
+            to("selenium/console.html")
+        }
         // pip() is a BLOCK SETTER of install(), not a node. Called at top level
         // it writes onto the graph ctx instead of install()'s block, so install()
         // never sees the dep and the venv gets only base pip — the suite then

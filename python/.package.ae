@@ -23,6 +23,14 @@ aeb(cap) {
             from(lib)
             to("selenium/native/libselenium_core.so")
         }
+        // Ship the SUT-adjacent console page inside the package (Bridge reads it
+        // at runtime — _console_html() prefers this packaged copy). Canonical
+        // source is selenium_core/console/; this staged copy is a build artifact,
+        // matching how go/.package.ae and d/.package.ae stage it.
+        copy.file() {
+            from("../selenium_core/console/console.html")
+            to("selenium/console.html")
+        }
         python.package_existing() {
         }
     }

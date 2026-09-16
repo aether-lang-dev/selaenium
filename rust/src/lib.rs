@@ -151,6 +151,24 @@ extern "C" {
         behavior: *const c_char,
         timeout_ms: c_int,
     ) -> *mut c_char;
+
+    // ---- runner surface (interactive shell / controller / bridge / .side) ----
+    // The interactive "wee shell" and its run/step/continue controller live in the
+    // engine (shell.ae, runner.ae, iframe_bridge.ae, runner_server.ae); these are
+    // thin calls over the C ABI. Opaque runner (rp) / bridge (bp) handles are
+    // independent of the W3C session handle.
+    fn aether_sel_embed_shell_eval(h: Handle, line: *const c_char) -> *mut c_char;
+    fn aether_sel_embed_runner_new(h: Handle) -> Handle;
+    fn aether_sel_embed_runner_free(rp: Handle);
+    fn aether_sel_embed_runner_ingest(rp: Handle, request_json: *const c_char) -> c_int;
+    fn aether_sel_embed_runner_poll_reply(rp: Handle, id: c_int) -> *mut c_char;
+    fn aether_sel_embed_runner_poll_event(rp: Handle) -> *mut c_char;
+    fn aether_sel_embed_bridge_new(h: Handle) -> Handle;
+    fn aether_sel_embed_bridge_free(bp: Handle);
+    fn aether_sel_embed_bridge_install(h: Handle) -> c_int;
+    fn aether_sel_embed_bridge_pump(bp: Handle, h: Handle) -> c_int;
+    fn aether_sel_embed_runner_server_start(h: Handle, port: c_int) -> c_int;
+    fn aether_sel_embed_side_run(h: Handle, side_json: *const c_char) -> *mut c_char;
 }
 
 /// Copy a caller-owned native `char*` into a Rust `String`, then free it per the
@@ -952,6 +970,127 @@ impl WebDriver {
         }
         Ok(self.bidi.as_mut().unwrap())
     }
+
+    // ---- runner surface (shell / controller / bridge / .side playback) ----
+
+    /// Evaluate ONE interactive shell line against this session (e.g.
+    /// `open <url>`, `click #go`, `text #hdr`, `eval return 6*7`, `trace on`,
+    /// `events`) and return the engine's JSON result (`{ok, value|info|error}`).
+    /// The grammar and dispatch are engine-side (shell.ae) — this is a thin call,
+    /// the front-end-agnostic substrate a REPL / SUT-adjacent iframe / editor
+    /// front-end sits on.
+    pub fn shell(&self, line: &str) -> Result<Json> {
+        let l = cstr(line);
+        Self::decode_runner(take_string(unsafe { aether_sel_embed_shell_eval(self.handle, l.as_ptr()) }))
+    }
+
+    /// An interactive [`Runner`] controller over this session: drive it with
+    /// run/step/continue, correlate replies by id, and drain
+    /// command-finished / paused events — all over the multiplexed runner lane.
+    pub fn runner(&self) -> Result<Runner> {
+        let rp = unsafe { aether_sel_embed_runner_new(self.handle) };
+        if rp.is_null() {
+            return Err(WebDriverError::classify(-1, "failed to create runner".into()));
+        }
+        Ok(Runner { rp, next_id: 1 })
+    }
+
+    /// The SUT-adjacent console [`Bridge`]: injects a floating console iframe next
+    /// to the page under test, then shuttles its commands down to the engine's
+    /// runner and results back up — all over `executeScript` (the page's
+    /// `window.__selaenium` is the mailbox). Borrows this driver for the bridge's
+    /// lifetime.
+    pub fn bridge(&self) -> Result<Bridge> {
+        let bp = unsafe { aether_sel_embed_bridge_new(self.handle) };
+        if bp.is_null() {
+            return Err(WebDriverError::classify(-1, "failed to create bridge".into()));
+        }
+        Ok(Bridge { driver: self, bp, injected: false })
+    }
+
+    /// Run the runner control server over this session, BLOCKING in the request
+    /// loop until the process ends. Out-of-process hosts (a dashboard page, a
+    /// VS Code extension, a Tauri webview, a DAP adapter) connect to
+    /// `ws://127.0.0.1:<port>/runner` and drive the session with the runner
+    /// protocol. Returns non-zero if the port cannot bind. `SEL_RUNNER_PORT`
+    /// overrides the port. Use [`serve_runner_background`] to run it on a thread
+    /// instead of blocking the caller.
+    ///
+    /// [`serve_runner_background`]: WebDriver::serve_runner_background
+    pub fn serve_runner(&self, port: i32) -> i32 {
+        unsafe { aether_sel_embed_runner_server_start(self.handle, port) }
+    }
+
+    /// Play a Selenium IDE `.side` project against this session and return the
+    /// JSON report `{name, tests, passed, failed, results:[{test, ok, steps}]}`.
+    /// Each command runs through the same shell verbs the interactive console
+    /// uses (open/click/type/assert*/waitFor*); the playback engine is
+    /// engine-side (shell.ae's side_run) — this is a thin call.
+    pub fn play_side(&self, side_json: &str) -> Result<Json> {
+        let s = cstr(side_json);
+        Self::decode_runner(take_string(unsafe { aether_sel_embed_side_run(self.handle, s.as_ptr()) }))
+    }
+
+    /// Decode a runner-surface JSON string: empty -> [`Json::Null`], else parse.
+    /// The engine reports command outcomes inside the payload (`ok`/`error`), so
+    /// a well-formed reply is a success at this layer; only malformed JSON errors.
+    fn decode_runner(raw: String) -> Result<Json> {
+        if raw.is_empty() {
+            return Ok(Json::Null);
+        }
+        json::parse(&raw).map_err(|e| WebDriverError::classify(1, format!("bad runner JSON: {e}")))
+    }
+}
+
+/// Start [`WebDriver::serve_runner`] on a background thread, so a harness can hand
+/// a human the dashboard (or any `ws://…/runner` host) mid-run without blocking
+/// its own flow. Returns a [`RunnerServer`] describing the endpoints.
+///
+/// This is the standalone counterpart to D's `RunnerServer` class. The blocking
+/// server borrows the session's raw handle for the life of the process (the
+/// engine's request loop has no clean stop hook, matching the Grid hub), so the
+/// thread is detached and the handle is moved across the boundary in a
+/// [`Send`] wrapper — the caller must keep the [`WebDriver`] alive for as long as
+/// the server runs. Prefer the blocking [`WebDriver::serve_runner`] when the
+/// caller owns the loop.
+pub fn serve_runner_background(driver: &WebDriver, port: i32) -> RunnerServer {
+    // The handle is a plain engine pointer; moving it into the detached thread is
+    // sound because the caller must outlive the server (documented above), and
+    // the engine serializes access to the session internally.
+    struct SendHandle(Handle);
+    // SAFETY: the engine treats the handle as a serialized session; the caller
+    // contract keeps the owning WebDriver (and thus the handle) alive.
+    unsafe impl Send for SendHandle {}
+    let h = SendHandle(driver.handle);
+    std::thread::spawn(move || {
+        let h = h;
+        unsafe { aether_sel_embed_runner_server_start(h.0, port) };
+    });
+    RunnerServer { port }
+}
+
+/// The endpoints of a runner control server started by
+/// [`serve_runner_background`]. The server shares the driver's session — one
+/// debug channel at a time — and runs until the process ends. `url` / `ws_url`
+/// give the endpoints to point a host at.
+#[derive(Debug, Clone)]
+pub struct RunnerServer {
+    port: i32,
+}
+
+impl RunnerServer {
+    /// The port the server was started on.
+    pub fn port(&self) -> i32 {
+        self.port
+    }
+    /// The dashboard/host base URL.
+    pub fn url(&self) -> String {
+        format!("http://127.0.0.1:{}", self.port)
+    }
+    /// The WebSocket control endpoint (the runner protocol).
+    pub fn ws_url(&self) -> String {
+        format!("ws://127.0.0.1:{}/runner", self.port)
+    }
 }
 
 impl Drop for WebDriver {
@@ -959,6 +1098,179 @@ impl Drop for WebDriver {
         if !self.handle.is_null() {
             unsafe { aether_sel_embed_close(self.handle) };
             self.handle = std::ptr::null_mut();
+        }
+    }
+}
+
+// ---- Runner (interactive run/step/continue controller) ----------------------
+
+/// An interactive runner controller (mirrors the engine's runner.ae over the C
+/// ABI): drive a session with run/step/continue, correlate replies by id, and
+/// drain paused / command-finished events — all over the multiplexed runner
+/// lane. Obtain one with [`WebDriver::runner`]. This is the surface a terminal
+/// REPL, an SUT-adjacent iframe, or an editor front-end sits on.
+#[derive(Debug)]
+pub struct Runner {
+    rp: Handle,
+    next_id: c_int,
+}
+
+// The runner handle is a plain pointer into the engine; used from one thread at
+// a time in these bindings.
+unsafe impl Send for Runner {}
+
+impl Runner {
+    /// Send a control request (auto-assigned id) and return its correlated reply.
+    /// `method` is one of eval/mode/step/continue/inspect; `params_json` is a JSON
+    /// object body (`None` = no params). Empty reply -> [`Json::Null`].
+    pub fn send(&mut self, method: &str, params_json: Option<&str>) -> Json {
+        let id = self.next_id;
+        self.next_id += 1;
+        // Build {"id":N,"method":"<m>"[,"params":<params_json>]}. The method name
+        // is escaped by encoding it as a Json::Str; params_json is already-formed
+        // JSON, spliced in verbatim (as in the D reference).
+        let mut req = format!("{{\"id\":{id},\"method\":{}", json::s(method).encode());
+        if let Some(p) = params_json {
+            req.push_str(",\"params\":");
+            req.push_str(p);
+        }
+        req.push('}');
+        let rc = cstr(&req);
+        unsafe { aether_sel_embed_runner_ingest(self.rp, rc.as_ptr()) };
+        let reply = take_string(unsafe { aether_sel_embed_runner_poll_reply(self.rp, id) });
+        if reply.is_empty() {
+            Json::Null
+        } else {
+            json::parse(&reply).unwrap_or(Json::Null)
+        }
+    }
+
+    /// Run a shell line (executed immediately in run mode; queued in step mode).
+    pub fn eval(&mut self, line: &str) -> Json {
+        // Reuse the JSON encoder to escape `line` correctly (never hand-rolled).
+        let params = json::obj(vec![("line", json::s(line))]).encode();
+        self.send("eval", Some(&params))
+    }
+
+    /// Set `"run"` or `"step"` mode.
+    pub fn mode(&mut self, m: &str) -> Json {
+        let params = json::obj(vec![("mode", json::s(m))]).encode();
+        self.send("mode", Some(&params))
+    }
+
+    /// Run the next queued line (step mode).
+    pub fn step(&mut self) -> Json {
+        self.send("step", None)
+    }
+
+    /// Drain the queue and return to run mode.
+    pub fn cont(&mut self) -> Json {
+        self.send("continue", None)
+    }
+
+    /// Inspect `"trace"` | `"timers"` | `"sid"` without running a command.
+    pub fn inspect(&mut self, what: &str) -> Json {
+        let params = json::obj(vec![("what", json::s(what))]).encode();
+        self.send("inspect", Some(&params))
+    }
+
+    /// The next runner event (command-finished / paused / …), or `None` when the
+    /// event queue is empty.
+    pub fn next_event(&self) -> Option<Json> {
+        let e = take_string(unsafe { aether_sel_embed_runner_poll_event(self.rp) });
+        if e.is_empty() {
+            None
+        } else {
+            json::parse(&e).ok()
+        }
+    }
+}
+
+impl Drop for Runner {
+    fn drop(&mut self) {
+        if !self.rp.is_null() {
+            unsafe { aether_sel_embed_runner_free(self.rp) };
+            self.rp = std::ptr::null_mut();
+        }
+    }
+}
+
+// ---- Bridge (SUT-adjacent console iframe over executeScript) ----------------
+
+/// The console page, embedded at compile time from
+/// `selenium_core/console/console.html` (as the D reference string-imports it) —
+/// so the binding injects the console with no external file at run time.
+const CONSOLE_HTML: &str = include_str!("../../selenium_core/console/console.html");
+
+/// The SUT-adjacent console bridge (mirrors the engine's iframe_bridge.ae). It
+/// injects a floating console iframe next to the site under test, then relays the
+/// console's commands DOWN to the engine's runner and results/events back UP —
+/// all over `executeScript`, the one channel into the page (the page's
+/// `window.__selaenium` is the mailbox). The engine holds no thread: [`serve`]
+/// loops [`pump`] on a timer, or a caller with its own loop can call [`pump`]
+/// directly. Obtain one with [`WebDriver::bridge`].
+///
+/// [`serve`]: Bridge::serve
+/// [`pump`]: Bridge::pump
+#[derive(Debug)]
+pub struct Bridge<'a> {
+    driver: &'a WebDriver,
+    bp: Handle,
+    injected: bool,
+}
+
+impl<'a> Bridge<'a> {
+    /// Inject the shim + the console iframe into the current page (idempotent).
+    /// Call after a navigation to re-attach the console to a fresh document.
+    pub fn inject(&mut self) -> Result<()> {
+        unsafe { aether_sel_embed_bridge_install(self.driver.handle) }; // window.__selaenium mailbox
+        // A floating iframe pinned bottom-right, srcdoc = the console page. Guard
+        // so a re-inject after navigation replaces a stale frame rather than
+        // stacking. postMessage from a srcdoc iframe still reaches window.parent.
+        const INJECTOR: &str = "var id='__selaenium_console';var old=document.getElementById(id);if(old)old.remove();\
+var f=document.createElement('iframe');f.id=id;f.srcdoc=arguments[0];\
+f.style.cssText='position:fixed;right:12px;bottom:12px;width:420px;height:300px;\
+z-index:2147483647;border:1px solid #333;border-radius:6px;box-shadow:0 6px 24px rgba(0,0,0,.4);\
+resize:both;overflow:hidden;background:#1e1e1e';document.documentElement.appendChild(f);return 'ok';";
+        self.driver.execute_script(INJECTOR, vec![json::s(CONSOLE_HTML)])?;
+        self.injected = true;
+        Ok(())
+    }
+
+    /// One bridge cycle: drain the console's outbox, run each request through the
+    /// runner, push replies+events back. Returns the number of requests handled
+    /// (0 = idle), or -1 on a page I/O error (tab gone). Cheap to call on a timer.
+    pub fn pump(&self) -> i32 {
+        unsafe { aether_sel_embed_bridge_pump(self.bp, self.driver.handle) }
+    }
+
+    /// Inject once, then pump on a fixed interval until `until` returns true (or
+    /// until [`pump`](Bridge::pump) reports a page/tab loss). The simple "just
+    /// give me a console" entry point for a harness that wants to hand a human the
+    /// wheel mid-run. `interval_ms` is the poll cadence; 100–150ms feels live
+    /// without hammering `executeScript`.
+    pub fn serve(&mut self, interval_ms: u64, until: impl Fn() -> bool) -> Result<()> {
+        if !self.injected {
+            self.inject()?;
+        }
+        loop {
+            if until() {
+                break;
+            }
+            if self.pump() < 0 {
+                break; // page/tab gone
+            }
+            std::thread::sleep(std::time::Duration::from_millis(interval_ms));
+        }
+        Ok(())
+    }
+}
+
+impl<'a> Drop for Bridge<'a> {
+    fn drop(&mut self) {
+        if !self.bp.is_null() {
+            unsafe { aether_sel_embed_bridge_free(self.bp) };
+            self.bp = std::ptr::null_mut();
         }
     }
 }

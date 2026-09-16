@@ -5,11 +5,20 @@
 // (live_test.go) skips cleanly if chromedriver is absent.
 import bldr
 import go
+import copy
 
 aeb(cap) {
     bldr.build() {
         prereq("go:1.22")
         dep("selenium_core/.build.ae")
+        // The SUT-adjacent console page is `//go:embed`ed by selenium.go
+        // (Bridge.consoleHtml). go compiles the tests in-place in this dir and
+        // embed cannot reach a parent dir, so stage the page next to the source
+        // before the test compiles it. Mirrors how the D binding ships it.
+        copy.file() {
+            from("../selenium_core/console/console.html")
+            to("console.html")
+        }
         go.go_test()
     }
 }

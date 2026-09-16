@@ -44,6 +44,24 @@ void   aether_sel_embed_free_string(char* s);
 void   aether_sel_embed_set_ca(void* h, const char* ca_path);
 void   aether_sel_embed_set_insecure(void* h, int on);
 
+// ---- runner surface (shell / runner controller / console bridge / server) ----
+// The interactive shell (one line -> a JSON result), the run/step/continue
+// controller (opaque runner handle, independent of the session handle), the
+// SUT-adjacent console bridge (opaque bridge handle), the out-of-process runner
+// control server (BLOCKS), and Selenium IDE .side playback.
+char*  aether_sel_embed_shell_eval(void* h, const char* line);
+void*  aether_sel_embed_runner_new(void* h);
+void   aether_sel_embed_runner_free(void* rp);
+int    aether_sel_embed_runner_ingest(void* rp, const char* request_json);
+char*  aether_sel_embed_runner_poll_reply(void* rp, int id);
+char*  aether_sel_embed_runner_poll_event(void* rp);
+void*  aether_sel_embed_bridge_new(void* h);
+void   aether_sel_embed_bridge_free(void* bp);
+int    aether_sel_embed_bridge_install(void* h);
+int    aether_sel_embed_bridge_pump(void* bp, void* h);
+int    aether_sel_embed_runner_server_start(void* h, int port);
+char*  aether_sel_embed_side_run(void* h, const char* side_json);
+
 // ---- driver orchestration (spawn/adopt a driver process in-binding) ----
 // An opaque driver handle, independent of the W3C session handle.
 char*  aether_sel_embed_resolve_driver(const char* browser, const char* hint);
@@ -92,11 +110,24 @@ char*  aether_sel_embed_bidi_network_set_cache_behavior(void* h, int id, const c
 import "C"
 
 import (
+	_ "embed"
 	"encoding/json"
 	"fmt"
+	"runtime"
+	"strconv"
 	"strings"
+	"time"
 	"unsafe"
 )
+
+// consoleHTML is the SUT-adjacent console page, embedded at compile time and
+// injected by Bridge.Inject as an iframe srcdoc (so it needs no server and no
+// same-origin file). It is staged into this package dir from
+// selenium_core/console/console.html by the build wiring (.tests.ae/.package.ae),
+// mirroring how the D binding string-imports the same page.
+//
+//go:embed console.html
+var consoleHTML string
 
 // The W3C element-reference key: a findElement result is
 // {"element-6066-11e4-a52e-4f735466cecf": "<id>"}.
@@ -910,6 +941,82 @@ func (d *WebDriver) Bidi() (*BiDi, error) {
 	return d.bidi, nil
 }
 
+// ---- runner surface --------------------------------------------------------
+// The interactive layer over the session, all engine-side: a one-line shell, a
+// run/step/continue controller, a SUT-adjacent console bridge, an out-of-process
+// control server, and Selenium IDE .side playback. Each is a thin call over the
+// aether_sel_embed_* runner C ABI (the grammar + dispatch live in the engine's
+// shell.ae / runner.ae).
+
+// Shell evaluates ONE shell line (e.g. "open <url>", "click #go", "text #hdr",
+// "eval return 6*7", "title") against this session and returns the engine's
+// decoded JSON result — {"ok":true,"value":...} on success, {"ok":false,
+// "error":...} on failure. The grammar and dispatch are engine-side (shell.ae);
+// this is a thin call.
+func (d *WebDriver) Shell(line string) (interface{}, error) {
+	cLine := cstr(line)
+	defer C.free(unsafe.Pointer(cLine))
+	return decodeJSONString(takeString(C.aether_sel_embed_shell_eval(d.h, cLine)))
+}
+
+// Runner returns an interactive run/step/continue controller over this session
+// (replies correlated by id, paused/command-finished events over the runner
+// lane) — the substrate a REPL, a SUT-adjacent iframe, or an editor front-end
+// drives. Close it with Runner.Close.
+func (d *WebDriver) Runner() *Runner {
+	rp := C.aether_sel_embed_runner_new(d.h)
+	r := &Runner{rp: unsafe.Pointer(rp), nextID: 1}
+	runtime.SetFinalizer(r, func(r *Runner) { r.Close() })
+	return r
+}
+
+// Bridge returns the SUT-adjacent console bridge: it injects a floating console
+// iframe next to the page under test, then shuttles the console's commands down
+// to the engine's runner and results back up (over executeScript — the page is
+// the mailbox). Call Bridge.Serve to inject + pump on a timer, or drive Pump
+// yourself from an existing loop. Close it with Bridge.Close.
+func (d *WebDriver) Bridge() *Bridge {
+	bp := C.aether_sel_embed_bridge_new(d.h)
+	b := &Bridge{d: d, bp: unsafe.Pointer(bp)}
+	runtime.SetFinalizer(b, func(b *Bridge) { b.Close() })
+	return b
+}
+
+// ServeRunner runs the runner control server over this session, BLOCKING in the
+// request loop until the process ends. Out-of-process hosts (a dashboard page, a
+// VS Code extension, a Tauri webview, a DAP adapter) connect to
+// ws://127.0.0.1:<port>/runner and drive the session with the runner protocol.
+// Returns non-zero if the port cannot bind. Use NewRunnerServer to run this on a
+// background goroutine instead.
+func (d *WebDriver) ServeRunner(port int) int {
+	return int(C.aether_sel_embed_runner_server_start(d.h, C.int(port)))
+}
+
+// PlaySide plays a Selenium IDE .side project (JSON) against this session and
+// returns the decoded JSON report {name, tests, passed, failed, results:[...]}.
+// Each command runs through the same shell verbs the interactive console uses
+// (open/click/type/assert*/waitFor*); the playback engine is engine-side
+// (shell.ae's side_run).
+func (d *WebDriver) PlaySide(sideJSON string) (interface{}, error) {
+	cSide := cstr(sideJSON)
+	defer C.free(unsafe.Pointer(cSide))
+	return decodeJSONString(takeString(C.aether_sel_embed_side_run(d.h, cSide)))
+}
+
+// decodeJSONString parses an engine-returned JSON string into a generic Go
+// value (the same convention as execute's decoded `value`). An empty string
+// yields (nil, nil).
+func decodeJSONString(raw string) (interface{}, error) {
+	if raw == "" {
+		return nil, nil
+	}
+	var v interface{}
+	if err := json.Unmarshal([]byte(raw), &v); err != nil {
+		return nil, fmt.Errorf("unmarshal runner json: %w", err)
+	}
+	return v, nil
+}
+
 // Quit ends the browser session and releases the handle. If this session
 // spawned its own driver process (NewLocalChrome), that driver is stopped too.
 func (d *WebDriver) Quit() error {
@@ -1628,3 +1735,193 @@ func toStringSlice(v interface{}) []string {
 	}
 	return out
 }
+
+// ---- Runner ----------------------------------------------------------------
+
+// Runner is an interactive run/step/continue controller over a session (mirrors
+// the engine's runner.ae over the C ABI): drive the session with eval/mode/step/
+// continue, correlate replies by id, and drain paused/command-finished events —
+// all over the multiplexed runner lane. Obtain one with WebDriver.Runner. This
+// is the surface a terminal REPL, a SUT-adjacent iframe, or an editor front-end
+// sits on. Not safe for concurrent use.
+type Runner struct {
+	rp     unsafe.Pointer
+	nextID int
+}
+
+// send fires a control request with an auto-assigned id and returns its
+// correlated reply (decoded JSON, nil if none). method is one of
+// eval/mode/step/continue/inspect; paramsJSON is a JSON object ("" = no params).
+func (r *Runner) send(method, paramsJSON string) (interface{}, error) {
+	id := r.nextID
+	r.nextID++
+	mj, err := json.Marshal(method)
+	if err != nil {
+		return nil, fmt.Errorf("marshal runner method: %w", err)
+	}
+	req := `{"id":` + strconv.Itoa(id) + `,"method":` + string(mj)
+	if paramsJSON != "" {
+		req += `,"params":` + paramsJSON
+	}
+	req += `}`
+	cReq := cstr(req)
+	C.aether_sel_embed_runner_ingest(r.rp, cReq)
+	C.free(unsafe.Pointer(cReq))
+	return decodeJSONString(takeString(C.aether_sel_embed_runner_poll_reply(r.rp, C.int(id))))
+}
+
+// Eval runs a shell line (immediately in run mode; queued in step mode) and
+// returns the correlated runner-lane reply.
+func (r *Runner) Eval(line string) (interface{}, error) {
+	lj, err := json.Marshal(line)
+	if err != nil {
+		return nil, fmt.Errorf("marshal eval line: %w", err)
+	}
+	return r.send("eval", `{"line":`+string(lj)+`}`)
+}
+
+// Mode sets "run" or "step" mode and returns the reply.
+func (r *Runner) Mode(m string) (interface{}, error) {
+	mj, err := json.Marshal(m)
+	if err != nil {
+		return nil, fmt.Errorf("marshal mode: %w", err)
+	}
+	return r.send("mode", `{"mode":`+string(mj)+`}`)
+}
+
+// Step runs the next queued line (step mode) and returns the reply.
+func (r *Runner) Step() (interface{}, error) { return r.send("step", "") }
+
+// Continue drains the queue and returns to run mode.
+func (r *Runner) Continue() (interface{}, error) { return r.send("continue", "") }
+
+// Inspect returns "trace" | "timers" | "sid" without running a command.
+func (r *Runner) Inspect(what string) (interface{}, error) {
+	wj, err := json.Marshal(what)
+	if err != nil {
+		return nil, fmt.Errorf("marshal inspect what: %w", err)
+	}
+	return r.send("inspect", `{"what":`+string(wj)+`}`)
+}
+
+// NextEvent returns the next runner event (command-finished / paused / …), or
+// nil if the queue is empty.
+func (r *Runner) NextEvent() (interface{}, error) {
+	if r.rp == nil {
+		return nil, nil
+	}
+	return decodeJSONString(takeString(C.aether_sel_embed_runner_poll_event(r.rp)))
+}
+
+// Close releases the runner handle. Idempotent.
+func (r *Runner) Close() {
+	if r.rp != nil {
+		C.aether_sel_embed_runner_free(r.rp)
+		r.rp = nil
+	}
+}
+
+// ---- Bridge ----------------------------------------------------------------
+
+// Bridge is the SUT-adjacent console bridge (mirrors the engine's
+// iframe_bridge.ae). It injects a floating console iframe next to the site under
+// test, then relays the console's commands DOWN to the engine's runner and
+// results/events back UP — all over executeScript, the one channel into the page
+// (the page's window.__selaenium is the mailbox). The engine holds no thread:
+// Serve loops Pump on a timer, or a caller with its own loop can call Pump
+// directly. Obtain one with WebDriver.Bridge.
+type Bridge struct {
+	d        *WebDriver
+	bp       unsafe.Pointer
+	injected bool
+}
+
+// Inject installs the shim + the console iframe into the current page
+// (idempotent). Call after a navigation to re-attach the console to a fresh
+// document.
+func (b *Bridge) Inject() error {
+	C.aether_sel_embed_bridge_install(b.d.h)
+	// A floating iframe pinned bottom-right, srcdoc = the console page. Guard so a
+	// re-inject after navigation replaces a stale frame rather than stacking.
+	// postMessage from a srcdoc iframe still reaches window.parent.
+	const script = "var id='__selaenium_console';var old=document.getElementById(id);if(old)old.remove();" +
+		"var f=document.createElement('iframe');f.id=id;f.srcdoc=arguments[0];" +
+		"f.style.cssText='position:fixed;right:12px;bottom:12px;width:420px;height:300px;" +
+		"z-index:2147483647;border:1px solid #333;border-radius:6px;box-shadow:0 6px 24px rgba(0,0,0,.4);" +
+		"resize:both;overflow:hidden;background:#1e1e1e';document.documentElement.appendChild(f);return 'ok';"
+	_, err := b.d.ExecuteScript(script, consoleHTML)
+	if err != nil {
+		return err
+	}
+	b.injected = true
+	return nil
+}
+
+// Pump runs one bridge cycle: drain the console's outbox, run each request
+// through the runner, push replies+events back. Returns the number of requests
+// handled (0 = idle), or -1 on a page I/O error (tab gone). Cheap to call on a
+// timer.
+func (b *Bridge) Pump() int {
+	return int(C.aether_sel_embed_bridge_pump(b.bp, b.d.h))
+}
+
+// Serve injects once, then pumps on a fixed interval until until returns true
+// (or forever if until is nil), breaking on a page/tab I/O error (Pump < 0).
+// intervalMs is the poll cadence; 100–150ms feels live without hammering
+// executeScript.
+func (b *Bridge) Serve(intervalMs int, until func() bool) error {
+	if !b.injected {
+		if err := b.Inject(); err != nil {
+			return err
+		}
+	}
+	for {
+		if until != nil && until() {
+			return nil
+		}
+		if b.Pump() < 0 {
+			return nil
+		}
+		time.Sleep(time.Duration(intervalMs) * time.Millisecond)
+	}
+}
+
+// Close releases the bridge handle. Idempotent.
+func (b *Bridge) Close() {
+	if b.bp != nil {
+		C.aether_sel_embed_bridge_free(b.bp)
+		b.bp = nil
+	}
+}
+
+// ---- RunnerServer ----------------------------------------------------------
+
+// RunnerServer runs the runner control server (runner_server.ae) on a background
+// goroutine, so a harness can hand a human the dashboard (or any ws://…/runner
+// host) mid-run without blocking its own flow. WebDriver.ServeRunner blocks; this
+// wraps it. The server shares the driver's session — one debug channel at a time
+// — and keeps running until the process ends (the engine's request loop has no
+// clean stop hook, matching the Grid hub), so start it once when you want the
+// console available. URL / WSURL give the endpoints to point a host at.
+type RunnerServer struct {
+	d    *WebDriver
+	port int
+}
+
+// NewRunnerServer starts the server for d on port on a background goroutine and
+// returns once the goroutine is launched; poll /health or just connect — the
+// socket is up within milliseconds.
+func NewRunnerServer(d *WebDriver, port int) *RunnerServer {
+	s := &RunnerServer{d: d, port: port}
+	go func() { d.ServeRunner(port) }()
+	return s
+}
+
+// Port returns the port the server was started on.
+func (s *RunnerServer) Port() int { return s.port }
+
+// URL returns the dashboard/host base URL.
+func (s *RunnerServer) URL() string { return "http://127.0.0.1:" + strconv.Itoa(s.port) }
+
+// WSURL returns the WebSocket control endpoint.
+func (s *RunnerServer) WSURL() string { return "ws://127.0.0.1:" + strconv.Itoa(s.port) + "/runner" }

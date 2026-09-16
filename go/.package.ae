@@ -16,6 +16,14 @@ aeb(cap) {
             from(lib)
             to("native/libselenium_core.so")
         }
+        // The SUT-adjacent console page is `//go:embed`ed by selenium.go
+        // (Bridge.consoleHtml), so a consumer that recompiles the module needs it
+        // next to the source. Ship it inside the module dir so it travels with the
+        // package rather than depending on the selenium_core sibling downstream.
+        copy.file() {
+            from("../selenium_core/console/console.html")
+            to("console.html")
+        }
         publish_artifact("module_dir", bldr._get(builder_context(), "source_dir"))
     }
 }

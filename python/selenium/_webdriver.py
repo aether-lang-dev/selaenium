@@ -1041,6 +1041,53 @@ class WebDriver:
             options = print_options.to_dict() if hasattr(print_options, "to_dict") else dict(print_options)
         return self._execute("printPage", options)
 
+    # ---- runner surface (interactive shell / runner / bridge / .side) ----
+    # The engine owns the shell grammar, the run/step/continue controller, the
+    # SUT-adjacent console bridge, the ws://…/runner control server, and .side
+    # playback. These are thin, ergonomic calls over that surface — the face a
+    # REPL, an in-page console, or an editor front-end sits on.
+
+    def shell(self, line: str) -> dict:
+        """Evaluate ONE runner shell line against this session (e.g. ``open <url>``,
+        ``click #go``, ``text #q``, ``eval return 6*7``, ``trace on``, ``events``)
+        and return the engine's JSON result (``{ok, value|info|error}``). The
+        grammar and dispatch are engine-side (shell.ae) — this is a thin call."""
+        raw = _native.take_string(_native.shell_eval(self._handle, _native.encode(line)))
+        return json.loads(raw) if raw else {}
+
+    def runner(self) -> "Runner":
+        """An interactive runner controller over this session: drive it with
+        run/step/continue, correlate replies by id, and drain paused/finished
+        events — all over the multiplexed runner lane. The substrate a REPL, an
+        SUT-adjacent iframe, or an editor front-end sits on."""
+        return Runner(_native.runner_new(self._handle))
+
+    def bridge(self) -> "Bridge":
+        """The SUT-adjacent console bridge: injects a floating console iframe next
+        to the page under test, then shuttles its commands down to the engine's
+        runner and results back up (over execute_script — the page is the
+        mailbox). Call ``bridge().serve()`` to inject + pump on a timer, or drive
+        ``pump()`` yourself from an existing loop."""
+        return Bridge(self, _native.bridge_new(self._handle))
+
+    def serve_runner(self, port: int = 8787) -> int:
+        """Run the runner control server over this session, BLOCKING in the
+        request loop until the process ends. Out-of-process hosts (a dashboard
+        page, an editor extension) connect to ``ws://127.0.0.1:<port>/runner`` and
+        drive the session with the runner protocol. Use :class:`RunnerServer` to
+        run this on a background thread instead. Returns non-zero if the port
+        cannot bind."""
+        return _native.runner_server_start(self._handle, port)
+
+    def play_side(self, side_json: str) -> dict:
+        """Play a Selenium IDE ``.side`` project against this session and return
+        the JSON report ``{name, tests, passed, failed, results:[{test, ok,
+        steps}]}``. Each command runs through the same shell verbs the interactive
+        console uses (open/click/type/assert*/waitFor*). The playback engine is
+        engine-side (shell.ae's side_run) — this is a thin call."""
+        raw = _native.take_string(_native.side_run(self._handle, _native.encode(side_json)))
+        return json.loads(raw) if raw else {}
+
     # ---- session metadata ----
 
     @property
@@ -1414,6 +1461,222 @@ class BiDi:
         if self._handle:
             _native.bidi_close(self._handle)
             self._handle = None
+
+
+class Runner:
+    """An interactive runner controller (mirrors the engine's runner.ae over the
+    C ABI): drive a session with run/step/continue, correlate replies by id, and
+    drain paused/command-finished events — all over the multiplexed runner lane.
+    Obtain one with :meth:`WebDriver.runner`. The surface a terminal REPL, an
+    SUT-adjacent iframe, or an editor front-end sits on. Free it with
+    :meth:`close` (also called on GC / context-manager exit)."""
+
+    def __init__(self, rp):
+        if not rp:
+            raise WebDriverException("failed to create runner", code=-1)
+        self._rp = rp
+        self._next_id = 1
+
+    def _id(self) -> int:
+        i = self._next_id
+        self._next_id += 1
+        return i
+
+    def send(self, method: str, params_json: str = "") -> dict:
+        """Send a control request (auto-assigned id) and return its correlated
+        reply. ``method`` is one of eval/mode/step/continue/inspect; ``params_json``
+        a JSON object string ("" = none). Returns ``{}`` if no reply is ready."""
+        rid = self._id()
+        req = f'{{"id":{rid},"method":{json.dumps(method)}'
+        if params_json:
+            req += f',"params":{params_json}'
+        req += "}"
+        _native.runner_ingest(self._rp, _native.encode(req))
+        rep = _native.take_string(_native.runner_poll_reply(self._rp, rid))
+        return json.loads(rep) if rep else {}
+
+    def eval(self, line: str) -> dict:
+        """Run a shell line (immediately in run mode; queued in step mode)."""
+        return self.send("eval", f'{{"line": {json.dumps(line)}}}')
+
+    def mode(self, m: str) -> dict:
+        """Set "run" or "step" mode."""
+        return self.send("mode", f'{{"mode": {json.dumps(m)}}}')
+
+    def step(self) -> dict:
+        """Run the next queued line (step mode)."""
+        return self.send("step")
+
+    def cont(self) -> dict:
+        """Drain the queue and return to run mode."""
+        return self.send("continue")
+
+    def inspect(self, what: str) -> dict:
+        """Inspect "trace" | "timers" | "sid" without running a command."""
+        return self.send("inspect", f'{{"what": {json.dumps(what)}}}')
+
+    def next_event(self) -> dict | None:
+        """The next runner event (command-finished / paused / …), or ``None``."""
+        e = _native.take_string(_native.runner_poll_event(self._rp))
+        return json.loads(e) if e else None
+
+    def close(self) -> None:
+        if self._rp:
+            _native.runner_free(self._rp)
+            self._rp = None
+
+    def __del__(self):
+        self.close()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.close()
+
+
+# The floating console iframe injector — the exact script the D binding's
+# Bridge.inject() runs. arguments[0] is the console page HTML (an iframe srcdoc,
+# so it needs no server and no same-origin file). Guarded so a re-inject after a
+# navigation replaces a stale frame rather than stacking.
+_CONSOLE_INJECTOR_JS = (
+    "var id='__selaenium_console';var old=document.getElementById(id);if(old)old.remove();"
+    "var f=document.createElement('iframe');f.id=id;f.srcdoc=arguments[0];"
+    "f.style.cssText='position:fixed;right:12px;bottom:12px;width:420px;height:300px;"
+    "z-index:2147483647;border:1px solid #333;border-radius:6px;box-shadow:0 6px 24px rgba(0,0,0,.4);"
+    "resize:both;overflow:hidden;background:#1e1e1e';document.documentElement.appendChild(f);return 'ok';"
+)
+
+
+def _console_html() -> str:
+    """Read the shipped console page (selenium_core/console/console.html).
+
+    The D binding string-imports this at compile time; Python reads it at run
+    time. Resolution mirrors how the native .so is found: a packaged copy staged
+    next to this module (``selenium/console.html``) wins, else walk up from the
+    module (and from ``SELENIUM_CORE_LIB``'s tree) to the in-repo
+    ``selenium_core/console/console.html``.
+    """
+    import os
+
+    here = os.path.dirname(os.path.abspath(__file__))
+    candidates = [os.path.join(here, "console.html")]
+
+    # Dev / in-tree: walk up looking for selenium_core/console/console.html,
+    # seeding the search from both this module and the native-lib override.
+    roots = [here]
+    override = os.environ.get("SELENIUM_CORE_LIB")
+    if override:
+        roots.append(os.path.dirname(os.path.abspath(override)))
+    for root in roots:
+        cur = root
+        for _ in range(8):
+            candidates.append(os.path.join(cur, "selenium_core", "console", "console.html"))
+            parent = os.path.dirname(cur)
+            if parent == cur:
+                break
+            cur = parent
+
+    for path in candidates:
+        if os.path.isfile(path):
+            with open(path, encoding="utf-8") as f:
+                return f.read()
+    raise WebDriverException(
+        "could not locate console.html (selenium_core/console/console.html)", code=-1
+    )
+
+
+class Bridge:
+    """The SUT-adjacent console bridge (mirrors the engine's iframe_bridge.ae). It
+    injects a floating console iframe next to the site under test, then relays the
+    console's commands DOWN to the engine's runner and results/events back UP —
+    all over execute_script, the one channel into the page (the page's
+    ``window.__selaenium`` is the mailbox). The engine holds no thread:
+    :meth:`serve` loops :meth:`pump` on a timer, or a caller with its own loop can
+    call :meth:`pump` directly. Obtain one with :meth:`WebDriver.bridge`."""
+
+    def __init__(self, driver: "WebDriver", bp):
+        if not bp:
+            raise WebDriverException("failed to create bridge", code=-1)
+        self._driver = driver
+        self._bp = bp
+        self._injected = False
+
+    def inject(self) -> None:
+        """Inject the shim + the console iframe into the current page (idempotent).
+        Call after a navigation to re-attach the console to a fresh document."""
+        _native.bridge_install(self._driver._handle)  # window.__selaenium mailbox
+        self._driver.execute_script(_CONSOLE_INJECTOR_JS, _console_html())
+        self._injected = True
+
+    def pump(self) -> int:
+        """One bridge cycle: drain the console's outbox, run each request through
+        the runner, push replies+events back. Returns the number of requests
+        handled (0 = idle), or -1 on a page I/O error (tab gone). Cheap to call on
+        a timer."""
+        return _native.bridge_pump(self._bp, self._driver._handle)
+
+    def serve(self, interval_ms: int = 120, until=None) -> None:
+        """Inject once, then pump on a fixed interval until ``until()`` returns
+        true (or forever if None). The simple "just give me a console" entry point
+        — for a harness that wants to hand a human the wheel mid-run. ``interval_ms``
+        is the poll cadence; 100–150ms feels live without hammering execute_script."""
+        import time
+
+        if not self._injected:
+            self.inject()
+        while True:
+            if until is not None and until():
+                break
+            if self.pump() < 0:  # page/tab gone
+                break
+            time.sleep(interval_ms / 1000)
+
+    def close(self) -> None:
+        if self._bp:
+            _native.bridge_free(self._bp)
+            self._bp = None
+
+    def __del__(self):
+        self.close()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.close()
+
+
+class RunnerServer:
+    """Runs the runner control server (runner_server.ae) on a background daemon
+    thread, so a harness can hand a human the dashboard (or any ws://…/runner
+    host) mid-run without blocking its own flow. :meth:`WebDriver.serve_runner`
+    blocks; this wraps it. The server shares the driver's session — one debug
+    channel at a time — and keeps running until the process ends (the engine's
+    request loop has no clean stop hook), so start it once. ``url`` / ``ws_url``
+    give the endpoints to point a host at."""
+
+    def __init__(self, driver: "WebDriver", port: int = 8787):
+        import threading
+
+        self._driver = driver
+        self._port = port
+        self._thread = threading.Thread(
+            target=lambda: driver.serve_runner(port), daemon=True
+        )
+        self._thread.start()
+
+    @property
+    def port(self) -> int:
+        return self._port
+
+    def url(self) -> str:
+        """The dashboard/host base URL."""
+        return f"http://127.0.0.1:{self._port}"
+
+    def ws_url(self) -> str:
+        """The WebSocket control endpoint (ws://…/runner)."""
+        return f"ws://127.0.0.1:{self._port}/runner"
 
 
 def _options_to_caps(options) -> dict:

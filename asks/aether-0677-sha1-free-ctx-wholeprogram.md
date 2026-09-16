@@ -1,7 +1,22 @@
 # ae 0.677 codegen: whole-program build emits an unresolved `sha1.free_ctx`
 
-> **STATUS: OPEN (2026-09-16).** Blocks upgrading selaenium's Aether pin past
-> 0.675. Worked around by holding `AETHER_REF=v0.675.0` (see ci/versions.env).
+> **STATUS: FIXED upstream — aether PR #2045 (2026-09-16), lands in 0.678.0+.**
+> Root cause: the typechecker tracked imported namespaces in a FIXED
+> `char* imported_namespaces[64]` and `register_namespace` guarded
+> `if (namespace_count < 64)`, so a merged `--emit=lib` unit registering >64
+> namespaces silently DROPPED every one past the 64th; a qualified call into a
+> dropped namespace then failed to resolve → the spurious E0301, including the
+> compiler-generated `sha1.free_ctx` cleanup for a `Sha1Ctx` reached through
+> std.http/std.cryptography. 0.677's crypto/TLS graph pushed the count past 64;
+> the cap itself was old (latent on 0.675, as observed here). The fix grows both
+> namespace tables dynamically (2×, seeded at 64) — no cap; the threshold is
+> gone, not merely raised. Pinned by aether tests/integration/many_namespaces_
+> qualified_call. NOT released yet — held at 0.675 until 0.678.0+ tags.
+>
+> When 0.678.0+ tags, re-test a fresh `aeb selenium_core/.build.ae` on it, then:
+> (1) bump `AETHER_REF` past 0.677 in ci/versions.env + README; (2) move the
+> `.side` playback engine out of shell.ae back into its own side_run.ae module
+> (it was folded into shell.ae only to stay under the namespace count).
 
 Found porting Selenium (selaenium): after bumping the toolchain to ae 0.677.0,
 the pure-Aether engine shared library stopped compiling — with an error that

@@ -765,6 +765,138 @@ fn live_convenience_tier() {
     d.quit().unwrap();
 }
 
+/// A LIVE exercise of the runner surface against real headless Chrome: the
+/// interactive shell (`shell`), the run/step/continue [`Runner`] controller, and
+/// `.side` playback (`play_side`). Mirrors the D reference live runner tests and
+/// the `live_chrome_surface` fixture (own chromedriver on an ephemeral port,
+/// self-skip if chromedriver absent, data: URLs for real documents).
+#[test]
+fn live_runner_surface() {
+    use selenium::WebDriver;
+
+    let Some(driver_bin) = which("chromedriver") else {
+        eprintln!("SKIPPED: chromedriver not on PATH");
+        return;
+    };
+
+    let cd_port = free_port();
+    let cd = Command::new(&driver_bin)
+        .arg(format!("--port={cd_port}"))
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("spawn chromedriver");
+    let _guard = DriverGuard(cd);
+
+    if !wait_up(cd_port, Duration::from_secs(10)) {
+        eprintln!("SKIPPED: chromedriver did not come up");
+        return;
+    }
+
+    let d = WebDriver::headless_chrome(&format!("http://127.0.0.1:{cd_port}")).expect("new session");
+
+    // ---- Runner shell: drive the session through the engine-side "wee shell"
+    //      (shell.ae, exposed over the C ABI as shell_eval). Front-end-agnostic.
+    let ro = d.shell("open data:text/html,<title>Sh</title><h1 id=q>hey</h1>").unwrap();
+    assert_eq!(ro.get("ok").and_then(|v| v.as_bool()), Some(true), "shell: open ok: {ro:?}");
+    assert_eq!(
+        d.shell("title").unwrap().get("value").and_then(|v| v.as_str()),
+        Some("Sh"),
+        "shell: title through the shell"
+    );
+    assert_eq!(
+        d.shell("text #q").unwrap().get("value").and_then(|v| v.as_str()),
+        Some("hey"),
+        "shell: text #q through the shell"
+    );
+    assert_eq!(
+        d.shell("eval return 6*7;").unwrap().get("value").and_then(|v| v.as_f64()),
+        Some(42.0),
+        "shell: eval"
+    );
+    let err = d.shell("bogusverb").unwrap();
+    assert_eq!(err.get("ok").and_then(|v| v.as_bool()), Some(false), "shell: unknown verb -> ok:false");
+    assert!(
+        err.get("error").and_then(|v| v.as_str()).unwrap_or("").contains("unknown command"),
+        "shell: unknown verb error message: {err:?}"
+    );
+
+    // ---- Runner controller: the interactive run/step/continue surface. ----
+    let mut r = d.runner().unwrap();
+    // run mode: eval executes immediately; reply carries the shell result.
+    let rr = r.eval("open data:text/html,<title>Run</title><h1 id=z>go</h1>");
+    assert_eq!(
+        rr.get("result").and_then(|res| res.get("ok")).and_then(|v| v.as_bool()),
+        Some(true),
+        "runner: run-mode eval ok: {rr:?}"
+    );
+    assert_eq!(
+        r.eval("title").get("result").and_then(|res| res.get("value")).and_then(|v| v.as_str()),
+        Some("Run"),
+        "runner: title via runner"
+    );
+    // a command-finished event fired.
+    let mut saw_finished = false;
+    while let Some(ev) = r.next_event() {
+        if ev.get("method").and_then(|v| v.as_str()) == Some("command-finished") {
+            saw_finished = true;
+        }
+    }
+    assert!(saw_finished, "runner: command-finished event emitted");
+    // step mode: queue then step.
+    assert_eq!(
+        r.mode("step").get("result").and_then(|res| res.get("mode")).and_then(|v| v.as_str()),
+        Some("step"),
+        "runner: mode step"
+    );
+    let q = r.eval("text #z");
+    assert!(
+        q.get("result").and_then(|res| res.get("queued")).is_some(),
+        "runner: step-mode eval queues: {q:?}"
+    );
+    let st = r.step();
+    let st = st.get("result").expect("runner-lane frame carries a result");
+    assert_eq!(st.get("stepped").and_then(|v| v.as_bool()), Some(true), "runner: step ran: {st:?}");
+    assert_eq!(
+        st.get("result").and_then(|res| res.get("value")).and_then(|v| v.as_str()),
+        Some("go"),
+        "runner: step runs the queued line -> 'go'"
+    );
+    // Return to run mode so the controller is left in a clean state.
+    r.cont();
+    drop(r);
+
+    // ---- .side playback: play a real Selenium IDE project against this session
+    //      and check the report (parse -> per-command shell dispatch -> report).
+    let side = concat!(
+        "{\"name\":\"d\",\"tests\":[{\"name\":\"t\",\"commands\":[",
+        "{\"command\":\"open\",\"target\":\"data:text/html,<title>SideOK</title><h1 id=z>hi</h1>\",\"value\":\"\"},",
+        "{\"command\":\"assertTitle\",\"target\":\"\",\"value\":\"SideOK\"},",
+        "{\"command\":\"assertText\",\"target\":\"id=z\",\"value\":\"hi\"}]}]}"
+    );
+    let rep = d.play_side(side).unwrap();
+    assert_eq!(rep.get("tests").and_then(|v| v.as_f64()), Some(1.0), "side: one test in the report");
+    assert_eq!(rep.get("passed").and_then(|v| v.as_f64()), Some(1.0), "side: passed==1: {rep:?}");
+    assert_eq!(rep.get("failed").and_then(|v| v.as_f64()), Some(0.0), "side: failed==0: {rep:?}");
+    assert_eq!(
+        rep.get("results").and_then(|v| v.as_array()).and_then(|a| a.first())
+            .and_then(|t| t.get("ok")).and_then(|v| v.as_bool()),
+        Some(true),
+        "side: per-test ok flag set"
+    );
+
+    // A deliberately-wrong assertion must fail the test.
+    let bad = concat!(
+        "{\"name\":\"d\",\"tests\":[{\"name\":\"wrong-title\",\"commands\":[",
+        "{\"command\":\"open\",\"target\":\"data:text/html,<title>Real</title>\",\"value\":\"\"},",
+        "{\"command\":\"assertTitle\",\"target\":\"\",\"value\":\"NotReal\"}]}]}"
+    );
+    let rep2 = d.play_side(bad).unwrap();
+    assert_eq!(rep2.get("failed").and_then(|v| v.as_f64()), Some(1.0), "side: a wrong assertion fails: {rep2:?}");
+
+    d.quit().unwrap();
+}
+
 /// Minimal std-only base64 decoder (screenshot PNG check only).
 fn base64_decode(s: &str) -> Vec<u8> {
     const T: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";

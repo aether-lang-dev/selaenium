@@ -31,6 +31,9 @@ from .._webdriver import (
     resolve_driver,
     launch_driver,
     ensure_driver,
+    Runner,
+    Bridge,
+    RunnerServer,
 )
 from .._native import configure as configure_native_lib
 from .common.by import By
@@ -75,5 +78,8 @@ __all__ = [
     "resolve_driver",
     "launch_driver",
     "ensure_driver",
+    "Runner",
+    "Bridge",
+    "RunnerServer",
     "configure_native_lib",
 ]
