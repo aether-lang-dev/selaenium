@@ -35,6 +35,23 @@
 > shape + ABI parity verified off-box); (c) aarch64-freebsd (still the mcontext_t
 > arch issue).
 >
+> **(c) — root cause + the fix shape (confirmed with the sv sibling, 2026-09-17).**
+> The mcontext_t error is a genuine ARCH-SPECIFIC SYSROOT MISMATCH, not a link
+> bug: `sys/_ucontext.h` pulls `<machine/ucontext.h>` where `mcontext_t` is
+> defined per-arch, so compiling an aarch64-freebsd target against the x86_64
+> base fails. Two things needed to close (c): (1) a real aarch64-freebsd BASE
+> sysroot — the aether release ships x86_64 ONLY (`aether-<v>-freebsd-x86_64-
+> sysroot.tar.xz`), so one must be sourced separately (a FreeBSD 14.3/15 aarch64
+> base tree); no such base is currently available to us. (2) release/build.sh
+> must select AETHER_SYSROOT PER-TARGET-ARCH before the aarch64 leg — today it
+> uses ONE AETHER_SYSROOT for all freebsd targets (the `if [ "$os" = "freebsd" ]
+> && [ -z AETHER_SYSROOT ]` skip block), which silently compiles aarch64 against
+> the x86_64 base in a multi-arch run. The sv/servirtium-vcr port fixed its build
+> the same way (per-arch AETHER_SYSROOT selection) so it's correct the day an
+> aarch64 base exists — mirror that here. Until a base is sourced, (c) stays
+> blocked "no aarch64 FreeBSD base available", NOT a toolchain bug (the -shared
+> -fPIC link fix #2047/#2049 already cleared the x86_64 blocker).
+>
 > --- earlier: x86_64 FIXED in source — aether #2049, pending release ---
 > The
 > object-`-fPIC` fix landed as aether PR #2049 (`9f400cd2`): `-fPIC` is now on the
