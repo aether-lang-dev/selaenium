@@ -14,8 +14,8 @@ Fiddle + json only).
 
 ## Get started
 
-There is no registry install; you build the gem, then install and use it. Four
-steps, in order:
+There is no registry install; you build the gem, then install and use it —
+build → install → drive (step 3 is a usually-skippable engine fallback):
 
 **1. Build the gem.** It bundles the engine `.so` under `lib/selenium/native/`.
 Pick ONE:
@@ -39,20 +39,29 @@ from rubygems.org) so any project can `require 'selenium-webdriver'`:
 gem install --local target/package/ruby/dist/selenium-webdriver-*.gem
 ```
 
-**3. Fetch the prebuilt engine once** (the installed gem ships no engine and
-needs no Aether toolchain):
+**3. (Usually not needed) fetch the engine.** The gem you built in step 1 already
+bundles the engine in `lib/selenium/native/`, and the loader finds that bundled
+copy — so you can go straight to step 4. `fetch_engine!` is the fallback for when
+the gem has NO bundled engine (a stripped gem, or one built without it):
 
 ```ruby
 require 'selenium-webdriver'
 Selenium::WebDriver.fetch_engine!     # download + verify + cache libselenium_core
 ```
 
-`fetch_engine!` downloads the prebuilt `libselenium_core` for your platform from
-THIS project's GitHub releases, verifies its published `.sha256`, and caches it
-(`$XDG_CACHE_HOME/selaenium/<tag>/`); every later `require 'selenium-webdriver'`
-loads it automatically. It takes `tag:` (pin an engine release) and `force:`
-(re-fetch). If the engine isn't present, the first driver call raises a
-`LoadError` telling you to run it.
+It downloads the prebuilt `libselenium_core` for your platform from THIS project's
+GitHub releases — the SAME release + asset the `.getFromGitHubReleases.ae` build
+node fetches (the API path is stdlib `net/http`; the build-node path shells
+`scripts/fetch-engine.sh`; both hit the same URL, verify the same `.sha256`, and
+land in the same `$XDG_CACHE_HOME/selaenium/<tag>/` cache). Whichever runs, a
+later `require 'selenium-webdriver'` loads the engine automatically. It takes
+`tag:` and `force:`. If no engine is found any way, the first driver call raises a
+`LoadError` pointing you here.
+
+The loader's search order is: explicit path (`configure_native_lib`) →
+`SELENIUM_CORE_LIB` → the gem's bundled `native/` → the fetch cache → bare name.
+So a bundled engine (step 1) wins over the fetch cache, which is why step 3 is
+normally a no-op.
 
 **4. Drive a browser:**
 
