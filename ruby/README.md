@@ -1,10 +1,16 @@
 # selenium-webdriver (Ruby)
 
 Selenium WebDriver for Ruby — a thin Fiddle wrapper over the shared pure-Aether
-WebDriver engine (`libselenium_core`). The gem carries no protocol logic: the
-W3C command map, routing, `By` normalization, error decode and the HTTP round
-trip all live in the engine. Ruby ≥ 3.0, no runtime gem dependencies (stdlib
-Fiddle + json only).
+WebDriver engine (`libselenium_core`).
+
+The **engine** is one pure, reentrant shared library — a single
+`.so`/`.dylib`/`.dll` you `dlopen` (N independent sessions per process). It is
+**not** an installation, a service, or a framework: no installer, no daemon, no
+config, no special directories. The gem carries no protocol logic — the W3C
+command map, routing, `By` normalization, error decode and the HTTP round trip
+all live in that one library. The recommended model is to **seal the engine into
+the gem at build time** (below) so the artifact you ship is complete and
+hermetic. Ruby ≥ 3.0, no runtime gem dependencies (stdlib Fiddle + json only).
 
 > **Name note.** This gem is named `selenium-webdriver` on purpose — it is a
 > drop-in, ABI-matched replacement for the mainstream Selenium-Ruby gem (upgrade
@@ -14,8 +20,9 @@ Fiddle + json only).
 
 ## Get started
 
-There is no registry install; you build the gem, then install and use it —
-build → install → drive (step 3 is a usually-skippable engine fallback):
+There is no registry install; you build the gem (with the engine sealed in), then
+install and use it — build → install → drive. (Step 3 is a last-resort escape
+hatch, not a normal step.)
 
 **1. Build the gem.** It bundles the engine `.so` under `lib/selenium/native/`.
 Pick ONE:
@@ -39,29 +46,26 @@ from rubygems.org) so any project can `require 'selenium-webdriver'`:
 gem install --local target/package/ruby/dist/selenium-webdriver-*.gem
 ```
 
-**3. (Usually not needed) fetch the engine.** The gem you built in step 1 already
-bundles the engine in `lib/selenium/native/`, and the loader finds that bundled
-copy — so you can go straight to step 4. `fetch_engine!` is the fallback for when
-the gem has NO bundled engine (a stripped gem, or one built without it):
+**3. Skip this — the engine is already sealed into the gem.** Step 1 bundled the
+engine into `lib/selenium/native/`, and the loader finds that bundled copy, so go
+straight to step 4. This is the point of sealing at build time: the artifact you
+installed is complete, reviewable, and hermetic — nothing fetches at run time.
 
-```ruby
-require 'selenium-webdriver'
-Selenium::WebDriver.fetch_engine!     # download + verify + cache libselenium_core
-```
+`Selenium::WebDriver.fetch_engine!` exists ONLY as a last-resort escape hatch for
+a gem that somehow shipped WITHOUT its engine (a stripped gem, or one built with
+`native/` empty). It is **not** part of the normal flow and is **never triggered
+implicitly** — the loader raises a `LoadError` rather than silently phoning home;
+you have to call it yourself. Prefer rebuilding/resealing the gem (step 1) over
+relying on a runtime fetch. When you do call it, it downloads the prebuilt engine
+for your platform from THIS project's GitHub releases — the SAME release + asset
++ `.sha256` the `.getFromGitHubReleases.ae` build node fetches (API path = stdlib
+`net/http`; build-node path shells `scripts/fetch-engine.sh`; same URL, same
+checksum, same `$XDG_CACHE_HOME/selaenium/<tag>/` cache), then a later `require`
+loads it.
 
-It downloads the prebuilt `libselenium_core` for your platform from THIS project's
-GitHub releases — the SAME release + asset the `.getFromGitHubReleases.ae` build
-node fetches (the API path is stdlib `net/http`; the build-node path shells
-`scripts/fetch-engine.sh`; both hit the same URL, verify the same `.sha256`, and
-land in the same `$XDG_CACHE_HOME/selaenium/<tag>/` cache). Whichever runs, a
-later `require 'selenium-webdriver'` loads the engine automatically. It takes
-`tag:` and `force:`. If no engine is found any way, the first driver call raises a
-`LoadError` pointing you here.
-
-The loader's search order is: explicit path (`configure_native_lib`) →
-`SELENIUM_CORE_LIB` → the gem's bundled `native/` → the fetch cache → bare name.
-So a bundled engine (step 1) wins over the fetch cache, which is why step 3 is
-normally a no-op.
+Loader search order: explicit (`configure_native_lib`) → `SELENIUM_CORE_LIB` →
+the gem's bundled `native/` → the fetch cache → bare name. The sealed bundle wins
+over the fetch cache, which is why a properly built gem never needs step 3.
 
 **4. Drive a browser:**
 
