@@ -2,6 +2,7 @@ module OpenQA.Selenium.FSharp.FfiTest
 
 open Xunit
 open OpenQA.Selenium
+open OpenQA.Selenium.FSharp
 
 // No-browser FFI test: proves the F# binding drives the ONE C# P/Invoke binding
 // (over CLR interop — no second FFI) and that the shared engine helpers marshal
@@ -59,6 +60,29 @@ let ``transport failure`` () =
     with :? WebDriverException as e ->
         threw <- e.Code = -1
     Assert.True(threw, "transport failure should surface code -1")
+
+[<Fact>]
+let ``F# Selenium module sugar delegates to the C# binding`` () =
+    // The F# `Selenium` module adds thin idiomatic sugar over the one C# binding
+    // (no second FFI). Assert its surface offline: the By re-export delegates to
+    // the C# By factory (className -> W3C "class name"), and the pure engine
+    // helpers agree with the RemoteWebDriver statics they forward to.
+    Assert.Equal<string>("id", (Selenium.By.id "hdr").Strategy)
+    Assert.Equal<string>("main", (Selenium.By.id "main").Value)
+    Assert.Equal<string>("class name", (Selenium.By.className "g").Strategy)
+    Assert.Equal<string>("css selector", (Selenium.By.cssSelector "a.x").Strategy)
+    Assert.Equal<string>("name", (Selenium.By.name "n").Strategy)
+    Assert.Equal<string>("tag name", (Selenium.By.tagName "a").Strategy)
+    Assert.Equal<string>("link text", (Selenium.By.linkText "x").Strategy)
+    Assert.Equal<string>("partial link text", (Selenium.By.partialLinkText "x").Strategy)
+    Assert.Equal<string>("xpath", (Selenium.By.xpath "//a").Strategy)
+    Assert.Equal<string>("POST /session/:sessionId/url", Selenium.route "get")
+    Assert.Equal<int>(17, Selenium.errorCode "no such element")
+    Assert.Contains("*[id=", Selenium.locator "id" "main")
+    // The loan-pattern builder exists and is typed: a partial application (no
+    // body) asserts the surface without opening a session.
+    let _builder : (IWebDriver -> int) -> int = Selenium.headlessChrome "http://127.0.0.1:1"
+    Assert.NotNull(box _builder)
 
 [<Fact>]
 let ``firefox/edge/safari factories ride the C# binding`` () =

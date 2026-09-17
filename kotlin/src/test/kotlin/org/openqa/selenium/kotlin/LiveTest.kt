@@ -4,6 +4,7 @@ import com.sun.net.httpserver.HttpServer
 import org.openqa.selenium.BidiEvent
 import org.openqa.selenium.NoSuchElementException
 import org.openqa.selenium.RemoteWebDriver
+import org.openqa.selenium.WebDriver
 import org.openqa.selenium.WebDriverException
 import java.net.InetSocketAddress
 import java.net.ServerSocket
@@ -42,6 +43,26 @@ fun main() {
         }
         check(threw, "transport failure -> code -1")
     }
+
+    // ---- Kotlin sugar surface (offline; no browser) ----
+    // The `By` object delegates to the Java By factory: each strategy yields a
+    // real org.openqa.selenium.By, and className maps to the W3C "class name".
+    check(By.id("hdr") is org.openqa.selenium.By, "By.id -> By instance")
+    check(By.cssSelector("a.x") is org.openqa.selenium.By, "By.cssSelector -> By instance")
+    check(By.className("g").toString().contains("class name"), "By.className -> \"class name\"")
+    check(By.name("n") is org.openqa.selenium.By, "By.name present")
+    check(By.tagName("a") is org.openqa.selenium.By, "By.tagName present")
+    check(By.linkText("x") is org.openqa.selenium.By, "By.linkText present")
+    check(By.partialLinkText("x") is org.openqa.selenium.By, "By.partialLinkText present")
+    check(By.xpath("//a") is org.openqa.selenium.By, "By.xpath present")
+    // The non-inline element/script extensions exist and are typed (referenced
+    // as callable values so the surface is asserted without opening a session).
+    // The inline chrome/headlessChrome/localChrome builders can't be referenced
+    // with `::` (Kotlin forbids callable refs to inline funs); headlessChrome is
+    // exercised by the live block below.
+    check((WebDriver::find) != null, "WebDriver.find extension present")
+    check((WebDriver::findAll) != null, "WebDriver.findAll extension present")
+    check((WebDriver::script) != null, "WebDriver.script extension present")
 
     // ---- live surface ----
     val driverBin = which("chromedriver")

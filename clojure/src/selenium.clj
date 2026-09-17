@@ -12,7 +12,7 @@
   session on exit, and value-returning functions over the Java methods. Command
   params are Clojure maps (converted to java.util.Map); results come back as the
   Java binding decodes them (java.util.Map / java.util.List / String / ...)."
-  (:import [org.openqa.selenium RemoteWebDriver WebElement By
+  (:import [org.openqa.selenium RemoteWebDriver ChromeDriver WebElement By
             WebDriverException NoSuchElementException]
            [java.util Map List]))
 
@@ -65,6 +65,14 @@
                (assoc "binary" (System/getenv "SEL_CHROME_BINARY")))]
     (chrome command-executor {"goog:chromeOptions" opts})))
 
+;; Start a *local* Chrome session that spawns its own chromedriver via the
+;; engine (no driver on PATH, no Grid) — the Selenium 4.x `ChromeDriver()` entry
+;; point, mirroring the Kotlin/Scala/Groovy localChrome sugar. `opts` is a map
+;; of extra capabilities.
+(defn local-chrome
+  ([] (ChromeDriver. (->java {})))
+  ([opts] (ChromeDriver. (->java opts))))
+
 (defn quit [^RemoteWebDriver d] (.quit d))
 (defn session-id [^RemoteWebDriver d] (.sessionId d))
 
@@ -72,6 +80,14 @@
   "Bind a headless Chrome session to `binding`, run `body`, and quit on exit."
   [[binding command-executor] & body]
   `(let [~binding (headless-chrome ~command-executor)]
+     (try ~@body (finally (quit ~binding)))))
+
+(defmacro with-local-chrome
+  "Bind a *local* Chrome session (spawns its own chromedriver via the engine) to
+  `binding`, run `body`, and quit on exit — the loan-pattern twin of the
+  Kotlin/Scala/Groovy localChrome sugar."
+  [[binding] & body]
+  `(let [~binding (local-chrome)]
      (try ~@body (finally (quit ~binding)))))
 
 ;; ---- navigation ----

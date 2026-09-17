@@ -37,6 +37,27 @@ object FfiTest:
     // By is now a factory: each strategy yields a locator instance.
     check(By.className("x").toString.contains("class name"), "By.className -> \"class name\"")
 
+    // ---- Scala sugar surface (offline; no browser) ----
+    // The `Selenium.By` re-export delegates to the Java By factory (all 8
+    // strategies); className maps to the W3C "class name".
+    check(Selenium.By.id("hdr").isInstanceOf[By], "Selenium.By.id -> By instance")
+    check(Selenium.By.cssSelector("a.x").isInstanceOf[By], "Selenium.By.cssSelector -> By instance")
+    check(Selenium.By.className("g").toString.contains("class name"), "Selenium.By.className -> \"class name\"")
+    check(Selenium.By.name("n").isInstanceOf[By], "Selenium.By.name present")
+    check(Selenium.By.tagName("a").isInstanceOf[By], "Selenium.By.tagName present")
+    check(Selenium.By.linkText("x").isInstanceOf[By], "Selenium.By.linkText present")
+    check(Selenium.By.partialLinkText("x").isInstanceOf[By], "Selenium.By.partialLinkText present")
+    check(Selenium.By.xpath("//a").isInstanceOf[By], "Selenium.By.xpath present")
+    // The pure engine helpers re-exported on the Scala object agree with the
+    // Java binding they delegate to.
+    check(Selenium.route("get") == "POST /session/:sessionId/url", "Selenium.route re-export")
+    check(Selenium.errorCode("no such element") == 17, "Selenium.errorCode re-export")
+    check(Selenium.locator("id", "main").contains("*[id="), "Selenium.locator re-export")
+    // The loan-pattern builders + find extension exist and are typed (referenced
+    // as values so this asserts the surface without opening a session).
+    check((Selenium.headlessChrome[Unit]).isInstanceOf[AnyRef], "headlessChrome builder present")
+    check((Selenium.localChrome[Unit]).isInstanceOf[AnyRef], "localChrome builder present")
+
     liveBidi()
 
     if failures == 0 then println("PASS: Scala FFI tests green")

@@ -56,6 +56,16 @@ try {
     check(e.code() == -1, "transport failure -> code -1")
 }
 
+// ---- Groovy sugar surface (offline; no browser) ----
+// The Selenium closure helpers (withChrome/withHeadlessChrome/withLocalChrome)
+// exist as static methods on the wrapper class — assert the surface via
+// reflection so no browser session is opened.
+check(Selenium.metaClass.methods.any { it.name == "withChrome" }, "withChrome present")
+check(Selenium.metaClass.methods.any { it.name == "withHeadlessChrome" }, "withHeadlessChrome present")
+check(Selenium.metaClass.methods.any { it.name == "withLocalChrome" }, "withLocalChrome present")
+// By reaches Groovy directly from the Java factory (no Groovy re-export needed).
+check(By.className("g").toString().contains("class name"), "By.className -> \"class name\"")
+
 // ---- live surface ----
 def driverBin = which("chromedriver")
 if (driverBin == null) {

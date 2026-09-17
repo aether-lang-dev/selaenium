@@ -158,6 +158,21 @@
                    (catch WebDriverException e (= -1 (.code e))))]
     (check threw "transport failure -> code -1"))
 
+  ;; ---- Clojure sugar surface (offline; no browser) ----
+  ;; The keyword `by` map delegates to the Java By factory: each strategy yields
+  ;; a By instance, and class-name maps to the W3C "class name" strategy.
+  (check (instance? By ((sel/by :id) "hdr")) "by :id -> By instance")
+  (check (instance? By ((sel/by :css) "a.x")) "by :css -> By instance")
+  (check (.contains (.toString ((sel/by :class-name) "g")) "class name")
+         "by :class-name -> \"class name\"")
+  (doseq [k [:id :name :css :css-selector :class-name :tag-name
+             :link-text :partial-link-text :xpath]]
+    (check (contains? sel/by k) (str "by has " k)))
+  ;; The local-chrome sugar (spawn-own-driver) is present, matching the other
+  ;; JVM delegators (Kotlin/Scala/Groovy localChrome).
+  (check (fn? (deref #'sel/local-chrome)) "local-chrome fn present")
+  (check (var? #'sel/with-local-chrome) "with-local-chrome macro present")
+
   (if-let [driver-bin (which "chromedriver")]
     (live-surface driver-bin)
     (println "  (live) SKIPPED: chromedriver not on PATH"))
