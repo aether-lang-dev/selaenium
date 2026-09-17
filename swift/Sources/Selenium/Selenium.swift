@@ -8,16 +8,14 @@
 // convenience tier (Keys, Select, Actions, explicit waits). The engine .so is
 // resolved via SELENIUM_CORE_LIB (linked at build; see Package.swift).
 //
-// FFI scope: the CSeleniumCore header declares only the GENERIC seam — open /
-// close / execute / by_locator / route / error_code / session_id / free_string.
-// Every command below is issued by name + JSON params through `execute`, so no
-// per-command native symbols are needed. Features that mainstream reaches through
-// DEDICATED engine symbols not present in this header — atom-backed isDisplayed /
-// getAttribute, relative locators, TLS trust config, in-binding driver
-// orchestration (local_chrome / ensure_driver / resolve_driver / launch_driver),
-// and the WebDriver-BiDi channel — are intentionally NOT provided here; see the
-// "freestyle limitations" note at the end. `getAttribute` is offered via an
-// injected-script fallback so the classic call still works.
+// FFI scope: the CSeleniumCore header declares EVERY aether_sel_embed_* symbol the
+// engine exports. Ordinary W3C commands are issued by name + JSON params through
+// `execute` (no per-command native symbols needed); the features mainstream reaches
+// through DEDICATED engine symbols — atom-backed isDisplayed / getAttribute,
+// relative locators, TLS trust config, in-binding driver orchestration
+// (localChrome / ensureDriver / resolveDriver / launchDriver), and the full
+// WebDriver-BiDi channel — are all first-class here, calling those symbols directly.
+// Nothing is faked or deferred (see the closing note at the end of this file).
 import Foundation
 import CSeleniumCore
 

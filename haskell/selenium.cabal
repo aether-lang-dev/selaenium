@@ -43,3 +43,17 @@ test-suite live
   default-language: Haskell2010
   ghc-options:      -threaded -rtsopts
   extra-libraries:  selenium_core
+
+-- No-browser ABI-surface guard: pins the pure engine helpers + By/Keys facts and
+-- (via Surface._refs) forces the whole public method table to type-check, so a
+-- rename or accidental removal of any public method breaks the build. Mirrors the
+-- crystal/swift surface specs; needs only the engine .so link, no chromedriver.
+test-suite surface
+  type:             exitcode-stdio-1.0
+  hs-source-dirs:   test
+  main-is:          Surface.hs
+  build-depends:    base
+                  , selenium
+  default-language: Haskell2010
+  ghc-options:      -Wall
+  extra-libraries:  selenium_core

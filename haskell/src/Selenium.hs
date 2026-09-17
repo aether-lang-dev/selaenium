@@ -131,10 +131,14 @@ module Selenium
   , selectByIndex
   , selectedOptions
   , firstSelectedOption
+  , isMultiple
   , deselectAll
     -- * Waits
   , waitUntil
+  , waitUntilEvery
   , waitForElement
+  , waitForVisible
+  , waitForClickable
   , waitForTitleIs
   , waitForTitleContains
   , waitForUrlIs
@@ -149,6 +153,7 @@ module Selenium
   , browserBinary
   , ensureDriver
   , launchDriver
+  , localChrome
   , driverUrl
   , driverPid
   , stopDriver
@@ -167,7 +172,9 @@ module Selenium
   , bidiSubscribe
   , bidiUnsubscribe
   , bidiWaitEvent
+  , bidiNextEvent
   , bidiGetTree
+  , bidiTopContext
   , bidiScriptEvaluate
   , bidiNavigate
   , bidiAddIntercept
@@ -835,6 +842,15 @@ firstSelectedOption d eid = do
     (o : _) -> pure o
     [] -> throwIO (WebDriverError 17 "no option is selected")
 
+-- | Whether the @<select>@ @eid@ is a multi-select (its @multiple@ boolean
+-- attribute is present) — the @is_multiple@ predicate the sibling @Select@
+-- wrappers expose. A present attribute with any non-@"false"@ value is truthy.
+isMultiple :: WebDriver -> String -> IO Bool
+isMultiple d eid = do
+  v <- getAttribute d eid "multiple"
+  let s = jsonUnquote v
+  pure (not (null s) && s /= "null" && s /= "false")
+
 -- | Deselect every selected option (multi-select). On a single-select this is a
 -- no-op after clicking would just re-toggle; callers should use it only on a
 -- @<select multiple>@.
@@ -861,15 +877,19 @@ chooseBy d (o : os) want project = do
 -- The poll loop lives here in the binding — the engine issues single commands
 -- and holds no thread, exactly as the reference aether/webdriver.ae waits do.
 
-pollIntervalMicros :: Int
-pollIntervalMicros = 500 * 1000 -- 500ms, mainstream default
-
 -- | Poll @cond driver@ until it returns @True@ or @timeoutMs@ elapses. Throws
 -- 'WebDriverError' 21 (timeout) if the deadline passes. A code-17 (no such
 -- element) error from @cond@ is swallowed and retried.
 waitUntil :: WebDriver -> Int -> (WebDriver -> IO Bool) -> IO ()
-waitUntil d timeoutMs cond = go (max 0 timeoutMs)
+waitUntil d timeoutMs = waitUntilEvery d timeoutMs 500
+
+-- | 'waitUntil' with an explicit poll cadence (mainstream's @pollingEvery@ knob;
+-- the fluent-@Wait@ bindings expose it as @poll_every@). @pollMs@ is the delay
+-- between condition checks; a non-positive interval is clamped up to 500ms.
+waitUntilEvery :: WebDriver -> Int -> Int -> (WebDriver -> IO Bool) -> IO ()
+waitUntilEvery d timeoutMs pollMs cond = go (max 0 timeoutMs)
   where
+    step = if pollMs <= 0 then 500 else pollMs
     go remaining = do
       r <- try (cond d)
       settled <- case r of
@@ -884,14 +904,44 @@ waitUntil d timeoutMs cond = go (max 0 timeoutMs)
           if remaining <= 0
             then throwIO (WebDriverError 21 ("waited " ++ show timeoutMs ++ "ms for condition"))
             else do
-              threadDelay pollIntervalMicros
-              go (remaining - 500)
+              threadDelay (step * 1000)
+              go (remaining - step)
 
 -- | Block until an element matching the locator is present; return its id.
 waitForElement :: WebDriver -> Locator -> Int -> IO String
 waitForElement d loc timeoutMs = do
   waitUntil d timeoutMs (\drv -> exists drv loc)
   findElement d loc
+
+-- | Block until an element matching the locator is present AND displayed; return
+-- its id (the @wait_for_visible@ helper the sibling bindings expose).
+waitForVisible :: WebDriver -> Locator -> Int -> IO String
+waitForVisible d loc timeoutMs = do
+  waitUntil d timeoutMs (\drv -> elementDisplayedIfPresent drv loc)
+  findElement d loc
+
+-- | Block until an element matching the locator is present, displayed AND
+-- enabled (clickable); return its id (the @wait_for_clickable@ helper).
+waitForClickable :: WebDriver -> Locator -> Int -> IO String
+waitForClickable d loc timeoutMs = do
+  waitUntil d timeoutMs $ \drv -> do
+    vis <- elementDisplayedIfPresent drv loc
+    if not vis
+      then pure False
+      else do
+        eid <- findElement drv loc
+        elementIsEnabled drv eid
+  findElement d loc
+
+-- Present-and-displayed probe: a clean not-found (code 17) counts as "not yet",
+-- so the poll retries rather than aborting.
+elementDisplayedIfPresent :: WebDriver -> Locator -> IO Bool
+elementDisplayedIfPresent drv loc = do
+  r <- try (findElement drv loc)
+  case r of
+    Right eid -> isDisplayed drv eid
+    Left (WebDriverError 17 _) -> pure False
+    Left e -> throwIO e
 
 waitForTitleIs :: WebDriver -> String -> Int -> IO ()
 waitForTitleIs d want timeoutMs = waitUntil d timeoutMs (\drv -> (== want) <$> title drv)
@@ -958,6 +1008,24 @@ launchDriver :: String -> Int -> IO (Maybe DriverProcess)
 launchDriver path timeoutMs = do
   p <- N.selLaunchDriver path timeoutMs
   pure (if p == nullPtr then Nothing else Just (DriverProcess p))
+
+-- | Engine-managed local Chrome (the @local_chrome@ convenience the sibling
+-- bindings expose): resolve+launch a chromedriver via the engine, then open a
+-- Chrome session against it. Needs neither a driver on PATH nor a running Grid.
+-- Returns the session paired with the 'DriverProcess' that backs it — the caller
+-- owns both: 'quit' the driver, then 'stopDriver' the process to reap it.
+-- @Nothing@ when no driver could be resolved\/launched (the cue to SKIP a live
+-- test). @capsJson@ is the alwaysMatch capabilities object (@"{}"@ for defaults);
+-- @timeoutMs@ bounds the driver-launch wait.
+localChrome :: String -> Int -> IO (Maybe (WebDriver, DriverProcess))
+localChrome capsJson timeoutMs = do
+  mproc <- ensureDriver "chrome" "" timeoutMs
+  case mproc of
+    Nothing -> pure Nothing
+    Just proc -> do
+      url <- driverUrl proc
+      d <- chrome url capsJson
+      pure (Just (d, proc))
 
 -- | The @http:\/\/127.0.0.1:\<port\>@ to pass to 'chrome'\/'headlessChrome'.
 driverUrl :: DriverProcess -> IO String
@@ -1048,8 +1116,28 @@ bidiUnsubscribe (BiDi p) cid events timeoutMs = N.selBidiUnsubscribe p cid event
 bidiWaitEvent :: BiDi -> String -> Int -> IO String
 bidiWaitEvent (BiDi p) method timeoutMs = N.selBidiWaitEvent p method timeoutMs
 
+-- | Block until an event whose @method@ matches arrives (or @timeoutMs@); the
+-- decoded event JSON, or @Nothing@ on timeout\/close (the @next_event@ helper the
+-- sibling bindings expose over the raw 'bidiWaitEvent'). Subscribe first.
+bidiNextEvent :: BiDi -> String -> Int -> IO (Maybe String)
+bidiNextEvent b method timeoutMs = do
+  raw <- bidiWaitEvent b method timeoutMs
+  pure (if null raw then Nothing else Just raw)
+
 bidiGetTree :: BiDi -> Int -> Int -> IO String
 bidiGetTree (BiDi p) cid timeoutMs = N.selBidiGetTree p cid timeoutMs
+
+-- | The top-level browsing-context id (the anchor for evaluate\/navigate), or
+-- @Nothing@ when the tree is empty (the @top_context@ helper the sibling bindings
+-- expose over 'bidiGetTree'). @cid@ is the command id for the getTree call.
+bidiTopContext :: BiDi -> Int -> Int -> IO (Maybe String)
+bidiTopContext b cid timeoutMs = do
+  tree <- bidiGetTree b cid timeoutMs
+  let needle = "\"context\":\""
+  pure $ if needle `isInfixOf` tree
+    then let ctx = takeWhile (/= '"') (afterInfix needle tree)
+         in if null ctx then Nothing else Just ctx
+    else Nothing
 
 bidiScriptEvaluate :: BiDi -> Int -> String -> String -> Int -> IO String
 bidiScriptEvaluate (BiDi p) cid expr ctx timeoutMs = N.selBidiScriptEvaluate p cid expr ctx timeoutMs

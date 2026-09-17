@@ -11,6 +11,10 @@ using Test
 @testset "Selenium.jl" begin
     include("engine_fetcher_test.jl")
 
+    # ABI-surface guard: pure reflection over the public method table, no engine
+    # .so required, so it always runs.
+    include("surface_test.jl")
+
     if haskey(ENV, "SELENIUM_CORE_LIB") && !isempty(ENV["SELENIUM_CORE_LIB"])
         include("ffi_test.jl")
     else

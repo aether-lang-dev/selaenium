@@ -20,6 +20,13 @@ aeb(cap) {
         dep("selenium_core/.build.ae")
         lib = dep_artifact("selenium_core/.build.ae", "shared_lib")
         engine_dir = path.dirname(lib)
+        // No-browser ABI-surface guard first (fast; compile-checks the whole
+        // public method table), then the self-orchestrated live legs.
+        haskell.test() {
+            env("SELENIUM_CORE_LIB", lib)
+            link_dir(engine_dir)
+            target("test:surface")
+        }
         haskell.test() {
             env("SELENIUM_CORE_LIB", lib)
             link_dir(engine_dir)
