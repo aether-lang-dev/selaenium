@@ -64,6 +64,21 @@ main() {
         }
     }
 
+    spec.describe(fw, "bridge_process: SAM step-aside verbs reach the console via the bridge") {
+        spec.it("a list request round-trips as a tagged reply carrying the cursor") callback {
+            bp = runner.runner_new(null)
+            // record two lines (step mode), then list — the SAM sequence view.
+            _m, _nm = iframe_bridge.bridge_process(bp, "[{\"id\":40,\"method\":\"mode\",\"params\":{\"mode\":\"step\"}}]")
+            _e, _ne = iframe_bridge.bridge_process(bp, "[{\"id\":41,\"method\":\"eval\",\"params\":{\"line\":\"open http://x/0\"}}]")
+            env, _n = iframe_bridge.bridge_process(bp, "[{\"id\":42,\"method\":\"list\"}]")
+            spec.assert_true(string.index_of(env, "\"kind\":\"reply\"") >= 0, "list reply is tagged kind=reply")
+            spec.assert_true(string.index_of(env, "\"id\":42") >= 0, "correlated to id 42")
+            spec.assert_true(string.index_of(env, "\"cursor\":") >= 0, "the envelope carries the cursor")
+            spec.assert_true(string.index_of(env, "\"count\":1") >= 0, "one recorded line")
+            runner.runner_free(bp)
+        }
+    }
+
     spec.describe(fw, "bridge_process: step-mode framing survives the envelope") {
         spec.it("eval in step mode yields a queued reply + a paused event") callback {
             bp = runner.runner_new(null)
