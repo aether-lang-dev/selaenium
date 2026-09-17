@@ -136,7 +136,10 @@ defmodule SeleniumTest do
           {:bidi_provide_response, 5},
           {:bidi_continue_with_auth, 4},
           {:bidi_set_cache_behavior, 2},
-          {:bidi_event_request_id, 1}
+          {:bidi_event_request_id, 1},
+          {:bidi_unsubscribe, 3},
+          {:bidi_lost_events, 1},
+          {:bidi_navigate, 3}
         ] do
       assert function_exported?(Selenium, f, a), "missing Selenium.#{f}/#{a}"
     end

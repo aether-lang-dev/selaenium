@@ -59,6 +59,7 @@ defmodule Selenium.Native do
   defdelegate bidi_subscribe(bidi_handle, id, events_csv, timeout_ms), to: :selenium_nif
   defdelegate bidi_unsubscribe(bidi_handle, id, events_csv, timeout_ms), to: :selenium_nif
   defdelegate bidi_lost_events(bidi_handle), to: :selenium_nif
+  defdelegate bidi_navigate(bidi_handle, id, ctx, url, timeout_ms), to: :selenium_nif
 
   # ---- BiDi network interception (request pausing / mocking) ----
   defdelegate bidi_network_add_intercept(bidi_handle, id, phases, url_pattern, timeout_ms),

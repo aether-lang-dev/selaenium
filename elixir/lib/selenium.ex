@@ -908,6 +908,23 @@ defmodule Selenium do
     end)
   end
 
+  @doc "session.unsubscribe from one or more event names; wait for the ack."
+  def bidi_unsubscribe(h, events, timeout_ms \\ 10_000) do
+    with_bidi(h, fn bh ->
+      id = bidi_next_id(h)
+      {:ok, ack(Native.bidi_unsubscribe(bh, id, join_events(events), timeout_ms))}
+    end)
+  end
+
+  @doc """
+  The number of BiDi events that were dropped because the receive queue
+  overflowed (0 when none were lost). A non-zero value means `bidi_next_event`
+  missed some events.
+  """
+  def bidi_lost_events(h) do
+    with_bidi(h, fn bh -> {:ok, Native.bidi_lost_events(bh)} end)
+  end
+
   @doc "Block until an event whose method matches arrives, or timeout. {:ok, event} | {:ok, :timeout}."
   def bidi_next_event(h, method, timeout_ms \\ 5_000) do
     with_bidi(h, fn bh ->
@@ -935,6 +952,24 @@ defmodule Selenium do
     case bidi_command(h, "browsingContext.getTree", %{}, timeout_ms) do
       {:ok, %{"result" => %{"contexts" => [%{"context" => ctx} | _]}}} -> ctx
       _ -> nil
+    end
+  end
+
+  @doc """
+  Navigate the top-level browsing context to `url` over BiDi
+  (`browsingContext.navigate`, waiting for the "complete" load). Returns
+  `{:ok, result}` with the navigation result, or `{:error, _}` if there is no
+  browsing context.
+  """
+  def bidi_navigate(h, url, timeout_ms \\ 30_000) do
+    case bidi_top_context(h, timeout_ms) do
+      nil ->
+        {:error, {0, "no browsing context for navigate"}}
+
+      ctx ->
+        with_bidi(h, fn bh ->
+          {:ok, decode(Native.bidi_navigate(bh, bidi_next_id(h), ctx, to_string(url), timeout_ms))}
+        end)
     end
   end
 

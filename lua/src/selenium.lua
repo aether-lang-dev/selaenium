@@ -391,6 +391,9 @@ M.WebElement = WebElement
 
 local WebDriver = {}
 WebDriver.__index = WebDriver
+-- Expose the metatable so callers (and the surface guard) can see the session
+-- method table, mirroring M.WebElement / M.Select / M.Actions.
+M.WebDriver = WebDriver
 
 local function new(command_executor, caps, tls)
   local handle = native.open(command_executor)

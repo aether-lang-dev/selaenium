@@ -141,6 +141,50 @@ do
   check(#act:build() == 0, "pause-only sequence emits no device")
 end
 
+-- ---- public-surface guard: WebDriver/WebElement/Select/Wait methods ----
+-- Lua dispatches methods dynamically, so this asserts every name on the shared
+-- feature bar is a callable on its metatable — the counterpart to the compiled
+-- bindings' compile-surface checks; a removed/renamed method fails this run.
+do
+  local function has(tbl, names, label)
+    for _, n in ipairs(names) do
+      check(type(tbl[n]) == "function", label .. ":" .. n .. " is declared")
+    end
+  end
+  has(s.WebDriver, {
+    "get", "title", "current_url", "page_source", "back", "forward", "refresh",
+    "find_element", "find_elements", "find_relative", "find_relative_count",
+    "exists", "active_element", "execute_script", "execute_async_script",
+    "window_handles", "current_window_handle", "new_window", "close_window",
+    "switch_to_window", "maximize_window", "minimize_window", "fullscreen_window",
+    "get_window_rect", "set_window_rect", "switch_to_frame",
+    "switch_to_parent_frame", "switch_to_default_content",
+    "accept_alert", "dismiss_alert", "alert_text", "send_alert_text", "alert_present",
+    "add_cookie", "cookies", "cookie", "delete_cookie", "delete_all_cookies",
+    "perform_actions", "clear_actions", "set_timeouts", "set_page_load_timeout",
+    "set_script_timeout", "implicitly_wait", "screenshot_base64", "print_pdf",
+    "wait", "wait_for_element", "wait_for_visible", "wait_for_clickable",
+    "wait_until_gone", "wait_for_title_is", "wait_for_title_contains",
+    "wait_for_url_is", "wait_for_url_contains", "actions",
+    "bidi", "bidi_available", "quit", "session_id",
+  }, "WebDriver")
+  has(s.WebElement, {
+    "click", "clear", "send_keys", "text", "tag_name", "get_property", "rect",
+    "is_displayed", "is_enabled", "is_selected", "get_attribute",
+    "get_dom_attribute", "css_value", "value_of_css_property", "screenshot_base64",
+    "find_element", "find_elements", "shadow_root", "submit",
+  }, "WebElement")
+  has(s.Select, {
+    "options", "all_selected_options", "first_selected_option",
+    "select_by_index", "select_by_value", "select_by_visible_text", "deselect_all",
+  }, "Select")
+  has(s.Actions, {
+    "move_to_element", "click", "click_and_hold", "context_click", "double_click",
+    "drag_and_drop", "key_down", "key_up", "send_keys", "release", "pause",
+    "build", "perform",
+  }, "Actions")
+end
+
 if fails == 0 then
   print("PASS: Lua FFI tests green")
   os.exit(0)

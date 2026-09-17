@@ -174,3 +174,78 @@ test "Actions only pauses builds no device" {
     acts.deinit();
     try std.testing.expectEqualStrings("[]", built);
 }
+
+// ---- Public-surface guard (compile-time) ----
+//
+// References every public method by address so this test binary fails to
+// compile if any of them is removed or renamed — the Zig equivalent of the
+// other bindings' reflection-based surface tests. It never runs anything; the
+// mere `_ = &Type.method` forces semantic analysis of each declaration.
+test "public surface is present (ABI parity with the Rust bar)" {
+    // Browser session factories (all seven, incl. per-browser TLS + headless).
+    _ = &sel.WebDriver.chrome;
+    _ = &sel.WebDriver.chromeTls;
+    _ = &sel.WebDriver.headlessChrome;
+    _ = &sel.WebDriver.firefox;
+    _ = &sel.WebDriver.firefoxTls;
+    _ = &sel.WebDriver.headlessFirefox;
+    _ = &sel.WebDriver.edge;
+    _ = &sel.WebDriver.edgeTls;
+    _ = &sel.WebDriver.headlessEdge;
+    _ = &sel.WebDriver.safari;
+    _ = &sel.WebDriver.safariTls;
+    _ = &sel.WebDriver.localChrome;
+
+    // Element discovery: singular + plural, driver- and element-scoped, relative.
+    _ = &sel.WebDriver.findElement;
+    _ = &sel.WebDriver.findElements;
+    _ = &sel.WebDriver.findChildElement;
+    _ = &sel.WebDriver.findChildElements;
+    _ = &sel.WebDriver.findRelative;
+    _ = &sel.WebDriver.findRelativeCount;
+    _ = &sel.WebDriver.exists;
+    _ = &sel.WebDriver.activeElement;
+
+    // Shadow DOM: getShadowRoot + the ShadowRoot search context.
+    _ = &sel.WebDriver.shadowRoot;
+    _ = &sel.ShadowRoot.findElement;
+    _ = &sel.ShadowRoot.findElements;
+
+    // A representative sweep of the rest of the driver surface so the guard
+    // notices wholesale regressions, not only the additions above.
+    _ = &sel.WebDriver.get;
+    _ = &sel.WebDriver.title;
+    _ = &sel.WebDriver.currentUrl;
+    _ = &sel.WebDriver.pageSource;
+    _ = &sel.WebDriver.back;
+    _ = &sel.WebDriver.forward;
+    _ = &sel.WebDriver.refresh;
+    _ = &sel.WebDriver.executeScript;
+    _ = &sel.WebDriver.executeAsyncScript;
+    _ = &sel.WebDriver.performActions;
+    _ = &sel.WebDriver.clearActions;
+    _ = &sel.WebDriver.screenshotBase64;
+    _ = &sel.WebDriver.printPdf;
+    _ = &sel.WebDriver.addCookie;
+    _ = &sel.WebDriver.cookies;
+    _ = &sel.WebDriver.deleteAllCookies;
+    _ = &sel.WebDriver.windowHandles;
+    _ = &sel.WebDriver.newWindow;
+    _ = &sel.WebDriver.closeWindow;
+    _ = &sel.WebDriver.switchToWindow;
+    _ = &sel.WebDriver.switchToFrame;
+    _ = &sel.WebDriver.switchToParentFrame;
+    _ = &sel.WebDriver.switchToDefaultContent;
+    _ = &sel.WebDriver.acceptAlert;
+    _ = &sel.WebDriver.dismissAlert;
+    _ = &sel.WebDriver.alertText;
+    _ = &sel.WebDriver.sendAlertText;
+    _ = &sel.WebDriver.alertPresent;
+    _ = &sel.WebDriver.setTimeouts;
+    _ = &sel.WebDriver.implicitlyWait;
+    _ = &sel.WebDriver.bidi;
+    _ = &sel.WebDriver.bidiAvailable;
+    _ = &sel.BiDi.subscribe;
+    _ = &sel.BiDi.unsubscribe;
+    _ = &sel.BiDi.nextEvent;
+}

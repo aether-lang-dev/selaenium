@@ -486,6 +486,72 @@ wait_variants_test_() ->
         end
     end}.
 
+%% ---- public-surface guard -----------------------------------------------
+%%
+%% Assert every name on the shared feature bar is an exported function of
+%% `selenium` / `by` (Erlang is dynamically dispatched, so this runtime check is
+%% the guard that a removed/renamed export fails the build's test run) — the
+%% counterpart to the other bindings' surface tests.
+surface_test() ->
+    _ = code:ensure_loaded(selenium),
+    _ = code:ensure_loaded(by),
+    %% {Module, Function, Arity} for the driver/element/select/wait/BiDi surface.
+    Sel = [
+        %% session factories
+        {chrome, 1}, {chrome_tls, 3}, {headless_chrome, 1},
+        {firefox, 1}, {headless_firefox, 1}, {edge, 1}, {headless_edge, 1}, {safari, 1},
+        {local_chrome, 1}, {resolve_driver, 2}, {launch_driver, 2}, {ensure_driver, 3},
+        {driver_url, 1}, {driver_pid, 1}, {stop_driver, 1},
+        %% navigation / document
+        {get, 2}, {title, 1}, {current_url, 1}, {page_source, 1},
+        {back, 1}, {forward, 1}, {refresh, 1},
+        %% elements
+        {find_element, 2}, {find_elements, 2}, {find_relative, 3}, {find_relative_count, 3},
+        {exists, 2}, {active_element, 1}, {clear, 2}, {send_keys, 3}, {submit, 2},
+        {tag_name, 2}, {element_text, 2}, {get_attribute, 3}, {get_property, 3},
+        {dom_attribute, 3}, {css_value, 3}, {value_of_css_property, 3},
+        {is_displayed, 2}, {is_enabled, 2}, {is_selected, 2},
+        {element_rect, 2}, {element_screenshot, 2},
+        {shadow_root, 2}, {find_element_from_shadow_root, 3}, {find_elements_from_shadow_root, 3},
+        %% script / windows / frames / alerts / cookies
+        {execute_script, 3}, {execute_async_script, 3},
+        {window_handles, 1}, {current_window_handle, 1}, {new_window, 2}, {close_window, 1},
+        {switch_to_window, 2}, {maximize_window, 1}, {minimize_window, 1}, {fullscreen_window, 1},
+        {get_window_rect, 1}, {set_window_rect, 2},
+        {switch_to_frame, 2}, {switch_to_parent_frame, 1}, {switch_to_default_content, 1},
+        {accept_alert, 1}, {dismiss_alert, 1}, {alert_text, 1}, {send_alert_text, 2}, {alert_present, 1},
+        {add_cookie, 2}, {cookies, 1}, {cookie, 2}, {delete_cookie, 2}, {delete_all_cookies, 1},
+        {perform_actions, 2}, {clear_actions, 1},
+        {set_timeouts, 2}, {set_page_load_timeout, 2}, {set_script_timeout, 2}, {implicitly_wait, 2},
+        {screenshot, 1}, {print_pdf, 1},
+        %% select
+        {all_selected_options, 2}, {first_selected_option, 2}, {is_multiple, 2},
+        {select_by_index, 3}, {select_by_value, 3}, {select_by_visible_text, 3}, {deselect_all, 2},
+        %% waits (the locator is split into separate By + Value args here)
+        {wait_until, 4}, {wait_for_element, 4}, {wait_for_visible, 4}, {wait_for_clickable, 4},
+        {wait_until_gone, 4}, {wait_for_title_is, 3}, {wait_for_title_contains, 3},
+        {wait_for_url_is, 3}, {wait_for_url_contains, 3}, {wait_for_text_contains, 4},
+        %% actions
+        {action_click, 2}, {action_click_and_hold, 2}, {action_release, 1},
+        {action_double_click, 2}, {action_context_click, 2}, {action_move_to, 2},
+        {action_drag_and_drop, 3}, {action_key_down, 2}, {action_key_up, 2},
+        %% BiDi
+        {bidi_available, 1}, {bidi_subscribe, 2}, {bidi_unsubscribe, 2}, {bidi_next_event, 3},
+        {bidi_command, 4}, {bidi_lost_events, 1}, {bidi_get_tree, 1}, {bidi_top_context, 1},
+        {bidi_evaluate, 2}, {bidi_evaluate_value, 2}, {bidi_navigate, 2},
+        {bidi_add_intercept, 2}, {bidi_remove_intercept, 2}, {bidi_continue_request, 2},
+        {bidi_fail_request, 2}, {bidi_provide_response, 2}, {bidi_continue_with_auth, 4},
+        {bidi_set_cache_behavior, 1}, {bidi_event_request_id, 1}
+    ],
+    MissingSel = [{selenium, F, A} || {F, A} <- Sel,
+                                      not erlang:function_exported(selenium, F, A)],
+    By = [{id, 1}, {name, 1}, {class_name, 1}, {css, 1}, {css_selector, 1},
+          {tag_name, 1}, {link_text, 1}, {partial_link_text, 1}, {xpath, 1}],
+    MissingBy = [{by, F, A} || {F, A} <- By,
+                               not erlang:function_exported(by, F, A)],
+    ?assertEqual([], MissingSel ++ MissingBy),
+    ok.
+
 %% ---- helpers -------------------------------------------------------------
 
 %% A findElements-style JSON array of element refs.

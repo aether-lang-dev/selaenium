@@ -79,6 +79,8 @@ const c = struct {
 };
 
 pub const w3c_element_key = "element-6066-11e4-a52e-4f735466cecf";
+/// The W3C shadow-root reference key, distinct from the element key.
+pub const w3c_shadow_key = "shadow-6066-11e4-a52e-4f735466cecf";
 
 /// A locator: a (strategy, value) pair produced by the `By` factory and passed
 /// to `findElement`/`findElements` (Selenium 4.x's one-arg locator shape).
@@ -190,6 +192,7 @@ pub const Keys = struct {
 pub const ErrorKind = enum {
     transport,
     no_such_element,
+    no_such_shadow_root,
     stale_element_reference,
     element_click_intercepted,
     element_not_interactable,
@@ -225,6 +228,7 @@ fn classifyKind(code: i32) ErrorKind {
         11 => .invalid_selector,
         13 => .javascript,
         17 => .no_such_element,
+        19 => .no_such_shadow_root,
         21, 24 => .timeout,
         23 => .stale_element_reference,
         28 => .unknown_command,
@@ -397,6 +401,43 @@ pub const WebElement = struct {
     }
 };
 
+/// A shadow root as a search context (mirrors Selenium's `ShadowRoot`). Only
+/// `findElement`/`findElements` are supported, scoped inside the shadow tree.
+/// Obtain one from `WebDriver.shadowRoot`.
+pub const ShadowRoot = struct {
+    driver: *WebDriver,
+    id: []u8, // owned (the W3C shadow-root reference)
+
+    pub fn deinit(self: *ShadowRoot) void {
+        self.driver.allocator.free(self.id);
+    }
+
+    /// Find the first descendant of this shadow root matching `by`
+    /// (`findElementFromShadowRoot`), scoped inside the shadow tree.
+    pub fn findElement(self: *const ShadowRoot, by: Locator) Error!WebElement {
+        const loc = try locator(self.driver.allocator, by.using, by.value);
+        defer self.driver.allocator.free(loc);
+        const p = try std.fmt.allocPrint(self.driver.allocator, "{{\"id\":\"{s}\",{s}", .{ self.id, loc[1..] });
+        defer self.driver.allocator.free(p);
+        var v = try self.driver.execute("findElementFromShadowRoot", p);
+        defer v.deinit();
+        const eid = self.driver.extractElementId(v.value) catch return Error.WebDriver;
+        return WebElement{ .driver = self.driver, .id = eid };
+    }
+
+    /// Find every descendant of this shadow root matching `by`
+    /// (`findElementsFromShadowRoot`). Owned slice; free each `.deinit()` + slice.
+    pub fn findElements(self: *const ShadowRoot, by: Locator) Error![]WebElement {
+        const loc = try locator(self.driver.allocator, by.using, by.value);
+        defer self.driver.allocator.free(loc);
+        const p = try std.fmt.allocPrint(self.driver.allocator, "{{\"id\":\"{s}\",{s}", .{ self.id, loc[1..] });
+        defer self.driver.allocator.free(p);
+        var v = try self.driver.execute("findElementsFromShadowRoot", p);
+        defer v.deinit();
+        return self.driver.elementsFrom(v.value);
+    }
+};
+
 pub const WebDriver = struct {
     allocator: std.mem.Allocator,
     handle: ?*anyopaque,
@@ -469,6 +510,73 @@ pub const WebDriver = struct {
             \\{"browserName":"chrome","goog:chromeOptions":{"args":["--headless=new","--no-sandbox","--disable-gpu","--disable-dev-shm-usage"]}}
         ;
         return chrome(allocator, command_executor, caps);
+    }
+
+    /// Start a Firefox session against a running geckodriver (or Grid).
+    /// `options_json` is the caps object (as for `chrome`); the browserName is
+    /// forced to "firefox" if absent.
+    pub fn firefox(allocator: std.mem.Allocator, command_executor: []const u8, options_json: []const u8) Error!WebDriver {
+        return firefoxTls(allocator, command_executor, options_json, .{});
+    }
+
+    /// TLS-aware `firefox` (see `chromeTls`).
+    pub fn firefoxTls(allocator: std.mem.Allocator, command_executor: []const u8, options_json: []const u8, tls: TlsConfig) Error!WebDriver {
+        const caps = try withBrowserName(allocator, options_json, "firefox");
+        defer allocator.free(caps);
+        return chromeTls(allocator, command_executor, caps, tls);
+    }
+
+    pub fn headlessFirefox(allocator: std.mem.Allocator, command_executor: []const u8) Error!WebDriver {
+        const caps =
+            \\{"browserName":"firefox","moz:firefoxOptions":{"args":["-headless"]}}
+        ;
+        return chrome(allocator, command_executor, caps);
+    }
+
+    /// Start a Microsoft Edge session against a running msedgedriver (or Grid).
+    /// (W3C browserName is "MicrosoftEdge".)
+    pub fn edge(allocator: std.mem.Allocator, command_executor: []const u8, options_json: []const u8) Error!WebDriver {
+        return edgeTls(allocator, command_executor, options_json, .{});
+    }
+
+    /// TLS-aware `edge` (see `chromeTls`).
+    pub fn edgeTls(allocator: std.mem.Allocator, command_executor: []const u8, options_json: []const u8, tls: TlsConfig) Error!WebDriver {
+        const caps = try withBrowserName(allocator, options_json, "MicrosoftEdge");
+        defer allocator.free(caps);
+        return chromeTls(allocator, command_executor, caps, tls);
+    }
+
+    pub fn headlessEdge(allocator: std.mem.Allocator, command_executor: []const u8) Error!WebDriver {
+        const caps =
+            \\{"browserName":"MicrosoftEdge","ms:edgeOptions":{"args":["--headless=new","--no-sandbox","--disable-gpu","--disable-dev-shm-usage"]}}
+        ;
+        return chrome(allocator, command_executor, caps);
+    }
+
+    /// Start a Safari session against a running safaridriver (macOS only). Safari
+    /// has no headless mode, so there is no `headlessSafari`.
+    pub fn safari(allocator: std.mem.Allocator, command_executor: []const u8, options_json: []const u8) Error!WebDriver {
+        return safariTls(allocator, command_executor, options_json, .{});
+    }
+
+    /// TLS-aware `safari` (see `chromeTls`).
+    pub fn safariTls(allocator: std.mem.Allocator, command_executor: []const u8, options_json: []const u8, tls: TlsConfig) Error!WebDriver {
+        const caps = try withBrowserName(allocator, options_json, "safari");
+        defer allocator.free(caps);
+        return chromeTls(allocator, command_executor, caps, tls);
+    }
+
+    /// Return an owned caps JSON that is `options_json` with `"browserName"`
+    /// prepended (so a caller-supplied browserName still wins, being later in
+    /// the object). `options_json` is a JSON object; `"{}"` yields just the name.
+    fn withBrowserName(allocator: std.mem.Allocator, options_json: []const u8, name: []const u8) Error![]u8 {
+        const trimmed = std.mem.trim(u8, options_json, " \t\r\n");
+        const tail: []const u8 = if (trimmed.len >= 2 and trimmed[0] == '{')
+            trimmed[1..]
+        else
+            "}";
+        const sep: []const u8 = if (std.mem.eql(u8, tail, "}")) "" else ",";
+        return std.fmt.allocPrint(allocator, "{{\"browserName\":\"{s}\"{s}{s}", .{ name, sep, tail }) catch Error.OutOfMemory;
     }
 
     /// A Chrome session that spawns its OWN chromedriver via the engine — no
@@ -607,6 +715,18 @@ pub const WebDriver = struct {
         return self.atomResult(@intCast(c.aether_sel_embed_find_relative(self.handle, bc.ptr, fc.ptr)));
     }
 
+    /// The NUMBER of elements a relative-locator query matches, without
+    /// materializing element refs — the count-only counterpart to
+    /// `findRelative` (same `filters_json` shape).
+    pub fn findRelativeCount(self: *WebDriver, base_css: []const u8, filters_json: []const u8) Error!usize {
+        var v = try self.findRelative(base_css, filters_json);
+        defer v.deinit();
+        return switch (v.value) {
+            .array => |a| a.items.len,
+            else => 0,
+        };
+    }
+
     // ---- navigation ----
     pub fn get(self: *WebDriver, url: []const u8) Error!void {
         const p = try std.fmt.allocPrint(self.allocator, "{{\"url\":\"{s}\"}}", .{url});
@@ -661,6 +781,38 @@ pub const WebDriver = struct {
         defer v.deinit();
         const id = self.extractElementId(v.value) catch return Error.WebDriver;
         return WebElement{ .driver = self, .id = id };
+    }
+
+    /// Find EVERY element matching `by` (W3C `findElements`). Returns an owned
+    /// slice of `WebElement` (empty when none match); free each `.deinit()` and
+    /// then the slice.
+    pub fn findElements(self: *WebDriver, by: Locator) Error![]WebElement {
+        const loc = try locator(self.allocator, by.using, by.value);
+        defer self.allocator.free(loc);
+        var v = try self.execute("findElements", loc);
+        defer v.deinit();
+        return self.elementsFrom(v.value);
+    }
+
+    /// Materialize a parsed JSON array of W3C element refs into owned
+    /// `WebElement`s (the shared tail of `findElements`/`findChildElements`).
+    fn elementsFrom(self: *WebDriver, value: std.json.Value) Error![]WebElement {
+        const arr = switch (value) {
+            .array => |a| a,
+            else => return self.allocator.alloc(WebElement, 0) catch Error.OutOfMemory,
+        };
+        var out = self.allocator.alloc(WebElement, arr.items.len) catch return Error.OutOfMemory;
+        var i: usize = 0;
+        errdefer {
+            var j: usize = 0;
+            while (j < i) : (j += 1) out[j].deinit();
+            self.allocator.free(out);
+        }
+        while (i < arr.items.len) : (i += 1) {
+            const id = self.extractElementId(arr.items[i]) catch return Error.WebDriver;
+            out[i] = WebElement{ .driver = self, .id = id };
+        }
+        return out;
     }
 
     /// True if at least one element matching `by` is present right now — an
@@ -858,6 +1010,42 @@ pub const WebDriver = struct {
         defer v.deinit();
         const id = self.extractElementId(v.value) catch return Error.WebDriver;
         return WebElement{ .driver = self, .id = id };
+    }
+
+    /// Find EVERY descendant of `parent` matching `by` (element-scoped
+    /// `findChildElements`). Owned slice; free each `.deinit()` + the slice.
+    pub fn findChildElements(self: *WebDriver, parent: *const WebElement, by: Locator) Error![]WebElement {
+        const loc = try locator(self.allocator, by.using, by.value);
+        defer self.allocator.free(loc);
+        const p = try std.fmt.allocPrint(self.allocator, "{{\"id\":\"{s}\",{s}", .{ parent.id, loc[1..] });
+        defer self.allocator.free(p);
+        var v = try self.execute("findChildElements", p);
+        defer v.deinit();
+        return self.elementsFrom(v.value);
+    }
+
+    /// This element's shadow root as a search context (W3C `getShadowRoot`;
+    /// mirrors Selenium's `getShadowRoot`). Returns `error.WebDriver` with kind
+    /// `no_such_shadow_root` (code 19) if the element hosts no open shadow root.
+    pub fn shadowRoot(self: *WebDriver, e: *const WebElement) Error!ShadowRoot {
+        var v = try self.elementCmd("getShadowRoot", e.id, "");
+        defer v.deinit();
+        switch (v.value) {
+            .object => |o| {
+                if (o.get(w3c_shadow_key)) |idv| {
+                    switch (idv) {
+                        .string => |s| return ShadowRoot{
+                            .driver = self,
+                            .id = self.allocator.dupe(u8, s) catch return Error.OutOfMemory,
+                        },
+                        else => {},
+                    }
+                }
+            },
+            else => {},
+        }
+        self.setLast(19, self.allocator.dupe(u8, "no such shadow root") catch "");
+        return Error.WebDriver;
     }
 
     // ---- cookies ----
