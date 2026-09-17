@@ -152,7 +152,8 @@ GEMINI.local.md
 
 # BEAM family (Erlang owns the shared NIF; Elixir/Gleam ride it)
 /erlang/_build/
-/erlang/erl_crash.dump
+# NB no erl_crash.dump rule on purpose: a BEAM crash dump appearing is a signal,
+# not noise. Ignoring it hides the fact that the VM crashed. Delete it when seen.
 /gleam/build/
 /gleam/manifest.toml
 /elixir/_build/
