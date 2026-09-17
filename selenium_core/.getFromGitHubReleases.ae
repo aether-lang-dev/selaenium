@@ -1,0 +1,63 @@
+// selenium_core/.getFromGitHubReleases.ae — the FETCH substitute producer for
+// the engine .so. Instead of cross-compiling libselenium_core from Aether
+// source, this node downloads the prebuilt engine for THIS platform from the
+// project's GitHub releases (verified against its published .sha256, cached),
+// stages it, and publishes the SAME artifact edges the engine builder publishes
+// (shared_lib / shared_library / shared_library_deps_including_transitive) — so
+// it is a drop-in producer of the engine with no Aether toolchain.
+//
+// Use it via aeb's overrideDep (aeb 0.313+): relabel the engine-build edge to
+// this node —
+//
+//   aeb <target> --overrideDep selenium_core/<engine build node>=selenium_core/.getFromGitHubReleases.ae
+//
+// so a binding's tests/package node consumes the FETCHED engine (its
+// dep_artifact reads what this node publishes) rather than building it. This is
+// how a no-Aether-toolchain packaging / CI flow supplies the engine, and the
+// piece a generated consumer manifest points at.
+//
+// The download+verify+cache is the shared scripts/fetch-engine.sh the runtime
+// and link-time bindings already use, so one cached engine
+// ($XDG_CACHE_HOME/selaenium/<tag>/libselenium_core.<ext>) is shared everywhere;
+// staging here is native std.fs (no shelled cp/mkdir). ENGINE_VERSION (the
+// release tag) lives in that script (TAG, currently v0.8.0).
+import bldr
+import std.string
+import std.os
+import std.fs
+
+aeb(cap) {
+    bldr.build() {
+        // {module_dir} interpolates to the node LABEL for a typed node, so
+        // resolve the real filesystem source dir (selenium_core/) for the script
+        // path. The fetcher lives one up, at <repo>/scripts/fetch-engine.sh.
+        srcdir = bldr.source_dir(builder_context())
+        tgtdir = bldr.target_dir(builder_context())
+        fetch  = string.concat(srcdir, "/../scripts/fetch-engine.sh")
+
+        // Fetch (download + .sha256 verify + cache) and read back the cache path.
+        // os.exec runs the vetted fetch script — the one genuinely-runtime step;
+        // everything else is native std.fs, not shelled tools.
+        _dl, _derr = os.exec(string.concat("sh ", string.concat(fetch, " >&2")))
+        cached, _perr = os.exec(string.concat("sh ", string.concat(fetch, " --path")))
+        cached = string.trim(cached)
+
+        // Stage the cached .so into (a) the node's target dir (the published
+        // path) and (b) the in-tree native/ dir the link-time bindings' fixed -L
+        // path expects — via std.fs, mirroring where the engine builder lands it.
+        libdir = string.concat(tgtdir, "/lib")
+        so_path = string.concat(libdir, "/libselenium_core.so")
+        native_so = string.concat(srcdir, "/native/libselenium_core.so")
+        _m1 = fs.mkdir_p(libdir)
+        _m2 = fs.mkdir_p(string.concat(srcdir, "/native"))
+        _c1 = fs.copy(cached, so_path)
+        _c2 = fs.copy(cached, native_so)
+
+        // Publish the exact edge set the engine builder publishes, pointing at
+        // the staged .so — so this node is a drop-in substitute with no consumer
+        // change (consumers read dep_artifact(…, "shared_lib") et al.).
+        publish_artifact("shared_lib", so_path)
+        publish_artifact("shared_library", so_path)
+        publish_artifact("shared_library_deps_including_transitive", so_path)
+    }
+}
