@@ -32,7 +32,8 @@ aeb ruby/.package.ae \
 
 Either produces `target/package/ruby/dist/selenium-webdriver-<v>.gem`.
 
-**2. Install it** (local file — not from rubygems.org):
+**2. Install it for regular Ruby project use** (from the local `.gem` file, not
+from rubygems.org) so any project can `require 'selenium-webdriver'`:
 
 ```sh
 gem install --local target/package/ruby/dist/selenium-webdriver-*.gem
