@@ -61,10 +61,10 @@ either works. To build your own program instead of the test, link
 
 ## Engine version pin
 
-The fetch-cache tag is pinned to **`v0.8.0`** in `c/.build.ae`
-(`ENGINE_VERSION()`), matching `scripts/fetch-engine.sh`'s default `TAG` and
-`rust/build.rs`'s `ENGINE_VERSION`. Keep all three in lockstep when the engine
-release tag bumps.
+The fetch-cache tag is the single source of truth in the repo-root
+**`SELENIUM_CORE_VERSION`** file (currently `v0.8.0`), which `c/.build.ae`
+(`SELENIUM_CORE_VERSION()`), `scripts/fetch-engine.sh`, `rust/build.rs`, and
+every other binding read. Bump the engine by editing that one file.
 
 ## Testing
 

@@ -60,16 +60,19 @@ export `CGO_LDFLAGS` as above (you can point it at `SELENIUM_CORE_LIB`'s dir).
 mirroring `rust/build.rs`'s `resolve_dir()` order
 (`SELENIUM_CORE_LIB` → bundled `native/` → fetch cache → monorepo sibling):
 
-- `const EngineVersion = "v0.8.0"` — the gh-release tag whose cache is searched
-  (matches `scripts/fetch-engine.sh`'s default `TAG` and `rust/build.rs`).
+- `const SeleniumCoreVersion = "v0.8.0"` — the gh-release tag whose cache is
+  searched (kept in lockstep with the repo-root `SELENIUM_CORE_VERSION` file by
+  `TestSeleniumCoreVersionPin`, which reads the file and fails on drift; go:embed
+  can't reach the parent dir, so the literal is guarded rather than file-read).
 - `CacheDir()` / `CachedEnginePath()` — the shared per-user cache dir/file
   (identical to `scripts/fetch-engine.sh --path`).
 - `EngineDir()` / `EnginePath()` — resolve the engine dir/file for runtime
   dlopen/rpath and tests.
 - `CgoLdflags()` — the `-L… -Wl,-rpath,…` string to export as `CGO_LDFLAGS`.
 
-Keep `EngineVersion` in lockstep with `scripts/fetch-engine.sh` and
-`rust/build.rs` when the engine release tag bumps.
+Bump the engine by editing the repo-root `SELENIUM_CORE_VERSION` file;
+`TestSeleniumCoreVersionPin` then fails until `SeleniumCoreVersion` is updated to
+match.
 
 ## Testing
 

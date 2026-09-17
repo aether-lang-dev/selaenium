@@ -94,7 +94,7 @@ ln -sf "$(scripts/fetch-engine.sh --path)" go/native/libselenium_core.so
 ```
 
 The engine-version pin and the runtime resolver live in `enginepath.go`:
-`const EngineVersion = "v0.8.0"` (the gh-release tag whose cache is searched;
+`const SeleniumCoreVersion = "v0.8.0"` (the gh-release tag whose cache is searched;
 keep it in lockstep with `scripts/fetch-engine.sh` and `rust/build.rs`),
 `CacheDir()` / `CachedEnginePath()` (the shared per-user cache dir/file, equal
 to `fetch-engine.sh --path`), `EngineDir()` / `EnginePath()` (resolve the engine

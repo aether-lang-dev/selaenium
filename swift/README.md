@@ -77,8 +77,9 @@ swift build                    # then build/test normally
 swift test
 ```
 
-The engine release tag this package pins is `engineVersion` in `Package.swift`
-(matching `scripts/fetch-engine.sh` and every other binding).
+The engine release tag is the repo-root `SELENIUM_CORE_VERSION` file (the single
+source of truth every binding reads); `Package.swift` keeps a `seleniumCoreVersion`
+literal, guarded by `Tests/SeleniumTests/VersionTests.swift` against that file.
 
 ## Getting the engine (before you build)
 

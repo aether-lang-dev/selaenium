@@ -71,8 +71,9 @@ Or set `SELENIUM_CORE_LIB=/abs/path/libselenium_core.so`
 (`scripts/fetch-engine.sh --path` prints the cache path). `TAG=vX.Y.Z` pins a
 release, `FORCE=1` re-fetches. The fetch downloads from THIS project's GitHub
 releases and verifies the `.sha256` sidecar. The engine-version pin
-`const EngineVersion = "v0.8.0"` in `selenium.nim` is the gh-release tag whose
-cache is searched — keep it in lockstep with `scripts/fetch-engine.sh` and
+`const SeleniumCoreVersion*` in `selenium.nim` (read at compile time from the
+repo-root `SELENIUM_CORE_VERSION` file via `staticRead`) is the gh-release tag
+whose cache is searched — the single source of truth `scripts/fetch-engine.sh` and
 `rust/build.rs`.
 
 ## Shipping a self-contained package (platform / DevOps)

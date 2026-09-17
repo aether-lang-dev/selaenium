@@ -75,9 +75,10 @@ crystal/bin/crystal-build spec spec/ffi_spec.cr   # then build/run normally
 
 Plain `crystal build` still works when the engine is in the bundled `native/` or
 the monorepo dir (locations 2 and 4, which are baked into the literal); the
-wrapper is what adds locations 1 and 3. The engine release tag this binding
-pins is `ENGINE_VERSION` in `src/selenium.cr` (matching
-`scripts/fetch-engine.sh` and every other binding).
+wrapper is what adds locations 1 and 3. The engine release tag is the repo-root
+`SELENIUM_CORE_VERSION` file (the single source of truth every binding reads);
+`src/selenium.cr` keeps a `SELENIUM_CORE_VERSION` literal guarded by
+`spec/version_spec.cr`, which fails if it drifts from that file.
 
 ## Getting the engine (before you build)
 

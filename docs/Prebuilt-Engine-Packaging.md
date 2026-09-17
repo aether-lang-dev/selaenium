@@ -47,9 +47,11 @@ is a substitute producer for the engine builder. It shells the shared
 [`scripts/fetch-engine.sh`](../scripts/fetch-engine.sh) (download + `.sha256`
 verify + cache under `$XDG_CACHE_HOME/selaenium/<tag>/`, the same cache the
 runtime and link-time bindings use), stages the `.so` with native `std.fs`, and
-`publish_artifact`s the engine edges. The release tag it fetches (`ENGINE_VERSION`)
-lives in `scripts/fetch-engine.sh` (`TAG`, currently `v0.8.0`) — keep it in step
-with the `AETHER_REF` engine cut when re-gluing to a newer engine.
+`publish_artifact`s the engine edges. The release tag it fetches is the single
+source of truth in the repo-root `SELENIUM_CORE_VERSION` file (currently `v0.8.0`),
+which `scripts/fetch-engine.sh` and every binding read (overridable via `TAG=`) —
+edit that one file, keeping it in step with the `AETHER_REF` engine cut, when
+re-gluing to a newer engine.
 
 ## Which dep to override, per binding
 

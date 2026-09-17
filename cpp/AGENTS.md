@@ -64,10 +64,11 @@ the same way, with `-Icpp/include -Ic/include`.
 
 ## Engine version pin
 
-The fetch-cache tag is pinned to **`v0.8.0`** in `cpp/.tests.ae`
-(`ENGINE_VERSION()`), matching `scripts/fetch-engine.sh`'s default `TAG`,
-`c/.build.ae`, and `rust/build.rs`'s `ENGINE_VERSION`. Keep them in lockstep
-when the engine release tag bumps.
+The fetch-cache tag is the single source of truth in the repo-root
+**`SELENIUM_CORE_VERSION`** file (currently `v0.8.0`), which `cpp/.tests.ae`
+(`SELENIUM_CORE_VERSION()`), `scripts/fetch-engine.sh`, `c/.build.ae`,
+`rust/build.rs`, and every other binding read. Bump the engine by editing that
+one file.
 
 ## Testing
 
