@@ -66,6 +66,49 @@ main() {
         }
     }
 
+    spec.describe(fw, "SAM history + cursor: list / jump / prev / next / redo") {
+        // Fresh controller so indices are predictable.
+        r2 = runner.runner_new(null)
+        spec.it("step mode records three lines without running them") callback {
+            _a = runner.runner_ingest(r2, "{\"id\":20,\"method\":\"mode\",\"params\":{\"mode\":\"step\"}}")
+            _b = _reply(r2, 20)
+            _c = runner.runner_ingest(r2, "{\"id\":21,\"method\":\"eval\",\"params\":{\"line\":\"open http://x/0\"}}")
+            spec.assert_true(string.index_of(_reply(r2, 21), "\"index\":0") >= 0, "first recorded at index 0")
+            _d = runner.runner_ingest(r2, "{\"id\":22,\"method\":\"eval\",\"params\":{\"line\":\"open http://x/1\"}}")
+            spec.assert_true(string.index_of(_reply(r2, 22), "\"index\":1") >= 0, "second at index 1")
+            _e = runner.runner_ingest(r2, "{\"id\":23,\"method\":\"eval\",\"params\":{\"line\":\"open http://x/2\"}}")
+            spec.assert_true(string.index_of(_reply(r2, 23), "\"index\":2") >= 0, "third at index 2")
+        }
+        spec.it("list shows all three with cursor at 0") callback {
+            _ig = runner.runner_ingest(r2, "{\"id\":24,\"method\":\"list\"}")
+            rep = _reply(r2, 24)
+            spec.assert_true(string.index_of(rep, "\"count\":3") >= 0, "count 3")
+            spec.assert_true(string.index_of(rep, "\"cursor\":0") >= 0, "cursor at 0 (nothing run yet)")
+            spec.assert_true(string.index_of(rep, "http://x/2") >= 0, "the third line is listed")
+        }
+        spec.it("step advances the cursor to 1") callback {
+            _ig = runner.runner_ingest(r2, "{\"id\":25,\"method\":\"step\"}")
+            spec.assert_true(string.index_of(_reply(r2, 25), "\"index\":0") >= 0, "ran index 0")
+        }
+        spec.it("jump moves the cursor to 2 without running") callback {
+            _ig = runner.runner_ingest(r2, "{\"id\":26,\"method\":\"jump\",\"params\":{\"to\":2}}")
+            spec.assert_true(string.index_of(_reply(r2, 26), "\"cursor\":2") >= 0, "cursor jumped to 2")
+        }
+        spec.it("prev moves the cursor back to 1") callback {
+            _ig = runner.runner_ingest(r2, "{\"id\":27,\"method\":\"prev\"}")
+            spec.assert_true(string.index_of(_reply(r2, 27), "\"cursor\":1") >= 0, "cursor back to 1")
+        }
+        spec.it("jump clamps past the end to n") callback {
+            _ig = runner.runner_ingest(r2, "{\"id\":28,\"method\":\"jump\",\"params\":{\"to\":99}}")
+            spec.assert_true(string.index_of(_reply(r2, 28), "\"cursor\":3") >= 0, "clamped to count (3)")
+        }
+        spec.it("redo re-runs the last-executed line (cursor-1)") callback {
+            _ig = runner.runner_ingest(r2, "{\"id\":29,\"method\":\"redo\"}")
+            spec.assert_true(string.index_of(_reply(r2, 29), "\"redone\":true") >= 0, "redo ran cursor-1")
+        }
+        runner.runner_free(r2)
+    }
+
     spec.describe(fw, "inspect + errors") {
         spec.it("inspect sid replies (empty for a null session)") callback {
             _ig = runner.runner_ingest(r, "{\"id\":8,\"method\":\"inspect\",\"params\":{\"what\":\"sid\"}}")

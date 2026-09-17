@@ -13,11 +13,21 @@
 // like bidi_demux_probe tests the router.
 //
 // Control request (what a front-end sends), JSON:
-//   {"id":N,"method":"eval","params":{"line":"open https://x"}}   run a shell line
+//   {"id":N,"method":"eval","params":{"line":"open https://x"}}   record a shell line (run now in run mode)
 //   {"id":N,"method":"mode","params":{"mode":"step"|"run"}}       set run/step mode
-//   {"id":N,"method":"step"}                                       run the next queued line (step mode)
-//   {"id":N,"method":"continue"}                                   run all queued lines + return to run
+//   {"id":N,"method":"step"}                                       run the line at the cursor, advance
+//   {"id":N,"method":"continue"}                                   run from the cursor to the end + return to run
 //   {"id":N,"method":"inspect","params":{"what":"trace"|"timers"|"sid"}}
+//   {"id":N,"method":"list"}                                       the recorded sequence + the cursor
+//   {"id":N,"method":"jump","params":{"to":K}}                     move the cursor to index K (no exec)
+//   {"id":N,"method":"prev"} / {"id":N,"method":"next"}            move the cursor -1 / +1 (no exec)
+//   {"id":N,"method":"redo"}                                       re-run the LAST-executed line (cursor-1)
+//
+// The SAM ("step-aside") model: eval'd lines are RECORDED into an indexed
+// history with a `cursor` (the next line to run), not a destructive FIFO — so a
+// front-end can step, step BACK (prev/jump), re-run (redo), and see the whole
+// sequence (list). step/continue advance the cursor; the history is never
+// discarded within a session.
 // Reply (correlated by id) on the runner lane:
 //   {"channel":"runner","id":N,"result":{…}}
 // Event (uncorrelated) on the runner lane:
@@ -33,14 +43,16 @@ import shell
 import bidi_demux
 
 // A runner controller wraps a W3C session + a demux (for the runner lane) + the
-// step state machine. mode: "run" executes an eval line immediately; "step"
-// queues it and executes one line per step()/continue().
+// SAM step state machine. mode: "run" executes an eval line immediately AND
+// records it; "step" records it without running. `lines` is the recorded
+// history ("\n"-joined, indexed 0..n-1); `cursor` is the next line to run.
 struct Runner {
     session: ptr       // the *Session commands run against
     demux: ptr         // bidi_demux.Demux — the runner lane carries our frames
     mode: string       // "run" (default) | "step"
-    queue: string      // "\n"-joined pending lines (step mode), FIFO
-    qn: int            // number of queued lines
+    lines: string      // "\n"-joined recorded lines (the SAM history), indexed
+    n: int             // number of recorded lines
+    cursor: int        // index of the NEXT line to execute (0..n); n == "at end"
 }
 
 // runner_new(session) — a controller over an existing W3C session. Owns its own
@@ -51,8 +63,9 @@ runner_new(session: ptr) -> ptr {
     r.session = session
     r.demux = bidi_demux.demux_new()
     r.mode = "run"
-    r.queue = ""
-    r.qn = 0
+    r.lines = ""
+    r.n = 0
+    r.cursor = 0
     return r as ptr
 }
 
@@ -110,49 +123,120 @@ runner_ingest(rp: ptr, request_json: string) -> int {
     if method == "inspect" {
         return _do_inspect(r, id, _param_str(root, "what"))
     }
+    if method == "list" {
+        return _do_list(r, id)
+    }
+    if method == "jump" {
+        return _do_jump(r, id, _param_int(root, "to"))
+    }
+    if method == "prev" {
+        return _do_move(r, id, 0 - 1)
+    }
+    if method == "next" {
+        return _do_move(r, id, 1)
+    }
+    if method == "redo" {
+        return _do_redo(r, id)
+    }
 
     return _reply_err(r, id, string.concat("unknown runner method: ", method))
 }
 
-// _do_eval — run mode: execute the line now. step mode: queue it (deferred to
-// step/continue) and emit a `paused` event so the front-end knows to step.
+// _do_eval — RECORD the line into history (at the end). run mode: execute it now
+// and advance the cursor past it. step mode: leave it unexecuted and emit a
+// `paused` event with the count remaining from the cursor.
 _do_eval(r: *Runner, id: int, line: string) -> int {
+    _append(r, line)
     if r.mode == "step" {
-        _enqueue(r, line)
-        _event(r, "paused", string.concat("{\"pending\":", string.concat(string.from_int(r.qn), "}")))
-        return _reply_ok(r, id, "{\"queued\":true}")
+        _event(r, "paused", string.concat("{\"pending\":", string.concat(string.from_int(_pending(r)), "}")))
+        return _reply_ok(r, id, string.concat("{\"queued\":true,\"index\":", string.concat(string.from_int(r.n - 1), "}")))
     }
     res = shell.shell_eval(r.session, line)
-    _event(r, "command-finished", string.concat("{\"line\":", string.concat(_qs(line), "}")))
+    r.cursor = r.n
+    _event(r, "command-finished", string.concat("{\"index\":", string.concat(string.from_int(r.n - 1),
+        string.concat(",\"line\":", string.concat(_qs(line), "}")))))
     return _reply_ok(r, id, res)
 }
 
-// _do_step — execute the next queued line (step mode). Emits command-finished,
-// and a fresh `paused` (with remaining count) if more are queued.
+// _do_step — execute the line AT the cursor, advance the cursor by one. Emits
+// command-finished, and a fresh `paused` (with remaining count) if more follow.
 _do_step(r: *Runner, id: int) -> int {
-    if r.qn == 0 {
+    if r.cursor >= r.n {
         return _reply_ok(r, id, "{\"stepped\":false,\"pending\":0}")
     }
-    line = _dequeue(r)
+    idx = r.cursor
+    line = _line_at(r, idx)
     res = shell.shell_eval(r.session, line)
-    _event(r, "command-finished", string.concat("{\"line\":", string.concat(_qs(line), "}")))
-    if r.qn > 0 {
-        _event(r, "paused", string.concat("{\"pending\":", string.concat(string.from_int(r.qn), "}")))
+    r.cursor = r.cursor + 1
+    _event(r, "command-finished", string.concat("{\"index\":", string.concat(string.from_int(idx),
+        string.concat(",\"line\":", string.concat(_qs(line), "}")))))
+    if _pending(r) > 0 {
+        _event(r, "paused", string.concat("{\"pending\":", string.concat(string.from_int(_pending(r)), "}")))
     }
-    return _reply_ok(r, id, string.concat("{\"stepped\":true,\"result\":", string.concat(res, "}")))
+    return _reply_ok(r, id, string.concat("{\"stepped\":true,\"index\":", string.concat(string.from_int(idx),
+        string.concat(",\"result\":", string.concat(res, "}")))))
 }
 
-// _do_continue — drain the queue, running each line, then return to run mode.
+// _do_continue — run from the cursor to the end, then return to run mode.
 _do_continue(r: *Runner, id: int) -> int {
     ran = 0
-    while r.qn > 0 {
-        line = _dequeue(r)
+    while r.cursor < r.n {
+        idx = r.cursor
+        line = _line_at(r, idx)
         _res = shell.shell_eval(r.session, line)
-        _event(r, "command-finished", string.concat("{\"line\":", string.concat(_qs(line), "}")))
+        r.cursor = r.cursor + 1
+        _event(r, "command-finished", string.concat("{\"index\":", string.concat(string.from_int(idx),
+            string.concat(",\"line\":", string.concat(_qs(line), "}")))))
         ran = ran + 1
     }
     r.mode = "run"
     return _reply_ok(r, id, string.concat("{\"continued\":", string.concat(string.from_int(ran), ",\"mode\":\"run\"}")))
+}
+
+// _do_list — the recorded sequence as a JSON array of {index,line}, plus the
+// cursor. The SAM "where am I / what's the script" view; runs nothing.
+_do_list(r: *Runner, id: int) -> int {
+    arr = "["
+    i = 0
+    while i < r.n {
+        if i > 0 { arr = string.concat(arr, ",") }
+        arr = string.concat(arr, string.concat("{\"index\":", string.concat(string.from_int(i),
+            string.concat(",\"line\":", string.concat(_qs(_line_at(r, i)), "}")))))
+        i = i + 1
+    }
+    arr = string.concat(arr, "]")
+    return _reply_ok(r, id, string.concat("{\"cursor\":", string.concat(string.from_int(r.cursor),
+        string.concat(",\"count\":", string.concat(string.from_int(r.n),
+        string.concat(",\"lines\":", string.concat(arr, "}")))))))
+}
+
+// _do_jump — set the cursor to index `to` (clamped to 0..n); runs nothing.
+_do_jump(r: *Runner, id: int, to: int) -> int {
+    t = to
+    if t < 0 { t = 0 }
+    if t > r.n { t = r.n }
+    r.cursor = t
+    return _reply_ok(r, id, string.concat("{\"cursor\":", string.concat(string.from_int(r.cursor), "}")))
+}
+
+// _do_move — move the cursor by `delta` (prev=-1 / next=+1), clamped; no exec.
+_do_move(r: *Runner, id: int, delta: int) -> int {
+    return _do_jump(r, id, r.cursor + delta)
+}
+
+// _do_redo — re-run the LAST-executed line (the one just before the cursor). No
+// cursor movement: it re-executes cursor-1 in place. No-op if nothing has run.
+_do_redo(r: *Runner, id: int) -> int {
+    if r.cursor <= 0 {
+        return _reply_ok(r, id, "{\"redone\":false}")
+    }
+    idx = r.cursor - 1
+    line = _line_at(r, idx)
+    res = shell.shell_eval(r.session, line)
+    _event(r, "command-finished", string.concat("{\"index\":", string.concat(string.from_int(idx),
+        string.concat(",\"line\":", string.concat(_qs(line), "}")))))
+    return _reply_ok(r, id, string.concat("{\"redone\":true,\"index\":", string.concat(string.from_int(idx),
+        string.concat(",\"result\":", string.concat(res, "}")))))
 }
 
 // _do_inspect — surface the Phase-0 trace / timers / session id without running
@@ -164,20 +248,33 @@ _do_inspect(r: *Runner, id: int, what: string) -> int {
     return _reply_err(r, id, string.concat("unknown inspect target: ", what))
 }
 
-// ---- queue helpers ----------------------------------------------------------
-_enqueue(r: *Runner, line: string) {
-    if r.qn == 0 { r.queue = line } else { r.queue = string.concat(r.queue, string.concat("\n", line)) }
-    r.qn = r.qn + 1
+// ---- history helpers --------------------------------------------------------
+// _append — record a line at the end of the "\n"-joined history.
+_append(r: *Runner, line: string) {
+    if r.n == 0 { r.lines = line } else { r.lines = string.concat(r.lines, string.concat("\n", line)) }
+    r.n = r.n + 1
 }
-_dequeue(r: *Runner) -> string {
-    nl = string.index_of(r.queue, "\n")
-    if nl < 0 {
-        out = r.queue; r.queue = ""; r.qn = 0; return out
+// _pending — lines from the cursor to the end (how many step/continue would run).
+_pending(r: *Runner) -> int {
+    p = r.n - r.cursor
+    if p < 0 { return 0 }
+    return p
+}
+// _line_at(r, i) — the i-th recorded line (0-based), or "" if out of range.
+_line_at(r: *Runner, i: int) -> string {
+    if i < 0 { return "" }
+    if i >= r.n { return "" }
+    rest = r.lines
+    k = 0
+    while k < i {
+        nl = string.index_of(rest, "\n")
+        if nl < 0 { return "" }
+        rest = string.substring(rest, nl + 1, string.length(rest))
+        k = k + 1
     }
-    out = string.substring(r.queue, 0, nl)
-    r.queue = string.substring(r.queue, nl + 1, string.length(r.queue))
-    r.qn = r.qn - 1
-    return out
+    nl2 = string.index_of(rest, "\n")
+    if nl2 < 0 { return rest }
+    return string.substring(rest, 0, nl2)
 }
 
 // ---- runner-lane emit -------------------------------------------------------
@@ -211,6 +308,13 @@ _param_str(root: ptr, key: string) -> string {
     if vv == null { return "" }
     s, _s = json.get_string(vv)
     return s
+}
+_param_int(root: ptr, key: string) -> int {
+    pv, _p = json.object_get(root, "params")
+    if pv == null { return 0 }
+    vv, _v = json.object_get(pv, key)
+    if vv == null { return 0 }
+    return json.get_int(vv)
 }
 _qs(v: string) -> string {
     out = "\""

@@ -14,12 +14,14 @@
  *   repl ... < script.txt                                        batch (a line per command)
  * Lines: any shell command (`open <url>`, `text #h`, `eval <js>`, …) or a REPL
  * meta: `:step` `:continue` `:mode step|run` `:inspect trace|timers|sid` `:events`
- * `:quit`. A bare shell line is `runner.eval`'d (queued in step mode).
+ * plus the SAM step-aside verbs `:list` `:jump <n>` `:prev` `:next` `:redo`, and
+ * `:quit`. A bare shell line is `runner.eval`'d (recorded; queued in step mode).
  *
  * Built by d/tools/.build.ae; drives the engine via the D binding's Runner.
  */
 import std.stdio;
 import std.string;
+import std.conv : to;
 import std.json;
 import std.getopt;
 import selenium;
@@ -53,7 +55,8 @@ int main(string[] argv) {
     bool interactive = isTerminal();
     if (interactive) {
         writeln("selaenium repl — ", browser, " @ ", endpoint);
-        writeln("shell lines drive the session; meta: :step :continue :mode :inspect :events :quit");
+        writeln("shell lines drive the session; meta: :step :continue :mode :inspect :events");
+        writeln("  step-aside: :list :jump <n> :prev :next :redo ; :quit");
     }
 
     foreach (rawLine; stdin.byLine) {
@@ -62,10 +65,15 @@ int main(string[] argv) {
 
         JSONValue rep;
         if (line == ":quit" || line == ":q") break;
-        else if (line == ":step") rep = r.step();
+        else if (line == ":step" || line == ":s") rep = r.step();
         else if (line == ":continue" || line == ":c") rep = r.cont();
         else if (line.startsWith(":mode")) rep = r.mode(line.length > 6 ? line[6 .. $].strip : "run");
         else if (line.startsWith(":inspect")) rep = r.inspect(line.length > 9 ? line[9 .. $].strip : "sid");
+        else if (line == ":list" || line == ":l") rep = r.list();
+        else if (line.startsWith(":jump")) rep = r.jump(line.length > 6 ? to!int(line[6 .. $].strip) : 0);
+        else if (line == ":prev" || line == ":p") rep = r.prev();
+        else if (line == ":next" || line == ":n") rep = r.next();
+        else if (line == ":redo") rep = r.redo();
         else if (line == ":events") { drainEvents(r); continue; }
         else rep = r.eval(line);
 

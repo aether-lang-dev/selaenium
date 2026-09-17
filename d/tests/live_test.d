@@ -348,6 +348,21 @@ int main() {
         auto st = r.step()["result"];   // unwrap the runner-lane frame's result
         check(st["stepped"].boolean && st["result"]["value"].str == "go",
               "runner: step runs the queued line -> 'go'");
+        // SAM step-aside navigation: the recorded history has a cursor we can
+        // list, jump around, and re-run over (webautoma SAM console; see NOTICE).
+        auto lst = r.list()["result"];
+        check(lst["count"].integer >= 3, "runner: list shows the recorded sequence");
+        check(("cursor" in lst) !is null, "runner: list carries the cursor");
+        auto jr = r.jump(0)["result"];
+        check(jr["cursor"].integer == 0, "runner: jump moves the cursor to 0");
+        auto nx = r.next()["result"];
+        check(nx["cursor"].integer == 1, "runner: next advances the cursor");
+        auto pv = r.prev()["result"];
+        check(pv["cursor"].integer == 0, "runner: prev moves the cursor back");
+        // redo re-runs the last-executed line (cursor-1); after prev cursor==0
+        // so redo is a no-op — assert the honest false rather than fake a run.
+        check(r.redo()["result"]["redone"].boolean == false,
+              "runner: redo at cursor 0 is a no-op");
     }
 
     // SUT-adjacent console bridge: the executeScript transport half (the unit

@@ -1353,6 +1353,18 @@ final class Runner {
     /// Inspect "trace" | "timers" | "sid" without running a command.
     JSONValue inspect(string what) { return send("inspect", `{"what":` ~ JSONValue(what).toString() ~ `}`); }
 
+    // --- SAM history/cursor verbs (step-aside navigation) ---
+    /// The recorded command sequence + the cursor (runs nothing).
+    JSONValue list() { return send("list"); }
+    /// Move the cursor to index `to` without executing.
+    JSONValue jump(int to) { return send("jump", `{"to":` ~ to!string(to) ~ `}`); }
+    /// Move the cursor back one (no exec).
+    JSONValue prev() { return send("prev"); }
+    /// Move the cursor forward one (no exec).
+    JSONValue next() { return send("next"); }
+    /// Re-run the last-executed line (cursor-1).
+    JSONValue redo() { return send("redo"); }
+
     /// The next runner event (command-finished / paused / …), or JSONValue null.
     JSONValue nextEvent() {
         string e = takeString(aether_sel_embed_runner_poll_event(rp));
