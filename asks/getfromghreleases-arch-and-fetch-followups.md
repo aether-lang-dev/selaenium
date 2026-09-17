@@ -6,24 +6,19 @@ bumping the pinned ae** (`ci/versions.env` AETHER_REF, currently `v0.680.0`) and
 should land together with that bump — verified against the actual pinned
 binary, not on a peer's report of the release.
 
-## 1. Drop the `uname -m` shim → `os.arch()`
+## 1. Drop the `uname -m` shim → `os.arch()`  ✅ DONE (2026-09-17, commit 0ca3737)
 
-`_arch()` currently shells a single `os.exec("uname -m")` and normalizes the
-result to the release-asset vocabulary (`x86_64` / `arm64`), because stdlib had
-no CPU-arch accessor.
+`os.arch()` shipped in aether 0.681.0 (#2051), returning the normalized
+ecosystem vocab (`x86_64` never `amd64`, `arm64` never `aarch64`) — exactly the
+release-asset tokens — so `_arch()` collapsed to `return os.arch()` with NO
+normalizer. AETHER_REF bumped 0.680.0 → 0.681.0 (aeb v0.314's AETHER_PIN 0.680.0
+is a FLOOR, so no coupled AEB move). The node is now fully shell-free.
 
-`os.arch()` is reported to have shipped (aether #2051). If the pinned ae exposes
-it, `_arch()`'s body collapses to `return os.arch()` **with no normalizer** —
-os.arch() is reported to already return the normalized ecosystem vocab
-(`x86_64` never `amd64`, `arm64` never `aarch64`; also i386/arm/riscv64/ppc64le/
-s390x/wasm32/wasm64/unknown) and to report the **target** arch under
-cross-compile (uname -m reports the build host — matters for cross-fetch).
-
-**Verify before swapping**: confirm `os.arch()` exists in the pinned binary AND
-that its return tokens are exactly what the release-asset names use (spot-check
-x86_64 + arm64). If the vocab ever diverges, keep a thin normalizer rather than
-a bare `return os.arch()` — the current in-file comment optimistically says
-"bare return", but correctness depends on the token match.
+Verified on the RELEASED 0.681.0 binary (ae + aetherc both 0.681.0):
+`os.platform()+"-"+os.arch()` = `linux-x86_64` live; engine .so rebuilds clean
+and byte-identical (sha aea3cbbb…), 66 `aether_sel_embed_*` exports intact; the
+`--overrideDep` ruby-gem seal fetched the real v0.8.0 engine end-to-end with the
+cache CLEARED (928928 bytes, sha 4516753c…) and sealed it.
 
 ## 2. Optional: `_download_bytes` + sha check → aeb's `fetch._fetch_verified`
 
@@ -36,8 +31,13 @@ hand-rolled `_download_bytes` + sha256 verify + cache-stage logic here. Treat as
 a separate, optional cleanup — evaluate it on its own once the aeb pin (AEB_REF)
 that ships it is the pinned one; do not conflate with the `os.arch()` swap.
 
-## When bumping the ae pin (whichever release lands)
-- Confirm os.arch() against the real binary (item 1).
+## When bumping the ae pin (whichever release lands) — the discipline that held for 0.681
+- Confirm the new stdlib you depend on against the real binary (item 1 did this
+  for os.arch()). NOTE the toolchain-install trap hit on 0.681: `ci/toolchain.sh`
+  "skip if ae present" does NOT compare to AETHER_REF (left 0.680 in place); and
+  a plain install left `ae` at 0.681 but `aetherc` (the codegen) at 0.680 — a
+  Frankenstein toolchain. The fix is `ae version install <v> && ae version use
+  <v>` so BOTH come from one build; `ae version doctor`'s compile probe confirms.
 - Rebuild the engine `.so` and `nm`-verify the `aether_sel_embed_*` symbols —
   NOT just build success. A big version jump has a codegen-bug history
   (0.677 sha1.free_ctx whole-program bug produced a broken .so masked by stale
