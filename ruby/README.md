@@ -8,20 +8,38 @@ Fiddle + json only).
 
 ## Use it (as a Ruby dev)
 
+> **Name note.** This gem is named `selenium-webdriver` on purpose — it is a
+> drop-in, ABI-matched replacement for the mainstream Selenium-Ruby gem (upgrade
+> by changing only the source). It is **NOT published to rubygems.org**, so a
+> bare `gem install selenium-webdriver` installs the *classic* Selenium team's
+> gem, not this one. Install THIS gem from its built `.gem` file:
+
 ```sh
-gem install selenium-webdriver      # pure Ruby; ships no engine yet
-rake selenium:fetch_engine          # download the prebuilt engine for your OS/arch
+# build the gem (see "Build the gem" below), then install it locally:
+gem install --local target/package/ruby/dist/selenium-webdriver-*.gem
 ```
 
-`gem install` deliberately ships no engine and needs no Aether toolchain.
-`rake selenium:fetch_engine` downloads the prebuilt `libselenium_core` for your
-platform from the project's GitHub releases, verifies its published `.sha256`,
-and caches it (`$XDG_CACHE_HOME/selaenium/<tag>/`); `require 'selenium-webdriver'`
-then loads it automatically. `TAG=vX.Y.Z` pins an engine release, `FORCE=1`
-re-fetches, and `rake selenium:engine_path` prints the cache location.
+```ruby
+# then fetch the prebuilt engine once (no Aether toolchain):
+require 'selenium-webdriver'
+Selenium::WebDriver.fetch_engine!     # download + verify + cache libselenium_core
+```
 
-If the engine isn't present, the first call raises a `LoadError` telling you to
-run the fetch task.
+The gem deliberately ships no engine and needs no Aether toolchain to install.
+`fetch_engine!` downloads the prebuilt `libselenium_core` for your platform from
+THIS project's GitHub releases, verifies its published `.sha256`, and caches it
+(`$XDG_CACHE_HOME/selaenium/<tag>/`); every later `require 'selenium-webdriver'`
+loads it automatically. It takes `tag:` (pin an engine release) and `force:`
+(re-fetch). If the engine isn't present, the first driver call raises a
+`LoadError` telling you to run it.
+
+> Working in the source tree instead of an installed gem? The Rakefile there
+> wraps the same call: `rake selenium:fetch_engine` (env `TAG=` / `FORCE=`) and
+> `rake selenium:engine_path`. The Rakefile is a dev convenience and is **not**
+> shipped in the gem — an installed consumer uses `Selenium::WebDriver.fetch_engine!`.
+
+(The repo's top-level README also has a one-line installer that builds + installs
+from source.)
 
 ```ruby
 require 'selenium-webdriver'
