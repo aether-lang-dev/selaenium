@@ -29,7 +29,7 @@ import std/[os, json, strutils, sequtils, unicode]
 # Single source of truth: the repo-root SELENIUM_CORE_VERSION file, read at
 # compile time (staticRead, path relative to this file) so the tag lives in ONE
 # place across every binding — no per-binding literal to drift.
-const SeleniumCoreVersion* = staticRead("../../SELENIUM_CORE_VERSION").strip()
+const SeleniumCoreVersion* = strutils.strip(staticRead("../../SELENIUM_CORE_VERSION"))
 
 # The shared fetch cache dir: $XDG_CACHE_HOME/selaenium/<tag>/ (or the OS
 # default — ~/Library/Caches on macOS, ~/.cache elsewhere), computed at compile
