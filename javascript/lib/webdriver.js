@@ -135,6 +135,15 @@ class WebElement {
   async getTagName() {
     return this._exec('getElementTagName')
   }
+  // The computed ARIA role of the element (mainstream WebElement.getAriaRole()).
+  async getAriaRole() {
+    return this._exec('getAriaRole')
+  }
+  // The computed accessible name of the element (mainstream
+  // WebElement.getAccessibleName()).
+  async getAccessibleName() {
+    return this._exec('getAccessibleName')
+  }
   async getCssValue(cssStyleProperty) {
     return this._exec('getElementValueOfCssProperty', { propertyName: cssStyleProperty })
   }
@@ -292,6 +301,8 @@ function newWebElementPromise(driver, elementPromise) {
     'sendKeys',
     'getText',
     'getTagName',
+    'getAriaRole',
+    'getAccessibleName',
     'getCssValue',
     'getRect',
     'isDisplayed',

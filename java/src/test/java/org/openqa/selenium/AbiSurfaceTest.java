@@ -120,6 +120,58 @@ class AbiSurfaceTest {
         assertInstanceOf(PrintsPage.class, new RecordingDriver());
     }
 
+    // ---- relative locators (support.locators.RelativeLocator) ----
+
+    @Test
+    void relativeLocatorLowersToBaseCssAndFilters() {
+        org.openqa.selenium.support.locators.RelativeLocator.RelativeBy rb =
+            org.openqa.selenium.support.locators.RelativeLocator.withTagName("td")
+                .below(By.id("hdr"))
+                .toRightOf(By.cssSelector(".x"))
+                .above(By.tagName("h1"))
+                .near(By.className("y"));
+
+        assertInstanceOf(By.class, rb, "RelativeBy must be a By so findElement(By) accepts it");
+        assertEquals("td", rb.baseCss());
+        List<Map<String, Object>> filters = rb.engineFilters();
+        assertEquals(4, filters.size());
+        assertEquals(Map.of("kind", "below", "sel", "#hdr"), filters.get(0));
+        assertEquals(Map.of("kind", "right", "sel", ".x"), filters.get(1));
+        assertEquals(Map.of("kind", "above", "sel", "h1"), filters.get(2));
+        assertEquals(Map.of("kind", "near", "sel", ".y"), filters.get(3));
+    }
+
+    @Test
+    void findElementsRoutesRelativeByThroughFindRelative() {
+        final List<String> seenBase = new ArrayList<>();
+        final List<List<Map<String, Object>>> seenFilters = new ArrayList<>();
+        RemoteWebDriver d = new RemoteWebDriver() {
+            @Override
+            public List<WebElement> findRelative(String baseCss, List<Map<String, Object>> filters) {
+                seenBase.add(baseCss);
+                seenFilters.add(filters);
+                return List.of(new RemoteWebElement(this, "rel-1"), new RemoteWebElement(this, "rel-2"));
+            }
+        };
+
+        By rb = org.openqa.selenium.support.locators.RelativeLocator.with(By.tagName("li")).below(By.id("top"));
+        List<WebElement> els = d.findElements(rb);
+        assertEquals(2, els.size());
+        assertEquals("li", seenBase.get(0));
+        assertEquals(List.of(Map.of("kind", "below", "sel", "#top")), seenFilters.get(0));
+
+        WebElement one = d.findElement(rb);
+        assertEquals("rel-1", ((RemoteWebElement) one).id());
+    }
+
+    @Test
+    void relativeLocatorRejectsWebElementAnchor() {
+        RemoteWebDriver d = new RecordingDriver();
+        WebElement anchor = new RemoteWebElement(d, "anchor-1");
+        assertThrows(IllegalArgumentException.class,
+            () -> org.openqa.selenium.support.locators.RelativeLocator.withTagName("td").below(anchor));
+    }
+
     // The per-browser static session factories exist with the same shape as
     // chrome(): a (String, Map) two-arg form and a (String, Map, String, boolean)
     // four-arg form, all returning RemoteWebDriver. Edge/Safari have no browser

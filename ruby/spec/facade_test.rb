@@ -250,6 +250,15 @@ class FacadeTest < Minitest::Test
     assert_equal({ 'height' => 20, 'width' => 10 }, el.size)
   end
 
+  def test_element_aria_role_and_accessible_name
+    d = RecordingDriver.new('getAriaRole' => 'button', 'getAccessibleName' => 'Submit')
+    el = M::WebElement.new(d, 'E1')
+    assert_equal 'button', el.aria_role
+    assert_equal ['getAriaRole', { 'id' => 'E1' }], d.command('getAriaRole')
+    assert_equal 'Submit', el.accessible_name
+    assert_equal ['getAccessibleName', { 'id' => 'E1' }], d.command('getAccessibleName')
+  end
+
   def test_element_find_elements_plural
     d = RecordingDriver.new('findChildElements' => [{ W3C_KEY => 'C1' }, { W3C_KEY => 'C2' }])
     els = M::WebElement.new(d, 'E1').find_elements(tag_name: 'li')

@@ -299,6 +299,17 @@ module Selenium
       exec('getElementTagName')
     end
 
+    # The computed ARIA role of the element (mainstream Element#aria_role).
+    def aria_role
+      exec('getAriaRole')
+    end
+
+    # The computed accessible name of the element (mainstream
+    # Element#accessible_name).
+    def accessible_name
+      exec('getAccessibleName')
+    end
+
     # Whether the element is shown (the isDisplayed atom, run in-page by the
     # engine — the visibility algorithm, not a naive style check).
     def displayed?

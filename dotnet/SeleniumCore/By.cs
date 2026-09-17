@@ -10,9 +10,11 @@ namespace OpenQA.Selenium;
 /// engine's <c>by_locator</c> accepts; ClassName uses the W3C-canonical
 /// <c>"class name"</c> form.
 /// </summary>
-public sealed class By
+public class By
 {
-    private By(string strategy, string value)
+    // Protected so the relative-locator support (RelativeBy) can extend By and
+    // flow through the ordinary FindElement(By) path, as in mainstream Selenium.
+    protected By(string strategy, string value)
     {
         Strategy = strategy;
         Value = value;

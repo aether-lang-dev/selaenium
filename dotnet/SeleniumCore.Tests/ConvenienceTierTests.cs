@@ -361,6 +361,8 @@ namespace SeleniumCore.Tests
     {
         public string Id { get; set; } = "elem";
         public string TagName { get; set; } = "";
+        public string AriaRole { get; set; } = "";
+        public string ComputedAccessibleName { get; set; } = "";
         public string Text { get; set; } = "";
         public bool Enabled { get; set; } = true;
         public bool Selected { get; set; }

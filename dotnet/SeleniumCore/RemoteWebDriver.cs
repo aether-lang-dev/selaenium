@@ -313,12 +313,28 @@ public class RemoteWebDriver : IWebDriver, ITakesScreenshot
     // ---- elements ----
     public IWebElement FindElement(By by)
     {
+        if (by is RelativeBy relative)
+        {
+            IReadOnlyList<RemoteWebElement> found =
+                FindRelative(relative.BaseCss, System.Linq.Enumerable.ToArray(relative.EngineFilters));
+            if (found.Count == 0)
+            {
+                throw new NoSuchElementException("no relative element found", 17);
+            }
+            return found[0];
+        }
         JsonElement result = Execute("findElement", DecodeBy(by.Strategy, by.Value))!.Value;
         return new RemoteWebElement(this, result.GetProperty(W3CElementKey).GetString()!);
     }
 
     public ReadOnlyCollection<IWebElement> FindElements(By by)
     {
+        if (by is RelativeBy relative)
+        {
+            return new ReadOnlyCollection<IWebElement>(
+                FindRelative(relative.BaseCss, System.Linq.Enumerable.ToArray(relative.EngineFilters))
+                    .Select(e => (IWebElement)e).ToList());
+        }
         JsonElement result = Execute("findElements", DecodeBy(by.Strategy, by.Value))!.Value;
         return new ReadOnlyCollection<IWebElement>(result.EnumerateArray()
             .Select(e => (IWebElement)new RemoteWebElement(this, e.GetProperty(W3CElementKey).GetString()!))

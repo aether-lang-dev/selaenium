@@ -364,6 +364,74 @@ namespace SeleniumCore.Tests
             var first = (IDictionary<string, object?>)args[0]!;
             first["element-6066-11e4-a52e-4f735466cecf"].ShouldBe("E-1");
         }
+
+        [Fact]
+        public void AriaRoleIssuesGetAriaRole()
+        {
+            var (d, el) = NewElement();
+            d.SetResponse("getAriaRole", "\"button\"");
+            el.AriaRole.ShouldBe("button");
+            d.Issued("getAriaRole").ShouldBeTrue();
+        }
+
+        [Fact]
+        public void ComputedAccessibleNameIssuesGetAccessibleName()
+        {
+            var (d, el) = NewElement();
+            d.SetResponse("getAccessibleName", "\"Submit\"");
+            el.ComputedAccessibleName.ShouldBe("Submit");
+            d.Issued("getAccessibleName").ShouldBeTrue();
+        }
+    }
+
+    public class RelativeLocatorAbiTests
+    {
+        [Fact]
+        public void RelativeByIsABy()
+        {
+            RelativeBy rb = RelativeBy.WithLocator(By.TagName("td"));
+            ((By)rb).ShouldNotBeNull();
+            rb.ShouldBeAssignableTo<By>();
+        }
+
+        [Fact]
+        public void LowersToBaseCssAndFilters()
+        {
+            RelativeBy rb = RelativeBy.WithLocator(By.TagName("td"))
+                .Below(By.Id("hdr"))
+                .RightOf(By.CssSelector(".x"))
+                .Above(By.TagName("h1"))
+                .Near(By.ClassName("y"));
+
+            rb.BaseCss.ShouldBe("td");
+            var filters = rb.EngineFilters;
+            filters.Count.ShouldBe(4);
+            filters[0]["kind"].ShouldBe("below");
+            filters[0]["sel"].ShouldBe("#hdr");
+            filters[1]["kind"].ShouldBe("right");
+            filters[1]["sel"].ShouldBe(".x");
+            filters[2]["sel"].ShouldBe("h1");
+            filters[3]["kind"].ShouldBe("near");
+            filters[3]["sel"].ShouldBe(".y");
+        }
+
+        [Fact]
+        public void RejectsWebElementAnchor()
+        {
+            var d = new RecordingDriver();
+            d.SetResponse("findElement", "{\"element-6066-11e4-a52e-4f735466cecf\":\"E-1\"}");
+            IWebElement anchor = d.FindElement(By.Id("a"));
+            Should.Throw<System.ArgumentException>(
+                () => RelativeBy.WithLocator(By.TagName("td")).Below(anchor));
+        }
+
+        [Fact]
+        public void FindElementsAcceptsRelativeByThroughByOverload()
+        {
+            // Compile-time proof that FindElements(By) accepts a RelativeBy (is-a By).
+            By locator = RelativeBy.WithLocator(By.TagName("li")).Below(By.Id("top"));
+            locator.ShouldBeAssignableTo<RelativeBy>();
+        }
     }
 
     public class ExceptionAbiTests

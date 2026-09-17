@@ -415,6 +415,13 @@ public class RemoteWebDriver
     @Override
     @SuppressWarnings("unchecked")
     public WebElement findElement(By by) {
+        if (by instanceof org.openqa.selenium.support.locators.RelativeLocator.RelativeBy relative) {
+            List<WebElement> found = findRelative(relative.baseCss(), relative.engineFilters());
+            if (found.isEmpty()) {
+                throw new NoSuchElementException("no relative element found", 17);
+            }
+            return found.get(0);
+        }
         Map<String, Object> result = (Map<String, Object>) execute("findElement", decodeBy(by.strategy(), by.value()));
         return new RemoteWebElement(this, (String) result.get(W3C_ELEMENT_KEY));
     }
@@ -422,6 +429,9 @@ public class RemoteWebDriver
     @Override
     @SuppressWarnings("unchecked")
     public List<WebElement> findElements(By by) {
+        if (by instanceof org.openqa.selenium.support.locators.RelativeLocator.RelativeBy relative) {
+            return findRelative(relative.baseCss(), relative.engineFilters());
+        }
         List<Object> result = (List<Object>) execute("findElements", decodeBy(by.strategy(), by.value()));
         return result.stream()
                 .map(e -> (WebElement) new RemoteWebElement(this, (String) ((Map<String, Object>) e).get(W3C_ELEMENT_KEY)))

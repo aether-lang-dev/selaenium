@@ -34,6 +34,11 @@ def test_import_paths_resolve():
     from selenium.webdriver.chrome.options import Options
     from selenium.webdriver.support.ui import WebDriverWait, Select
     from selenium.webdriver.support import expected_conditions  # noqa: F401
+    from selenium.webdriver.support.relative_locator import (  # noqa: F401
+        RelativeBy,
+        locate_with,
+        with_tag_name,
+    )
 
     # webdriver namespace exposes ChromeOptions and the facade classes
     assert webdriver.ChromeOptions is Options
@@ -858,3 +863,58 @@ def test_downloadable_files_surface():
     assert d.get_downloadable_files() == ["a.txt", "b.txt"]
     d.delete_downloadable_files()
     assert ("deleteDownloadableFiles", {}) in d.calls
+
+
+# ---- relative locators (selenium.webdriver.support.relative_locator) ----------
+
+
+def test_relative_locator_api_shape():
+    from selenium.webdriver.support.relative_locator import (
+        RelativeBy,
+        locate_with,
+        with_tag_name,
+    )
+    from selenium.webdriver.common.by import By
+
+    rb = with_tag_name("td")
+    assert isinstance(rb, RelativeBy)
+    # fluent chain returns self and records filters
+    assert rb.below({By.ID: "hdr"}).to_right_of({By.CSS_SELECTOR: ".x"}) is rb
+    assert rb.above({By.TAG_NAME: "h1"}).near({By.CLASS_NAME: "y"}) is rb
+
+    base_css, filters = rb._engine_query()
+    assert base_css == "td"
+    assert {"kind": "below", "sel": "#hdr"} in filters
+    assert {"kind": "right", "sel": ".x"} in filters
+    assert {"kind": "above", "sel": "h1"} in filters
+    assert {"kind": "near", "sel": ".y"} in filters
+
+    # mainstream to_dict shape
+    d = locate_with(By.CSS_SELECTOR, "p").above({By.ID: "footer"}).to_dict()
+    assert d["relative"]["root"] == {"css selector": "p"}
+    assert d["relative"]["filters"][0]["kind"] == "above"
+
+
+def test_find_element_routes_relative_by_through_find_relative():
+    from selenium.webdriver.support.relative_locator import with_tag_name
+    from selenium.webdriver.common.by import By
+    from selenium._webdriver import WebElement, _W3C_ELEMENT_KEY
+
+    d = _make_driver_without_session()
+    seen = {}
+
+    def _find_relative(base_css, *filters):
+        seen["base"] = base_css
+        seen["filters"] = filters
+        return [WebElement(d, "rel-1"), WebElement(d, "rel-2")]
+
+    d.find_relative = _find_relative
+
+    rb = with_tag_name("li").below({By.ID: "top"})
+    els = d.find_elements(rb)
+    assert [e.id for e in els] == ["rel-1", "rel-2"]
+    assert seen["base"] == "li"
+    assert seen["filters"] == ({"kind": "below", "sel": "#top"},)
+
+    one = d.find_element(rb)
+    assert one.id == "rel-1"

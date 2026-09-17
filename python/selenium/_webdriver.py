@@ -654,6 +654,13 @@ def _keys_to_typing(value) -> list[str]:
     return chars
 
 
+def _is_relative_by(by) -> bool:
+    """True if ``by`` is a RelativeBy (mainstream: find_element(s) accepts one in
+    place of a (by, value) pair). Duck-typed to avoid an import cycle with the
+    support package."""
+    return hasattr(by, "_engine_query") and hasattr(by, "filters")
+
+
 def _decode_by(by: str, value: str) -> dict:
     """Ask the engine for the {"using","value"} locator (shares the ONE By
     normalization + CSS-escape path with every other binding)."""
@@ -781,12 +788,26 @@ class WebDriver:
     # ---- elements ----
 
     def find_element(self, by: str = By.ID, value: str | None = None) -> WebElement:
+        if _is_relative_by(by):
+            elements = self._find_relative_by(by)
+            if not elements:
+                raise NoSuchElementException("no relative element found")
+            return elements[0]
         result = self._execute("findElement", _decode_by(by, value))
         return WebElement(self, result[_W3C_ELEMENT_KEY])
 
     def find_elements(self, by: str = By.ID, value: str | None = None) -> list[WebElement]:
+        if _is_relative_by(by):
+            return self._find_relative_by(by)
         result = self._execute("findElements", _decode_by(by, value))
         return [WebElement(self, e[_W3C_ELEMENT_KEY]) for e in result]
+
+    def _find_relative_by(self, relative_by) -> list[WebElement]:
+        """Resolve a :class:`RelativeBy` through the engine's relative-locators
+        atom (mainstream: ``find_element(s)`` accepts a RelativeBy in place of a
+        (by, value) pair)."""
+        base_css, filters = relative_by._engine_query()
+        return self.find_relative(base_css, *filters)
 
     # ---- script ----
 

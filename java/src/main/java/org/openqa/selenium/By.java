@@ -7,12 +7,18 @@ package org.openqa.selenium;
  * exactly what the shared engine's {@code by_locator} accepts; className uses
  * the W3C-canonical {@code "class name"} form.
  */
-public final class By {
+public class By {
 
     private final String strategy;
     private final String value;
 
-    private By(String strategy, String value) {
+    /**
+     * Package/subclass constructor. Kept accessible so the relative-locator
+     * support ({@code support.locators.RelativeLocator.RelativeBy}) can extend
+     * {@code By} and flow through the ordinary {@code findElement(By)} path, as
+     * in mainstream Selenium.
+     */
+    protected By(String strategy, String value) {
         this.strategy = strategy;
         this.value = value;
     }

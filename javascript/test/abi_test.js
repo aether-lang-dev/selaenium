@@ -180,6 +180,14 @@ test('WebElement command methods are all async', async () => {
   assert.strictEqual(await el.getTagName(), 'div')
   assert.strictEqual(lastCall()[0], 'getElementTagName')
 
+  queue('button')
+  assert.strictEqual(await el.getAriaRole(), 'button')
+  assert.strictEqual(lastCall()[0], 'getAriaRole')
+
+  queue('Submit')
+  assert.strictEqual(await el.getAccessibleName(), 'Submit')
+  assert.strictEqual(lastCall()[0], 'getAccessibleName')
+
   queue(null)
   assert.ok(el.click() instanceof Promise)
   await el.click()

@@ -133,6 +133,13 @@ public interface IWebElement : ISearchContext
 
     string TagName { get; }
 
+    /// <summary>The computed ARIA role of the element (mainstream <c>AriaRole</c>).</summary>
+    string AriaRole { get; }
+
+    /// <summary>The computed accessible name of the element (mainstream
+    /// <c>ComputedAccessibleName</c>).</summary>
+    string ComputedAccessibleName { get; }
+
     bool Enabled { get; }
 
     bool Selected { get; }

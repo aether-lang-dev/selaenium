@@ -72,6 +72,8 @@ public class RemoteWebElement : IWebElement
 
     public string Text => Exec("getElementText", null)!.Value.GetString()!;
     public string TagName => Exec("getElementTagName", null)!.Value.GetString()!;
+    public string AriaRole => Exec("getAriaRole", null)!.Value.GetString()!;
+    public string ComputedAccessibleName => Exec("getAccessibleName", null)!.Value.GetString()!;
 
     /// <summary>Whether the element is shown (the isDisplayed atom — the visibility
     /// algorithm, run in-page by the engine — not a naive style check).</summary>
