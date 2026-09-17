@@ -284,6 +284,10 @@ grid/run-grid-test.sh --hub <cmd>   # our hub, no container
   every corresponding `.tests.ae` was green. See
   [`docs/Consumer-Install.md`](docs/Consumer-Install.md).
 
+To cut a package (gem/jar/…) WITHOUT the Aether toolchain — fetching the prebuilt
+engine from the release instead of building it, via aeb's `--overrideDep` — see
+[`docs/Prebuilt-Engine-Packaging.md`](docs/Prebuilt-Engine-Packaging.md).
+
 ## The C ABI (`aether_sel_embed_*`)
 
 Handle-based: N independent sessions per process. `open(base_url)` returns an
