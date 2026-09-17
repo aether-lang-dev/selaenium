@@ -20,7 +20,11 @@
 # no-op.
 set -eu
 
-TAG="${TAG:-v0.8.0}"          # the engine gh-release tag (matches the bindings' ENGINE_VERSION)
+# The libselenium_core gh-release tag. Single source of truth: the repo-root
+# SELENIUM_CORE_VERSION file (read here, overridable via TAG=). Every binding
+# reads that same file so the tag lives in ONE place.
+_here="$(cd "$(dirname "$0")/.." && pwd)"          # repo root (scripts/ is one down)
+TAG="${TAG:-$(cat "$_here/SELENIUM_CORE_VERSION")}"
 REPO="aether-lang-dev/selaenium"
 BASE="https://github.com/${REPO}/releases/download"
 

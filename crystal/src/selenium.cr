@@ -14,8 +14,8 @@
 require "json"
 
 # The engine gh-release tag whose fetch-cache this binding searches (matches
-# scripts/fetch-engine.sh's default TAG and every other binding's ENGINE_VERSION).
-ENGINE_VERSION = "v0.8.0"
+# scripts/fetch-engine.sh's default TAG and every other binding's SELENIUM_CORE_VERSION).
+SELENIUM_CORE_VERSION = "v0.8.0"
 
 # The engine .so is resolved at link time. Crystal's @[Link(ldflags:)] must be a
 # STRING LITERAL — it rejects a {{…}} macro expression and #{env(...)}

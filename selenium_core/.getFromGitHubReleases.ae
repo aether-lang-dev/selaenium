@@ -20,7 +20,9 @@
 // curl/wget/sha256sum/mkdir/cp, and no `uname -m` — os.arch() (aether #2051,
 // 0.681+) supplies the CPU-arch token at compile time. Kept keyed to the same
 // cache the other bindings use ($XDG_CACHE_HOME/selaenium/<tag>/), so one
-// downloaded engine is shared.
+// downloaded engine is shared. The release tag comes from the repo-root
+// SELENIUM_CORE_VERSION file (fs.read in _tag) — the single source of truth
+// every binding reads, so there is no per-binding tag literal to drift.
 import bldr
 import std.string
 import std.os
@@ -28,25 +30,35 @@ import std.fs
 import std.http.client
 import std.cryptography
 
-// The engine gh-release tag this node fetches (matches scripts/fetch-engine.sh's
-// TAG + the bindings' ENGINE_VERSION). Bump when re-gluing to a newer engine.
-// (A function, not a top-level const — Aether has no top-level mutable state.)
-_tag() -> string { return "v0.8.0" }
+// The libselenium_core gh-release tag this node fetches. Single source of truth:
+// the repo-root SELENIUM_CORE_VERSION file (one dir up from this node's
+// selenium_core/ source dir), read at build time so the tag lives in ONE place
+// across every binding — no per-binding literal to drift. Falls back to the
+// baked default only if the file is unreadable.
+_tag(srcdir: string) -> string {
+    v, err = fs.read(string.concat(srcdir, "/../SELENIUM_CORE_VERSION"))
+    if string.length(err) > 0 { return "v0.8.0" }
+    t = string.trim(v)
+    if string.length(t) == 0 { return "v0.8.0" }
+    return t
+}
 _repo() -> string { return "aether-lang-dev/selaenium" }
 
 aeb(cap) {
     bldr.build() {
+        srcdir = bldr.source_dir(builder_context())
+        tag = _tag(srcdir)
         os_ = _os_tag()
         arch = _arch()
         ext = _ext(os_)
-        asset = string.concat("libselenium_core-", string.concat(_tag(),
+        asset = string.concat("libselenium_core-", string.concat(tag,
             string.concat("-", string.concat(os_, string.concat("-",
             string.concat(arch, string.concat(".", ext)))))))
         base = string.concat("https://github.com/", string.concat(_repo(),
-            string.concat("/releases/download/", _tag())))
+            string.concat("/releases/download/", tag)))
 
         // cache: $XDG_CACHE_HOME (or OS default) /selaenium/<tag>/lib<name>.<ext>
-        cache_dir = string.concat(_cache_base(os_), string.concat("/selaenium/", _tag()))
+        cache_dir = string.concat(_cache_base(os_), string.concat("/selaenium/", tag))
         libname = _libname(os_)
         cached = string.concat(cache_dir, string.concat("/", libname))
         _m = fs.mkdir_p(cache_dir)
@@ -81,7 +93,6 @@ aeb(cap) {
         tgt = bldr.target_dir(builder_context())
         libdir = string.concat(tgt, "/lib")
         so_path = string.concat(libdir, "/libselenium_core.so")
-        srcdir = bldr.source_dir(builder_context())
         _m2 = fs.mkdir_p(libdir)
         _m3 = fs.mkdir_p(string.concat(srcdir, "/native"))
         _c1 = fs.copy(cached, so_path)

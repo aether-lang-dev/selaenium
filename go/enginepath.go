@@ -30,10 +30,12 @@ import (
 	"runtime"
 )
 
-// EngineVersion is the engine gh-release tag whose fetch-cache this binding
-// searches. It matches scripts/fetch-engine.sh's default TAG, rust/build.rs's
-// ENGINE_VERSION, and the runtime bindings' ENGINE_VERSION.
-const EngineVersion = "v0.8.0"
+// SeleniumCoreVersion is the libselenium_core gh-release tag whose fetch-cache this
+// binding searches. Single source of truth: the repo-root SELENIUM_CORE_VERSION
+// file. go:embed cannot reach a parent dir, so this literal is kept in lockstep
+// with that file by TestEngineVersionPin (which reads the file and fails on
+// drift) — update both together when the tag bumps.
+const SeleniumCoreVersion = "v0.8.0"
 
 // libFilename is the bare filename the loader/linker looks for on this OS
 // (the cache dir already keys by tag, so no tag/platform in the name).
@@ -48,12 +50,12 @@ func libFilename() string {
 	}
 }
 
-// CacheDir returns $XDG_CACHE_HOME/selaenium/<EngineVersion> (or the OS default
+// CacheDir returns $XDG_CACHE_HOME/selaenium/<SeleniumCoreVersion> (or the OS default
 // base: ~/Library/Caches on macOS, %LOCALAPPDATA% on Windows, ~/.cache
 // elsewhere) — the per-user, per-tag dir scripts/fetch-engine.sh and every
 // runtime binding share. The path is returned whether or not it exists.
 func CacheDir() string {
-	return filepath.Join(cacheBase(), "selaenium", EngineVersion)
+	return filepath.Join(cacheBase(), "selaenium", SeleniumCoreVersion)
 }
 
 // cacheBase is the platform cache root, honoring XDG_CACHE_HOME first (matching

@@ -25,10 +25,12 @@
 const std = @import("std");
 
 // The engine gh-release tag whose fetch-cache this binding searches (matches
-// scripts/fetch-engine.sh's default TAG and every other binding's ENGINE_VERSION).
-const ENGINE_VERSION = "v0.8.0";
+// scripts/fetch-engine.sh's default TAG and every other binding's SELENIUM_CORE_VERSION).
+const SELENIUM_CORE_VERSION = "v0.8.0";
 
 pub fn build(b: *std.Build) void {
+    assertEngineVersionPinned(b);
+
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
@@ -97,6 +99,32 @@ pub fn build(b: *std.Build) void {
     example_step.dependOn(&run_example.step);
 }
 
+// Drift guard: the repo-root SELENIUM_CORE_VERSION file is the single source of
+// truth for the libselenium_core release tag. Zig's @embedFile cannot reach a
+// parent directory, so this binding keeps the literal SELENIUM_CORE_VERSION above — but
+// this build-time check reads the file (build runs from zig/, so the path is
+// ../SELENIUM_CORE_VERSION) and panics if the literal drifts from it, so the two
+// cannot silently diverge. Every `zig build` (including `zig build test`) runs it.
+// Do NOT "fix" a mismatch by editing the file to match — update SELENIUM_CORE_VERSION.
+fn assertEngineVersionPinned(b: *std.Build) void {
+    const io = b.graph.io;
+    const raw = b.build_root.handle.readFileAlloc(
+        io,
+        "../SELENIUM_CORE_VERSION",
+        b.allocator,
+        .limited(64),
+    ) catch |err| {
+        std.debug.panic("reading ../SELENIUM_CORE_VERSION: {s}", .{@errorName(err)});
+    };
+    const want = std.mem.trim(u8, raw, " \t\r\n");
+    if (!std.mem.eql(u8, want, SELENIUM_CORE_VERSION)) {
+        std.debug.panic(
+            "SELENIUM_CORE_VERSION = \"{s}\", but SELENIUM_CORE_VERSION says \"{s}\" — update the constant in build.zig",
+            .{ SELENIUM_CORE_VERSION, want },
+        );
+    }
+}
+
 fn linkEngine(step: *std.Build.Step.Compile, dirs: []const []const u8) void {
     const mod = step.root_module;
     mod.link_libc = true;
@@ -130,7 +158,7 @@ fn fetchCacheDir(b: *std.Build) ?[]const u8 {
     const env = b.graph.environ_map;
     if (env.get("XDG_CACHE_HOME")) |x| {
         if (x.len > 0)
-            return std.fs.path.join(b.allocator, &.{ x, "selaenium", ENGINE_VERSION }) catch @panic("OOM");
+            return std.fs.path.join(b.allocator, &.{ x, "selaenium", SELENIUM_CORE_VERSION }) catch @panic("OOM");
     }
     const home = env.get("HOME") orelse return null;
     if (home.len == 0) return null;
@@ -138,7 +166,7 @@ fn fetchCacheDir(b: *std.Build) ?[]const u8 {
         .macos => "Library/Caches",
         else => ".cache",
     };
-    return std.fs.path.join(b.allocator, &.{ home, sub, "selaenium", ENGINE_VERSION }) catch @panic("OOM");
+    return std.fs.path.join(b.allocator, &.{ home, sub, "selaenium", SELENIUM_CORE_VERSION }) catch @panic("OOM");
 }
 
 fn asDir(path: []const u8) []const u8 {

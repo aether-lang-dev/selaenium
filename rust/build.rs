@@ -12,9 +12,11 @@
 // time without LD_LIBRARY_PATH.
 use std::path::{Path, PathBuf};
 
-// The engine gh-release tag whose fetch-cache this crate searches (matches
-// scripts/fetch-engine.sh's default TAG + the runtime bindings' ENGINE_VERSION).
-const ENGINE_VERSION: &str = "v0.8.0";
+// The libselenium_core gh-release tag whose fetch-cache this crate searches.
+// Single source of truth: the repo-root SELENIUM_CORE_VERSION file (no trailing
+// newline), read here at build time so the tag lives in ONE place across every
+// binding — no per-binding literal to drift.
+const SELENIUM_CORE_VERSION: &str = include_str!("../SELENIUM_CORE_VERSION");
 
 fn main() {
     let dir = resolve_dir();
@@ -29,6 +31,7 @@ fn main() {
     println!("cargo:native_dir={}", dir.display());
     // Re-run if the pin changes.
     println!("cargo:rerun-if-env-changed=SELENIUM_CORE_LIB");
+    println!("cargo:rerun-if-changed=../SELENIUM_CORE_VERSION");
 }
 
 fn resolve_dir() -> PathBuf {
@@ -74,12 +77,12 @@ fn fetch_cache_dir() -> Option<PathBuf> {
     } else {
         return home_cache();
     };
-    Some(base.join("selaenium").join(ENGINE_VERSION))
+    Some(base.join("selaenium").join(SELENIUM_CORE_VERSION))
 }
 
 fn home_cache() -> Option<PathBuf> {
     let home = std::env::var("HOME").ok()?;
     // macOS uses ~/Library/Caches; Linux/other use ~/.cache. cfg picks at build.
     let sub = if cfg!(target_os = "macos") { "Library/Caches" } else { ".cache" };
-    Some(PathBuf::from(home).join(sub).join("selaenium").join(ENGINE_VERSION))
+    Some(PathBuf::from(home).join(sub).join("selaenium").join(SELENIUM_CORE_VERSION))
 }

@@ -25,9 +25,11 @@
 
 import std/[os, json, strutils, sequtils, unicode]
 
-# The engine gh-release tag whose fetch-cache this binding searches (matches
-# scripts/fetch-engine.sh's default TAG and every other binding's ENGINE_VERSION).
-const EngineVersion* = "v0.8.0"
+# The libselenium_core gh-release tag whose fetch-cache this binding searches.
+# Single source of truth: the repo-root SELENIUM_CORE_VERSION file, read at
+# compile time (staticRead, path relative to this file) so the tag lives in ONE
+# place across every binding — no per-binding literal to drift.
+const SeleniumCoreVersion* = staticRead("../../SELENIUM_CORE_VERSION").strip()
 
 # The shared fetch cache dir: $XDG_CACHE_HOME/selaenium/<tag>/ (or the OS
 # default — ~/Library/Caches on macOS, ~/.cache elsewhere), computed at compile
@@ -38,7 +40,7 @@ proc fetchCacheDir(): string {.compileTime.} =
     if xdg.len > 0: xdg
     elif defined(macosx): getHomeDir() / "Library" / "Caches"
     else: getHomeDir() / ".cache"
-  base / "selaenium" / EngineVersion
+  base / "selaenium" / SeleniumCoreVersion
 
 const
   srcDir = currentSourcePath().parentDir()

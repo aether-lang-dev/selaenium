@@ -9,7 +9,7 @@
 //   1. SELENIUM_CORE_LIB — an explicit path to the .so (dev/CI escape hatch);
 //   2. this binding's bundled native/libselenium_core.<ext> (a shipped copy);
 //   3. the shared fetch cache scripts/fetch-engine.sh populates:
-//      $XDG_CACHE_HOME/selaenium/<ENGINE_VERSION>/ (or the OS default);
+//      $XDG_CACHE_HOME/selaenium/<SELENIUM_CORE_VERSION>/ (or the OS default);
 //   4. the aeb-built engine artifact (selenium_core/.build.ae's shared_lib).
 //
 // NB: aeb resolves dep() edges by STATIC text scan (tools/extract-deps), so the
@@ -26,9 +26,17 @@ import std.os
 import std.file
 import std.string
 
-// The engine gh-release tag whose fetch-cache this node searches (matches
-// scripts/fetch-engine.sh's default TAG + rust/build.rs's ENGINE_VERSION).
-ENGINE_VERSION() -> string { return "v0.8.0" }
+// The libselenium_core gh-release tag. Single source of truth: the repo-root
+// SELENIUM_CORE_VERSION file (this node's steps run from the repo root, so the
+// path is bare). One place across every binding — no per-binding literal to
+// drift. Falls back to the baked default only if the file is unreadable.
+SELENIUM_CORE_VERSION() -> string {
+    v, err = file.read("SELENIUM_CORE_VERSION")
+    if string.length(err) > 0 { return "v0.8.0" }
+    t = string.trim(v)
+    if string.length(t) == 0 { return "v0.8.0" }
+    return t
+}
 
 // The shared fetch-cache dir: $XDG_CACHE_HOME/selaenium/<tag>/ (or the OS
 // default — ~/.cache on Linux, ~/Library/Caches on macOS). Same convention as
@@ -36,14 +44,14 @@ ENGINE_VERSION() -> string { return "v0.8.0" }
 _fetch_cache_dir() -> string {
     xdg = os.getenv("XDG_CACHE_HOME")
     if string.length(xdg) > 0 {
-        return string.concat(xdg, string.concat("/selaenium/", ENGINE_VERSION()))
+        return string.concat(xdg, string.concat("/selaenium/", SELENIUM_CORE_VERSION()))
     }
     home = os.getenv("HOME")
     if string.length(home) == 0 { return "" }
     // Probe macOS first (~/Library/Caches), then Linux (~/.cache).
-    mac = string.concat(home, string.concat("/Library/Caches/selaenium/", ENGINE_VERSION()))
+    mac = string.concat(home, string.concat("/Library/Caches/selaenium/", SELENIUM_CORE_VERSION()))
     if file.exists(string.concat(mac, "/libselenium_core.dylib")) == 1 { return mac }
-    return string.concat(home, string.concat("/.cache/selaenium/", ENGINE_VERSION()))
+    return string.concat(home, string.concat("/.cache/selaenium/", SELENIUM_CORE_VERSION()))
 }
 
 // Resolve a prebuilt engine .so WITHOUT the dep graph (steps 1–3). Returns an

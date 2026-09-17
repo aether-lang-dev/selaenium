@@ -6,19 +6,27 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 )
 
-func TestEngineVersionPin(t *testing.T) {
-	// Must track scripts/fetch-engine.sh's default TAG and rust/build.rs.
-	if EngineVersion != "v0.8.0" {
-		t.Fatalf("EngineVersion = %q, want v0.8.0", EngineVersion)
+func TestSeleniumCoreVersionPin(t *testing.T) {
+	// The repo-root SELENIUM_CORE_VERSION file is the single source of truth for
+	// the libselenium_core release tag. go:embed cannot reach a parent dir, so
+	// this binding keeps a literal SeleniumCoreVersion — but this test reads the file
+	// and fails if the literal drifts from it, so the two cannot silently diverge.
+	b, err := os.ReadFile(filepath.Join("..", "SELENIUM_CORE_VERSION"))
+	if err != nil {
+		t.Fatalf("reading SELENIUM_CORE_VERSION: %v", err)
+	}
+	if want := strings.TrimSpace(string(b)); SeleniumCoreVersion != want {
+		t.Fatalf("SeleniumCoreVersion = %q, but SELENIUM_CORE_VERSION says %q — update the constant", SeleniumCoreVersion, want)
 	}
 }
 
 func TestCacheDirHonorsXDG(t *testing.T) {
 	t.Setenv("XDG_CACHE_HOME", "/somewhere/cache")
-	want := filepath.Join("/somewhere/cache", "selaenium", EngineVersion)
+	want := filepath.Join("/somewhere/cache", "selaenium", SeleniumCoreVersion)
 	if got := CacheDir(); got != want {
 		t.Fatalf("CacheDir() = %q, want %q", got, want)
 	}
@@ -34,7 +42,7 @@ func TestCacheDirDefaultBase(t *testing.T) {
 	}
 	t.Setenv("XDG_CACHE_HOME", "")
 	t.Setenv("HOME", "/home/tester")
-	want := filepath.Join("/home/tester", ".cache", "selaenium", EngineVersion)
+	want := filepath.Join("/home/tester", ".cache", "selaenium", SeleniumCoreVersion)
 	if got := CacheDir(); got != want {
 		t.Fatalf("CacheDir() = %q, want %q", got, want)
 	}
@@ -67,7 +75,7 @@ func TestEngineDirFindsCache(t *testing.T) {
 	cache := t.TempDir()
 	t.Setenv("XDG_CACHE_HOME", cache)
 	t.Setenv("SELENIUM_CORE_LIB", "")
-	full := filepath.Join(cache, "selaenium", EngineVersion)
+	full := filepath.Join(cache, "selaenium", SeleniumCoreVersion)
 	if err := os.MkdirAll(full, 0o755); err != nil {
 		t.Fatal(err)
 	}

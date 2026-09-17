@@ -7,8 +7,8 @@ import Foundation
 import PackageDescription
 
 // The engine gh-release tag whose fetch-cache this package searches (matches
-// scripts/fetch-engine.sh's default TAG and every other binding's ENGINE_VERSION).
-let engineVersion = "v0.8.0"
+// scripts/fetch-engine.sh's default TAG and the SELENIUM_CORE_VERSION file).
+let seleniumCoreVersion = "v0.8.0"
 
 // The link paths below MUST be absolute and computed here, at
 // manifest-evaluation time. A relative "-L native" resolves against whatever
@@ -48,7 +48,7 @@ if let explicit = env["SELENIUM_CORE_LIB"], !explicit.isEmpty {
     candidateDirs.append(URL(fileURLWithPath: explicit).deletingLastPathComponent().path)
 }
 candidateDirs.append(packageDir.appendingPathComponent("native").path)
-candidateDirs.append(cacheHome + "/selaenium/" + engineVersion)
+candidateDirs.append(cacheHome + "/selaenium/" + seleniumCoreVersion)
 candidateDirs.append(packageDir.deletingLastPathComponent()
     .appendingPathComponent("selenium_core").appendingPathComponent("native").path)
 
