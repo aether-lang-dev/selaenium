@@ -18,10 +18,36 @@ hermetic. Ruby ≥ 3.0, no runtime gem dependencies (stdlib Fiddle + json only).
 > bare `gem install selenium-webdriver` installs the *classic* Selenium team's
 > gem, not this one — you build this one from the repo (below).
 
-## Get started
+## Using it (Ruby app developer)
 
-There is no registry install; you build the gem (with the engine sealed in), then
-install and use it — build → install → drive.
+You consume `selenium-webdriver` like any other gem — from wherever your shop
+publishes it (a private gem source: Artifactory / Gemfury / geminabox / a `gem
+server`), since it is not on rubygems.org (see the name note above). Your
+platform/DevOps team builds and publishes it in-house (next section); you just:
+
+```ruby
+# Gemfile:  gem 'selenium-webdriver'   (from your internal source), then:
+require 'selenium-webdriver'
+
+driver = Selenium::WebDriver.for(:chrome)          # or headless_chrome(url) / firefox / edge
+driver.get('https://example.com')
+puts driver.title
+puts driver.find_element(Selenium::WebDriver::By::ID, 'main').text
+driver.quit
+```
+
+The engine ships sealed inside the gem, so there is nothing to install, compile,
+or configure — no `aeb`, no `ae`, no compiler. It's a normal pure-Ruby gem (no
+native-extension build on `gem install`, no runtime gem deps) that `dlopen`s its
+bundled `.so`. If you ever need to point at a different engine, you can, ahead of
+any discovery: `Selenium::WebDriver.configure_native_lib('/abs/path/libselenium_core.so')`,
+or the `SELENIUM_CORE_LIB` env var.
+
+## Building & publishing the gem (platform / DevOps)
+
+The team that owns the Aether tooling builds the gem once — with the engine
+sealed in — and pushes it to the shop's internal gem source. App developers never
+touch `aeb`/`ae`.
 
 **1. Build the gem** (with the `aeb` build tool). It bundles the engine `.so`
 into `lib/selenium/native/`. Two options — grab the prebuilt engine, or build it:
@@ -37,36 +63,19 @@ aeb ruby/.package.ae
 
 Same gem either way (`target/package/ruby/dist/selenium-webdriver-<v>.gem`) with
 the same engine bytes inside — (a) downloads it, (b) compiles it. An arbitrary
-choice; pick whichever suits you. (The `aeb` tool and what building the engine
-from source entails are covered elsewhere — see the top-level README; a Ruby
-project only needs the resulting gem.)
+choice; pick whichever suits your pipeline. (The `aeb`/`ae` toolchain is covered
+in the top-level README; the produced gem needs none of it to consume.)
 
-**2. Install it for regular Ruby project use** (from the local `.gem` file, not
-from rubygems.org) so any project can `require 'selenium-webdriver'`:
+**2. Publish it to your internal gem source**, e.g.
 
 ```sh
-gem install --local target/package/ruby/dist/selenium-webdriver-*.gem
+gem push --host https://gems.your-shop.internal \
+    target/package/ruby/dist/selenium-webdriver-*.gem
+# or `gem install --local <path>` for a one-off / CI cache.
 ```
 
-**3. Drive a browser.** The engine is already sealed into the gem (step 1 bundled
-it), so there is nothing else to set up:
-
-```ruby
-require 'selenium-webdriver'
-
-driver = Selenium::WebDriver.for(:chrome)          # or headless_chrome(url) / firefox / edge
-driver.get('https://example.com')
-puts driver.title
-puts driver.find_element(Selenium::WebDriver::By::ID, 'main').text
-driver.quit
-```
-
-The engine can also be pinned explicitly, ahead of any discovery:
-`Selenium::WebDriver.configure_native_lib('/abs/path/libselenium_core.so')`, or
-via the `SELENIUM_CORE_LIB` env var.
-
-(The repo's top-level README also has a one-line installer that builds + installs
-from source.)
+From there it's a normal private gem: app developers `gem 'selenium-webdriver'`
+from that source and `require` it (above), engine and all.
 
 ## Fetch the engine instead of compiling it (`--overrideDep`)
 
