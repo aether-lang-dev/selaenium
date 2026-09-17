@@ -1,7 +1,9 @@
 # aeb 0.313 `--overrideDep` relabels the build schedule but NOT `dep_artifact()` reads
 
-**From:** selaenium, 2026-09-17. **Status: FIXED — aeb 9238127** (`_override_sub_label`
-in `_read_dep_artifact`, bldr:2263/2292; in my installed aeb v0.313-1-g…). Verified
+**From:** selaenium, 2026-09-17. **Status: FIXED + RELEASED — aeb v0.314**
+(commit 9238127 `_override_sub_label` in `_read_dep_artifact`, + follow-ups
+7455ea4 apply-after-topo-sort and b6b0203 the no-dep()-in-comments contract).
+selaenium pin bumped v0.312 -> v0.314; verified on the released bundle. Verified
 both by the aeb sibling (pre-fix `dep_artifact("selenium_core/.build.ae","shared_lib")`
 → `[]`; post-fix → the substitute's staged path, real v0.8.0 engine sha 4516753c…)
 and here (override run resolves the substitute path; rust 1/1). Existing
