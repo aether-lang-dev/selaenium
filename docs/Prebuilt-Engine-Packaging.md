@@ -1,10 +1,18 @@
-# Packaging against the prebuilt engine (no Aether toolchain)
+# Packaging against the prebuilt engine (fetch, don't compile)
 
 Every binding's package (`gem` / `jar` / `wheel` / …) bundles the pure-Aether
-engine `libselenium_core`. Normally the packaging node **builds** the engine from
-source, which needs the Aether toolchain (`ae` + the source tree). This page is
-the other way: **fetch** the prebuilt engine from the GitHub release and package
-that, so you can cut a distributable with no Aether toolchain at all.
+engine `libselenium_core` — one pure, reentrant shared library
+(`.so`/`.dylib`/`.dll`), not an install/service/framework. Normally the packaging
+node **compiles** that engine from its Aether source, which needs the engine
+source graph on the module path. This page is the other way: **fetch** the
+prebuilt engine from the GitHub release and package that.
+
+It's a choice about where the engine `.so` comes from, not a way to avoid the
+toolchain: `aeb` still runs the packaging node and still uses an `ae` compiler
+(your own, or one it fetches into its own cache) to build that node. What fetching
+skips is compiling the *engine* from source — so you need no engine source tree,
+just `aeb` + network. Some prefer it (a reproducible release artifact, nothing to
+compile); it's an arbitrary, per-person call.
 
 The mechanism is aeb's `--overrideDep` (aeb 0.313+, read-redirect in 0.314+) plus
 one fetch node, [`selenium_core/.getFromGitHubReleases.ae`](../selenium_core/.getFromGitHubReleases.ae).

@@ -23,20 +23,23 @@ hermetic. Ruby ≥ 3.0, no runtime gem dependencies (stdlib Fiddle + json only).
 There is no registry install; you build the gem (with the engine sealed in), then
 install and use it — build → install → drive.
 
-**1. Build the gem.** It bundles the engine `.so` under `lib/selenium/native/`.
-Pick ONE:
+**1. Build the gem** (with the `aeb` build tool). It bundles the engine `.so`
+into `lib/selenium/native/`. Two options — grab the prebuilt engine, or build it:
 
 ```sh
-# (a) with the Aether toolchain — builds the engine from source:
-aeb ruby/.package.ae
-
-# (b) with NO Aether toolchain — fetches the prebuilt engine from the release
-#     and bundles that (aeb 0.314+; see "No-toolchain build" below):
+# (a) grab the prebuilt engine from the release (nothing to compile):
 aeb ruby/.package.ae \
     --overrideDep selenium_core/.build.ae=selenium_core/.getFromGitHubReleases.ae
+
+# (b) build the engine from source instead:
+aeb ruby/.package.ae
 ```
 
-Either produces `target/package/ruby/dist/selenium-webdriver-<v>.gem`.
+Same gem either way (`target/package/ruby/dist/selenium-webdriver-<v>.gem`) with
+the same engine bytes inside — (a) downloads it, (b) compiles it. An arbitrary
+choice; pick whichever suits you. (The `aeb` tool and what building the engine
+from source entails are covered elsewhere — see the top-level README; a Ruby
+project only needs the resulting gem.)
 
 **2. Install it for regular Ruby project use** (from the local `.gem` file, not
 from rubygems.org) so any project can `require 'selenium-webdriver'`:
@@ -65,12 +68,12 @@ via the `SELENIUM_CORE_LIB` env var.
 (The repo's top-level README also has a one-line installer that builds + installs
 from source.)
 
-## No-toolchain build (`--overrideDep`)
+## Fetch the engine instead of compiling it (`--overrideDep`)
 
-Step 1(b) above relabels the gem's engine-build dependency to the fetch node
+Step 1(a) above relabels the gem's engine dependency to the fetch node
 ([`selenium_core/.getFromGitHubReleases.ae`](../selenium_core/.getFromGitHubReleases.ae)),
-which downloads + `.sha256`-verifies + stages the prebuilt engine — so you cut a
-gem with no compiler and no `ae`. See
+which downloads + `.sha256`-verifies + stages the prebuilt engine `.so` from the
+release rather than compiling it — so there's no engine source to build. See
 [`docs/Prebuilt-Engine-Packaging.md`](../docs/Prebuilt-Engine-Packaging.md) for
 the full flow, the per-binding override targets, and the checksum caveat.
 
