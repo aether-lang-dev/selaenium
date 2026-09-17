@@ -1,10 +1,32 @@
 # aeb 0.313 `--overrideDep` relabels the build schedule but NOT `dep_artifact()` reads
 
-**From:** selaenium, 2026-09-17. **Status:** bug/gap in the just-shipped
-`--overrideDep` (aeb 0.313). The substitute node runs, but a consumer that reads
-the substituted dep's published artifact by the ORIGINAL label gets nothing —
-this is exactly the "artifact READ redirect" layer the design reply
-(REPLY-generate-consumer-manifest-and-override-dep.md) said would ship first.
+**From:** selaenium, 2026-09-17. **Status: FIXED — aeb 9238127** (`_override_sub_label`
+in `_read_dep_artifact`, bldr:2263/2292; in my installed aeb v0.313-1-g…). Verified
+both by the aeb sibling (pre-fix `dep_artifact("selenium_core/.build.ae","shared_lib")`
+→ `[]`; post-fix → the substitute's staged path, real v0.8.0 engine sha 4516753c…)
+and here (override run resolves the substitute path; rust 1/1). Existing
+`dep_artifact("<real>", key)` calls transparently get the substitute's value, no
+consumer change — exactly as asked.
+
+> **CAVEAT for override/consumer PROOFS (about the rust binding, not the fix).**
+> rust's build.rs resolves the engine four ways (SELENIUM_CORE_LIB → bundled
+> rust/native/ → fetch cache → monorepo). `.getFromGitHubReleases.ae` runs
+> fetch-engine.sh, which RE-POPULATES the fetch cache (and stages native/), so a
+> fallback finds the `.so` and the rust test passes 1/1 EVEN IF the override read
+> were still broken — I confirmed the built binary's RUNPATH is the fetch cache
+> (`~/.cache/selaenium/v0.8.0`), NOT the substitute dir. So "rust passes under
+> --overrideDep" is NOT by itself proof the override path was used; the real proof
+> is at the `dep_artifact` layer (captured above). A proof that must assert the
+> override PATH has to scrub the fetch cache + native/ + monorepo so
+> SELENIUM_CORE_LIB is the only source — squarely the consumer-example isolation
+> territory. Recorded so future override validation doesn't false-green.
+
+--- original bug report ---
+
+Status was: bug/gap in the just-shipped `--overrideDep` (aeb 0.313). The substitute
+node runs, but a consumer that reads the substituted dep's published artifact by
+the ORIGINAL label gets nothing — the "artifact READ redirect" layer the design
+reply (REPLY-generate-consumer-manifest-and-override-dep.md) said would ship first.
 
 ## Setup (works as far as scheduling)
 
