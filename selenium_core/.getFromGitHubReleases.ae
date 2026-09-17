@@ -1,63 +1,173 @@
 // selenium_core/.getFromGitHubReleases.ae — the FETCH substitute producer for
-// the engine .so. Instead of cross-compiling libselenium_core from Aether
-// source, this node downloads the prebuilt engine for THIS platform from the
-// project's GitHub releases (verified against its published .sha256, cached),
-// stages it, and publishes the SAME artifact edges the engine builder publishes
-// (shared_lib / shared_library / shared_library_deps_including_transitive) — so
-// it is a drop-in producer of the engine with no Aether toolchain.
+// the engine .so. Instead of compiling libselenium_core from Aether source, this
+// node downloads the prebuilt engine for THIS platform from the project's GitHub
+// releases (verified against its published .sha256, cached), stages it, and
+// publishes the SAME artifact edges the engine builder publishes (shared_lib /
+// shared_library / shared_library_deps_including_transitive) — a drop-in producer
+// with no engine source to build.
 //
-// Use it via aeb's overrideDep (aeb 0.313+): relabel the engine-build edge to
+// Use it via aeb's overrideDep (aeb 0.314+): relabel the engine-build edge to
 // this node —
 //
 //   aeb <target> --overrideDep selenium_core/<engine build node>=selenium_core/.getFromGitHubReleases.ae
 //
 // so a binding's tests/package node consumes the FETCHED engine (its
-// dep_artifact reads what this node publishes) rather than building it. This is
-// how a no-Aether-toolchain packaging / CI flow supplies the engine, and the
-// piece a generated consumer manifest points at.
+// dep_artifact reads what this node publishes) rather than building it.
 //
-// The download+verify+cache is the shared scripts/fetch-engine.sh the runtime
-// and link-time bindings already use, so one cached engine
-// ($XDG_CACHE_HOME/selaenium/<tag>/libselenium_core.<ext>) is shared everywhere;
-// staging here is native std.fs (no shelled cp/mkdir). ENGINE_VERSION (the
-// release tag) lives in that script (TAG, currently v0.8.0).
+// PURE Aether stdlib: http.client (download, following GitHub's CDN redirect),
+// cryptography.sha256_file (verify), fs.* (cache + stage), os.getenv/os.platform
+// (locate). No shelled curl/wget/sha256sum/mkdir/cp. The ONE remaining shell is a
+// single `uname -m` for the CPU arch, which std does not yet expose (aeb's own
+// bldr._host_arch shells the same); swap `_arch()` to os.arch() once it ships
+// (aether #2051, ae 0.681+). Kept keyed to the same cache the other bindings use
+// ($XDG_CACHE_HOME/selaenium/<tag>/), so one downloaded engine is shared.
 import bldr
 import std.string
 import std.os
 import std.fs
+import std.http.client
+import std.cryptography
+
+// The engine gh-release tag this node fetches (matches scripts/fetch-engine.sh's
+// TAG + the bindings' ENGINE_VERSION). Bump when re-gluing to a newer engine.
+// (A function, not a top-level const — Aether has no top-level mutable state.)
+_tag() -> string { return "v0.8.0" }
+_repo() -> string { return "aether-lang-dev/selaenium" }
 
 aeb(cap) {
     bldr.build() {
-        // {module_dir} interpolates to the node LABEL for a typed node, so
-        // resolve the real filesystem source dir (selenium_core/) for the script
-        // path. The fetcher lives one up, at <repo>/scripts/fetch-engine.sh.
-        srcdir = bldr.source_dir(builder_context())
-        tgtdir = bldr.target_dir(builder_context())
-        fetch  = string.concat(srcdir, "/../scripts/fetch-engine.sh")
+        os_ = _os_tag()
+        arch = _arch()
+        ext = _ext(os_)
+        asset = string.concat("libselenium_core-", string.concat(_tag(),
+            string.concat("-", string.concat(os_, string.concat("-",
+            string.concat(arch, string.concat(".", ext)))))))
+        base = string.concat("https://github.com/", string.concat(_repo(),
+            string.concat("/releases/download/", _tag())))
 
-        // Fetch (download + .sha256 verify + cache) and read back the cache path.
-        // os.exec runs the vetted fetch script — the one genuinely-runtime step;
-        // everything else is native std.fs, not shelled tools.
-        _dl, _derr = os.exec(string.concat("sh ", string.concat(fetch, " >&2")))
-        cached, _perr = os.exec(string.concat("sh ", string.concat(fetch, " --path")))
-        cached = string.trim(cached)
+        // cache: $XDG_CACHE_HOME (or OS default) /selaenium/<tag>/lib<name>.<ext>
+        cache_dir = string.concat(_cache_base(os_), string.concat("/selaenium/", _tag()))
+        libname = _libname(os_)
+        cached = string.concat(cache_dir, string.concat("/", libname))
+        _m = fs.mkdir_p(cache_dir)
 
-        // Stage the cached .so into (a) the node's target dir (the published
-        // path) and (b) the in-tree native/ dir the link-time bindings' fixed -L
-        // path expects — via std.fs, mirroring where the engine builder lands it.
-        libdir = string.concat(tgtdir, "/lib")
+        // published .sha256 sidecar ("" if unavailable) — for verify + idempotence.
+        want = _download_text(string.concat(base, string.concat("/", string.concat(asset, ".sha256"))))
+        want = _first_word(want)
+
+        // idempotent: a present, checksum-matching cached copy skips the network.
+        need = 1
+        if fs.exists(cached) == 1 {
+            if string.length(want) == 0 { need = 0 }
+            else {
+                have_hex, _he = cryptography.sha256_file(cached)
+                if have_hex == want { need = 0 }
+            }
+        }
+        if need == 1 {
+            body, blen = _download_bytes(string.concat(base, string.concat("/", asset)))
+            if blen <= 0 { bldr.fail(builder_context(), string.concat("fetch failed: ", asset)) }
+            _w = fs.write_binary(cached, body, blen)
+            if string.length(want) > 0 {
+                got, _ge = cryptography.sha256_file(cached)
+                if got != want {
+                    bldr.fail(builder_context(), string.concat("checksum mismatch for ", asset))
+                }
+            }
+        }
+
+        // Stage into the node's target dir (the published path) + the in-tree
+        // native/ dir link-time bindings' fixed -L path expects.
+        tgt = bldr.target_dir(builder_context())
+        libdir = string.concat(tgt, "/lib")
         so_path = string.concat(libdir, "/libselenium_core.so")
-        native_so = string.concat(srcdir, "/native/libselenium_core.so")
-        _m1 = fs.mkdir_p(libdir)
-        _m2 = fs.mkdir_p(string.concat(srcdir, "/native"))
+        srcdir = bldr.source_dir(builder_context())
+        _m2 = fs.mkdir_p(libdir)
+        _m3 = fs.mkdir_p(string.concat(srcdir, "/native"))
         _c1 = fs.copy(cached, so_path)
-        _c2 = fs.copy(cached, native_so)
+        _c2 = fs.copy(cached, string.concat(srcdir, "/native/libselenium_core.so"))
 
-        // Publish the exact edge set the engine builder publishes, pointing at
-        // the staged .so — so this node is a drop-in substitute with no consumer
-        // change (consumers read dep_artifact(…, "shared_lib") et al.).
+        // Publish the exact edge set the engine builder publishes.
         publish_artifact("shared_lib", so_path)
         publish_artifact("shared_library", so_path)
         publish_artifact("shared_library_deps_including_transitive", so_path)
     }
+}
+
+// ---- platform ---------------------------------------------------------------
+
+// os.platform() gives the OS kernel token; map to the release-asset OS word.
+_os_tag() -> string {
+    p = os.platform()
+    if p == "darwin" { return "macos" }
+    return p    // linux / windows / freebsd already match the asset vocabulary
+}
+_ext(os_: string) -> string {
+    if os_ == "macos" { return "dylib" }
+    if os_ == "windows" { return "dll" }
+    return "so"
+}
+_libname(os_: string) -> string {
+    if os_ == "windows" { return "selenium_core.dll" }
+    if os_ == "macos" { return "libselenium_core.dylib" }
+    return "libselenium_core.so"
+}
+
+// _arch() — the CPU-arch word (x86_64/arm64), normalized to the release
+// vocabulary. TEMPORARY: std has no CPU-arch accessor yet, so this shells one
+// `uname -m` (the same workaround aeb's bldr._host_arch uses). Replace the body
+// with `return os.arch()` once aether #2051 (0.681+) is the pinned ae — os.arch()
+// is compile-time (no spawn) AND reports the TARGET arch under cross-compile,
+// which uname -m cannot.
+_arch() -> string {
+    raw, _e = os.exec("uname -m")
+    a = string.trim(raw)
+    if a == "x86_64" { return "x86_64" }
+    if a == "amd64" { return "x86_64" }
+    if a == "arm64" { return "arm64" }
+    if a == "aarch64" { return "arm64" }
+    return a
+}
+
+_cache_base(os_: string) -> string {
+    xdg = os.getenv("XDG_CACHE_HOME")
+    if string.length(xdg) > 0 { return xdg }
+    home = os.getenv("HOME")
+    if os_ == "macos" { return string.concat(home, "/Library/Caches") }
+    if os_ == "windows" {
+        la = os.getenv("LOCALAPPDATA")
+        if string.length(la) > 0 { return la }
+        return string.concat(home, "/AppData/Local")
+    }
+    return string.concat(home, "/.cache")
+}
+
+// ---- http (stdlib, redirect-following) --------------------------------------
+
+// GET a URL, following GitHub's CDN redirect, and return (body, length). length
+// <= 0 on any failure. Binary-safe (uses response_body_length, not str length).
+_download_bytes(url: string) -> (string, int) {
+    req = client.request("GET", url)
+    if req == null { return "", 0 }
+    _r = client.set_follow_redirects(req, 5)
+    resp, err = client.send_request(req)
+    if string.length(err) > 0 { return "", 0 }
+    if client.response_status(resp) != 200 { return "", 0 }
+    body = client.response_body(resp)
+    len = client.response_body_length(resp)
+    return body, len
+}
+
+// GET a small text resource (the .sha256 sidecar); "" on any failure.
+_download_text(url: string) -> string {
+    body, len = _download_bytes(url)
+    if len <= 0 { return "" }
+    return body
+}
+
+_first_word(s: string) -> string {
+    t = string.trim(s)
+    sp = string.index_of(t, " ")
+    if sp < 0 { return t }
+    return string.substring(t, 0, sp)
 }
