@@ -164,9 +164,8 @@ GEMINI.local.md
 /python/*.egg-info/
 # console.html staged into the package by python/.tests.ae + .package.ae from the
 # canonical selenium_core/console/; the in-tree copy is a build artifact (Bridge
-# reads it at runtime). Plus a stale pre-rename .so-staging dir.
+# reads it at runtime).
 /python/selenium/console.html
-/python/selenium_core/
 __pycache__/
 *.pyc
 .pytest_cache/
