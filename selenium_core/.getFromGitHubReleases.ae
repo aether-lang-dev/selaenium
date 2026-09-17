@@ -14,13 +14,13 @@
 // so a binding's tests/package node consumes the FETCHED engine (its
 // dep_artifact reads what this node publishes) rather than building it.
 //
-// PURE Aether stdlib: http.client (download, following GitHub's CDN redirect),
-// cryptography.sha256_file (verify), fs.* (cache + stage), os.getenv/os.platform
-// (locate). No shelled curl/wget/sha256sum/mkdir/cp. The ONE remaining shell is a
-// single `uname -m` for the CPU arch, which std does not yet expose (aeb's own
-// bldr._host_arch shells the same); swap `_arch()` to os.arch() once it ships
-// (aether #2051, ae 0.681+). Kept keyed to the same cache the other bindings use
-// ($XDG_CACHE_HOME/selaenium/<tag>/), so one downloaded engine is shared.
+// PURE Aether stdlib, NO shell-out: http.client (download, following GitHub's
+// CDN redirect), cryptography.sha256_file (verify), fs.* (cache + stage),
+// os.getenv/os.platform/os.arch (locate + release-asset name). No shelled
+// curl/wget/sha256sum/mkdir/cp, and no `uname -m` — os.arch() (aether #2051,
+// 0.681+) supplies the CPU-arch token at compile time. Kept keyed to the same
+// cache the other bindings use ($XDG_CACHE_HOME/selaenium/<tag>/), so one
+// downloaded engine is shared.
 import bldr
 import std.string
 import std.os
@@ -113,20 +113,14 @@ _libname(os_: string) -> string {
     return "libselenium_core.so"
 }
 
-// _arch() — the CPU-arch word (x86_64/arm64), normalized to the release
-// vocabulary. TEMPORARY: std has no CPU-arch accessor yet, so this shells one
-// `uname -m` (the same workaround aeb's bldr._host_arch uses). Replace the body
-// with `return os.arch()` once aether #2051 (0.681+) is the pinned ae — os.arch()
-// is compile-time (no spawn) AND reports the TARGET arch under cross-compile,
-// which uname -m cannot.
+// _arch() — the CPU-arch word for the release-asset name. os.arch() (aether
+// #2051, 0.681+) already returns the normalized ecosystem vocabulary the
+// release assets use ("x86_64" never "amd64", "arm64" never "aarch64"), so no
+// normalizer is needed here. It is compile-time (no process spawn — works in a
+// sandbox with no shell) AND reports the TARGET arch under cross-compile, which
+// the old `uname -m` shell-out could not.
 _arch() -> string {
-    raw, _e = os.exec("uname -m")
-    a = string.trim(raw)
-    if a == "x86_64" { return "x86_64" }
-    if a == "amd64" { return "x86_64" }
-    if a == "arm64" { return "arm64" }
-    if a == "aarch64" { return "arm64" }
-    return a
+    return os.arch()
 }
 
 _cache_base(os_: string) -> string {
