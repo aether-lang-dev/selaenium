@@ -11,26 +11,34 @@
 // over an event bus, with remote Nodes registering) is deliberately NOT here;
 // see docs/Grid.md for where the line is drawn and why.
 //
-// ---- why there is no session map -------------------------------------------
+// ---- shared state under the worker pool ------------------------------------
 //
 // std.http dispatches HTTP/1.1 handlers on a worker pool (cores * 2), so any
-// shared mutable session map would need a lock, and Aether's concurrency story
-// is actors rather than mutexes. We sidestep the problem instead of guarding it:
-// the hub is STATELESS. The routing facts a later request needs — which driver
-// process owns this session, on which port — are encoded INTO the session id the
-// hub hands back (see encode_session_id). Decoding is pure string work on the
-// request's own path, so two requests never touch shared state and the hub is
-// trivially safe under the worker pool.
+// shared mutable state two handlers touch has to be made safe. There are two
+// kinds here and they take different approaches:
 //
-// The cost is that an abandoned session (a client that never calls quit) leaves
-// its driver running, because nothing is tracking it to time out. Real Grid
-// reaps those; see docs/Grid.md "Known limitations".
+//   1. The SESSION MAP is avoided entirely — the hub is STATELESS about sessions.
+//      The routing facts a later request needs (which driver process owns this
+//      session, on which port) are encoded INTO the session id the hub hands back
+//      (see encode_session_id); decoding is pure string work on the request's own
+//      path, so two requests never touch shared state. The cost is that an
+//      abandoned session leaves its driver running (nothing tracks it to time
+//      out); real Grid reaps those — see docs/Grid.md "Known limitations".
+//
+//   2. The NODE REGISTRY (distributed Grid) is genuinely shared, and is made safe
+//      as a POOL-OWNED copy-on-write snapshot (registry.ae): a single immutable
+//      node table in a std.snapshot cell, mutated by lock-free CAS from the pool
+//      handlers, read by lock-free load. NOT an actor — a fire-and-forget send
+//      from a pool-worker thread to an actor is silently dropped on released
+//      0.681 (see registry.ae's header). This is the same "pool-owned shared
+//      state, guarded by a concurrency primitive" shape the runtime's own reverse
+//      -proxy load balancer uses (atomics + a mutex, in C); the registry does it
+//      from .ae with the one primitive .ae has, snapshot.cas.
 import std.http
 import std.http.client
 import std.string
 import std.json
 import std.os
-import std.actors
 import driver
 import hubcore
 import registry
@@ -167,29 +175,22 @@ forward_handler(req: ptr, res: ptr, ud: ptr) {
     send_json(res, status, string.replace_all(rbody, real_id, hub_id))
 }
 
-// GET /se/grid/nodecount — how many nodes are registered, asked of the registry
-// ACTOR (int answer via a ref cell — the observable channel out of an actor).
-// Proves a POSTed registration actually landed in the actor's state.
+// GET /se/grid/nodecount — how many nodes are registered. The registry is a
+// pool-owned snapshot cell (passed in as `ud` from main); this reads it directly
+// with a lock-free load (registry.count). No actor, no ref-cell poll — a handler
+// runs on std.http's worker pool, and a pool thread cannot get an actor to
+// process a message (the send is silently dropped: see registry.ae's header), so
+// the registry lives ON the pool and every handler touches it directly.
 node_count_handler(req: ptr, res: ptr, ud: ptr) {
-    reg = actors.whereis("grid_registry")
-    cell = ref(0 - 1)
-    reg ! Count { sink: cell }
-    waited = 0
-    while waited < 1000 {
-        if ref_get(cell) != (0 - 1) { waited = 1000 }
-        else { sleep(5); waited = waited + 5 }
-    }
-    // ref cells are int-typed; read straight into the body (no narrowing temp).
-    body = string.concat("{\"nodes\":", string.concat(string.from_int(ref_get(cell)), "}"))
+    body = string.concat("{\"nodes\":", string.concat(string.from_int(registry.count(ud)), "}"))
     send_json(res, 200, body)
 }
 
 // POST /se/grid/register — a node advertising itself. Parse its descriptor
-// ({"id","address","browsers":[..],"maxSessions"}) and feed a Register to the
-// in-process registry ACTOR. A @c_callback HTTP handler cannot carry an
-// Aether-typed arg, so the actor is reached by name via actors.whereis — the
-// exact cross-context pattern std.actors' registry exists for. Idempotent: a
-// re-POST (heartbeat / re-register) replaces the node by id.
+// ({"id","address","browsers":[..],"maxSessions"}) and register it in the
+// pool-owned registry cell (`ud`). registry.register is a CAS-COW write, safe
+// from concurrent pool handlers. Idempotent: a re-POST (heartbeat / re-register)
+// replaces the node by id.
 register_node_handler(req: ptr, res: ptr, ud: ptr) {
     body = http.request_body(req)
     root, perr = json.parse(body)
@@ -204,10 +205,7 @@ register_node_handler(req: ptr, res: ptr, ud: ptr) {
     if string.length(id) == 0 { id = address }         // fall back to address as id
     if max <= 0 { max = 1 }
 
-    reg = actors.whereis("grid_registry")
-    // message name unqualified even though it's imported from `registry` —
-    // spawn/send/receive positions reject a module-qualified message name.
-    reg ! Register { id: id, address: address, browsers: browsers, max: max }
+    registry.register(ud, id, address, browsers, max)
 
     out = json.obj()
     _o = json.set(out, "ok", json.str("true"))
@@ -250,9 +248,11 @@ _int_field(root: ptr, key: string) -> int {
 }
 
 main() {
-    // The node registry (an actor) — registered under the well-known name the
-    // register handler reaches via actors.whereis. selaenium's first live actor.
-    _reg = registry.registry_start()
+    // The node registry — a pool-owned copy-on-write snapshot cell. The register
+    // + nodecount handlers receive it as their `ud` and read/write it directly
+    // (CAS for writes, lock-free load for reads), all on the http worker pool.
+    // See registry.ae's header for why this is NOT an actor on released 0.681.
+    reg_cell = registry.registry_init()
 
     // SEL_HUB_PORT overrides the conventional Grid port.
     port = 4444
@@ -271,8 +271,8 @@ main() {
     }
 
     http.server_get(server, "/status", status_handler, 0)
-    http.server_post(server, "/se/grid/register", register_node_handler, 0)
-    http.server_get(server, "/se/grid/nodecount", node_count_handler, 0)
+    http.server_post(server, "/se/grid/register", register_node_handler, reg_cell)
+    http.server_get(server, "/se/grid/nodecount", node_count_handler, reg_cell)
     http.server_post(server, "/session", new_session_handler, 0)
     // Session-scoped traffic. `*` matches the rest of the path, so one handler
     // per method covers every W3C command without re-listing the route table.

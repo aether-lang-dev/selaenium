@@ -27,6 +27,12 @@
 # Env: SEL_GRID_IMAGE (default selenium/standalone-chromium:latest),
 #      SEL_GRID_PORT (default 4444), SEL_GRID_KEEP=1 (leave the container up),
 #      SEL_HUB_BIN (path to selaenium-hub; default target/build/grid/bin/).
+#
+# A lighter, driver-free live check of the distributed-Grid registry lives beside
+# this: grid/tests/nodecount_live.sh asserts /se/grid/nodecount reflects a real
+# POST /se/grid/register (0 -> 1 -> 2, idempotent) — the "-1 gap closed" proof,
+# needing only the hub binary (no browser, no container). Run it after building
+# the hub: `aeb grid/.build.ae && sh grid/tests/nodecount_live.sh`.
 set -u
 
 # ---- --hub: our own standalone hub instead of the reference container --------

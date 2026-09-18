@@ -12,11 +12,21 @@ aeb(cap) {
             source("tests/hub_probe.ae")
             lib(".")
         }
-        // The Grid node-registry ACTOR (registry.ae) — selaenium's first real
-        // use of Aether actors. Pure: no network, no driver, no listening port.
+        // The Grid node registry (registry.ae) — a pool-owned std.snapshot
+        // copy-on-write structure (NOT an actor; see registry.ae's header for the
+        // runtime reason). Pure: no network, no driver, no listening port.
         aether.program_test() {
             source("tests/registry_probe.ae")
             lib(".")
+        }
+        // Concurrent-writers stress: the registry is std.snapshot's first real
+        // concurrent-CAS-writer user, and nothing upstream tests that path, so we
+        // prove it here — many worker threads register at once, count must be
+        // exact (no lost updates). Needs the os cap for std.worker's thread pool.
+        aether.program_test() {
+            source("tests/registry_stress.ae")
+            lib(".")
+            caps("os")
         }
     }
 }

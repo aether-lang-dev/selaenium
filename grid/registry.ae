@@ -1,112 +1,177 @@
-// registry.ae — the Grid node registry, as an Aether ACTOR.
+// registry.ae — the Grid node registry: a POOL-OWNED, copy-on-write snapshot.
 //
 // This is the shared-state substrate distributed Grid needs and standalone mode
 // deliberately did without: a hub tracking which Nodes have registered, what
-// slots each offers, and which is alive. `docs/Grid.md` explains why the
-// standalone hub has NO shared session map — std.http dispatches handlers on a
-// worker pool, so shared mutable state would need a lock, and Aether's
-// concurrency story is actors, not mutexes. So the registry is an actor: writes
-// serialize in its mailbox, reads are messages, and no handler ever holds a lock.
+// slots each offers, and which is alive.
 //
-// This is selaenium's FIRST real actor. It is deliberately small — register /
-// heartbeat / remove / lookup / list / count — and unit-tested with no network
-// (grid/tests/registry_probe.ae), to prove the actor model works in this repo's
-// build + concurrency model before the Distributor / New Session Queue / Session
-// Map are built on top of it.
+// ---- why pool-owned COW, not an actor (the honest 0.681 substrate) ----------
+//
+// std.http dispatches HTTP/1.1 handlers on a worker POOL (cores*2 bare pthreads).
+// The natural Aether answer would be an actor: writes serialize in its mailbox,
+// no handler holds a lock. We built that first — and hit a hard runtime wall: a
+// fire-and-forget `actor ! Msg` sent FROM A POOL-WORKER THREAD is silently
+// DROPPED. The send enqueues to the scheduler's single-producer `from_queues`
+// slot as an illegitimate second producer, and the message is lost (root-caused
+// by the aether team; see aether asks/foreign-c-thread-actor-send-silently-
+// dropped.md). So a handler CANNOT hand a Register off to a registry actor today
+// — the actor never processes it (the "-1 nodecount" symptom).
+//
+// The correct RELEASED substrate is therefore: NO actor in the write path. One
+// writer model = the pool, serialized by std.snapshot's lock-free CAS. The whole
+// registry is a single immutable node-table string held in a snapshot cell.
+// register/remove/slot LOAD the current table, build a NEW table with the change
+// (the pure _drop_row/_row/_bump_inuse helpers already do exactly this — no
+// in-place mutation, which readers forbid), and CAS old->new, retrying if a
+// concurrent pool thread won the race. count/available/pick just LOAD and read.
+// Every op is callable directly from a @c_callback handler on the pool — no
+// cross-thread hand-off, so the send-path bug never bites. And because there is
+// exactly one logical writer discipline (CAS the cell), there is no
+// two-writers-of-truth aliasing — the thing single-owner-actor protected.
+//
+// WHEN THE ACTOR RETURNS: once the aether send-path fix lands (foreign C thread
+// -> actor sends stop being dropped) AND the hub can run handlers on-scheduler
+// (real actor-dispatch), the registry becomes a single-writer ACTOR again and
+// pool handlers hand off to it instead of CASing shared state. This module's
+// public API (register/remove/count/available/pick over a cell handle) is the
+// seam that swap hides behind.
 //
 // A Node is identified by a string id and carries its base address (where the
-// hub proxies sessions), a "\t"-joined list of browser names it can host, its
-// max slot count, and a last-heartbeat epoch-ms. State is a "\n"-joined table of
-// "id\taddress\tbrowsers\tmax\tlast_ms" rows — the same plain-string shape the
-// engine already uses for timers/vars, so there is no map type to marshal across
-// the actor boundary (a ptr map on actor state is exactly the segfault the
-// std.actors tests warn about).
-import std.actors
+// hub proxies sessions), a space-joined list of browser names it can host, its
+// max slot count, an in-use count, and a last-heartbeat epoch-ms. The table is a
+// "\n"-joined set of "id\taddress\tbrowsers\tmax\tinuse\tlast_ms" rows.
 import std.string
 import std.time
+import std.snapshot
 
-// ---- messages ---------------------------------------------------------------
-// A caller that wants an answer passes a reply actor_ref (`from`) and a ref cell
-// (`sink`, a plain int/string ref) the answer is written into — the observable
-// channel out of an actor, per the std.actors idiom (never hold the cell on
-// actor state).
+// libc: the snapshot cell holds a heap char* (an independent copy of the table
+// cstr); strdup makes it, free retires a displaced one. string_to_cstr /
+// string_from_cstr bridge Aether strings <-> the heap cstr the cell stores.
+extern strdup(s: string) -> ptr
+extern free(p: ptr)
 
-// Register (or replace) a node. Idempotent on id.
-message Register { id: string  address: string  browsers: string  max: int }
-// Refresh a node's last-seen time (liveness). No-op for an unknown id.
-message Heartbeat { id: string }
-// Drop a node (drain/deregister).
-message Remove { id: string }
-// Ask whether a node that can host `browser` with a free slot is available:
-// writes 1 (available) or 0 (none) into `sink`. Actor answers use an INT `ref`
-// cell — a string cannot round-trip a ref cell, and a reply MESSAGE cannot cross
-// a module boundary into a caller's actor (the actor codegen only wires handlers
-// for messages defined in the receiver's own module). So the query surface is
-// int-answered; the chosen node's ADDRESS is fetched by the hub via a
-// same-module helper (pick_address below), not across an actor reply.
-message Available { browser: string  sink: ptr }
-// Ask how many nodes are registered; written into `sink`.
-message Count { sink: ptr }
-// Note that a session was assigned to / released from `id` (adjusts in-use slot
-// bookkeeping so Pick can honour max). delta is +1 (assign) or -1 (release).
-message Slot { id: string  delta: int }
+// ---- the cell: the whole registry, as one atomically-swapped snapshot --------
+// A Registry handle is just the snapshot cell ptr. The hub creates ONE in main
+// and passes it as the `ud` of every grid handler; the handlers call the
+// functions below with it. No module-global (Aether has none) — the cell travels
+// through the handler ud slot, which is exactly what ud is for.
 
-actor Registry {
-    // "id\taddress\tbrowsers\tmax\tinuse\tlast_ms\n..." — one row per node.
-    state nodes = ""
+// registry_init() — create an empty registry cell. Call once in main.
+registry_init() -> ptr {
+    return snapshot.new(_dup(""))
+}
 
-    receive {
-        Register(id, address, browsers, max) -> {
-            nodes = _drop_row(nodes, id)
-            nodes = string.concat(nodes, _row(id, address, browsers, max, 0, _now_ms()))
-        }
-        Heartbeat(id) -> {
-            nodes = _touch(nodes, id)
-        }
-        Remove(id) -> {
-            nodes = _drop_row(nodes, id)
-        }
-        Slot(id, delta) -> {
-            nodes = _bump_inuse(nodes, id, delta)
-        }
-        Available(browser, sink) -> {
-            addr = _pick(nodes, browser)
-            if string.length(addr) > 0 { ref_set(sink, 1) } else { ref_set(sink, 0) }
-        }
-        Count(sink) -> {
-            ref_set(sink, _row_count(nodes))
-        }
+// _dup(table) — an independent heap cstr copy of the Aether table string, for
+// the cell to own. _read(box) — the table string back out of a loaded cell value.
+_dup(table: string) -> ptr { return strdup(string_to_cstr(table)) }
+_read(box: ptr) -> string { if box == null { return "" } return string_from_cstr(box) }
+
+// _commit(cell, cur, next_table) — CAS `next_table` (an Aether string) in over
+// `cur` (the value loaded to build it). Returns 1 on success, 0 on lost race.
+// This is the single point that enforces the two reclamation rules the COW
+// discipline needs (aeb's guardrails):
+//   - CAS LOSER frees the `next` cstr it built EAGERLY: nobody took it, it never
+//     entered the cell, so no reader can hold it — free it now (not the retire
+//     path), else every lost race leaks.
+//   - CAS WINNER's displaced `cur` may still be held by an in-flight reader, so
+//     it must NOT be freed now; it is retired (see _retire).
+_commit(cell: ptr, cur: ptr, next_table: string) -> int {
+    next = _dup(next_table)
+    if snapshot.cas(cell, cur, next) == 1 {
+        _retire(cur)
+        return 1
+    }
+    free(next)   // rejected: we own it, free eagerly
+    return 0
+}
+
+// ---- write ops (CAS loops; safe from any pool handler) ----------------------
+// Each: load the current table, build a NEW table (pure helpers — no in-place
+// mutation), CAS it in; on a lost race the table changed under us, so retry from
+// a FRESH load. Idempotent/serialized: only one thread's CAS wins per generation.
+
+// register(cell, ...) — add or replace a node (idempotent on id).
+register(cell: ptr, id: string, address: string, browsers: string, max: int) {
+    while 1 == 1 {
+        cur = snapshot.load(cell)
+        next = string.concat(_drop_row(_read(cur), id), _row(id, address, browsers, max, 0, _now_ms()))
+        if _commit(cell, cur, next) == 1 { return }
     }
 }
 
-// registry_start() — spawn the registry actor and register it under the
-// well-known name "grid_registry" so any @c_callback HTTP handler can reach it
-// via actors.whereis without threading an actor_ref through the http layer.
-registry_start() -> actor_ref {
-    r = registry_new()
-    actors.register("grid_registry", r)
-    return r
+// remove(cell, id) — drop a node.
+remove(cell: ptr, id: string) {
+    while 1 == 1 {
+        cur = snapshot.load(cell)
+        if _commit(cell, cur, _drop_row(_read(cur), id)) == 1 { return }
+    }
 }
 
-// registry_new() — spawn a registry actor WITHOUT the global name (a fresh,
-// unregistered instance). `spawn` needs the actor type unqualified, so callers
-// in other modules use this rather than `spawn(registry.Registry())`.
-registry_new() -> actor_ref {
-    return spawn(Registry())
+// heartbeat(cell, id) — refresh a node's last-seen time (no-op for unknown id).
+heartbeat(cell: ptr, id: string) {
+    while 1 == 1 {
+        cur = snapshot.load(cell)
+        if _commit(cell, cur, _touch(_read(cur), id)) == 1 { return }
+    }
 }
 
-// NOTE for the hub: a string answer (the picked node's address, or the /status
-// JSON) can't come back through a ref cell or a cross-module reply message. When
-// the hub and registry are wired, the address is fetched by co-locating the pick
-// with the hub's request handling, or by an int handle the hub maps to an
-// address it also holds. pick_address / status_json are the pure functions that
-// do the string work; they are exposed for that same-module wiring and keep
-// _pick/_to_json exercised until the distributor lands.
-pick_address_of(nodes_snapshot: string, browser: string) -> string {
-    return _pick(nodes_snapshot, browser)
+// slot(cell, id, delta) — adjust a node's in-use slot count (+1 assign / -1 release).
+slot(cell: ptr, id: string, delta: int) {
+    while 1 == 1 {
+        cur = snapshot.load(cell)
+        if _commit(cell, cur, _bump_inuse(_read(cur), id, delta)) == 1 { return }
+    }
 }
-status_json_of(nodes_snapshot: string) -> string {
-    return _to_json(nodes_snapshot)
+
+// ---- read ops (lock-free loads; safe from any pool handler) -----------------
+
+// count(cell) — how many nodes are registered.
+count(cell: ptr) -> int { return _row_count(_read(snapshot.load(cell))) }
+
+// available(cell, browser) — 1 if some node hosts `browser` with a free slot.
+available(cell: ptr, browser: string) -> int {
+    if string.length(_pick(_read(snapshot.load(cell)), browser)) > 0 { return 1 }
+    return 0
+}
+
+// pick_address(cell, browser) — the address of an available node for `browser`, "" if none.
+pick_address(cell: ptr, browser: string) -> string {
+    return _pick(_read(snapshot.load(cell)), browser)
+}
+
+// status_json(cell) — the node table as a JSON array.
+status_json(cell: ptr) -> string {
+    return _to_json(_read(snapshot.load(cell)))
+}
+
+// ---- reclamation: the displaced (successful-CAS) table --------------------
+// snapshot's contract (std.snapshot module.ae:14-34): the cell never owns/frees
+// its values; a CAS winner gets the displaced ptr back to reclaim, but only
+// after a grace period — a concurrent reader (a lookup handler that did
+// load()+_pick and then blocked on socket I/O) may still hold it across several
+// swaps, so freeing it now is a use-after-free.
+//
+// A correct bounded retire ring needs shared mutable state across CAS winners
+// (push displaced, free the N-generations-old one) — and successive winners run
+// concurrently, so that ring itself needs a lock. Released Aether exposes NO
+// mutex/lock to .ae (verified: no std.sync/std.mutex, no lock extern), so a
+// race-free ring is not buildable here without hand-rolling hazard pointers —
+// which the aether owner explicitly advised against for this case.
+//
+// So we take the documented safe default: DEFER-BY-LEAK. A displaced table is
+// never freed; it is retained for the process lifetime. This is bounded and
+// tiny: only Register/Remove/Slot/Heartbeat displace a table, each table is a
+// few hundred bytes, and a hub sees a handful of registrations/heartbeats — the
+// total is trivial next to the driver processes the hub spawns. The CAS-LOSER
+// path (the high-frequency one under contention) does NOT leak — it eager-frees
+// its rejected `next` in _commit. Only successful mutations retain, so the leak
+// is O(number of successful registry writes), not O(requests).
+//
+// The real ring-buffer reclamation lands with the actor-return migration: once
+// the send-path fix ships and the registry is a single-writer ACTOR again, the
+// actor owns its old tables and frees them serially (no lock needed — one
+// writer), which is the clean answer this substrate can't express today.
+_retire(displaced: ptr) {
+    _kept = displaced   // intentionally retained (see above); freed never.
 }
 
 // ---- pure row helpers (unit-testable without an actor) ----------------------

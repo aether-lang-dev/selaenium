@@ -1,0 +1,83 @@
+// registry_stress.ae — concurrent-writers stress for the pool-owned CAS-COW
+// registry (registry.ae).
+//
+// WHY: the registry is std.snapshot's FIRST real concurrent-CAS-writer user.
+// std.snapshot has shipped since aether v0.309 (issue #840), but its regression
+// test is single-threaded and nothing in-tree drives concurrent CAS writers — so
+// nothing upstream proves the exact thing the grid depends on: that the CAS
+// retry loop in registry.register never LOSES an update when many pool threads
+// mutate the same cell at once. This test proves it, using std.worker (a real
+// thread pool, the same shape std.http dispatches handlers on).
+//
+// If the CAS loop were wrong (e.g. store instead of cas, or no retry), N
+// concurrent distinct registrations would clobber each other and the final count
+// would be < N. It must be EXACTLY N. And N concurrent SAME-id registrations must
+// stay idempotent (one row), not race into duplicates.
+import std.worker
+import std.string
+import registry
+
+// Block until every submitted worker job has finished. worker.wait() drains
+// completions and blocks on the pool's done-signal until pending() == 0 — the
+// correct completion barrier (a drain-poll loop can observe a transient 0 and
+// return before all jobs run).
+_await_all() { _w = worker.wait() }
+
+// _stress_distinct(cell, n) — fire n concurrent registrations of DISTINCT ids.
+_stress_distinct(cell: ptr, n: int) {
+    i = 0
+    while i < n {
+        id = string.concat("node-", string.from_int(i))
+        addr = string.concat("http://127.0.0.1:", string.from_int(5000 + i))
+        _ok = worker.run(
+            || { registry.register(cell, id, addr, "chrome", 1)  return null },
+            | r: ptr | { }
+        )
+        i = i + 1
+    }
+    _await_all()
+}
+
+// _stress_same(cell, n, id) — fire n concurrent registrations of the SAME id.
+_stress_same(cell: ptr, n: int, id: string) {
+    j = 0
+    while j < n {
+        _ok = worker.run(
+            || { registry.register(cell, id, "http://dup", "firefox", 1)  return null },
+            | r: ptr | { }
+        )
+        j = j + 1
+    }
+    _await_all()
+}
+
+main() {
+    n = 200
+    cell = registry.registry_init()
+    fails = 0
+
+    _stress_distinct(cell, n)
+    got = registry.count(cell)
+    if got == n {
+        println("  [ok] ${n} concurrent DISTINCT registrations -> count ${got} (no lost updates)")
+    } else {
+        println("  [FAIL] expected ${n}, got ${got} (CAS lost updates under contention)")
+        fails = fails + 1
+    }
+
+    _stress_same(cell, n, "dup")
+    got2 = registry.count(cell)
+    if got2 == n + 1 {
+        println("  [ok] ${n} concurrent SAME-id registrations -> count ${got2} (idempotent under contention)")
+    } else {
+        println("  [FAIL] expected ${n + 1}, got ${got2} (idempotency broke under contention)")
+        fails = fails + 1
+    }
+
+    if fails == 0 {
+        println("PASS: registry_stress — CAS-COW registry is correct under concurrent writers")
+        return 0
+    }
+    println("FAIL: registry_stress")
+    return 1
+}
