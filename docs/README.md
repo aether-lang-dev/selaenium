@@ -9,6 +9,11 @@ Design notes for the Selenium-on-Aether port.
   (the persistent-WebSocket, event-driven protocol). Transport + model proven
   live (`selenium_core/bidi_probe.ae`); the engine-layer + ABI plan awaits
   review — the open question is async events over a synchronous FFI.
+- **[Interactive Runner & Console](./Interactive-Runner-Console.md)** — the
+  engine-side shell language + SAM step-aside debug model (`shell.ae`/`runner.ae`),
+  surfaced from a terminal REPL, a SUT-adjacent iframe console, and a WebSocket
+  dashboard. Unit-proven + the Aether REPL driven live against real Chrome. A
+  design homage to webautoma's SAM console.
 
 ## WASM binding — three parked directions
 
