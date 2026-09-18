@@ -56,6 +56,28 @@ shell_eval(sp: ptr, line: string) -> string {
     // ---- scripts ----
     if verb == "eval" { return _cmd(sp, "executeScript", _script_obj(rest)) }
 
+    // ---- scrolling (webautoma-style: scroll by a delta / element into view) ----
+    // `scroll <dx> <dy>` scrolls the window; `scrollTo <sel>` scrolls the element
+    // named by <sel> into view. Both ride executeScript (the same seam as eval),
+    // so no new engine primitive — a terse console convenience.
+    if verb == "scroll" {
+        dx = _word(rest, 0)
+        dy = _word(rest, 1)
+        if string.length(dx) == 0 { dx = "0" }
+        if string.length(dy) == 0 { dy = "0" }
+        js = string.concat("window.scrollBy(", string.concat(dx, string.concat(",", string.concat(dy, ");"))))
+        return _cmd(sp, "executeScript", _script_obj(js))
+    }
+    if verb == "scrollTo" {
+        eid = _find(sp, string.trim(rest))
+        if string.length(eid) == 0 { return _err(_find_err(sp, rest), selenium_core.last_error_code_of(sp)) }
+        // pass the element as arguments[0] (the W3C element ref object).
+        args = string.concat("[{\"element-6066-11e4-a52e-4f735466cecf\":", string.concat(_qs(eid), "}]"))
+        body = string.concat("{\"script\":", string.concat(_qs("arguments[0].scrollIntoView({block:'center'});"),
+            string.concat(",\"args\":", string.concat(args, "}"))))
+        return _cmd(sp, "executeScript", body)
+    }
+
     // ---- raw escape hatch: `exec <command> <params-json>` ----
     if verb == "exec" {
         cmd = _word(rest, 0)
@@ -244,5 +266,5 @@ _json_field(json: string, key: string) -> string {
 }
 
 _help_text() -> string {
-    return "commands: open <url> | title | url | source | back | forward | refresh | click <sel> | clear <sel> | text <sel> | type <sel> <text> | eval <js> | exec <cmd> <json> | trace on|off | events | timer start|stop <name> | timers | sid | help.  selectors: #id, .class, css=<sel>, xpath=<x> or //, bare=css"
+    return "commands: open <url> | title | url | source | back | forward | refresh | click <sel> | clear <sel> | text <sel> | type <sel> <text> | scroll <dx> <dy> | scrollTo <sel> | eval <js> | exec <cmd> <json> | trace on|off | events | timer start|stop <name> | timers | sid | help.  selectors: #id, .class, css=<sel>, xpath=<x> or //, bare=css"
 }
