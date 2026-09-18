@@ -15,7 +15,7 @@ Apache-2.0) — a design homage, not a code fork; credited in
 
 | File | Role |
 |------|------|
-| `shell.ae` | the "wee shell language" — `shell_eval(session, line)` parses a terse line (`open <url>`, `click <sel>`, `text <sel>`, `type <sel> <text>`, `scroll <dx> <dy>`, `scrollTo <sel>`, `eval <js>`, `trace on`, …) and dispatches through the same command catalog every binding uses. Immediate execution. |
+| `shell.ae` | the "wee shell language" — `shell_eval(session, line)` parses a terse line (`open <url>`, `click <sel>`, `text <sel>`, `type <sel> <text>`, `scroll <dx> <dy>`, `scrollTo <sel>`, `store <name> <sel>`, `eval <js>`, `trace on`, …) and dispatches through the same command catalog every binding uses. Immediate execution. Every line is first run through a `{{name}}` interpolation pass against the session variable store (below). |
 | `runner.ae` | the interactive **debug controller** over the shell — an indexed command *history* with a **cursor**, driven by control requests on the runner lane: `eval`, `mode run\|step`, `step`, `continue`, `inspect`, and the **SAM step-aside** verbs `list` / `jump` / `prev` / `next` / `redo`. Replies are id-correlated; `paused` / `command-finished` events are emitted. |
 | `bidi_demux.ae` | the named-channel demux — multiplexes the runner control lane (so replies/events don't collide with a browser BiDi lane). |
 | `iframe_bridge.ae` | the **SUT-adjacent** transport: the console runs as an iframe *beside* the page under test, but commands route DOWN to the driving client and back UP over `executeScript` — in-page UI, out-of-page execution. |
@@ -29,6 +29,23 @@ Apache-2.0) — a design homage, not a code fork; credited in
 sequence with the cursor marked; `jump`/`prev`/`next` move it without executing;
 `redo` re-runs the last-executed line. This is what lets a human step *back* and
 re-run, not just forward — the essence of SAM.
+
+### Variables & templating (scripts made dynamic)
+
+`store <name> <sel>` scrapes the named element's text into a per-session variable
+store (`var_set`/`var_get` on the `Session`), and every shell line is run through
+a `{{name}}` interpolation pass (`_expand_vars`) before parsing — so a value
+grabbed off the page can be spliced into later commands (`store id #order`, then
+`open /receipt/{{id}}`). This is webautoma's `stackAdd` + `{{.var}}` idea.
+
+**Scope, deliberately:** templating lives in `shell_eval`, so it is uniform
+across everything that runs through the shell — the REPL, the iframe console, the
+dashboard, and `.side` playback — because the logic lives once in the engine. It
+is **not** woven into the typed client API: `driver.get(url)` in any binding does
+its own string building in its own language and never sees `{{...}}`. Templating
+makes *scripts* dynamic; it is not a substitute for a client's ordinary string
+concatenation (doing so would mean 27 reimplementations, and would silently
+rewrite any `{{` a page legitimately contains).
 
 ## The front-end hosts
 
@@ -104,6 +121,10 @@ x86_64):**
   `:list` showed `cursor:0, count:2` with both indexed lines; `:step` ran index 0
   and re-paused (`pending:1`); the second `:list` showed `cursor:1`; `:continue`
   drained the rest (`continued:1`, back to run mode). Exit 0.
+- `scroll` / `scrollTo`: on a 3000px-tall page, `scroll 0 500` then `scrollTo #btm`
+  then `text #btm` returned `bottom` (the bottom element became reachable). Exit 0.
+- Variables: `store tok #tok` scraped `hello42`; `type #box {{tok}}` interpolated
+  it and typed it; reading the input value back returned `hello42`. Exit 0.
 
 Every SAM verb behaved as the unit probes assert — confirmed against a live
 session, not just fed JSON. (A `--url` pointed at a dead endpoint prints
