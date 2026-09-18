@@ -46,6 +46,12 @@ struct Session {
     trace_count: int        // number of events accumulated (for the array commas)
     timers_json: string     // accumulated "[{timer},...]" of stopped named spans
     timers_open: string     // "name\tstart_ms\n..." of currently-open timers
+    // --- shell/.side variable store: values scraped from the page (the shell's
+    // `store <name> <sel>`), interpolated into later shell lines via {{name}}.
+    // "name\tvalue\n..." (same plain-string shape as timers_open; no map type).
+    // Shell/.side/REPL only — the typed client API (get/sendKeys/...) never sees
+    // {{...}}; a binding developer uses their own language's string building.
+    vars: string
 }
 
 // Create a session bound to `base_url` (e.g. "http://127.0.0.1:9515" or a
@@ -71,6 +77,7 @@ session_new(base_url: string) -> ptr {
     s.trace_count = 0
     s.timers_json = ""
     s.timers_open = ""
+    s.vars = ""
     return s as ptr
 }
 
@@ -233,6 +240,75 @@ session_id_of(sp: ptr) -> string {
     if sp == null { return "" }
     s = sp as *Session
     return s.session_id
+}
+
+// var_set(sp, name, value) — store/replace a shell variable. Values hold
+// "name\tvalue\n" rows; a re-set of an existing name drops the old row first.
+// Newlines/tabs in the value would corrupt the row format, so they are
+// space-normalized (a scraped page value is plain text for {{...}} splicing).
+var_set(sp: ptr, name: string, value: string) {
+    if sp == null { return }
+    s = sp as *Session
+    s.vars = _var_drop(s.vars, name)
+    v = _var_clean(value)
+    s.vars = string.concat(s.vars, string.concat(name, string.concat("\t", string.concat(v, "\n"))))
+}
+
+// var_get(sp, name) — the stored value for `name`, or "" if unset.
+var_get(sp: ptr, name: string) -> string {
+    if sp == null { return "" }
+    s = sp as *Session
+    key = string.concat(name, "\t")
+    rows = s.vars
+    // scan line-anchored: the row starts either at index 0 or right after a "\n".
+    at = 0
+    while at < string.length(rows) {
+        line_start = at
+        nl = string.index_of(string.substring(rows, at, string.length(rows)), "\n")
+        line_end = string.length(rows)
+        if nl >= 0 { line_end = at + nl }
+        row = string.substring(rows, line_start, line_end)
+        if string.starts_with(row, key) == 1 {
+            return string.substring(row, string.length(key), string.length(row))
+        }
+        if nl < 0 { return "" }
+        at = line_end + 1
+    }
+    return ""
+}
+
+// _var_drop(rows, name) — the "name\t...\n" rows with `name`'s row removed.
+_var_drop(rows: string, name: string) -> string {
+    key = string.concat(name, "\t")
+    out = ""
+    at = 0
+    while at < string.length(rows) {
+        nl = string.index_of(string.substring(rows, at, string.length(rows)), "\n")
+        line_end = string.length(rows)
+        if nl >= 0 { line_end = at + nl }
+        row = string.substring(rows, at, line_end)
+        if string.starts_with(row, key) == 0 {
+            out = string.concat(out, string.concat(row, "\n"))
+        }
+        if nl < 0 { return out }
+        at = line_end + 1
+    }
+    return out
+}
+
+// _var_clean(v) — replace \n and \t with spaces so a value can't break the
+// row-delimited store.
+_var_clean(v: string) -> string {
+    out = ""
+    i = 0
+    while i < string.length(v) {
+        c = string.substring(v, i, i + 1)
+        if c == "\n" { out = string.concat(out, " ") }
+        else { if c == "\t" { out = string.concat(out, " ") }
+        else { out = string.concat(out, c) } }
+        i = i + 1
+    }
+    return out
 }
 
 last_status_of(sp: ptr) -> int {

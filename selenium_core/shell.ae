@@ -27,12 +27,32 @@ import selenium_core
 // Never throws; every outcome is a JSON string. `sp` may be null (returns an
 // error result rather than crashing).
 shell_eval(sp: ptr, line: string) -> string {
-    trimmed = string.trim(line)
-    if string.length(trimmed) == 0 { return _info("") }         // blank line: no-op
-    if string.starts_with(trimmed, "#") == 1 { return _info("") } // comment
+    trimmed0 = string.trim(line)
+    if string.length(trimmed0) == 0 { return _info("") }         // blank line: no-op
+    if string.starts_with(trimmed0, "#") == 1 { return _info("") } // comment
+
+    // Interpolate {{name}} from the session var store BEFORE parsing, so every
+    // verb's args are templated (open/click/text/type/eval/…). Shell/.side/REPL
+    // only — the typed client API never runs through here. See var_set/var_get.
+    trimmed = _expand_vars(sp, trimmed0)
 
     verb = _word(trimmed, 0)
     rest = _after(trimmed, verb)
+
+    // ---- variable store: `store <name> <sel>` captures the element's text into
+    // the session var store for later {{name}} interpolation. `vars` lists them.
+    if verb == "store" {
+        name = _word(rest, 0)
+        sel = string.trim(_after(rest, name))
+        if string.length(name) == 0 { return _err("usage: store <name> <selector>", 0) }
+        eid = _find(sp, sel)
+        if string.length(eid) == 0 { return _err(_find_err(sp, sel), selenium_core.last_error_code_of(sp)) }
+        rc = selenium_core.execute(sp, "getElementText", string.concat("{\"id\":", string.concat(_qs(eid), "}")))
+        if rc != 0 { return _err(selenium_core.last_error_of(sp), selenium_core.last_error_code_of(sp)) }
+        val = _unquote_json(selenium_core.last_value_of(sp))
+        selenium_core.var_set(sp, name, val)
+        return _info(string.concat("stored ", string.concat(name, string.concat("=", val))))
+    }
 
     // ---- navigation ----
     if verb == "open" { return _cmd(sp, "get", _obj1("url", rest)) }
@@ -214,6 +234,48 @@ _obj1(k: string, v: string) -> string {
     return string.concat("{", string.concat(_qs(k), string.concat(":", string.concat(_qs(string.trim(v)), "}"))))
 }
 
+// _expand_vars(sp, line) — replace every {{name}} occurrence with the session
+// var store's value for `name` (or "" if unset). A single left-to-right scan;
+// unmatched "{{" without a closing "}}" is left verbatim.
+_expand_vars(sp: ptr, line: string) -> string {
+    if string.index_of(line, "{{") < 0 { return line }   // fast path: no template
+    out = ""
+    i = 0
+    n = string.length(line)
+    while i < n {
+        rest = string.substring(line, i, n)
+        op = string.index_of(rest, "{{")
+        if op < 0 { out = string.concat(out, rest); i = n }
+        else {
+            out = string.concat(out, string.substring(rest, 0, op))
+            after = string.substring(rest, op + 2, string.length(rest))
+            cl = string.index_of(after, "}}")
+            if cl < 0 { out = string.concat(out, "{{"); i = i + op + 2 }  // no close: literal
+            else {
+                name = string.trim(string.substring(after, 0, cl))
+                out = string.concat(out, selenium_core.var_get(sp, name))
+                i = i + op + 2 + cl + 2
+            }
+        }
+    }
+    return out
+}
+
+// _unquote_json(s) — a JSON string literal ("...") -> its decoded content; a
+// non-string value passes through. getElementText returns a JSON string.
+_unquote_json(s: string) -> string {
+    t = string.trim(s)
+    if string.starts_with(t, "\"") == 0 { return t }
+    inner = string.substring(t, 1, string.length(t))
+    // drop the trailing quote if present (no string.ends_with — check last char)
+    ln = string.length(inner)
+    if ln > 0 {
+        last = string.substring(inner, ln - 1, ln)
+        if last == "\"" { inner = string.substring(inner, 0, ln - 1) }
+    }
+    return inner
+}
+
 // _script_obj(js) — {"script":<js>,"args":[]} for executeScript.
 _script_obj(js: string) -> string {
     return string.concat("{\"script\":", string.concat(_qs(string.trim(js)), ",\"args\":[]}"))
@@ -266,5 +328,5 @@ _json_field(json: string, key: string) -> string {
 }
 
 _help_text() -> string {
-    return "commands: open <url> | title | url | source | back | forward | refresh | click <sel> | clear <sel> | text <sel> | type <sel> <text> | scroll <dx> <dy> | scrollTo <sel> | eval <js> | exec <cmd> <json> | trace on|off | events | timer start|stop <name> | timers | sid | help.  selectors: #id, .class, css=<sel>, xpath=<x> or //, bare=css"
+    return "commands: open <url> | title | url | source | back | forward | refresh | click <sel> | clear <sel> | text <sel> | type <sel> <text> | scroll <dx> <dy> | scrollTo <sel> | store <name> <sel> | eval <js> | exec <cmd> <json> | trace on|off | events | timer start|stop <name> | timers | sid | help.  {{name}} in any line is replaced by a stored var.  selectors: #id, .class, css=<sel>, xpath=<x> or //, bare=css"
 }
