@@ -55,7 +55,7 @@
 </header>
 <div id="log" aria-live="polite"></div>
 <form id="form" autocomplete="off">
-  <input id="cmd" placeholder="open https://example.com   ·   :step   :mode step   ·   ?help" autofocus>
+  <input id="cmd" placeholder="open https://example.com  ·  :step :mode step :list :jump 0  ·  ?help" autofocus>
 </form>
 
 <script>
@@ -113,9 +113,23 @@
       if ("continued" in r) { print("ran " + r.continued + " queued line(s)", "info"); return; }
       if (r.mode) { setMode(r.mode); print("mode: " + r.mode, "info"); return; }
       if (r.trace || r.timers || r.sid !== undefined) { print(JSON.stringify(r, null, 2), "out"); return; }
+      if ("lines" in r) { return renderList(r); }             // a list() reply
+      if ("redone" in r) { if (!r.redone) { print("nothing to redo", "info"); return; } return renderShell(r.result); }
+      if ("cursor" in r && !("count" in r)) { print("cursor -> " + r.cursor, "info"); return; }  // jump/prev/next
       return renderShell(r);
     }
     print(String(r), "out");
+  }
+
+  // The recorded sequence with a cursor marker (SAM "where am I" view).
+  function renderList(r) {
+    var lines = r.lines || [];
+    if (!lines.length) { print("(no commands recorded)", "info"); return; }
+    for (var i = 0; i < lines.length; i++) {
+      var here = (lines[i].index === r.cursor);
+      print((here ? "▸ " : "  ") + String(lines[i].index) + "  " + lines[i].line, here ? "in" : "out");
+    }
+    if (r.cursor >= lines.length) print("▸ " + r.cursor + "  (end)", "in");
   }
 
   function renderShell(res) {
@@ -130,10 +144,16 @@
     text = text.trim(); if (!text) return;
     print(text, "in"); history.push(text); histIdx = history.length;
     if (text === "?" || text === "?help" || text === "help") { send("eval", { line: "help" }, renderReply); return; }
-    if (text === ":step") { send("step", undefined, renderReply); return; }
+    if (text === ":step" || text === ":s") { send("step", undefined, renderReply); return; }
     if (text === ":continue" || text === ":c") { send("continue", undefined, renderReply); return; }
     if (text.indexOf(":mode") === 0) { send("mode", { mode: text.slice(5).trim() || (mode === "run" ? "step" : "run") }, renderReply); return; }
     if (text.indexOf(":inspect") === 0) { send("inspect", { what: text.slice(8).trim() || "sid" }, renderReply); return; }
+    // ---- SAM step-aside navigation ----
+    if (text === ":list" || text === ":l") { send("list", undefined, renderReply); return; }
+    if (text.indexOf(":jump") === 0) { var to = parseInt(text.slice(5).trim(), 10); send("jump", { to: isNaN(to) ? 0 : to }, renderReply); return; }
+    if (text === ":prev" || text === ":p") { send("prev", undefined, renderReply); return; }
+    if (text === ":next" || text === ":n") { send("next", undefined, renderReply); return; }
+    if (text === ":redo") { send("redo", undefined, renderReply); return; }
     send("eval", { line: text }, renderReply);
   }
 
