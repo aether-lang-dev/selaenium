@@ -84,6 +84,21 @@ main() {
         }
     }
 
+    spec.describe(fw, "grid registry: hosts distinguishes saturated from absent (the queue decision)") {
+        spec.it("hosts=1 for a browser some node lists, even with no free slot") callback {
+            reg = registry.registry_init()
+            registry.register(reg, "node-5001", "http://127.0.0.1:5001", "chrome", 1)
+            registry.slot(reg, "node-5001", 1)       // saturated, but still hosts chrome
+            spec.assert_eq(registry.hosts(reg, "chrome"), 1, "chrome is hosted (would QUEUE)")
+            spec.assert_eq(registry.available(reg, "chrome"), 0, "...but not currently available")
+        }
+        spec.it("hosts=0 for a browser no node lists (would fall back to local)") callback {
+            reg = registry.registry_init()
+            registry.register(reg, "node-5001", "http://127.0.0.1:5001", "chrome", 1)
+            spec.assert_eq(registry.hosts(reg, "safari"), 0, "safari not hosted (local fallback)")
+        }
+    }
+
     _rc = spec.run_summary(fw)
     return _rc
 }

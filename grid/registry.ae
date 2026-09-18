@@ -146,6 +146,14 @@ pick_node(cell: ptr, browser: string) -> (string, string) {
     return _pick_node(_read(snapshot.load(cell)), browser)
 }
 
+// hosts(cell, browser) — 1 if ANY registered node lists `browser`, regardless of
+// free slots. The distributor uses this to tell "all matching nodes are busy"
+// (hosts=1, pick empty -> QUEUE and retry) from "no node hosts this browser at
+// all" (hosts=0 -> fall back to a local driver, don't queue forever).
+hosts(cell: ptr, browser: string) -> int {
+    return _hosts(_read(snapshot.load(cell)), browser)
+}
+
 // status_json(cell) — the node table as a JSON array.
 status_json(cell: ptr) -> string {
     return _to_json(_read(snapshot.load(cell)))
@@ -280,6 +288,23 @@ _pick_node(rows: string, browser: string) -> (string, string) {
         at = line_end + 1
     }
     return ("", "")
+}
+
+// _hosts — 1 if any row lists `browser` (ignores slot capacity).
+_hosts(rows: string, browser: string) -> int {
+    at = 0
+    while at < string.length(rows) {
+        nl = string.index_of(string.substring(rows, at, string.length(rows)), "\n")
+        line_end = string.length(rows)
+        if nl >= 0 { line_end = at + nl }
+        row = string.substring(rows, at, line_end)
+        if string.length(row) > 0 {
+            if _list_has(_f(_fields(row), 2), browser) == 1 { return 1 }
+        }
+        if nl < 0 { return 0 }
+        at = line_end + 1
+    }
+    return 0
 }
 
 _row_count(rows: string) -> int {

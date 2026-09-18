@@ -39,6 +39,7 @@ import std.http.client
 import std.string
 import std.json
 import std.os
+import std.time
 import driver
 import hubcore
 import registry
@@ -100,12 +101,37 @@ new_session_handler(req: ptr, res: ptr, ud: ptr) {
     body = http.request_body(req)
     browser = hubcore.browser_of_caps(body)
 
-    // ---- distributor: route to a registered node if one is available ----
+    // ---- distributor + new-session queue -----------------------------------
+    // If a node hosts this browser, route to it. When all matching nodes are
+    // BUSY (hosts=1 but no free slot), QUEUE: poll pick_node until a slot frees
+    // or the queue times out (SEL_GRID_QUEUE_TIMEOUT ms, default 30s) — real Grid
+    // holds saturating requests rather than failing them. If NO node hosts the
+    // browser at all, fall through to a local driver (standalone superset).
     if ud != null {
-        node_id, node_addr = registry.pick_node(ud, browser)
-        if string.length(node_addr) > 0 {
-            if _distribute_to_node(res, ud, node_id, node_addr, body) == 1 { return }
-            // node failed to create the session; fall through to local provisioning.
+        if registry.hosts(ud, browser) == 1 {
+            deadline = _now_ms() + _queue_timeout_ms()
+            waited_any = 0
+            while 1 == 1 {
+                node_id, node_addr = registry.pick_node(ud, browser)
+                if string.length(node_addr) > 0 {
+                    if _distribute_to_node(res, ud, node_id, node_addr, body) == 1 { return }
+                    // the picked node failed to create the session; if others may
+                    // still serve, keep trying until the deadline, else give up to
+                    // the local fallback below.
+                }
+                if _now_ms() >= deadline {
+                    // saturated for the whole queue window: a proper W3C timeout,
+                    // NOT a silent local fallback (the client asked the grid).
+                    if waited_any == 1 {
+                        send_json(res, 500, hubcore.w3c_error("session not created",
+                            string.concat("no free slot on any node for browser: ", browser)))
+                        return
+                    }
+                    break   // never actually queued (transient); allow local fallback
+                }
+                waited_any = 1
+                sleep(_queue_poll_ms())
+            }
         }
     }
 
@@ -308,6 +334,24 @@ _int_field(root: ptr, key: string) -> int {
     if v == null { return 0 }
     return json.get_int(v)
 }
+
+// ---- new-session queue knobs ------------------------------------------------
+_now_ms() -> long { return time.now_ms() }
+
+// How long the distributor holds a saturated newSession before giving up
+// (SEL_GRID_QUEUE_TIMEOUT ms, default 30000). 0 disables queueing.
+_queue_timeout_ms() -> long {
+    v = os.getenv("SEL_GRID_QUEUE_TIMEOUT")
+    if string.length(v) == 0 { return 30000 as long }
+    p, e = string.to_int(v)
+    if e != "" { return 30000 as long }
+    if p < 0 { return 30000 as long }
+    return p as long
+}
+
+// Poll interval while queued (ms). Small enough to grab a freed slot promptly,
+// large enough not to spin the CPU.
+_queue_poll_ms() -> int { return 100 }
 
 main() {
     // The node registry — a pool-owned copy-on-write snapshot cell. The register
