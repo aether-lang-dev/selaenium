@@ -30,8 +30,10 @@ import std.http.client
 import std.string
 import std.json
 import std.os
+import std.actors
 import driver
 import hubcore
+import registry
 
 // ---- proxying ---------------------------------------------------------------
 
@@ -165,7 +167,93 @@ forward_handler(req: ptr, res: ptr, ud: ptr) {
     send_json(res, status, string.replace_all(rbody, real_id, hub_id))
 }
 
+// GET /se/grid/nodecount — how many nodes are registered, asked of the registry
+// ACTOR (int answer via a ref cell — the observable channel out of an actor).
+// Proves a POSTed registration actually landed in the actor's state.
+node_count_handler(req: ptr, res: ptr, ud: ptr) {
+    reg = actors.whereis("grid_registry")
+    cell = ref(0 - 1)
+    reg ! Count { sink: cell }
+    waited = 0
+    while waited < 1000 {
+        if ref_get(cell) != (0 - 1) { waited = 1000 }
+        else { sleep(5); waited = waited + 5 }
+    }
+    // ref cells are int-typed; read straight into the body (no narrowing temp).
+    body = string.concat("{\"nodes\":", string.concat(string.from_int(ref_get(cell)), "}"))
+    send_json(res, 200, body)
+}
+
+// POST /se/grid/register — a node advertising itself. Parse its descriptor
+// ({"id","address","browsers":[..],"maxSessions"}) and feed a Register to the
+// in-process registry ACTOR. A @c_callback HTTP handler cannot carry an
+// Aether-typed arg, so the actor is reached by name via actors.whereis — the
+// exact cross-context pattern std.actors' registry exists for. Idempotent: a
+// re-POST (heartbeat / re-register) replaces the node by id.
+register_node_handler(req: ptr, res: ptr, ud: ptr) {
+    body = http.request_body(req)
+    root, perr = json.parse(body)
+    if string.length(perr) > 0 {
+        send_json(res, 400, hubcore.w3c_error("invalid argument", "malformed node descriptor"))
+        return
+    }
+    id = _str_field(root, "id")
+    address = _str_field(root, "address")
+    browsers = _browsers_space(root)
+    max = _int_field(root, "maxSessions")
+    if string.length(id) == 0 { id = address }         // fall back to address as id
+    if max <= 0 { max = 1 }
+
+    reg = actors.whereis("grid_registry")
+    // message name unqualified even though it's imported from `registry` —
+    // spawn/send/receive positions reject a module-qualified message name.
+    reg ! Register { id: id, address: address, browsers: browsers, max: max }
+
+    out = json.obj()
+    _o = json.set(out, "ok", json.str("true"))
+    encoded, _e = json.encode(out)
+    json.free(out)
+    send_json(res, 200, string.replace_all(encoded, "\"true\"", "true"))
+}
+
+// _browsers_space(root) — the descriptor's "browsers":[..] as a space-joined
+// string (the registry's stored form).
+_browsers_space(root: ptr) -> string {
+    arr, _a = json.object_get(root, "browsers")
+    if arr == null { return "" }
+    out = ""
+    i = 0
+    el, _e0 = json.array_get(arr, i)
+    while el != null {
+        s, serr = json.get_string(el)
+        if string.length(serr) == 0 {
+            if string.length(out) > 0 { out = string.concat(out, " ") }
+            out = string.concat(out, s)
+        }
+        i = i + 1
+        el, _en = json.array_get(arr, i)
+    }
+    return out
+}
+
+_str_field(root: ptr, key: string) -> string {
+    v, _v = json.object_get(root, key)
+    if v == null { return "" }
+    s, serr = json.get_string(v)
+    if string.length(serr) > 0 { return "" }
+    return s
+}
+_int_field(root: ptr, key: string) -> int {
+    v, _v = json.object_get(root, key)
+    if v == null { return 0 }
+    return json.get_int(v)
+}
+
 main() {
+    // The node registry (an actor) — registered under the well-known name the
+    // register handler reaches via actors.whereis. selaenium's first live actor.
+    _reg = registry.registry_start()
+
     // SEL_HUB_PORT overrides the conventional Grid port.
     port = 4444
     env_port_s = os.getenv("SEL_HUB_PORT")
@@ -183,6 +271,8 @@ main() {
     }
 
     http.server_get(server, "/status", status_handler, 0)
+    http.server_post(server, "/se/grid/register", register_node_handler, 0)
+    http.server_get(server, "/se/grid/nodecount", node_count_handler, 0)
     http.server_post(server, "/session", new_session_handler, 0)
     // Session-scoped traffic. `*` matches the rest of the path, so one handler
     // per method covers every W3C command without re-listing the route table.

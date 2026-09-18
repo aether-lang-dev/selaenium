@@ -9,6 +9,9 @@ import aether
 
 aeb(cap) {
     bldr.build() {
+        // The hub: router + standalone drivers + the node REGISTRY actor + the
+        // /se/grid/register endpoint that feeds it. lib(".") resolves registry
+        // (+ hubcore); actors is a std module.
         aether.program() {
             source("hub.ae")
             lib(".")
@@ -16,6 +19,15 @@ aeb(cap) {
             lib("../selenium_core/drivermgr")
             caps("net,os,fs")
             output("selaenium-hub")
+        }
+        // The node: a W3C session server that registers with a hub over HTTP.
+        aether.program() {
+            source("node.ae")
+            lib(".")
+            lib("../selenium_core")
+            lib("../selenium_core/drivermgr")
+            caps("net,os,fs")
+            output("selaenium-node")
         }
     }
 }

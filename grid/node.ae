@@ -1,0 +1,238 @@
+// node.ae — a distributed-Grid NODE: a W3C session server that REGISTERS with a
+// hub. This is the distributed split of the standalone hub (hub.ae): the node is
+// the "provision a driver + proxy a session" half, served on its own port, plus
+// a registration client that tells a hub "I exist, here's my address, the
+// browsers I host and my slot count." The hub's distributor then routes
+// newSession requests to a registered node instead of provisioning locally.
+//
+// The session-serving handlers are the SAME logic as hub.ae's (provision on
+// newSession, encode routing into the session id, proxy later requests, reap on
+// DELETE) — a node IS a standalone hub that also advertises itself. Kept as its
+// own file so the node can run on many machines while the hub runs on one.
+//
+// Registration is over HTTP (Selenium-Grid style): on startup the node POSTs its
+// NodeInfo to the hub's /se/grid/register, then serves sessions. A continuous
+// heartbeat (re-register on a timer) is a refinement noted below; step 1 proves
+// register-on-startup + the hub reflecting the node in its registry.
+//
+//   SEL_NODE_PORT   the port this node serves W3C traffic on (default 5555)
+//   SEL_HUB_URL     the hub to register with (default http://127.0.0.1:4444)
+//   SEL_NODE_BROWSERS  space-joined browsers this node hosts (default "chrome")
+//   SEL_NODE_MAX    max concurrent sessions/slots (default 1)
+import std.http
+import std.http.client
+import std.string
+import std.json
+import std.os
+import driver
+import hubcore
+
+// ---- session serving (same shape as hub.ae) --------------------------------
+
+proxy(port: int, method: string, path: string, body: string) -> string {
+    url = string.concat("http://127.0.0.1:", string.concat(string.from_int(port), path))
+    req = client.request(method, url)
+    _h1 = client.set_header(req, "Accept", "application/json")
+    if string.equals(method, "POST") == 1 {
+        b = body
+        if string.length(b) == 0 { b = "{}" }
+        _sb = client.set_body(req, b, string.length(b), "application/json; charset=utf-8")
+    }
+    _to = client.set_timeout(req, 300s)
+    resp, err = client.send_request(req)
+    client.request_free(req)
+    if err != "" { return string.concat("ERR ", err) }
+    status = client.response_status(resp)
+    rbody = client.response_body(resp)
+    client.response_free(resp)
+    return string.concat(string.concat("OK ", string.from_int(status)), string.concat(" ", rbody))
+}
+
+send_json(res: ptr, status: int, body: string) {
+    http.response_set_status(res, status)
+    http.response_set_header(res, "Content-Type", "application/json; charset=utf-8")
+    http.response_set_body(res, body)
+}
+
+// GET /status — readiness, same shape the hub/clients poll.
+node_status_handler(req: ptr, res: ptr, ud: ptr) {
+    out = json.obj()
+    inner = json.obj()
+    _r = json.set(inner, "ready", json.str("true"))
+    _m = json.set(inner, "message", json.str("selaenium grid node"))
+    _v = json.set(out, "value", inner)
+    encoded, _e = json.encode(out)
+    json.free(out)
+    send_json(res, 200, string.replace_all(encoded, "\"true\"", "true"))
+}
+
+node_new_session_handler(req: ptr, res: ptr, ud: ptr) {
+    body = http.request_body(req)
+    browser = hubcore.browser_of_caps(body)
+    dp = driver.ensure(browser, "", 20000)
+    if dp == null {
+        send_json(res, 500, hubcore.w3c_error("session not created",
+            string.concat("no driver could be provisioned for browser: ", browser)))
+        return
+    }
+    port = driver.port_of(dp)
+    pid = driver.pid_of(dp)
+    tagged = proxy(port, "POST", "/session", body)
+    status, rbody = hubcore.split_tagged(tagged)
+    if status == 0 {
+        driver.stop(dp)
+        send_json(res, 500, hubcore.w3c_error("session not created",
+            string.concat("driver transport failure: ", rbody)))
+        return
+    }
+    if status >= 400 {
+        driver.stop(dp)
+        send_json(res, status, rbody)
+        return
+    }
+    real_id = hubcore.session_id_of_response(rbody)
+    if string.length(real_id) == 0 {
+        driver.stop(dp)
+        send_json(res, 500, hubcore.w3c_error("session not created", "driver returned no session id"))
+        return
+    }
+    driver.release(dp)
+    node_id = hubcore.encode_session_id(pid, port, real_id)
+    send_json(res, status, string.replace_all(rbody, real_id, node_id))
+}
+
+node_forward_handler(req: ptr, res: ptr, ud: ptr) {
+    path = http.request_path(req)
+    method = http.request_method(req)
+    node_sid = hubcore.session_id_of_path(path)
+    pid, port, real_id = hubcore.decode_session_id(node_sid)
+    if port < 0 {
+        send_json(res, 404, hubcore.w3c_error("invalid session id",
+            string.concat("not a node session id: ", node_sid)))
+        return
+    }
+    driver_path = string.replace_all(path, node_sid, real_id)
+    body = http.request_body(req)
+    if string.length(body) > 0 { body = string.replace_all(body, node_sid, real_id) }
+    tagged = proxy(port, method, driver_path, body)
+    status, rbody = hubcore.split_tagged(tagged)
+    if status == 0 {
+        send_json(res, 500, hubcore.w3c_error("unknown error",
+            string.concat("driver transport failure: ", rbody)))
+        return
+    }
+    if string.equals(method, "DELETE") == 1 {
+        if string.equals(path, string.concat("/session/", node_sid)) == 1 {
+            if status < 400 { driver.reap(pid) }
+        }
+    }
+    send_json(res, status, string.replace_all(rbody, real_id, node_sid))
+}
+
+// ---- registration client ----------------------------------------------------
+
+// register_with_hub(hub_url, node_id, address, browsers, max) — POST this node's
+// NodeInfo to the hub's /se/grid/register. Returns 1 on a 2xx ack, 0 otherwise.
+// The body is the Selenium-Grid-ish node descriptor the hub feeds to its registry
+// actor. Idempotent on the hub side (Register replaces by id), so a re-register /
+// heartbeat is a repeat POST.
+register_with_hub(hub_url: string, node_id: string, address: string, browsers: string, max: int) -> int {
+    body = _register_body(node_id, address, browsers, max)
+    url = string.concat(hub_url, "/se/grid/register")
+    req = client.request("POST", url)
+    _h = client.set_header(req, "Accept", "application/json")
+    _sb = client.set_body(req, body, string.length(body), "application/json; charset=utf-8")
+    _to = client.set_timeout(req, 10s)
+    resp, err = client.send_request(req)
+    client.request_free(req)
+    if err != "" { return 0 }
+    status = client.response_status(resp)
+    client.response_free(resp)
+    if status >= 200 { if status < 300 { return 1 } }
+    return 0
+}
+
+// _register_body — {"id","address","browsers":[..],"maxSessions"} — the node
+// descriptor. browsers is emitted as a JSON array; the hub joins it back to the
+// space-form its registry stores.
+_register_body(node_id: string, address: string, browsers: string, max: int) -> string {
+    return string.concat("{\"id\":", string.concat(_qs(node_id),
+        string.concat(",\"address\":", string.concat(_qs(address),
+        string.concat(",\"browsers\":", string.concat(_browsers_json(browsers),
+        string.concat(",\"maxSessions\":", string.concat(string.from_int(max), "}"))))))))
+}
+
+// _browsers_json("chrome firefox") -> ["chrome","firefox"]
+_browsers_json(space_list: string) -> string {
+    out = "["
+    first = 1
+    rest = string.trim(space_list)
+    while string.length(rest) > 0 {
+        sp = string.index_of(rest, " ")
+        tok = rest
+        if sp >= 0 { tok = string.substring(rest, 0, sp) }
+        if string.length(tok) > 0 {
+            if first == 0 { out = string.concat(out, ",") }
+            first = 0
+            out = string.concat(out, _qs(tok))
+        }
+        if sp < 0 { rest = "" } else { rest = string.trim(string.substring(rest, sp + 1, string.length(rest))) }
+    }
+    return string.concat(out, "]")
+}
+
+_qs(v: string) -> string {
+    out = "\""
+    i = 0
+    while i < string.length(v) {
+        c = string.substring(v, i, i + 1)
+        if c == "\"" { out = string.concat(out, "\\\"") }
+        else { out = string.concat(out, c) }
+        i = i + 1
+    }
+    return string.concat(out, "\"")
+}
+
+_getenv_or(name: string, dflt: string) -> string {
+    v = os.getenv(name)
+    if string.length(v) > 0 { return v }
+    return dflt
+}
+_getenv_int(name: string, dflt: int) -> int {
+    v = os.getenv(name)
+    if string.length(v) == 0 { return dflt }
+    p, e = string.to_int(v)
+    if e != "" { return dflt }
+    if p <= 0 { return dflt }
+    return p
+}
+
+main() {
+    node_port = _getenv_int("SEL_NODE_PORT", 5555)
+    hub_url = _getenv_or("SEL_HUB_URL", "http://127.0.0.1:4444")
+    browsers = _getenv_or("SEL_NODE_BROWSERS", "chrome")
+    max = _getenv_int("SEL_NODE_MAX", 1)
+    address = string.concat("http://127.0.0.1:", string.from_int(node_port))
+    node_id = string.concat("node-", string.from_int(node_port))
+
+    // Register with the hub BEFORE we block in the server loop. A failure is not
+    // fatal — the node can still serve directly, and a hub that comes up later
+    // gets us on its next heartbeat (a heartbeat timer is the next refinement).
+    ok = register_with_hub(hub_url, node_id, address, browsers, max)
+    if ok == 1 { println("node: registered with hub ${hub_url} as ${node_id} (${browsers}, ${max} slots)") }
+    else { println("node: hub ${hub_url} did not ack registration (serving anyway)") }
+
+    server = http.server_create(node_port)
+    if server == 0 {
+        println("node: could not bind ${node_port}")
+        return
+    }
+    http.server_get(server, "/status", node_status_handler, 0)
+    http.server_post(server, "/session", node_new_session_handler, 0)
+    http.server_get(server, "/session/*", node_forward_handler, 0)
+    http.server_post(server, "/session/*", node_forward_handler, 0)
+    http.server_delete(server, "/session/*", node_forward_handler, 0)
+    http.server_put(server, "/session/*", node_forward_handler, 0)
+    println("node: selaenium grid node listening on ${node_port}")
+    http.server_start(server)
+}
