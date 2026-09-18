@@ -238,10 +238,15 @@ status_json(cell: ptr) -> string {
 // its rejected `next` in _commit. Only successful mutations retain, so the leak
 // is O(number of successful registry writes), not O(requests).
 //
-// The real ring-buffer reclamation lands with the actor-return migration: once
-// the send-path fix ships and the registry is a single-writer ACTOR again, the
-// actor owns its old tables and frees them serially (no lock needed — one
-// writer), which is the clean answer this substrate can't express today.
+// Two paths close this properly, whichever aether ships first:
+//   (a) aether#2082 — expose a reclamation primitive (an atomic int) to .ae.
+//       That lets this module build a bounded lock-free retire ring (refcount +
+//       free the N-generations-old table), the smallest fix and the recommended
+//       one. Filed as an issue; if greenlit, the pickup is here in _retire.
+//   (b) the actor-return migration — once the foreign-thread send-path fix ships
+//       and the registry is a single-writer ACTOR again, the actor owns its old
+//       tables and frees them serially (one writer, no lock). Larger.
+// Until either lands, DEFER-BY-LEAK (above) is the correct, bounded default.
 _retire(displaced: ptr) {
     _kept = displaced   // intentionally retained (see above); freed never.
 }
