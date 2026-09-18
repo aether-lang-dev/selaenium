@@ -215,13 +215,6 @@ main() {
     address = string.concat("http://127.0.0.1:", string.from_int(node_port))
     node_id = string.concat("node-", string.from_int(node_port))
 
-    // Register with the hub BEFORE we block in the server loop. A failure is not
-    // fatal — the node can still serve directly, and a hub that comes up later
-    // gets us on its next heartbeat (a heartbeat timer is the next refinement).
-    ok = register_with_hub(hub_url, node_id, address, browsers, max)
-    if ok == 1 { println("node: registered with hub ${hub_url} as ${node_id} (${browsers}, ${max} slots)") }
-    else { println("node: hub ${hub_url} did not ack registration (serving anyway)") }
-
     server = http.server_create(node_port)
     if server == 0 {
         println("node: could not bind ${node_port}")
@@ -233,6 +226,28 @@ main() {
     http.server_post(server, "/session/*", node_forward_handler, 0)
     http.server_delete(server, "/session/*", node_forward_handler, 0)
     http.server_put(server, "/session/*", node_forward_handler, 0)
+
+    // Serve on a background thread so this thread can HEARTBEAT: the node
+    // re-POSTs its registration every SEL_NODE_HEARTBEAT ms (default 5000). The
+    // hub's register is idempotent and refreshes last_ms, so a repeat POST is a
+    // heartbeat; a node that stops (crashes) stops heartbeating and the hub
+    // expires it after its TTL. server_start_background returns immediately.
+    berr = http.server_start_background(server)
+    if string.length(berr) > 0 {
+        println("node: ${berr}")
+        return
+    }
     println("node: selaenium grid node listening on ${node_port}")
-    http.server_start(server)
+
+    hb_ms = _getenv_int("SEL_NODE_HEARTBEAT", 5000)
+    first = 1
+    while 1 == 1 {
+        ok = register_with_hub(hub_url, node_id, address, browsers, max)
+        if first == 1 {
+            if ok == 1 { println("node: registered with hub ${hub_url} as ${node_id} (${browsers}, ${max} slots)") }
+            else { println("node: hub ${hub_url} did not ack registration (serving anyway; will retry)") }
+            first = 0
+        }
+        sleep(hb_ms)
+    }
 }

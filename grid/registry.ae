@@ -41,6 +41,7 @@
 // "\n"-joined set of "id\taddress\tbrowsers\tmax\tinuse\tlast_ms" rows.
 import std.string
 import std.time
+import std.os
 import std.snapshot
 
 // libc: the snapshot cell holds a heap char* (an independent copy of the table
@@ -122,36 +123,88 @@ slot(cell: ptr, id: string, delta: int) {
     }
 }
 
+// ---- heartbeat / staleness --------------------------------------------------
+// A node re-POSTs its registration periodically (the hub calls register, which
+// refreshes last_ms). A node that STOPS heartbeating is stale after a TTL and
+// must not be picked/counted, or the distributor routes to a dead address. Reads
+// below operate on a freshness-FILTERED view of the loaded table (a dead node
+// vanishes the next time anyone looks, with no write), and sweep() physically
+// CAS-prunes the cell so the table doesn't grow without bound.
+//
+// TTL: SEL_GRID_NODE_TTL ms (default 15000 = ~3 missed 5s heartbeats). <=0
+// disables staleness (every node is fresh — for tests that set last_ms by hand).
+_ttl_ms() -> long {
+    v = os.getenv("SEL_GRID_NODE_TTL")
+    if string.length(v) == 0 { return 15000 as long }
+    p, e = string.to_int(v)
+    if e != "" { return 15000 as long }
+    return p as long
+}
+
+// _fresh(rows) — the table with rows whose last_ms is older than the TTL dropped.
+// TTL<=0 returns rows unchanged.
+_fresh(rows: string) -> string {
+    ttl = _ttl_ms()
+    if ttl <= (0 as long) { return rows }
+    cutoff = _now_ms() - ttl
+    out = ""
+    at = 0
+    while at < string.length(rows) {
+        nl = string.index_of(string.substring(rows, at, string.length(rows)), "\n")
+        line_end = string.length(rows)
+        if nl >= 0 { line_end = at + nl }
+        row = string.substring(rows, at, line_end)
+        if string.length(row) > 0 {
+            last = _to_long(_f(_fields(row), 5))
+            if last >= cutoff { out = string.concat(out, string.concat(row, "\n")) }
+        }
+        if nl < 0 { at = string.length(rows) } else { at = line_end + 1 }
+    }
+    return out
+}
+
+// sweep(cell) — CAS-prune stale rows from the cell (physical compaction). A write
+// op, safe from any pool handler; a no-op when nothing is stale (CAS of an equal
+// table still swaps, so callers should sweep on a cadence, not every request).
+sweep(cell: ptr) {
+    while 1 == 1 {
+        cur = snapshot.load(cell)
+        fresh = _fresh(_read(cur))
+        if _commit(cell, cur, fresh) == 1 { return }
+    }
+}
+
 // ---- read ops (lock-free loads; safe from any pool handler) -----------------
+// Each reads a FRESHNESS-FILTERED view so a stale (dead) node is never counted
+// or picked, even before sweep() has physically removed it.
 
-// count(cell) — how many nodes are registered.
-count(cell: ptr) -> int { return _row_count(_read(snapshot.load(cell))) }
+// count(cell) — how many LIVE nodes are registered.
+count(cell: ptr) -> int { return _row_count(_fresh(_read(snapshot.load(cell)))) }
 
-// available(cell, browser) — 1 if some node hosts `browser` with a free slot.
+// available(cell, browser) — 1 if some live node hosts `browser` with a free slot.
 available(cell: ptr, browser: string) -> int {
-    if string.length(_pick(_read(snapshot.load(cell)), browser)) > 0 { return 1 }
+    if string.length(_pick(_fresh(_read(snapshot.load(cell))), browser)) > 0 { return 1 }
     return 0
 }
 
-// pick_address(cell, browser) — the address of an available node for `browser`, "" if none.
+// pick_address(cell, browser) — the address of an available live node, "" if none.
 pick_address(cell: ptr, browser: string) -> string {
-    return _pick(_read(snapshot.load(cell)), browser)
+    return _pick(_fresh(_read(snapshot.load(cell))), browser)
 }
 
-// pick_node(cell, browser) — (id, address) of an available node for `browser`,
-// or ("", "") if none. Both come from the SAME matched row of one load, so the
-// distributor can proxy to the address AND slot() by the id without a second
-// pick that could race to a different node.
+// pick_node(cell, browser) — (id, address) of an available live node for
+// `browser`, or ("", "") if none. Both come from the SAME matched row of one
+// (freshness-filtered) load.
 pick_node(cell: ptr, browser: string) -> (string, string) {
-    return _pick_node(_read(snapshot.load(cell)), browser)
+    return _pick_node(_fresh(_read(snapshot.load(cell))), browser)
 }
 
-// hosts(cell, browser) — 1 if ANY registered node lists `browser`, regardless of
-// free slots. The distributor uses this to tell "all matching nodes are busy"
-// (hosts=1, pick empty -> QUEUE and retry) from "no node hosts this browser at
-// all" (hosts=0 -> fall back to a local driver, don't queue forever).
+// hosts(cell, browser) — 1 if ANY LIVE node lists `browser`, regardless of free
+// slots. The distributor uses this to tell "all matching nodes are busy"
+// (hosts=1, pick empty -> QUEUE and retry) from "no live node hosts this browser
+// at all" (hosts=0 -> fall back to a local driver, don't queue forever).
 hosts(cell: ptr, browser: string) -> int {
-    return _hosts(_read(snapshot.load(cell)), browser)
+    return _hosts(_fresh(_read(snapshot.load(cell))), browser)
 }
 
 // status_json(cell) — the node table as a JSON array.
@@ -237,7 +290,7 @@ _bump_inuse(rows: string, id: string, delta: int) -> string {
     f = _fields(r)
     inuse = _to_int(_f(f, 4)) + delta
     if inuse < 0 { inuse = 0 }
-    return _drop_and_add(rows, id, _f(f, 0), _f(f, 1), _f(f, 2), _to_int(_f(f, 3)), inuse, _to_int_long(_f(f, 5)))
+    return _drop_and_add(rows, id, _f(f, 0), _f(f, 1), _f(f, 2), _to_int(_f(f, 3)), inuse, _to_long(_f(f, 5)))
 }
 
 _drop_and_add(rows: string, id: string, i: string, addr: string, br: string, max: int, inuse: int, last_ms: long) -> string {
@@ -388,7 +441,9 @@ _now_ms() -> long { return time.now_ms() }
 _long_str(v: long) -> string { return _long_to_str(v) }
 _long_to_str(v: long) -> string { return string.from_long(v) }
 _to_int(s: string) -> int { v, e = string.to_int(s); if string.length(e) > 0 { return 0 } return v }
-_to_int_long(s: string) -> long { return _to_int(s) as long }
+// last_ms is epoch-ms — well beyond 32-bit — so parse it as a real long, NOT via
+// _to_int (which would overflow). string.to_long round-trips string.from_long.
+_to_long(s: string) -> long { v, e = string.to_long(s); if string.length(e) > 0 { return 0 as long } return v }
 
 _qs(v: string) -> string {
     out = "\""

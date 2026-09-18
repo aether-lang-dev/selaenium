@@ -294,6 +294,11 @@ register_node_handler(req: ptr, res: ptr, ud: ptr) {
     if max <= 0 { max = 1 }
 
     registry.register(ud, id, address, browsers, max)
+    // Compact stale (dead-node) rows on this low-frequency write point, so the
+    // table doesn't grow without bound. Reads already ignore stale rows, so this
+    // is only physical cleanup — every register (incl. every heartbeat re-POST)
+    // sweeps, which is a natural cadence tied to node liveness.
+    registry.sweep(ud)
 
     out = json.obj()
     _o = json.set(out, "ok", json.str("true"))
