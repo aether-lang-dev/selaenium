@@ -1,0 +1,283 @@
+// registry.ae — the Grid node registry, as an Aether ACTOR.
+//
+// This is the shared-state substrate distributed Grid needs and standalone mode
+// deliberately did without: a hub tracking which Nodes have registered, what
+// slots each offers, and which is alive. `docs/Grid.md` explains why the
+// standalone hub has NO shared session map — std.http dispatches handlers on a
+// worker pool, so shared mutable state would need a lock, and Aether's
+// concurrency story is actors, not mutexes. So the registry is an actor: writes
+// serialize in its mailbox, reads are messages, and no handler ever holds a lock.
+//
+// This is selaenium's FIRST real actor. It is deliberately small — register /
+// heartbeat / remove / lookup / list / count — and unit-tested with no network
+// (grid/tests/registry_probe.ae), to prove the actor model works in this repo's
+// build + concurrency model before the Distributor / New Session Queue / Session
+// Map are built on top of it.
+//
+// A Node is identified by a string id and carries its base address (where the
+// hub proxies sessions), a "\t"-joined list of browser names it can host, its
+// max slot count, and a last-heartbeat epoch-ms. State is a "\n"-joined table of
+// "id\taddress\tbrowsers\tmax\tlast_ms" rows — the same plain-string shape the
+// engine already uses for timers/vars, so there is no map type to marshal across
+// the actor boundary (a ptr map on actor state is exactly the segfault the
+// std.actors tests warn about).
+import std.actors
+import std.string
+import std.time
+
+// ---- messages ---------------------------------------------------------------
+// A caller that wants an answer passes a reply actor_ref (`from`) and a ref cell
+// (`sink`, a plain int/string ref) the answer is written into — the observable
+// channel out of an actor, per the std.actors idiom (never hold the cell on
+// actor state).
+
+// Register (or replace) a node. Idempotent on id.
+message Register { id: string  address: string  browsers: string  max: int }
+// Refresh a node's last-seen time (liveness). No-op for an unknown id.
+message Heartbeat { id: string }
+// Drop a node (drain/deregister).
+message Remove { id: string }
+// Ask whether a node that can host `browser` with a free slot is available:
+// writes 1 (available) or 0 (none) into `sink`. Actor answers use an INT `ref`
+// cell — a string cannot round-trip a ref cell, and a reply MESSAGE cannot cross
+// a module boundary into a caller's actor (the actor codegen only wires handlers
+// for messages defined in the receiver's own module). So the query surface is
+// int-answered; the chosen node's ADDRESS is fetched by the hub via a
+// same-module helper (pick_address below), not across an actor reply.
+message Available { browser: string  sink: ptr }
+// Ask how many nodes are registered; written into `sink`.
+message Count { sink: ptr }
+// Note that a session was assigned to / released from `id` (adjusts in-use slot
+// bookkeeping so Pick can honour max). delta is +1 (assign) or -1 (release).
+message Slot { id: string  delta: int }
+
+actor Registry {
+    // "id\taddress\tbrowsers\tmax\tinuse\tlast_ms\n..." — one row per node.
+    state nodes = ""
+
+    receive {
+        Register(id, address, browsers, max) -> {
+            nodes = _drop_row(nodes, id)
+            nodes = string.concat(nodes, _row(id, address, browsers, max, 0, _now_ms()))
+        }
+        Heartbeat(id) -> {
+            nodes = _touch(nodes, id)
+        }
+        Remove(id) -> {
+            nodes = _drop_row(nodes, id)
+        }
+        Slot(id, delta) -> {
+            nodes = _bump_inuse(nodes, id, delta)
+        }
+        Available(browser, sink) -> {
+            addr = _pick(nodes, browser)
+            if string.length(addr) > 0 { ref_set(sink, 1) } else { ref_set(sink, 0) }
+        }
+        Count(sink) -> {
+            ref_set(sink, _row_count(nodes))
+        }
+    }
+}
+
+// registry_start() — spawn the registry actor and register it under the
+// well-known name "grid_registry" so any @c_callback HTTP handler can reach it
+// via actors.whereis without threading an actor_ref through the http layer.
+registry_start() -> actor_ref {
+    r = registry_new()
+    actors.register("grid_registry", r)
+    return r
+}
+
+// registry_new() — spawn a registry actor WITHOUT the global name (a fresh,
+// unregistered instance). `spawn` needs the actor type unqualified, so callers
+// in other modules use this rather than `spawn(registry.Registry())`.
+registry_new() -> actor_ref {
+    return spawn(Registry())
+}
+
+// NOTE for the hub: a string answer (the picked node's address, or the /status
+// JSON) can't come back through a ref cell or a cross-module reply message. When
+// the hub and registry are wired, the address is fetched by co-locating the pick
+// with the hub's request handling, or by an int handle the hub maps to an
+// address it also holds. pick_address / status_json are the pure functions that
+// do the string work; they are exposed for that same-module wiring and keep
+// _pick/_to_json exercised until the distributor lands.
+pick_address_of(nodes_snapshot: string, browser: string) -> string {
+    return _pick(nodes_snapshot, browser)
+}
+status_json_of(nodes_snapshot: string) -> string {
+    return _to_json(nodes_snapshot)
+}
+
+// ---- pure row helpers (unit-testable without an actor) ----------------------
+// Rows: "id\taddress\tbrowsers\tmax\tinuse\tlast_ms\n". browsers is a
+// space-joined list. Field access is by tab-split; the store never contains a
+// tab or newline inside a field (ids/addresses/browser names don't).
+
+_row(id: string, address: string, browsers: string, max: int, inuse: int, now_ms: long) -> string {
+    return string.concat(id, string.concat("\t", string.concat(address, string.concat("\t",
+        string.concat(browsers, string.concat("\t", string.concat(string.from_int(max), string.concat("\t",
+        string.concat(string.from_int(inuse), string.concat("\t",
+        string.concat(_long_str(now_ms), "\n")))))))))))
+}
+
+// _drop_row(rows, id) — rows with `id`'s row removed (line-anchored on the first
+// tab-delimited field).
+_drop_row(rows: string, id: string) -> string {
+    key = string.concat(id, "\t")
+    out = ""
+    at = 0
+    while at < string.length(rows) {
+        nl = string.index_of(string.substring(rows, at, string.length(rows)), "\n")
+        line_end = string.length(rows)
+        if nl >= 0 { line_end = at + nl }
+        row = string.substring(rows, at, line_end)
+        if string.starts_with(row, key) == 0 {
+            if string.length(row) > 0 { out = string.concat(out, string.concat(row, "\n")) }
+        }
+        if nl < 0 { return out }
+        at = line_end + 1
+    }
+    return out
+}
+
+// _touch(rows, id) — refresh last_ms for id (leaves other fields intact).
+_touch(rows: string, id: string) -> string {
+    r = _find_row(rows, id)
+    if string.length(r) == 0 { return rows }
+    f = _fields(r)
+    return _drop_and_add(rows, id, _f(f, 0), _f(f, 1), _f(f, 2), _to_int(_f(f, 3)), _to_int(_f(f, 4)), _now_ms())
+}
+
+// _bump_inuse(rows, id, delta) — adjust the in-use slot count (clamped >= 0).
+_bump_inuse(rows: string, id: string, delta: int) -> string {
+    r = _find_row(rows, id)
+    if string.length(r) == 0 { return rows }
+    f = _fields(r)
+    inuse = _to_int(_f(f, 4)) + delta
+    if inuse < 0 { inuse = 0 }
+    return _drop_and_add(rows, id, _f(f, 0), _f(f, 1), _f(f, 2), _to_int(_f(f, 3)), inuse, _to_int_long(_f(f, 5)))
+}
+
+_drop_and_add(rows: string, id: string, i: string, addr: string, br: string, max: int, inuse: int, last_ms: long) -> string {
+    base = _drop_row(rows, id)
+    return string.concat(base, _row(i, addr, br, max, inuse, last_ms))
+}
+
+// _pick(rows, browser) — the address of the first node that lists `browser` and
+// has inuse < max; "" if none.
+_pick(rows: string, browser: string) -> string {
+    at = 0
+    while at < string.length(rows) {
+        nl = string.index_of(string.substring(rows, at, string.length(rows)), "\n")
+        line_end = string.length(rows)
+        if nl >= 0 { line_end = at + nl }
+        row = string.substring(rows, at, line_end)
+        if string.length(row) > 0 {
+            f = _fields(row)
+            max = _to_int(_f(f, 3))
+            inuse = _to_int(_f(f, 4))
+            if inuse < max {
+                if _list_has(_f(f, 2), browser) == 1 { return _f(f, 1) }
+            }
+        }
+        if nl < 0 { return "" }
+        at = line_end + 1
+    }
+    return ""
+}
+
+_row_count(rows: string) -> int {
+    n = 0
+    at = 0
+    while at < string.length(rows) {
+        nl = string.index_of(string.substring(rows, at, string.length(rows)), "\n")
+        if nl < 0 { return n }
+        n = n + 1
+        at = at + nl + 1
+    }
+    return n
+}
+
+// _to_json(rows) — the node table as a JSON array of {id,address,browsers,max,inuse}.
+_to_json(rows: string) -> string {
+    out = "["
+    first = 1
+    at = 0
+    while at < string.length(rows) {
+        nl = string.index_of(string.substring(rows, at, string.length(rows)), "\n")
+        line_end = string.length(rows)
+        if nl >= 0 { line_end = at + nl }
+        row = string.substring(rows, at, line_end)
+        if string.length(row) > 0 {
+            f = _fields(row)
+            if first == 0 { out = string.concat(out, ",") }
+            first = 0
+            out = string.concat(out, string.concat("{\"id\":", string.concat(_qs(_f(f, 0)),
+                string.concat(",\"address\":", string.concat(_qs(_f(f, 1)),
+                string.concat(",\"browsers\":", string.concat(_qs(_f(f, 2)),
+                string.concat(",\"max\":", string.concat(_f(f, 3),
+                string.concat(",\"inuse\":", string.concat(_f(f, 4), "}")))))))))))
+        }
+        if nl < 0 { at = string.length(rows) } else { at = line_end + 1 }
+    }
+    return string.concat(out, "]")
+}
+
+// ---- tiny field helpers -----------------------------------------------------
+_find_row(rows: string, id: string) -> string {
+    key = string.concat(id, "\t")
+    at = 0
+    while at < string.length(rows) {
+        nl = string.index_of(string.substring(rows, at, string.length(rows)), "\n")
+        line_end = string.length(rows)
+        if nl >= 0 { line_end = at + nl }
+        row = string.substring(rows, at, line_end)
+        if string.starts_with(row, key) == 1 { return row }
+        if nl < 0 { return "" }
+        at = line_end + 1
+    }
+    return ""
+}
+
+// _fields(row) — the row itself; _f indexes tab-separated fields of it.
+_fields(row: string) -> string { return row }
+_f(row: string, i: int) -> string {
+    at = 0
+    k = 0
+    while k < i {
+        tb = string.index_of(string.substring(row, at, string.length(row)), "\t")
+        if tb < 0 { return "" }
+        at = at + tb + 1
+        k = k + 1
+    }
+    tb2 = string.index_of(string.substring(row, at, string.length(row)), "\t")
+    if tb2 < 0 { return string.substring(row, at, string.length(row)) }
+    return string.substring(row, at, at + tb2)
+}
+
+_list_has(space_list: string, item: string) -> int {
+    // browsers are space-joined; match a whole token.
+    padded = string.concat(" ", string.concat(space_list, " "))
+    needle = string.concat(" ", string.concat(item, " "))
+    if string.index_of(padded, needle) >= 0 { return 1 }
+    return 0
+}
+
+_now_ms() -> long { return time.now_ms() }
+_long_str(v: long) -> string { return _long_to_str(v) }
+_long_to_str(v: long) -> string { return string.from_long(v) }
+_to_int(s: string) -> int { v, e = string.to_int(s); if string.length(e) > 0 { return 0 } return v }
+_to_int_long(s: string) -> long { return _to_int(s) as long }
+
+_qs(v: string) -> string {
+    out = "\""
+    i = 0
+    while i < string.length(v) {
+        c = string.substring(v, i, i + 1)
+        if c == "\"" { out = string.concat(out, "\\\"") }
+        else { out = string.concat(out, c) }
+        i = i + 1
+    }
+    return string.concat(out, "\"")
+}

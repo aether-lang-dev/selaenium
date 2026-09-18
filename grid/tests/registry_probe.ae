@@ -1,0 +1,101 @@
+// registry_probe.ae — unit test for the Grid node-registry ACTOR (registry.ae).
+// The de-risking spike for selaenium's first real use of Aether actors: proves
+// an actor registers / counts / removes nodes and answers availability honouring
+// browser + slot capacity, with NO network and NO driver. Run via
+// grid/tests/.tests.ae.
+//
+// Actor constraints this test embodies (found by spiking — recorded in the
+// registry.ae header + docs):
+//   1. A `ref` cell is INT-only (a string can't round-trip it), so all actor
+//      answers here are ints written into a ref cell.
+//   2. A reply MESSAGE can't cross a module boundary into a caller's actor (the
+//      actor codegen only wires receive-handlers for messages defined in the
+//      receiver's own module) — so we do NOT use a cross-module Spy; int answers
+//      via ref cells are the observable channel.
+//   3. Poll a ref cell by sending the query ONCE then reading, not re-sending in
+//      the loop (re-sends pile replies and race).
+import std.spec
+import std.string
+import std.actors
+import registry
+
+main() {
+    fw = spec.init()
+
+    spec.describe(fw, "grid registry actor: register / count / remove") {
+        spec.it("registers two nodes and counts them") callback {
+            reg = registry.registry_new()
+            reg ! Register { id: "n1", address: "http://127.0.0.1:5001", browsers: "chrome firefox", max: 2 }
+            reg ! Register { id: "n2", address: "http://127.0.0.1:5002", browsers: "chrome", max: 1 }
+            spec.assert_eq(_count(reg), 2, "two nodes registered")
+        }
+        spec.it("register is idempotent on id (replace, not duplicate)") callback {
+            reg = registry.registry_new()
+            reg ! Register { id: "n1", address: "http://a", browsers: "chrome", max: 1 }
+            reg ! Register { id: "n1", address: "http://b", browsers: "chrome", max: 3 }
+            spec.assert_eq(_count(reg), 1, "still one node after re-register")
+        }
+        spec.it("remove drops a node from the count") callback {
+            reg = registry.registry_new()
+            reg ! Register { id: "n1", address: "http://a", browsers: "chrome", max: 1 }
+            reg ! Register { id: "n2", address: "http://b", browsers: "chrome", max: 1 }
+            reg ! Remove { id: "n1" }
+            spec.assert_eq(_count(reg), 1, "one node left after remove")
+        }
+    }
+
+    spec.describe(fw, "grid registry actor: availability honours browser + slot capacity") {
+        spec.it("a node hosting the browser with a free slot is available") callback {
+            reg = registry.registry_new()
+            reg ! Register { id: "n1", address: "http://chrome-node", browsers: "chrome", max: 1 }
+            spec.assert_eq(_avail(reg, "chrome"), 1, "chrome available")
+        }
+        spec.it("an unknown browser is not available") callback {
+            reg = registry.registry_new()
+            reg ! Register { id: "n1", address: "http://chrome-node", browsers: "chrome", max: 1 }
+            spec.assert_eq(_avail(reg, "safari"), 0, "safari has no node")
+        }
+        spec.it("no free slot -> not available") callback {
+            reg = registry.registry_new()
+            reg ! Register { id: "n1", address: "http://only", browsers: "chrome", max: 1 }
+            reg ! Slot { id: "n1", delta: 1 }        // fill the single slot
+            spec.assert_eq(_avail(reg, "chrome"), 0, "no free slot")
+        }
+        spec.it("releasing a slot makes it available again") callback {
+            reg = registry.registry_new()
+            reg ! Register { id: "n1", address: "http://only", browsers: "chrome", max: 1 }
+            reg ! Slot { id: "n1", delta: 1 }
+            reg ! Slot { id: "n1", delta: 0 - 1 }    // release
+            spec.assert_eq(_avail(reg, "chrome"), 1, "available after release")
+        }
+    }
+
+    _rc = spec.run_summary(fw)
+    return _rc
+}
+
+// _count(reg) — send Count ONCE, then poll the int cell until answered.
+_count(reg: actor_ref) -> int {
+    cell = ref(0 - 1)
+    reg ! Count { sink: cell }
+    return _await(cell)
+}
+
+// _avail(reg, browser) — send Available ONCE, poll. -1 sentinel means no answer;
+// the real answers are 0/1, so the poll distinguishes "not yet" from "no".
+_avail(reg: actor_ref, browser: string) -> int {
+    cell = ref(0 - 1)
+    reg ! Available { browser: browser, sink: cell }
+    return _await(cell)
+}
+
+// poll a cell seeded with -1 until it holds a real (>= 0) answer, or time out.
+_await(cell: ptr) -> int {
+    waited = 0
+    while waited < 1000 {
+        if ref_get(cell) != (0 - 1) { return ref_get(cell) }
+        sleep(5)
+        waited = waited + 5
+    }
+    return ref_get(cell)
+}

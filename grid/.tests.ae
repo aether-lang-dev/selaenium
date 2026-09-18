@@ -12,5 +12,11 @@ aeb(cap) {
             source("tests/hub_probe.ae")
             lib(".")
         }
+        // The Grid node-registry ACTOR (registry.ae) — selaenium's first real
+        // use of Aether actors. Pure: no network, no driver, no listening port.
+        aether.program_test() {
+            source("tests/registry_probe.ae")
+            lib(".")
+        }
     }
 }
