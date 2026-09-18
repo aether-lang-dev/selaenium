@@ -138,6 +138,14 @@ pick_address(cell: ptr, browser: string) -> string {
     return _pick(_read(snapshot.load(cell)), browser)
 }
 
+// pick_node(cell, browser) — (id, address) of an available node for `browser`,
+// or ("", "") if none. Both come from the SAME matched row of one load, so the
+// distributor can proxy to the address AND slot() by the id without a second
+// pick that could race to a different node.
+pick_node(cell: ptr, browser: string) -> (string, string) {
+    return _pick_node(_read(snapshot.load(cell)), browser)
+}
+
 // status_json(cell) — the node table as a JSON array.
 status_json(cell: ptr) -> string {
     return _to_json(_read(snapshot.load(cell)))
@@ -250,6 +258,28 @@ _pick(rows: string, browser: string) -> string {
         at = line_end + 1
     }
     return ""
+}
+
+// _pick_node — like _pick but returns (id, address) from the matched row.
+_pick_node(rows: string, browser: string) -> (string, string) {
+    at = 0
+    while at < string.length(rows) {
+        nl = string.index_of(string.substring(rows, at, string.length(rows)), "\n")
+        line_end = string.length(rows)
+        if nl >= 0 { line_end = at + nl }
+        row = string.substring(rows, at, line_end)
+        if string.length(row) > 0 {
+            f = _fields(row)
+            max = _to_int(_f(f, 3))
+            inuse = _to_int(_f(f, 4))
+            if inuse < max {
+                if _list_has(_f(f, 2), browser) == 1 { return (_f(f, 0), _f(f, 1)) }
+            }
+        }
+        if nl < 0 { return ("", "") }
+        at = line_end + 1
+    }
+    return ("", "")
 }
 
 _row_count(rows: string) -> int {

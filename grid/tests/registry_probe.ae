@@ -65,6 +65,25 @@ main() {
         }
     }
 
+    spec.describe(fw, "grid registry: pick_node returns id+address of a match (the distributor's pick)") {
+        spec.it("returns the id and address of an available node for the browser") callback {
+            reg = registry.registry_init()
+            registry.register(reg, "node-5001", "http://127.0.0.1:5001", "chrome", 1)
+            registry.register(reg, "node-5002", "http://127.0.0.1:5002", "firefox", 1)
+            id, addr = registry.pick_node(reg, "firefox")
+            spec.assert_str_eq(id, "node-5002", "picked the firefox node's id")
+            spec.assert_str_eq(addr, "http://127.0.0.1:5002", "picked its address")
+        }
+        spec.it("returns empty id+address when nothing matches / no free slot") callback {
+            reg = registry.registry_init()
+            registry.register(reg, "node-5001", "http://127.0.0.1:5001", "chrome", 1)
+            registry.slot(reg, "node-5001", 1)       // fill it
+            id, addr = registry.pick_node(reg, "chrome")
+            spec.assert_str_eq(id, "", "no free slot -> empty id")
+            spec.assert_str_eq(addr, "", "no free slot -> empty address")
+        }
+    }
+
     _rc = spec.run_summary(fw)
     return _rc
 }

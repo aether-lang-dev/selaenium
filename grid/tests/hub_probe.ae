@@ -48,6 +48,25 @@ main() {
             _p6, port6, _r6 = hubcore.decode_session_id("4321-0-abc")
             spec.assert_eq(port6, -1, "port zero")
         }
+        spec.it("round-trips a node session (pid=0 sentinel + node port)") callback {
+            // the distributor wraps a node's own id as 0-<node_port>-<node_sid>
+            nested = hubcore.encode_session_id(0, 5555, "77-9515-drv")
+            pid, port, inner = hubcore.decode_session_id(nested)
+            spec.assert_eq(pid, 0, "pid 0 marks a node session")
+            spec.assert_eq(port, 5555, "node port carried")
+            spec.assert_str_eq(inner, "77-9515-drv", "the node's own id is the inner payload")
+        }
+    }
+
+    spec.describe(fw, "port_of_address (distributor: node URL -> port)") {
+        spec.it("extracts the port from a node address") callback {
+            spec.assert_eq(hubcore.port_of_address("http://127.0.0.1:5555"), 5555, "host:port")
+            spec.assert_eq(hubcore.port_of_address("http://127.0.0.1:5555/wd/hub"), 5555, "with a path tail")
+        }
+        spec.it("is -1 for an address with no port") callback {
+            spec.assert_eq(hubcore.port_of_address("http://nodehost"), -1, "no :port")
+            spec.assert_eq(hubcore.port_of_address(""), -1, "empty")
+        }
     }
 
     spec.describe(fw, "session id out of a request path") {

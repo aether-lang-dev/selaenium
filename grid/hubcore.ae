@@ -49,6 +49,32 @@ session_id_of_path(path: string) -> string {
     return string.substring(rest, 0, slash)
 }
 
+// port_of_address("http://127.0.0.1:5555") -> 5555, or -1 if there is no
+// ":<digits>" tail. The distributor encodes a picked node's PORT into the hub
+// session id (with pid=0 as the "this is a node, not a local driver" sentinel),
+// so later session-scoped requests decode the port and proxy back to the SAME
+// node — the hub stays stateless about sessions, exactly as it is for local
+// drivers. (127.0.0.1 today; a remote-host node would need the host too.)
+port_of_address(address: string) -> int {
+    // the port is the digits after the LAST ':'.
+    last_colon = -1
+    i = 0
+    while i < string.length(address) {
+        if string.substring(address, i, i + 1) == ":" { last_colon = i }
+        i = i + 1
+    }
+    if last_colon < 0 { return -1 }
+    tail = string.substring(address, last_colon + 1, string.length(address))
+    // stop at a '/' if the URL has a path after the port.
+    slash = string.index_of(tail, "/")
+    if slash >= 0 { tail = string.substring(tail, 0, slash) }
+    if string.length(tail) == 0 { return -1 }
+    p, e = string.to_int(tail)
+    if e != "" { return -1 }
+    if p <= 0 { return -1 }
+    return p
+}
+
 // ---- capability reading -----------------------------------------------------
 
 // browserName out of a W3C newSession body, defaulting to "chrome".

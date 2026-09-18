@@ -89,12 +89,25 @@ status_handler(req: ptr, res: ptr, ud: ptr) {
     send_json(res, 200, string.replace_all(encoded, "\"true\"", "true"))
 }
 
-// POST /session — provision a driver for the requested browser, forward the
-// newSession verbatim, and hand back the driver's own answer with the session id
-// rewritten to carry its routing (see encode_session_id).
+// POST /session — the DISTRIBUTOR. If a registered node can host the requested
+// browser (registry.pick_address, `ud` = the node-registry cell), proxy the
+// newSession to THAT node and hand back its answer with the session id rewritten
+// to route later requests back to the same node (pid=0 sentinel + the node's
+// port). If no node is registered for the browser, fall back to provisioning a
+// driver locally (standalone behaviour) — so the hub is a superset: distributed
+// when nodes exist, standalone otherwise.
 new_session_handler(req: ptr, res: ptr, ud: ptr) {
     body = http.request_body(req)
     browser = hubcore.browser_of_caps(body)
+
+    // ---- distributor: route to a registered node if one is available ----
+    if ud != null {
+        node_id, node_addr = registry.pick_node(ud, browser)
+        if string.length(node_addr) > 0 {
+            if _distribute_to_node(res, ud, node_id, node_addr, body) == 1 { return }
+            // node failed to create the session; fall through to local provisioning.
+        }
+    }
 
     dp = driver.ensure(browser, "", 20000)
     if dp == null {
@@ -137,6 +150,45 @@ new_session_handler(req: ptr, res: ptr, ud: ptr) {
     send_json(res, status, string.replace_all(rbody, real_id, hub_id))
 }
 
+// _distribute_to_node — proxy a newSession to `node_addr` (a registered node's
+// URL) and, on success, hand the client a hub session id that routes later
+// requests back to that node. Returns 1 if the request was fully handled
+// (success OR the node's own error passed through), 0 if the node was
+// unreachable (caller falls back to local provisioning).
+//
+// Session-id nesting: the node itself wraps its driver's id as
+// node_sid = <driverpid>-<driverport>-<realid> (its own encode). The hub wraps
+// THAT again as hub_id = 0-<node_port>-<node_sid> — pid 0 marks "a node, not a
+// local driver", and <node_port> is where forward_handler proxies. So the hub
+// stays stateless about sessions: the whole route (node port + node's own
+// routing) rides in the id.
+_distribute_to_node(res: ptr, cell: ptr, node_id: string, node_addr: string, body: string) -> int {
+    node_port = hubcore.port_of_address(node_addr)
+    if node_port < 0 { return 0 }
+
+    tagged = proxy(node_port, "POST", "/session", body)
+    status, rbody = hubcore.split_tagged(tagged)
+    if status == 0 { return 0 }            // node unreachable: let the caller fall back
+    if status >= 400 {
+        send_json(res, status, rbody)      // node refused (bad caps): pass its error through
+        return 1
+    }
+    node_sid = hubcore.session_id_of_response(rbody)
+    if string.length(node_sid) == 0 {
+        send_json(res, 500, hubcore.w3c_error("session not created",
+            "node returned no session id"))
+        return 1
+    }
+
+    // Reserve a slot on the node so pick_node won't overfill it. Released on a
+    // successful DELETE of this session (forward_handler), keyed by the node id.
+    registry.slot(cell, node_id, 1)
+
+    hub_id = hubcore.encode_session_id(0, node_port, node_sid)
+    send_json(res, status, string.replace_all(rbody, node_sid, hub_id))
+    return 1
+}
+
 // Everything else under /session/... — decode the owner out of the id, replay the
 // request against that driver, and hand the answer straight back.
 forward_handler(req: ptr, res: ptr, ud: ptr) {
@@ -164,11 +216,21 @@ forward_handler(req: ptr, res: ptr, ud: ptr) {
         return
     }
 
-    // A successful DELETE of the session itself ends it: reap the process, or it
-    // would outlive the hub's knowledge of it entirely.
+    // A successful DELETE of the session itself ends it. Two cases by the pid
+    // field: a LOCAL driver (pid>0) is reaped by pid, or it would outlive the
+    // hub's knowledge of it; a NODE session (pid==0, the distributor sentinel)
+    // isn't ours to reap — the node quit its own driver — so we release the slot
+    // we reserved on that node. The node id is "node-<port>" by convention
+    // (node.ae), reconstructed from the port carried in the id.
     if string.equals(method, "DELETE") == 1 {
         if string.equals(path, string.concat("/session/", hub_id)) == 1 {
-            if status < 400 { driver.reap(pid) }
+            if status < 400 {
+                if pid == 0 {
+                    if ud != null { registry.slot(ud, string.concat("node-", string.from_int(port)), 0 - 1) }
+                } else {
+                    driver.reap(pid)
+                }
+            }
         }
     }
 
@@ -273,14 +335,17 @@ main() {
     http.server_get(server, "/status", status_handler, 0)
     http.server_post(server, "/se/grid/register", register_node_handler, reg_cell)
     http.server_get(server, "/se/grid/nodecount", node_count_handler, reg_cell)
-    http.server_post(server, "/session", new_session_handler, 0)
+    // Session routes carry the registry cell (`ud`): the distributor picks a node
+    // on newSession, and forward_handler releases a node slot on DELETE. When no
+    // node is registered they fall back to local drivers, so the cell is harmless.
+    http.server_post(server, "/session", new_session_handler, reg_cell)
     // Session-scoped traffic. `*` matches the rest of the path, so one handler
     // per method covers every W3C command without re-listing the route table.
-    http.server_get(server, "/session/*", forward_handler, 0)
-    http.server_post(server, "/session/*", forward_handler, 0)
-    http.server_delete(server, "/session/*", forward_handler, 0)
-    http.server_put(server, "/session/*", forward_handler, 0)
+    http.server_get(server, "/session/*", forward_handler, reg_cell)
+    http.server_post(server, "/session/*", forward_handler, reg_cell)
+    http.server_delete(server, "/session/*", forward_handler, reg_cell)
+    http.server_put(server, "/session/*", forward_handler, reg_cell)
 
-    println("hub: selaenium standalone Grid hub listening on ${port}")
+    println("hub: selaenium Grid hub listening on ${port} (distributor + standalone fallback)")
     http.server_start(server)
 }
