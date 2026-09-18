@@ -15,7 +15,7 @@ Apache-2.0) — a design homage, not a code fork; credited in
 
 | File | Role |
 |------|------|
-| `shell.ae` | the "wee shell language" — `shell_eval(session, line)` parses a terse line (`open <url>`, `click <sel>`, `text <sel>`, `eval <js>`, `trace on`, …) and dispatches through the same command catalog every binding uses. Immediate execution. |
+| `shell.ae` | the "wee shell language" — `shell_eval(session, line)` parses a terse line (`open <url>`, `click <sel>`, `text <sel>`, `type <sel> <text>`, `scroll <dx> <dy>`, `scrollTo <sel>`, `eval <js>`, `trace on`, …) and dispatches through the same command catalog every binding uses. Immediate execution. |
 | `runner.ae` | the interactive **debug controller** over the shell — an indexed command *history* with a **cursor**, driven by control requests on the runner lane: `eval`, `mode run\|step`, `step`, `continue`, `inspect`, and the **SAM step-aside** verbs `list` / `jump` / `prev` / `next` / `redo`. Replies are id-correlated; `paused` / `command-finished` events are emitted. |
 | `bidi_demux.ae` | the named-channel demux — multiplexes the runner control lane (so replies/events don't collide with a browser BiDi lane). |
 | `iframe_bridge.ae` | the **SUT-adjacent** transport: the console runs as an iframe *beside* the page under test, but commands route DOWN to the driving client and back UP over `executeScript` — in-page UI, out-of-page execution. |
