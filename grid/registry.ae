@@ -208,8 +208,11 @@ hosts(cell: ptr, browser: string) -> int {
 }
 
 // status_json(cell) — the node table as a JSON array.
+// status_json(cell) — the LIVE node table as a JSON array
+// [{id,address,browsers,max,inuse},...]. Freshness-filtered, so /se/grid/status
+// never reports a dead node.
 status_json(cell: ptr) -> string {
-    return _to_json(_read(snapshot.load(cell)))
+    return _to_json(_fresh(_read(snapshot.load(cell))))
 }
 
 // ---- reclamation: the displaced (successful-CAS) table --------------------

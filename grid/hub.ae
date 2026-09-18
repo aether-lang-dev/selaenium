@@ -274,6 +274,22 @@ node_count_handler(req: ptr, res: ptr, ud: ptr) {
     send_json(res, 200, body)
 }
 
+// GET /se/grid/status — the Grid introspection endpoint clients and the UI poll.
+// Reports the LIVE registered nodes (freshness-filtered) with their slot usage,
+// wrapped in the W3C {"value":{...}} envelope real Selenium Grid uses. `ready` is
+// always true: the hub can serve every request — a registered node when one is
+// free (or after the queue), else a locally-provisioned driver — so it never
+// reports "not ready" the way a distributed-only Grid with zero nodes would.
+grid_status_handler(req: ptr, res: ptr, ud: ptr) {
+    nodes = "[]"
+    n = 0
+    if ud != null { nodes = registry.status_json(ud); n = registry.count(ud) }
+    msg = string.concat("selaenium Grid hub — ", string.concat(string.from_int(n), " node(s) registered"))
+    body = string.concat("{\"value\":{\"ready\":true,\"message\":", string.concat(_qs_hub(msg),
+        string.concat(",\"nodes\":", string.concat(nodes, "}}"))))
+    send_json(res, 200, body)
+}
+
 // POST /se/grid/register — a node advertising itself. Parse its descriptor
 // ({"id","address","browsers":[..],"maxSessions"}) and register it in the
 // pool-owned registry cell (`ud`). registry.register is a CAS-COW write, safe
@@ -340,6 +356,22 @@ _int_field(root: ptr, key: string) -> int {
     return json.get_int(v)
 }
 
+// _qs_hub(s) — JSON-quote a hub-controlled string (status message). Minimal:
+// the only values we quote here are fixed text + digits, but escape " and \ so a
+// future message can't break the envelope.
+_qs_hub(v: string) -> string {
+    out = "\""
+    i = 0
+    while i < string.length(v) {
+        c = string.substring(v, i, i + 1)
+        if c == "\"" { out = string.concat(out, "\\\"") }
+        else { if c == "\\" { out = string.concat(out, "\\\\") }
+        else { out = string.concat(out, c) } }
+        i = i + 1
+    }
+    return string.concat(out, "\"")
+}
+
 // ---- new-session queue knobs ------------------------------------------------
 _now_ms() -> long { return time.now_ms() }
 
@@ -384,6 +416,7 @@ main() {
     http.server_get(server, "/status", status_handler, 0)
     http.server_post(server, "/se/grid/register", register_node_handler, reg_cell)
     http.server_get(server, "/se/grid/nodecount", node_count_handler, reg_cell)
+    http.server_get(server, "/se/grid/status", grid_status_handler, reg_cell)
     // Session routes carry the registry cell (`ud`): the distributor picks a node
     // on newSession, and forward_handler releases a node slot on DELETE. When no
     // node is registered they fall back to local drivers, so the cell is harmless.

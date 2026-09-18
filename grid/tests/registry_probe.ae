@@ -99,6 +99,23 @@ main() {
         }
     }
 
+    spec.describe(fw, "grid registry: status_json (the /se/grid/status payload)") {
+        spec.it("empty registry is an empty JSON array") callback {
+            reg = registry.registry_init()
+            spec.assert_str_eq(registry.status_json(reg), "[]", "no nodes -> []")
+        }
+        spec.it("reports id, address, max and inuse per node") callback {
+            reg = registry.registry_init()
+            registry.register(reg, "node-5001", "http://127.0.0.1:5001", "chrome firefox", 3)
+            registry.slot(reg, "node-5001", 1)       // one in use
+            js = registry.status_json(reg)
+            spec.assert_true(string.index_of(js, "\"id\":\"node-5001\"") >= 0, "id present")
+            spec.assert_true(string.index_of(js, "\"address\":\"http://127.0.0.1:5001\"") >= 0, "address present")
+            spec.assert_true(string.index_of(js, "\"max\":3") >= 0, "max present")
+            spec.assert_true(string.index_of(js, "\"inuse\":1") >= 0, "inuse tracked")
+        }
+    }
+
     _rc = spec.run_summary(fw)
     return _rc
 }
