@@ -28,6 +28,31 @@ export PATH="$PREFIX/bin:$HOME/.aether/bin:$PATH"
 say() { printf 'ci/toolchain: %s\n' "$*"; }
 have() { command -v "$1" >/dev/null 2>&1; }
 
+# ver_ge A B — true (0) if dotted version A >= B, numeric per-component.
+# Tolerant of a leading 'v' and of extra components (1.2 vs 1.2.0). Used to honour
+# AETHER_FLOOR: an already-installed ae is kept only when it meets the floor.
+ver_ge() {
+  a="${1#v}"; b="${2#v}"
+  IFS=. read -r a1 a2 a3 <<EOF
+$a
+EOF
+  IFS=. read -r b1 b2 b3 <<EOF
+$b
+EOF
+  a1=${a1:-0}; a2=${a2:-0}; a3=${a3:-0}
+  b1=${b1:-0}; b2=${b2:-0}; b3=${b3:-0}
+  [ "$a1" -gt "$b1" ] && return 0; [ "$a1" -lt "$b1" ] && return 1
+  [ "$a2" -gt "$b2" ] && return 0; [ "$a2" -lt "$b2" ] && return 1
+  [ "$a3" -ge "$b3" ]
+}
+
+# ae_version — the installed ae's dotted version (e.g. 0.681.0), or "" if none.
+ae_version() {
+  have ae || { echo ""; return; }
+  # `ae 0.681.0 (Aether Language)` -> 0.681.0
+  ae --version 2>/dev/null | head -1 | sed -n 's/.*[^0-9]\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\).*/\1/p'
+}
+
 for tool in curl tar make cc; do
   have "$tool" || { say "MISSING prerequisite: $tool (need curl, tar, GNU make, a C compiler)"; exit 1; }
 done
@@ -104,12 +129,21 @@ install_aeb_binary() {
 }
 
 # ---- ae (the Aether compiler) --------------------------------------------
-if [ "${FORCE:-0}" = "1" ] || ! have ae; then
+# Floor policy: install AETHER_REF when ae is missing, when FORCE=1, or when the
+# present ae is OLDER than AETHER_FLOOR; otherwise keep whatever is installed
+# (any ae >= the floor is accepted — newer is fine).
+AETHER_FLOOR="${AETHER_FLOOR:-0.0.0}"
+_ae_ver="$(ae_version)"
+if [ "${FORCE:-0}" = "1" ] || [ -z "$_ae_ver" ]; then
   say "installing Aether ${AETHER_REF} …"
   AETHER_REF="$AETHER_REF" PREFIX="$PREFIX" \
     curl -sSL "https://raw.githubusercontent.com/aether-lang-dev/aether/main/get.sh" | sh
+elif ver_ge "$_ae_ver" "$AETHER_FLOOR"; then
+  say "ae present: ${_ae_ver} (>= floor ${AETHER_FLOOR}; keeping. FORCE=1 to reinstall ${AETHER_REF})"
 else
-  say "ae present: $(ae --version 2>&1 | head -1) (skipping; FORCE=1 to reinstall)"
+  say "ae present: ${_ae_ver} is BELOW the floor ${AETHER_FLOOR} — installing ${AETHER_REF} …"
+  AETHER_REF="$AETHER_REF" PREFIX="$PREFIX" \
+    curl -sSL "https://raw.githubusercontent.com/aether-lang-dev/aether/main/get.sh" | sh
 fi
 
 # ---- aeb (the build runner; written in Aether, so needs ae first) --------
