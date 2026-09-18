@@ -1,0 +1,23 @@
+// repl.build.ae — build the native Aether terminal REPL (repl.ae) into a
+// standalone `selaenium-repl` executable. The REPL is a front-end HOST of the
+// runner lane written in Aether (not a binding language) so the reference host
+// is thinnest + toolchain-free: it calls the engine's shell/runner/driver
+// modules directly. Mirrors grid/.build.ae (an ae program over the same modules).
+//
+// lib(".")          resolves selenium_core / runner / shell / bidi_demux / driver
+// lib("drivermgr")  the resolve/browser/version/cft/cache modules driver.ae imports
+// caps net,os,fs    serve/transport (net), spawn+kill the driver (os), driver cache (fs)
+import bldr
+import aether
+
+aeb(cap) {
+    bldr.build() {
+        aether.program() {
+            source("repl.ae")
+            lib(".")
+            lib("drivermgr")
+            caps("net,os,fs")
+            output("selaenium-repl")
+        }
+    }
+}

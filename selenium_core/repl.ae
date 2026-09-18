@@ -1,0 +1,227 @@
+// repl.ae — the reference terminal front-end for the runner, in Aether.
+//
+// The first thing a human actually USES: open a Chrome session, drive it
+// interactively with the shell language (open/click/text/eval/…) plus the debug
+// verbs (:step/:continue/:mode/:inspect) AND the SAM step-aside verbs
+// (:list/:jump/:prev/:next/:redo), each line going down to the engine's runner
+// controller and results + events coming back up. Zero external dependency,
+// works over SSH — deliberately NOT tied to any GUI toolkit.
+//
+// It is written in Aether, not a binding language, ON PURPOSE: the shell
+// language + runner already live in the engine, so the reference host is thinnest
+// (and toolchain-free — no dmd/node) when it too is an `ae` program calling the
+// engine modules directly. The SUT-adjacent iframe (console.html) and the
+// out-of-process WebSocket dashboard (dashboard.html) are the other two hosts;
+// each is one client of the same runner lane.
+//
+// Usage (built by repl's .build.ae, or `ae run selenium_core/repl.ae`):
+//   repl [--browser chrome|firefox] [--url <driverOrGridUrl>]   interactive (stdin)
+//   repl ... < script.txt                                       batch (one line/command)
+// Lines: any shell command (`open <url>`, `text #h`, `eval <js>`, …) or a meta:
+//   :step :continue :mode step|run :inspect trace|timers|sid :events
+//   :list :jump <n> :prev :next :redo  :quit
+// A bare shell line is runner-`eval`'d (recorded; queued in step mode).
+//
+// Informed by webautoma's SAM ("Step-Aside Mode") console (Apache-2.0); see
+// NOTICE. Portions copyright Marcello Russo.
+import std.io
+import std.os
+import std.string
+import std.json
+import selenium_core
+import driver
+import runner
+import bidi_demux
+
+main() {
+    // ---- args: --browser / --url (argv[0] is the program; scan from 1) ----
+    browser = "chrome"
+    url = ""
+    i = 1
+    n = os.args_count()
+    while i < n {
+        a = os.args_get(i)
+        if a == "--browser" { i = i + 1; browser = os.args_get(i) }
+        if a == "--url" { i = i + 1; url = os.args_get(i) }
+        i = i + 1
+    }
+
+    // ---- resolve/launch a driver unless an explicit endpoint is given ----
+    dh = null
+    endpoint = url
+    if string.length(endpoint) == 0 {
+        drv = driver.resolve_driver(browser, "")
+        if string.length(drv) == 0 {
+            _e = io.stderr_write(string.concat("no driver for ", string.concat(browser, " (set --url for a running driver/Grid)\n")))
+            return 2
+        }
+        dh = driver.launch(drv, 20000)
+        if dh == null {
+            _e2 = io.stderr_write("could not launch driver\n")
+            return 2
+        }
+        endpoint = driver.url_of(dh)
+    }
+
+    // ---- open a session (newSession with headless caps) ----
+    sp = selenium_core.session_new(endpoint)
+    caps = _caps(browser)
+    rc = selenium_core.execute(sp, "newSession", caps)
+    if rc != 0 {
+        _e3 = io.stderr_write(string.concat("newSession failed: ", string.concat(selenium_core.last_error_of(sp), "\n")))
+        if dh != null { driver.stop(dh) }
+        return 2
+    }
+    selenium_core.session_set_trace(sp, 1)   // so :inspect trace / :events have data
+
+    r = runner.runner_new(sp)
+    demux = runner.runner_demux(r)
+
+    _b = io.stdout_write(string.concat("selaenium repl — ", string.concat(browser, string.concat(" @ ", string.concat(endpoint, "\n")))))
+    _b2 = io.stdout_write("shell lines drive the session; meta: :step :continue :mode :inspect :events\n")
+    _b3 = io.stdout_write("  step-aside: :list :jump <n> :prev :next :redo ; :quit\n")
+
+    // ---- REPL loop ----
+    idc = 1
+    running = 1
+    while running == 1 {
+        line, rerr = io.fd_read_line(0)
+        if string.length(rerr) > 0 { running = 0 }        // EOF / error: end
+        else {
+            t = string.trim(line)
+            if string.length(t) == 0 { }                   // blank: skip
+            else { if string.starts_with(t, "#") == 1 { }  // comment: skip
+            else {
+                if t == ":quit" { running = 0; }
+                else { if t == ":q" { running = 0; }
+                else {
+                    req = _to_request(t, idc)
+                    _ig = runner.runner_ingest(r, req)
+                    rep = bidi_demux.demux_poll_reply_runner(demux, idc)
+                    if string.length(rep) > 0 { _rp = io.stdout_write(string.concat(_render(rep), "\n")) }
+                    // drain events (paused / command-finished)
+                    ev = bidi_demux.demux_poll_event_runner(demux)
+                    while string.length(ev) > 0 {
+                        _ep = io.stdout_write(string.concat("  · ", string.concat(_event_line(ev), "\n")))
+                        ev = bidi_demux.demux_poll_event_runner(demux)
+                    }
+                    idc = idc + 1
+                } }
+            } }
+        }
+    }
+
+    // ---- teardown ----
+    runner.runner_free(r)
+    _q = selenium_core.execute(sp, "quit", "{}")
+    if dh != null { driver.stop(dh) }
+    return 0
+}
+
+// _to_request(line, id) — a meta (:verb) or a bare shell line, as a runner
+// control-request JSON {"id":id,"method":..,"params":..}.
+_to_request(line: string, id: int) -> string {
+    idp = string.concat("\"id\":", string.from_int(id))
+    if line == ":step" { return _m(idp, "step", "") }
+    if line == ":s" { return _m(idp, "step", "") }
+    if line == ":continue" { return _m(idp, "continue", "") }
+    if line == ":c" { return _m(idp, "continue", "") }
+    if string.starts_with(line, ":mode") == 1 {
+        m = string.trim(string.substring(line, 5, string.length(line)))
+        if string.length(m) == 0 { m = "run" }
+        return _m(idp, "mode", string.concat("{\"mode\":", string.concat(_qs(m), "}")))
+    }
+    if string.starts_with(line, ":inspect") == 1 {
+        w = string.trim(string.substring(line, 8, string.length(line)))
+        if string.length(w) == 0 { w = "sid" }
+        return _m(idp, "inspect", string.concat("{\"what\":", string.concat(_qs(w), "}")))
+    }
+    if line == ":list" { return _m(idp, "list", "") }
+    if line == ":l" { return _m(idp, "list", "") }
+    if string.starts_with(line, ":jump") == 1 {
+        to = _to_int(string.trim(string.substring(line, 5, string.length(line))))
+        return _m(idp, "jump", string.concat("{\"to\":", string.concat(string.from_int(to), "}")))
+    }
+    if line == ":prev" { return _m(idp, "prev", "") }
+    if line == ":p" { return _m(idp, "prev", "") }
+    if line == ":next" { return _m(idp, "next", "") }
+    if line == ":n" { return _m(idp, "next", "") }
+    if line == ":redo" { return _m(idp, "redo", "") }
+    // a bare shell line -> eval
+    return _m(idp, "eval", string.concat("{\"line\":", string.concat(_qs(line), "}")))
+}
+
+_m(idp: string, method: string, params: string) -> string {
+    base = string.concat("{", string.concat(idp, string.concat(",\"method\":", _qs(method))))
+    if string.length(params) > 0 { base = string.concat(base, string.concat(",\"params\":", params)) }
+    return string.concat(base, "}")
+}
+
+// _render(reply_json) — a runner-lane reply frame; unwrap "result"'s shell value
+// / info / error to one line, else print the object.
+_render(rep: string) -> string {
+    root, perr = json.parse(rep)
+    if string.length(perr) > 0 { return rep }
+    errv, _e = json.object_get(root, "error")
+    if errv != null { s, _s = json.get_string(errv); return string.concat("error: ", s) }
+    resv, _r = json.object_get(root, "result")
+    if resv == null { return rep }
+    // result may itself carry {ok,value|info|error}
+    vv, _v = json.object_get(resv, "value")
+    if vv != null { sv, svok = json.get_string(vv); if string.length(svok) == 0 { return sv }
+                    ser, _se = json.stringify(vv); return ser }
+    iv, _i = json.object_get(resv, "info")
+    if iv != null { si, _si = json.get_string(iv); return si }
+    ev, _ev = json.object_get(resv, "error")
+    if ev != null { se2, _se2 = json.get_string(ev); return string.concat("error: ", se2) }
+    out, _o = json.stringify(resv)
+    return out
+}
+
+// _event_line(ev_json) — "method params" for a runner event frame.
+_event_line(ev: string) -> string {
+    root, perr = json.parse(ev)
+    if string.length(perr) > 0 { return ev }
+    mv, _m2 = json.object_get(root, "method")
+    method = "?"
+    if mv != null { method, _ms = json.get_string(mv) }
+    pv, _p = json.object_get(root, "params")
+    if pv == null { return method }
+    ps, _ps = json.stringify(pv)
+    return string.concat(method, string.concat(" ", ps))
+}
+
+// _caps(browser) — the newSession capabilities (headless args), matching the
+// shell/bidi caps convention. Chrome; firefox uses moz:firefoxOptions.
+_caps(browser: string) -> string {
+    if browser == "firefox" {
+        return "{\"capabilities\":{\"alwaysMatch\":{\"moz:firefoxOptions\":{\"args\":[\"-headless\"]}}}}"
+    }
+    return "{\"capabilities\":{\"alwaysMatch\":{\"goog:chromeOptions\":{\"args\":[\"--headless=new\",\"--no-sandbox\",\"--disable-gpu\",\"--disable-dev-shm-usage\"]}}}}"
+}
+
+// ---- tiny helpers ----------------------------------------------------------
+_to_int(s: string) -> int {
+    t = string.trim(s)
+    if string.length(t) == 0 { return 0 }
+    v, err = string.to_int(t)
+    if string.length(err) > 0 { return 0 }
+    return v
+}
+
+_qs(v: string) -> string {
+    out = "\""
+    n = string.length(v)
+    i = 0
+    while i < n {
+        c = string.substring(v, i, i + 1)
+        if c == "\"" { out = string.concat(out, "\\\"") }
+        else { if c == "\\" { out = string.concat(out, "\\\\") }
+        else { if c == "\n" { out = string.concat(out, "\\n") }
+        else { if c == "\r" { out = string.concat(out, "\\r") }
+        else { if c == "\t" { out = string.concat(out, "\\t") }
+        else { out = string.concat(out, c) } } } } }
+        i = i + 1
+    }
+    return string.concat(out, "\"")
+}
