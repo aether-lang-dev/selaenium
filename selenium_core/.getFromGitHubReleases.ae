@@ -98,9 +98,18 @@ aeb(cap) {
         _c1 = fs.copy(cached, so_path)
         _c2 = fs.copy(cached, string.concat(srcdir, "/native/libselenium_core.so"))
 
-        // Publish the exact edge set the engine builder publishes.
+        // Publish the exact edge set the engine builder publishes. aeb's
+        // aether.shared_lib writes FOUR (lib/aether/module.ae): the two name
+        // aliases, `ldlibdeps`, and the transitive key. `ldlibdeps` is the one
+        // lib/java reads for -Djava.library.path and lib/go reads for its link
+        // wiring, so omitting it made this a drop-in for any leaf that reads
+        // "shared_lib" directly and SILENTLY not one for a JVM/Go consumer —
+        // java/.build.ae, java/.tests.ae, go/.tests.ae and go/.package.ae all
+        // dep the engine node, so an --overrideDep onto this node left them with
+        // no library path and a failure at LOAD time rather than at fetch time.
         publish_artifact("shared_lib", so_path)
         publish_artifact("shared_library", so_path)
+        publish_artifact("ldlibdeps", so_path)
         publish_artifact("shared_library_deps_including_transitive", so_path)
     }
 }
