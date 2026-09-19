@@ -16,6 +16,9 @@ aeb(cap) {
         nim.consumer_example() {
             stage("src/selenium.nim", "nim-pkg/src/selenium.nim")
             stage("selenium.nimble", "nim-pkg/selenium.nimble")
+            // src/selenium.nim reads ../../SELENIUM_CORE_VERSION at COMPILE time;
+            // that resolves to the stage root, so the repo-root file must be there.
+            stage("../SELENIUM_CORE_VERSION", "SELENIUM_CORE_VERSION")
             stage("native/libselenium_core.so", "nim-pkg/native/libselenium_core.so")
             stage("example/consumer.nim", "nim-consumer/consumer.nim")
             assert_file("nim-pkg/native/libselenium_core.so")

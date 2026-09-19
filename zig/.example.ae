@@ -16,6 +16,9 @@ aeb(cap) {
             stage_dir("src", "zig-pkg/src", "")
             stage_dir("example", "zig-pkg/example", "")
             stage("build.zig", "zig-pkg/build.zig")
+            // build.zig reads ../SELENIUM_CORE_VERSION at build time (it panics with
+            // FileNotFound -> SIGABRT without it); that resolves to the stage root.
+            stage("../SELENIUM_CORE_VERSION", "SELENIUM_CORE_VERSION")
             stage("build.zig.zon", "zig-pkg/build.zig.zon")
             stage("native/libselenium_core.so", "zig-pkg/native/libselenium_core.so")
             // build.zig also searches ../selenium_core/native (the monorepo

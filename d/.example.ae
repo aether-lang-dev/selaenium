@@ -16,6 +16,9 @@ aeb(cap) {
         dep("d/.package.ae")
         d.consumer_example() {
             stage("src/selenium/package.d", "d-pkg/src/selenium/package.d")
+            // package.d string-imports console.html (-J), so the consumer build
+            // fails without it: `file "console.html" cannot be found`.
+            stage("src/selenium/console.html", "d-pkg/src/selenium/console.html")
             stage("native/libselenium_core.so", "d-pkg/native/libselenium_core.so")
             stage("example/consumer.d", "d-consumer/consumer.d")
             assert_file("d-pkg/native/libselenium_core.so")

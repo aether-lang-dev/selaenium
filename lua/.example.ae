@@ -14,6 +14,9 @@ aeb(cap) {
         dep("lua/.package.ae")
         lua.consumer_example() {
             stage("src/selenium.lua", "lua-pkg/selenium.lua")
+            // selenium.lua require()s engine_fetcher; without it the INSTALLED
+            // package dies at "module 'engine_fetcher' not found".
+            stage("src/engine_fetcher.lua", "lua-pkg/engine_fetcher.lua")
             stage("selenium_core_native.so", "lua-pkg/selenium_core_native.so")
             stage("native/libselenium_core.so", "lua-pkg/native/libselenium_core.so")
             stage("example/consumer.lua", "lua-pkg/consumer.lua")

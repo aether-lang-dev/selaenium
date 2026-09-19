@@ -18,6 +18,12 @@ aeb(cap) {
             // the bundled crate (from the packaged rust/ tree).
             stage("Cargo.toml", "rust-pkg/Cargo.toml")
             stage("build.rs", "rust-pkg/build.rs")
+            // build.rs include_str!s ../SELENIUM_CORE_VERSION, which resolves to
+            // the stage root, so the repo-root file has to be staged alongside.
+            stage("../SELENIUM_CORE_VERSION", "SELENIUM_CORE_VERSION")
+            // lib.rs likewise include_str!s ../../selenium_core/console/console.html
+            // relative to rust-pkg/src, i.e. <stageroot>/selenium_core/console/.
+            stage("../selenium_core/console/console.html", "selenium_core/console/console.html")
             // EVERY module lib.rs declares must be staged, or the packaged
             // crate cannot compile for a consumer even though the in-tree build
             // is green — actions/keys/select/wait were added to the binding and
