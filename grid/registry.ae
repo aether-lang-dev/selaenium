@@ -42,7 +42,9 @@
 import std.string
 import std.time
 import std.os
+import std.heap
 import std.snapshot
+import std.sync
 
 // libc: the snapshot cell holds a heap char* (an independent copy of the table
 // cstr); strdup makes it, free retires a displaced one. string_to_cstr /
@@ -50,15 +52,78 @@ import std.snapshot
 extern strdup(s: string) -> ptr
 extern free(p: ptr)
 
-// ---- the cell: the whole registry, as one atomically-swapped snapshot --------
-// A Registry handle is just the snapshot cell ptr. The hub creates ONE in main
-// and passes it as the `ud` of every grid handler; the handlers call the
-// functions below with it. No module-global (Aether has none) — the cell travels
-// through the handler ud slot, which is exactly what ud is for.
+// ---- the handle: a snapshot cell + a reader epoch (RECLAMATION, std.sync) -----
+// A Registry is a snapshot cell (the whole node table, one atomically-swapped
+// immutable cstr) PLUS an atomic count of in-flight readers. The hub creates ONE
+// in main and passes it as the `ud` of every grid handler (opaquely as a ptr);
+// every function below casts that ptr back to *Registry. No module-global
+// (Aether has none) — the handle travels through the handler ud slot.
+//
+// WHY a WRITE LOCK plus the reader epoch (this closes the old _retire leak safely,
+// aether #2082 / std.sync).
+//
+// The CAS-COW here is *reclaiming*: a writer that publishes a new table must free
+// the displaced one, or the table leaks on every heartbeat (the old _retire did
+// exactly that — leak-to-defer). Reclaiming a lock-free multi-writer CAS on a bare
+// pointer is unsafe in TWO independent ways, and both must be closed:
+//
+//   1. reader UAF — a reader that already loaded the displaced pointer may be one
+//      instruction from copying it. Closed by the READER EPOCH: every reader
+//      brackets its load+copy with atomic add/sub on `readers`, and a writer frees
+//      a displaced table only after `readers` drains to 0. Reader sections are a
+//      bounded, non-blocking load+copy (no yield), so the drain-spin is short and
+//      cannot deadlock (readers never wait on writers).
+//
+//   2. writer-vs-writer ABA — snapshot.cas is a PLAIN POINTER-VALUE CAS (no
+//      generation tag; see std/snapshot header). If two writers load the same
+//      `cur`, the first frees it after its CAS, the allocator RECYCLES that exact
+//      address into a third writer's fresh `next`, and now the second writer's
+//      stale CAS(cur=recycled-addr) SPURIOUSLY SUCCEEDS and clobbers a committed
+//      update. This is real: it dropped ~2/200 updates in registry_stress the
+//      instant reclamation started freeing (the leak version was ABA-immune only
+//      because it never recycled an address). The reader epoch does NOTHING for
+//      this — it is a distinct hazard.
+//
+// The minimal fix for (2) given the shipped primitives (std.sync is an atomic i64,
+// explicitly "not a mutex"): SERIALIZE WRITERS with a one-bit spinlock CAS'd on an
+// atomic i64 (`wlock`). With one writer at a time, no *other* writer ever holds a
+// `cur` while this writer frees it, so a recycled address can never be some other
+// writer's expected value → ABA is structurally impossible. Reads stay fully
+// LOCK-FREE (the whole point of snapshot-COW): the write lock contends only among
+// the rare writers (register/heartbeat/slot/sweep), never on the hot read path.
+// sync.atomic ordering: load=acquire, store=release, add/sub/cas=acq_rel give the
+// publish/subscribe edges (a writer that sees readers==0 has observed every
+// reader's leave; lock release publishes the writer's CAS to the next lock holder).
+struct Registry {
+    cell: ptr        // snapshot cell: the atomically-swapped node table cstr
+    readers: ptr     // sync atomic i64: count of in-flight reader critical sections
+    wlock: ptr       // sync atomic i64: writer spinlock (0=free, 1=held) — serializes writers
+}
 
-// registry_init() — create an empty registry cell. Call once in main.
+// registry_init() — create an empty registry. Call once in main. Returned as a
+// bare ptr (the handler ud type); functions below cast it back to *Registry.
 registry_init() -> ptr {
-    return snapshot.new(_dup(""))
+    r = heap.new(Registry)
+    r.cell = snapshot.new(_dup(""))
+    r.readers = sync.atomic_new(0 as long)
+    r.wlock = sync.atomic_new(0 as long)
+    return r as ptr
+}
+
+// _cell(rp) — the snapshot cell out of a handle ptr.
+_cell(rp: ptr) -> ptr { r = rp as *Registry; return r.cell }
+
+// ---- writer serialization ---------------------------------------------------
+// _wlock/_wunlock — a one-bit spinlock over the atomic i64. Held for the whole
+// load-build-CAS-reclaim of a single write op, so exactly one writer touches the
+// cell at a time. This is what makes reclamation ABA-safe (see the struct comment):
+// a recycled displaced-table address can never be a *concurrent* writer's expected
+// CAS value, because there is no concurrent writer. Contended only among writers.
+_wlock(r: *Registry) {
+    while sync.atomic_cas(r.wlock, 0 as long, 1 as long) != 1 { }
+}
+_wunlock(r: *Registry) {
+    sync.atomic_store(r.wlock, 0 as long)
 }
 
 // _dup(table) — an independent heap cstr copy of the Aether table string, for
@@ -66,60 +131,96 @@ registry_init() -> ptr {
 _dup(table: string) -> ptr { return strdup(string_to_cstr(table)) }
 _read(box: ptr) -> string { if box == null { return "" } return string_from_cstr(box) }
 
-// _commit(cell, cur, next_table) — CAS `next_table` (an Aether string) in over
-// `cur` (the value loaded to build it). Returns 1 on success, 0 on lost race.
-// This is the single point that enforces the two reclamation rules the COW
-// discipline needs (aeb's guardrails):
-//   - CAS LOSER frees the `next` cstr it built EAGERLY: nobody took it, it never
-//     entered the cell, so no reader can hold it — free it now (not the retire
-//     path), else every lost race leaks.
-//   - CAS WINNER's displaced `cur` may still be held by an in-flight reader, so
-//     it must NOT be freed now; it is retired (see _retire).
-_commit(cell: ptr, cur: ptr, next_table: string) -> int {
+// ---- reader critical section ------------------------------------------------
+// _snap(rp) — the CURRENT table string, read under the reader epoch: enter
+// (inc), load the cell pointer, copy it to an owned Aether string, leave (dec).
+// The copy happens before leave, so a writer that sees readers==0 knows no one
+// still holds a raw cell pointer. All reads go through this.
+_snap(rp: ptr) -> string {
+    r = rp as *Registry
+    _e = sync.atomic_add(r.readers, 1 as long)
+    s = _read(snapshot.load(r.cell))     // load + copy, no yield between
+    _l = sync.atomic_sub(r.readers, 1 as long)
+    return s
+}
+
+// _commit(rp, cur, next_table) — CAS `next_table` in over `cur`. Returns 1 on
+// success, 0 on lost race. Reclamation:
+//   - CAS LOSER frees the `next` it built EAGERLY (never entered the cell, no
+//     reader can hold it).
+//   - CAS WINNER's displaced `cur` is freed AFTER the reader epoch drains to 0
+//     (a reader may hold `cur` mid-copy); the spin is bounded (reader sections
+//     don't block). This replaces the old defer-by-leak _retire.
+_commit(rp: ptr, cur: ptr, next_table: string) -> int {
+    r = rp as *Registry
     next = _dup(next_table)
-    if snapshot.cas(cell, cur, next) == 1 {
-        _retire(cur)
+    if snapshot.cas(r.cell, cur, next) == 1 {
+        _reclaim(r, cur)
         return 1
     }
     free(next)   // rejected: we own it, free eagerly
     return 0
 }
 
-// ---- write ops (CAS loops; safe from any pool handler) ----------------------
-// Each: load the current table, build a NEW table (pure helpers — no in-place
-// mutation), CAS it in; on a lost race the table changed under us, so retry from
-// a FRESH load. Idempotent/serialized: only one thread's CAS wins per generation.
+// _reclaim(r, displaced) — free a displaced table once no reader can hold it.
+// Called only under the write lock, so no *other* writer holds `displaced` as a
+// live `cur` (that closes the recycle-ABA — see the struct comment). Spin until
+// the reader epoch is 0, then free: a reader's critical section is a bounded,
+// non-blocking load+copy, so this wait is short and cannot deadlock (readers never
+// wait on writers). The initial empty "" table (from registry_init) is never
+// displaced past process end, so nothing frees it early.
+_reclaim(r: *Registry, displaced: ptr) {
+    if displaced == null { return }
+    while sync.atomic_load(r.readers) != (0 as long) { }
+    free(displaced)
+}
 
-// register(cell, ...) — add or replace a node (idempotent on id).
+// ---- write ops (write-locked; safe from any pool handler) -------------------
+// Each: take the write lock (serializes writers, the ABA fix), load the current
+// table, build a NEW table (pure helpers — no in-place mutation), CAS it in, drop
+// the lock. Under the lock the CAS always wins first try (no concurrent writer),
+// but the retry loop stays as a defensive invariant. _commit reclaims the
+// displaced table under the reader epoch. The lock is released on EVERY exit path.
+
+// register(cell, ...) — add or replace a node (idempotent on id). `cell` is the
+// Registry handle.
 register(cell: ptr, id: string, address: string, browsers: string, max: int) {
+    r = cell as *Registry
+    _wlock(r)
     while 1 == 1 {
-        cur = snapshot.load(cell)
+        cur = snapshot.load(_cell(cell))
         next = string.concat(_drop_row(_read(cur), id), _row(id, address, browsers, max, 0, _now_ms()))
-        if _commit(cell, cur, next) == 1 { return }
+        if _commit(cell, cur, next) == 1 { _wunlock(r)  return }
     }
 }
 
 // remove(cell, id) — drop a node.
 remove(cell: ptr, id: string) {
+    r = cell as *Registry
+    _wlock(r)
     while 1 == 1 {
-        cur = snapshot.load(cell)
-        if _commit(cell, cur, _drop_row(_read(cur), id)) == 1 { return }
+        cur = snapshot.load(_cell(cell))
+        if _commit(cell, cur, _drop_row(_read(cur), id)) == 1 { _wunlock(r)  return }
     }
 }
 
 // heartbeat(cell, id) — refresh a node's last-seen time (no-op for unknown id).
 heartbeat(cell: ptr, id: string) {
+    r = cell as *Registry
+    _wlock(r)
     while 1 == 1 {
-        cur = snapshot.load(cell)
-        if _commit(cell, cur, _touch(_read(cur), id)) == 1 { return }
+        cur = snapshot.load(_cell(cell))
+        if _commit(cell, cur, _touch(_read(cur), id)) == 1 { _wunlock(r)  return }
     }
 }
 
 // slot(cell, id, delta) — adjust a node's in-use slot count (+1 assign / -1 release).
 slot(cell: ptr, id: string, delta: int) {
+    r = cell as *Registry
+    _wlock(r)
     while 1 == 1 {
-        cur = snapshot.load(cell)
-        if _commit(cell, cur, _bump_inuse(_read(cur), id, delta)) == 1 { return }
+        cur = snapshot.load(_cell(cell))
+        if _commit(cell, cur, _bump_inuse(_read(cur), id, delta)) == 1 { _wunlock(r)  return }
     }
 }
 
@@ -167,36 +268,39 @@ _fresh(rows: string) -> string {
 // op, safe from any pool handler; a no-op when nothing is stale (CAS of an equal
 // table still swaps, so callers should sweep on a cadence, not every request).
 sweep(cell: ptr) {
+    r = cell as *Registry
+    _wlock(r)
     while 1 == 1 {
-        cur = snapshot.load(cell)
+        cur = snapshot.load(_cell(cell))
         fresh = _fresh(_read(cur))
-        if _commit(cell, cur, fresh) == 1 { return }
+        if _commit(cell, cur, fresh) == 1 { _wunlock(r)  return }
     }
 }
 
-// ---- read ops (lock-free loads; safe from any pool handler) -----------------
-// Each reads a FRESHNESS-FILTERED view so a stale (dead) node is never counted
-// or picked, even before sweep() has physically removed it.
+// ---- read ops (lock-free reads under the reader epoch) ----------------------
+// Each reads via _snap (enter/load+copy/leave) so a concurrent writer never frees
+// the table mid-read, then FRESHNESS-FILTERS the copy so a stale (dead) node is
+// never counted or picked even before sweep() physically removes it.
 
 // count(cell) — how many LIVE nodes are registered.
-count(cell: ptr) -> int { return _row_count(_fresh(_read(snapshot.load(cell)))) }
+count(cell: ptr) -> int { return _row_count(_fresh(_snap(cell))) }
 
 // available(cell, browser) — 1 if some live node hosts `browser` with a free slot.
 available(cell: ptr, browser: string) -> int {
-    if string.length(_pick(_fresh(_read(snapshot.load(cell))), browser)) > 0 { return 1 }
+    if string.length(_pick(_fresh(_snap(cell)), browser)) > 0 { return 1 }
     return 0
 }
 
 // pick_address(cell, browser) — the address of an available live node, "" if none.
 pick_address(cell: ptr, browser: string) -> string {
-    return _pick(_fresh(_read(snapshot.load(cell))), browser)
+    return _pick(_fresh(_snap(cell)), browser)
 }
 
 // pick_node(cell, browser) — (id, address) of an available live node for
 // `browser`, or ("", "") if none. Both come from the SAME matched row of one
 // (freshness-filtered) load.
 pick_node(cell: ptr, browser: string) -> (string, string) {
-    return _pick_node(_fresh(_read(snapshot.load(cell))), browser)
+    return _pick_node(_fresh(_snap(cell)), browser)
 }
 
 // hosts(cell, browser) — 1 if ANY LIVE node lists `browser`, regardless of free
@@ -204,52 +308,19 @@ pick_node(cell: ptr, browser: string) -> (string, string) {
 // (hosts=1, pick empty -> QUEUE and retry) from "no live node hosts this browser
 // at all" (hosts=0 -> fall back to a local driver, don't queue forever).
 hosts(cell: ptr, browser: string) -> int {
-    return _hosts(_fresh(_read(snapshot.load(cell))), browser)
+    return _hosts(_fresh(_snap(cell)), browser)
 }
 
-// status_json(cell) — the node table as a JSON array.
 // status_json(cell) — the LIVE node table as a JSON array
 // [{id,address,browsers,max,inuse},...]. Freshness-filtered, so /se/grid/status
 // never reports a dead node.
 status_json(cell: ptr) -> string {
-    return _to_json(_fresh(_read(snapshot.load(cell))))
+    return _to_json(_fresh(_snap(cell)))
 }
 
-// ---- reclamation: the displaced (successful-CAS) table --------------------
-// snapshot's contract (std.snapshot module.ae:14-34): the cell never owns/frees
-// its values; a CAS winner gets the displaced ptr back to reclaim, but only
-// after a grace period — a concurrent reader (a lookup handler that did
-// load()+_pick and then blocked on socket I/O) may still hold it across several
-// swaps, so freeing it now is a use-after-free.
-//
-// A correct bounded retire ring needs shared mutable state across CAS winners
-// (push displaced, free the N-generations-old one) — and successive winners run
-// concurrently, so that ring itself needs a lock. Released Aether exposes NO
-// mutex/lock to .ae (verified: no std.sync/std.mutex, no lock extern), so a
-// race-free ring is not buildable here without hand-rolling hazard pointers —
-// which the aether owner explicitly advised against for this case.
-//
-// So we take the documented safe default: DEFER-BY-LEAK. A displaced table is
-// never freed; it is retained for the process lifetime. This is bounded and
-// tiny: only Register/Remove/Slot/Heartbeat displace a table, each table is a
-// few hundred bytes, and a hub sees a handful of registrations/heartbeats — the
-// total is trivial next to the driver processes the hub spawns. The CAS-LOSER
-// path (the high-frequency one under contention) does NOT leak — it eager-frees
-// its rejected `next` in _commit. Only successful mutations retain, so the leak
-// is O(number of successful registry writes), not O(requests).
-//
-// Two paths close this properly, whichever aether ships first:
-//   (a) aether#2082 — expose a reclamation primitive (an atomic int) to .ae.
-//       That lets this module build a bounded lock-free retire ring (refcount +
-//       free the N-generations-old table), the smallest fix and the recommended
-//       one. Filed as an issue; if greenlit, the pickup is here in _retire.
-//   (b) the actor-return migration — once the foreign-thread send-path fix ships
-//       and the registry is a single-writer ACTOR again, the actor owns its old
-//       tables and frees them serially (one writer, no lock). Larger.
-// Until either lands, DEFER-BY-LEAK (above) is the correct, bounded default.
-_retire(displaced: ptr) {
-    _kept = displaced   // intentionally retained (see above); freed never.
-}
+// (Reclamation is now _reclaim, above: the displaced table is freed once the
+// reader epoch drains, using std.sync — the old defer-by-leak is gone. aether
+// #2082 shipped the atomic-int primitive in ae 0.695 that made this buildable.)
 
 // ---- pure row helpers (unit-testable without an actor) ----------------------
 // Rows: "id\taddress\tbrowsers\tmax\tinuse\tlast_ms\n". browsers is a

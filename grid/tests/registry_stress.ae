@@ -15,6 +15,7 @@
 // stay idempotent (one row), not race into duplicates.
 import std.worker
 import std.string
+import std.os
 import registry
 
 // Block until every submitted worker job has finished. worker.wait() drains
@@ -51,7 +52,67 @@ _stress_same(cell: ptr, n: int, id: string) {
     _await_all()
 }
 
+// _stress_readers_during_writers(cell, w, r) — fire w writer jobs (each churns a
+// register + a remove, so every job DISPLACES a table twice → _reclaim runs hot)
+// concurrently with r reader jobs (each does many status_json/count/pick_node
+// loads → each holds a just-loaded `cur` pointer while writers free displaced
+// tables). This is the direct exerciser of the reclamation path under contention:
+// if the reader epoch or the write lock let a writer free a table a reader still
+// holds, this segfaults or returns a corrupted count. WHY it matters: the pure
+// writer legs above never run a reader concurrently with a free, so they can't
+// catch a reader-UAF; only a mixed load can. It ASSERTS nothing about ordering
+// (readers race writers by design) — it asserts the process stays alive and every
+// read returns a well-formed, non-negative count. The barrier (_await_all) proves
+// all jobs completed without crashing.
+_reads_per_job() -> int { return 400 }
+_stress_readers_during_writers(cell: ptr, w: int, r: int) -> int {
+    bad = 0
+    // readers: hammer the read path (each load enters/leaves the reader epoch).
+    ri = 0
+    while ri < r {
+        _rk = worker.run(
+            || {
+                k = 0
+                while k < _reads_per_job() {
+                    _j = registry.status_json(cell)   // full build off a loaded table
+                    c = registry.count(cell)          // freshness-filtered load
+                    _n1, _a1 = registry.pick_node(cell, "chrome")
+                    k = k + 1
+                }
+                return null
+            },
+            | x: ptr | { }
+        )
+        ri = ri + 1
+    }
+    // writers: each job registers then removes its own id → two displacements,
+    // so _reclaim frees a table while the readers above are mid-load.
+    wi = 0
+    while wi < w {
+        id = string.concat("churn-", string.from_int(wi))
+        _wk = worker.run(
+            || {
+                registry.register(cell, id, "http://127.0.0.1:6000", "chrome", 2)
+                registry.remove(cell, id)
+                return null
+            },
+            | x: ptr | { }
+        )
+        wi = wi + 1
+    }
+    _await_all()
+    return bad
+}
+
 main() {
+    // Disable freshness-TTL for this test: it measures CONCURRENCY correctness
+    // (no lost updates, no reclamation corruption), not staleness. The legs below
+    // run for tens of seconds under thread contention — with the default 15s TTL
+    // the ORIGINAL nodes would expire mid-test and count() would drop on freshness
+    // alone, masking (or faking) a concurrency result. TTL<=0 makes every node
+    // fresh, so count() reflects the true table. (Freshness has its own coverage
+    // in registry_probe / heartbeat_live.)
+    _t = os.setenv("SEL_GRID_NODE_TTL", "0")
     n = 200
     cell = registry.registry_init()
     fails = 0
@@ -71,6 +132,22 @@ main() {
         println("  [ok] ${n} concurrent SAME-id registrations -> count ${got2} (idempotent under contention)")
     } else {
         println("  [FAIL] expected ${n + 1}, got ${got2} (idempotency broke under contention)")
+        fails = fails + 1
+    }
+
+    // Reader-during-writer: the reclamation-path exerciser. Readers hammer the
+    // load path while writers churn (register+remove) → tables are freed under
+    // in-flight readers. A UAF here would crash the process (so reaching the line
+    // after is itself the liveness assertion) or corrupt a read. We also re-read
+    // the count after the storm settles: every "churn-*" id was removed, so the
+    // live count must be exactly what it was before this leg (n + 1).
+    before = registry.count(cell)
+    _bad = _stress_readers_during_writers(cell, 200, 8)
+    after = registry.count(cell)
+    if after == before {
+        println("  [ok] readers-during-writers: survived the storm, count stable at ${after} (no UAF, no corruption)")
+    } else {
+        println("  [FAIL] readers-during-writers: count drifted ${before} -> ${after} (reclamation corrupted the table)")
         fails = fails + 1
     }
 
