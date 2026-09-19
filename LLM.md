@@ -198,6 +198,35 @@ against Chrome for the WebAuthn and log-type commands.
   `builder <fn>(` in `~/.local/share/aeb/lib/<sdk>/module.ae` — allowing for
   builders that take arguments, e.g. `kotlin_test(test_class)`.
 
+### A non-answer is not a negative answer
+
+The single most expensive class of bug in this repo's history, in five costumes:
+
+- `cmd | tee` ate a runner's exit code, so nine aeb runners printed "tests PASSED"
+  on a failing suite.
+- A node whose toolchain was absent reported green, so a wall of skips read as
+  coverage. (`ci/coverage.sh --strict` exists because of this.)
+- A live test self-skipped on `SEL_*` env that nothing ever set, so 25
+  assertions — the shadow-DOM ones — had never once run.
+- A release watcher polled a rate-limited `api.github.com`, got 403, and recorded
+  "not released yet" for the whole window.
+- A release watcher polled the release TAG page, which returns 200 minutes
+  before the binaries upload, and reported an uninstallable release as ready.
+
+Every one is a NON-answer or a PROXY answer recorded as a definite answer, and
+every one fails toward the good-looking outcome, so nothing prompts you to look
+again. Two independent sessions made the identical wrong correction to the
+fourth one (API -> tag page) within an hour, which is why it is written down.
+
+When you write a check:
+
+- Assert the property you actually depend on (is it INSTALLABLE), not a proxy
+  that leads it (is it TAGGED).
+- Make the probe prove it discriminates — run a control you know must fail. A
+  probe that cannot produce a negative is not measuring anything.
+- Treat "I could not tell" as its own outcome and say so. Never fold it into the
+  negative branch.
+
 ## Open, known-broken
 
 Keep this list honest — delete an entry when it is fixed, not before.
