@@ -202,31 +202,17 @@ against Chrome for the WebAuthn and log-type commands.
 
 Keep this list honest — delete an entry when it is fixed, not before.
 
-- **`aeb aether/.tests.ae` fails at the LINK step.** The five
-  `aether_pure_tls_client_*` entry points are emitted non-static into every TU
-  that transitively imports `std.http.client`, so the two TUs aeb links collide.
-  305 definitions are shared between those TUs and only these five clash; the
-  rest are static. Filed as
-  `asks/aether-pure-tls-client-defined-non-static-in-every-tu.md`. **Not
-  worked around here** — there is no honest selaenium-side fix, and
-  restructuring the repo to dodge a codegen bug would only hide it.
-- **`aeb scala/.tests.ae` fails** — still, on aeb v0.310. `scalac_test` splices
-  the `env()` export prefix into the COMPILER-classpath slot:
-  `java -cp 'SELENIUM_CORE_LIB=/…/libselenium_core.so' dotty.tools.dotc.Main …`,
-  so the JVM looks for `dotty.tools.dotc.Main` on a classpath that is an
-  environment assignment. There are two `-cp` in that command; the second
-  (scalac's own) is correct. v0.310's new empty-classpath guard does not fire
-  precisely because the slot is not empty. Re-filed as
-  `asks/aeb-scalac-test-env-prefix-lands-in-the-compiler-classpath.md` after
-  the original was closed as satisfied. Removing the `env()` is NOT a fix: a
-  JVM-family binding needs `SELENIUM_CORE_LIB` to find the engine at run time.
 - **`swift/` has no `.example.ae`**, and swift is exactly where a consumer-only
   bug was found by hand (a relative `-L` in `Package.swift`). Worth adding.
   Swift on this box also needs `libncurses.so.6` and `libxml2.so.2`, sonames
   Arch does not ship.
 
 Fixed since this file was written, kept as a record of what the symptoms looked
-like: the D binding's `quit()` never issued the W3C `DELETE /session` (leaked
+like: `aeb aether/.tests.ae` failing at the LINK step on the five non-static
+`aether_pure_tls_client_*` entry points (it links AND passes now, 2026-09-19);
+`aeb scala/.tests.ae` failing because `scalac_test` spliced the `env()` export
+prefix into the compiler-classpath slot (fixed upstream in aeb `9a1c520`,
+shipped in v0.311); the D binding's `quit()` never issued the W3C `DELETE /session` (leaked
 ~14 processes a run, and the orphans wedged `aeb d/.tests.ae` for as long as you
 let it run — it now finishes in 17s); `core.stdc.stdlib.exit()` in the D test
 skipped every `scope(exit)`, which hid that; crystal's trailing `while`;

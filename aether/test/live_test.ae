@@ -200,15 +200,28 @@ main() {
         }
     }
 
-    // Edge/Safari surface check: no matching driver here, so the ctor returns
-    // null cleanly — the point is that the ctors exist and are callable without
-    // faking a live pass.
+    // Edge/Safari: the ctor must exist and return cleanly. BOTH outcomes are
+    // valid and the assertion must not depend on which one this box produces —
+    // asserting null was wrong, because the engine's drivermgr SELF-PROVISIONS
+    // a driver, so on a box with Edge installed edge() legitimately returns a
+    // live session and the check inverted. When we do get a session, prove it is
+    // a REAL one (drive it) rather than just tolerating it.
     e = webdriver.edge()
-    fails = fails + ck("edge() callable (null without msedgedriver here)", _is_null(e))
-    if e != null { webdriver.quit(e) }
+    if e == null {
+        fails = fails + ck("edge() callable (no driver provisionable -> null)", 1)
+    } else {
+        webdriver.get(e, "data:text/html,<title>Edge Aether</title>")
+        fails = fails + ck("edge() live session drove a page",
+                 string.equals(webdriver.title(e), "Edge Aether"))
+        webdriver.quit(e)
+    }
     s = webdriver.safari()
-    fails = fails + ck("safari() callable (null off macOS)", _is_null(s))
-    if s != null { webdriver.quit(s) }
+    if s == null {
+        fails = fails + ck("safari() callable (no driver provisionable -> null)", 1)
+    } else {
+        fails = fails + ck("safari() live session", _gt0(string.length(webdriver.title(s))))
+        webdriver.quit(s)
+    }
 
     if fails == 0 {
         println("PASS: native Aether client live surface green")

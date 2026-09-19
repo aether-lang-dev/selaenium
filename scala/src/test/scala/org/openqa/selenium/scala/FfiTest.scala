@@ -56,7 +56,11 @@ object FfiTest:
     // The loan-pattern builders + find extension exist and are typed (referenced
     // as values so this asserts the surface without opening a session).
     check((Selenium.headlessChrome[Unit]).isInstanceOf[AnyRef], "headlessChrome builder present")
-    check((Selenium.localChrome[Unit]).isInstanceOf[AnyRef], "localChrome builder present")
+    // localChrome's FIRST parameter list is empty (`[A]()(body)`), unlike
+    // headlessChrome's (`[A](commandExecutor)(body)`), so referencing it as a
+    // value needs that `()` applied before it eta-expands. Partial application
+    // does not run the body, so no browser is opened here.
+    check((Selenium.localChrome[Unit]()).isInstanceOf[AnyRef], "localChrome builder present")
 
     liveBidi()
 

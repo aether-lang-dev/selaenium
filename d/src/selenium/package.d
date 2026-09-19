@@ -1357,7 +1357,7 @@ final class Runner {
     /// The recorded command sequence + the cursor (runs nothing).
     JSONValue list() { return send("list"); }
     /// Move the cursor to index `to` without executing.
-    JSONValue jump(int to) { return send("jump", `{"to":` ~ to!string(to) ~ `}`); }
+    JSONValue jump(int to) { return send("jump", `{"to":` ~ JSONValue(to).toString() ~ `}`); }
     /// Move the cursor back one (no exec).
     JSONValue prev() { return send("prev"); }
     /// Move the cursor forward one (no exec).

@@ -868,9 +868,20 @@ by_locator(strategy: string, value: string) -> string {
             using = "css selector"
             v = string.concat(".", css_escape(value))
         }
+        "css" -> {
+            // "css" is a convenience ALIAS, not a W3C strategy — the spec's four
+            // are css selector / link text / partial link text / xpath (tag name
+            // is accepted by drivers). Passing it through unchanged put
+            // using:"css" on the wire, which drivers reject with invalid
+            // argument. Normalize it here, the one place By-normalization lives,
+            // so every binding's short alias works. (Found via the aether
+            // binding, whose By_CSS() returns "css": findElementFromShadowRoot
+            // failed while By_ID() — already rewritten below — succeeded.)
+            using = "css selector"
+        }
         _ -> {
-            // css / css selector / link text / partial link text / xpath /
-            // tag name pass through unchanged.
+            // css selector / link text / partial link text / xpath / tag name
+            // pass through unchanged — those ARE the wire values.
         }
     }
     obj = json.obj()
