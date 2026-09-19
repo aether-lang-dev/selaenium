@@ -24,8 +24,66 @@ import std.http.client
 import std.string
 import std.json
 import std.os
+import std.heap
+import std.sync
 import driver
 import hubcore
+
+// ---- node slot state (node-authoritative) -----------------------------------
+// The NODE owns its live sessions, so it is the authority on how many slots are
+// in use — not the hub. This state holds the max and a live atomic in-use count.
+// The hub's registry inuse is only a heartbeat-refreshed HINT; the real gate is
+// here: node_new_session_handler atomically claims a slot or returns 503, so two
+// concurrent newSessions can't both land on the last free slot (the assign->
+// heartbeat lag that would let the hub over-assign never bites, because the node,
+// not the hub's stale cache, has the final say). A slot is claimed on accept and
+// released on a successful DELETE; the heartbeat reports the live count so an
+// abandoned session (no DELETE) frees on the hub the moment the node's count
+// drops. The handle is created in main and passed as every handler's `ud`.
+struct NodeState {
+    max: int
+    inuse: ptr       // sync atomic i64: live session count
+}
+
+node_state_new(max: int) -> ptr {
+    s = heap.new(NodeState)
+    s.max = max
+    s.inuse = sync.atomic_new(0 as long)
+    return s as ptr
+}
+
+// _claim_slot(ud) — atomically take a slot if one is free. Returns 1 on success
+// (caller now owns a slot, must _release_slot on teardown), 0 if the node is full.
+// CAS loop on the atomic: read current, refuse at max, else CAS current+1.
+_claim_slot(ud: ptr) -> int {
+    if ud == null { return 1 }                 // no state (shouldn't happen): don't gate
+    s = ud as *NodeState
+    while 1 == 1 {
+        cur = sync.atomic_load(s.inuse)
+        if cur >= (s.max as long) { return 0 } // full
+        if sync.atomic_cas(s.inuse, cur, cur + (1 as long)) == 1 { return 1 }
+        // lost the race to another handler; retry from a fresh read
+    }
+    return 0
+}
+
+// _release_slot(ud) — give a slot back (clamped >= 0).
+_release_slot(ud: ptr) {
+    if ud == null { return }
+    s = ud as *NodeState
+    while 1 == 1 {
+        cur = sync.atomic_load(s.inuse)
+        if cur <= (0 as long) { return }
+        if sync.atomic_cas(s.inuse, cur, cur - (1 as long)) == 1 { return }
+    }
+}
+
+// _inuse(ud) — the current live session count (for the heartbeat report).
+_inuse(ud: ptr) -> int {
+    if ud == null { return 0 }
+    s = ud as *NodeState
+    return sync.atomic_load(s.inuse) as int
+}
 
 // ---- session serving (same shape as hub.ae) --------------------------------
 
@@ -69,8 +127,20 @@ node_status_handler(req: ptr, res: ptr, ud: ptr) {
 node_new_session_handler(req: ptr, res: ptr, ud: ptr) {
     body = http.request_body(req)
     browser = hubcore.browser_of_caps(body)
+
+    // Node-authoritative gate: atomically claim a slot BEFORE provisioning. If the
+    // node is full, refuse with 503 so the hub routes to another node (or queues)
+    // rather than over-committing this one. Every early return below RELEASES the
+    // slot — it is held only for a session that actually starts.
+    if _claim_slot(ud) == 0 {
+        send_json(res, 503, hubcore.w3c_error("session not created",
+            "node has no free slot"))
+        return
+    }
+
     dp = driver.ensure(browser, "", 20000)
     if dp == null {
+        _release_slot(ud)
         send_json(res, 500, hubcore.w3c_error("session not created",
             string.concat("no driver could be provisioned for browser: ", browser)))
         return
@@ -81,18 +151,21 @@ node_new_session_handler(req: ptr, res: ptr, ud: ptr) {
     status, rbody = hubcore.split_tagged(tagged)
     if status == 0 {
         driver.stop(dp)
+        _release_slot(ud)
         send_json(res, 500, hubcore.w3c_error("session not created",
             string.concat("driver transport failure: ", rbody)))
         return
     }
     if status >= 400 {
         driver.stop(dp)
+        _release_slot(ud)
         send_json(res, status, rbody)
         return
     }
     real_id = hubcore.session_id_of_response(rbody)
     if string.length(real_id) == 0 {
         driver.stop(dp)
+        _release_slot(ud)
         send_json(res, 500, hubcore.w3c_error("session not created", "driver returned no session id"))
         return
     }
@@ -123,7 +196,10 @@ node_forward_handler(req: ptr, res: ptr, ud: ptr) {
     }
     if string.equals(method, "DELETE") == 1 {
         if string.equals(path, string.concat("/session/", node_sid)) == 1 {
-            if status < 400 { driver.reap(pid) }
+            if status < 400 {
+                driver.reap(pid)
+                _release_slot(ud)     // session ended: give its slot back
+            }
         }
     }
     send_json(res, status, string.replace_all(rbody, real_id, node_sid))
@@ -136,8 +212,8 @@ node_forward_handler(req: ptr, res: ptr, ud: ptr) {
 // The body is the Selenium-Grid-ish node descriptor the hub feeds to its registry
 // actor. Idempotent on the hub side (Register replaces by id), so a re-register /
 // heartbeat is a repeat POST.
-register_with_hub(hub_url: string, node_id: string, address: string, browsers: string, max: int) -> int {
-    body = _register_body(node_id, address, browsers, max)
+register_with_hub(hub_url: string, node_id: string, address: string, browsers: string, max: int, inuse: int) -> int {
+    body = _register_body(node_id, address, browsers, max, inuse)
     url = string.concat(hub_url, "/se/grid/register")
     req = client.request("POST", url)
     _h = client.set_header(req, "Accept", "application/json")
@@ -152,14 +228,18 @@ register_with_hub(hub_url: string, node_id: string, address: string, browsers: s
     return 0
 }
 
-// _register_body — {"id","address","browsers":[..],"maxSessions"} — the node
-// descriptor. browsers is emitted as a JSON array; the hub joins it back to the
-// space-form its registry stores.
-_register_body(node_id: string, address: string, browsers: string, max: int) -> string {
+// _register_body — {"id","address","browsers":[..],"maxSessions","inuse"} — the
+// node descriptor. browsers is emitted as a JSON array; the hub joins it back to
+// the space-form its registry stores. `inuse` is the node's live session count
+// (node-authoritative): the hub SETS its registry inuse from this on every
+// heartbeat, so an abandoned session frees its slot as soon as the node reports
+// the lower count. Absent/older nodes omitting it are read as 0 by the hub.
+_register_body(node_id: string, address: string, browsers: string, max: int, inuse: int) -> string {
     return string.concat("{\"id\":", string.concat(_qs(node_id),
         string.concat(",\"address\":", string.concat(_qs(address),
         string.concat(",\"browsers\":", string.concat(_browsers_json(browsers),
-        string.concat(",\"maxSessions\":", string.concat(string.from_int(max), "}"))))))))
+        string.concat(",\"maxSessions\":", string.concat(string.from_int(max),
+        string.concat(",\"inuse\":", string.concat(string.from_int(inuse), "}"))))))))))
 }
 
 // _browsers_json("chrome firefox") -> ["chrome","firefox"]
@@ -220,12 +300,14 @@ main() {
         println("node: could not bind ${node_port}")
         return
     }
+    // One NodeState (max + live slot counter) shared by every handler via `ud`.
+    state = node_state_new(max)
     http.server_get(server, "/status", node_status_handler, 0)
-    http.server_post(server, "/session", node_new_session_handler, 0)
-    http.server_get(server, "/session/*", node_forward_handler, 0)
-    http.server_post(server, "/session/*", node_forward_handler, 0)
-    http.server_delete(server, "/session/*", node_forward_handler, 0)
-    http.server_put(server, "/session/*", node_forward_handler, 0)
+    http.server_post(server, "/session", node_new_session_handler, state)
+    http.server_get(server, "/session/*", node_forward_handler, state)
+    http.server_post(server, "/session/*", node_forward_handler, state)
+    http.server_delete(server, "/session/*", node_forward_handler, state)
+    http.server_put(server, "/session/*", node_forward_handler, state)
 
     // Serve on a background thread so this thread can HEARTBEAT: the node
     // re-POSTs its registration every SEL_NODE_HEARTBEAT ms (default 5000). The
@@ -242,7 +324,7 @@ main() {
     hb_ms = _getenv_int("SEL_NODE_HEARTBEAT", 5000)
     first = 1
     while 1 == 1 {
-        ok = register_with_hub(hub_url, node_id, address, browsers, max)
+        ok = register_with_hub(hub_url, node_id, address, browsers, max, _inuse(state))
         if first == 1 {
             if ok == 1 { println("node: registered with hub ${hub_url} as ${node_id} (${browsers}, ${max} slots)") }
             else { println("node: hub ${hub_url} did not ack registration (serving anyway; will retry)") }

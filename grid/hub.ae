@@ -195,6 +195,12 @@ _distribute_to_node(res: ptr, cell: ptr, node_id: string, node_addr: string, bod
     tagged = proxy(node_port, "POST", "/session", body)
     status, rbody = hubcore.split_tagged(tagged)
     if status == 0 { return 0 }            // node unreachable: let the caller fall back
+    if status == 503 {
+        // The node is FULL — its own live-slot gate refused (node-authoritative;
+        // our registry hint lagged). Not the client's error: treat it like
+        // unreachable so the caller tries another node / queues and retries.
+        return 0
+    }
     if status >= 400 {
         send_json(res, status, rbody)      // node refused (bad caps): pass its error through
         return 1
@@ -206,9 +212,11 @@ _distribute_to_node(res: ptr, cell: ptr, node_id: string, node_addr: string, bod
         return 1
     }
 
-    // Reserve a slot on the node so pick_node won't overfill it. Released on a
-    // successful DELETE of this session (forward_handler), keyed by the node id.
-    registry.slot(cell, node_id, 1)
+    // No hub-side slot bookkeeping: the NODE owns its slot count and reports it in
+    // the heartbeat (registry.report_inuse). Its own accept/reject (the 503 above)
+    // is the authoritative gate; our registry inuse is only a routing hint that the
+    // next heartbeat refreshes. This is what closes the abandoned-session slot leak
+    // — a session with no DELETE still frees on the hub when the node's count drops.
 
     hub_id = hubcore.encode_session_id(0, node_port, node_sid)
     send_json(res, status, string.replace_all(rbody, node_sid, hub_id))
@@ -244,16 +252,16 @@ forward_handler(req: ptr, res: ptr, ud: ptr) {
 
     // A successful DELETE of the session itself ends it. Two cases by the pid
     // field: a LOCAL driver (pid>0) is reaped by pid, or it would outlive the
-    // hub's knowledge of it; a NODE session (pid==0, the distributor sentinel)
-    // isn't ours to reap — the node quit its own driver — so we release the slot
-    // we reserved on that node. The node id is "node-<port>" by convention
-    // (node.ae), reconstructed from the port carried in the id.
+    // hub's knowledge of it. A NODE session (pid==0, the distributor sentinel)
+    // isn't ours to reap AND isn't ours to account: the node quits its own driver
+    // and decrements its OWN live-slot count, which it reports in the next
+    // heartbeat (registry.report_inuse). So the hub does nothing for a node DELETE
+    // — no slot bookkeeping here. This is the same path an ABANDONED node session
+    // (no DELETE ever arrives) takes: the node's report frees the slot either way.
     if string.equals(method, "DELETE") == 1 {
         if string.equals(path, string.concat("/session/", hub_id)) == 1 {
             if status < 400 {
-                if pid == 0 {
-                    if ud != null { registry.slot(ud, string.concat("node-", string.from_int(port)), 0 - 1) }
-                } else {
+                if pid != 0 {
                     driver.reap(pid)
                 }
             }
@@ -306,10 +314,18 @@ register_node_handler(req: ptr, res: ptr, ud: ptr) {
     address = _str_field(root, "address")
     browsers = _browsers_space(root)
     max = _int_field(root, "maxSessions")
+    inuse = _int_field(root, "inuse")                  // node-authoritative live count
     if string.length(id) == 0 { id = address }         // fall back to address as id
     if max <= 0 { max = 1 }
+    if inuse < 0 { inuse = 0 }
 
     registry.register(ud, id, address, browsers, max)
+    // The node owns its live sessions; reconcile our registry inuse to what it
+    // just reported. register() writes a fresh row with inuse=0, so this SET (not
+    // a delta) restores the node's real count — and an abandoned session frees its
+    // slot here as soon as the node's heartbeat reports the drop. No hub-side
+    // session tracking; the node's report is the truth.
+    registry.report_inuse(ud, id, inuse)
     // Compact stale (dead-node) rows on this low-frequency write point, so the
     // table doesn't grow without bound. Reads already ignore stale rows, so this
     // is only physical cleanup — every register (incl. every heartbeat re-POST)

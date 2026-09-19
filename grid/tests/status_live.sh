@@ -56,21 +56,38 @@ if ! command -v chromedriver >/dev/null 2>&1; then
   exit 0
 fi
 
-# 2. distribute a session; status should show inuse 1
+# 2. distribute a session; status should show inuse 1.
+# NOTE: inuse is NODE-AUTHORITATIVE — the node owns its live sessions and reports
+# the count in its heartbeat (every SEL_NODE_HEARTBEAT ms = 800 here), and the hub
+# SETS its registry inuse from that report. So status reflects a new session on the
+# NEXT heartbeat, not instantly; poll a few heartbeat intervals rather than reading
+# once. (The old hub incremented inuse itself at assign time; the node-authoritative
+# model is what frees an ABANDONED session's slot — no DELETE needed — so the small
+# report lag is the deliberate trade.)
 caps='{"capabilities":{"alwaysMatch":{"browserName":"chrome","goog:chromeOptions":{"args":["--headless=new","--no-sandbox","--disable-gpu","--disable-dev-shm-usage"]}}}}'
 resp="$(curl -s -X POST "http://127.0.0.1:$HUB_PORT/session" -H 'Content-Type: application/json' -d "$caps")"
 sid="$(printf '%s' "$resp" | sed -n 's/.*"sessionId":"\([^"]*\)".*/\1/p')"
 [ -n "$sid" ] || fail "no session created: $(printf '%s' "$resp" | head -c 200)"
-s2="$(st)"
-printf '%s' "$s2" | grep -q '"inuse":1' || fail "status did not show inuse=1 after a session: $s2"
-echo "  [ok] after distributing a session, status shows inuse=1"
+# poll up to ~4s (5 heartbeats at 800ms) for the node's report to land
+i=0; ok=0
+while [ "$i" -lt 20 ]; do
+  s2="$(st)"
+  if printf '%s' "$s2" | grep -q '"inuse":1'; then ok=1; break; fi
+  i=$((i+1)); sleep 0.2
+done
+[ "$ok" = 1 ] || fail "status did not show inuse=1 within ~4s of a session (node heartbeat): $s2"
+echo "  [ok] after distributing a session, status shows inuse=1 (node-reported)"
 
-# 3. delete; status should return to inuse 0
+# 3. delete; status should return to inuse 0 (again node-reported: poll the same way)
 curl -s -o /dev/null -X DELETE "http://127.0.0.1:$HUB_PORT/session/$sid" || true
-sleep 1
-s3="$(st)"
-printf '%s' "$s3" | grep -q '"inuse":0' || fail "status did not return to inuse=0 after DELETE: $s3"
-echo "  [ok] after DELETE, status shows inuse=0 (slot released)"
+i=0; ok=0
+while [ "$i" -lt 20 ]; do
+  s3="$(st)"
+  if printf '%s' "$s3" | grep -q '"inuse":0'; then ok=1; break; fi
+  i=$((i+1)); sleep 0.2
+done
+[ "$ok" = 1 ] || fail "status did not return to inuse=0 within ~4s of DELETE (node heartbeat): $s3"
+echo "  [ok] after DELETE, status shows inuse=0 (slot released, node-reported)"
 
 echo "[PASS] /se/grid/status reports live nodes and tracks slot usage across a session"
 echo "PASS: status_live"

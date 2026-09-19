@@ -224,6 +224,24 @@ slot(cell: ptr, id: string, delta: int) {
     }
 }
 
+// report_inuse(cell, id, n) — set a node's in-use slot count to `n` ABSOLUTELY
+// (no-op for unknown id, clamped >= 0). This is the node-authoritative path: the
+// NODE owns its live sessions and reports the count in its heartbeat, so the hub
+// SETS inuse to what the node reports rather than doing its own +1/-1 bookkeeping.
+// Node accept/reject (a node returns 503 when full) is what actually gates
+// assignment; the registry's inuse is a heartbeat-refreshed HINT (skip a node the
+// cache thinks is full) and the /se/grid/status figure. An abandoned session dies
+// on the node, the node's next heartbeat reports a lower count, and the slot frees
+// here with no hub-side session tracking.
+report_inuse(cell: ptr, id: string, n: int) {
+    r = cell as *Registry
+    _wlock(r)
+    while 1 == 1 {
+        cur = snapshot.load(_cell(cell))
+        if _commit(cell, cur, _set_inuse(_read(cur), id, n)) == 1 { _wunlock(r)  return }
+    }
+}
+
 // ---- heartbeat / staleness --------------------------------------------------
 // A node re-POSTs its registration periodically (the hub calls register, which
 // refreshes last_ms). A node that STOPS heartbeating is stale after a TTL and
@@ -368,6 +386,18 @@ _bump_inuse(rows: string, id: string, delta: int) -> string {
     if string.length(r) == 0 { return rows }
     f = _fields(r)
     inuse = _to_int(_f(f, 4)) + delta
+    if inuse < 0 { inuse = 0 }
+    return _drop_and_add(rows, id, _f(f, 0), _f(f, 1), _f(f, 2), _to_int(_f(f, 3)), inuse, _to_long(_f(f, 5)))
+}
+
+// _set_inuse(rows, id, n) — set the in-use slot count ABSOLUTELY (clamped >= 0),
+// preserving every other field incl. last_ms (a heartbeat refreshes last_ms via
+// register; report_inuse only reconciles the count). No-op for unknown id.
+_set_inuse(rows: string, id: string, n: int) -> string {
+    r = _find_row(rows, id)
+    if string.length(r) == 0 { return rows }
+    f = _fields(r)
+    inuse = n
     if inuse < 0 { inuse = 0 }
     return _drop_and_add(rows, id, _f(f, 0), _f(f, 1), _f(f, 2), _to_int(_f(f, 3)), inuse, _to_long(_f(f, 5)))
 }

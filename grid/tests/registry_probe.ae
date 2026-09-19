@@ -99,6 +99,56 @@ main() {
         }
     }
 
+    spec.describe(fw, "grid registry: report_inuse (node-authoritative slot count)") {
+        spec.it("sets inuse absolutely, gating availability") callback {
+            reg = registry.registry_init()
+            registry.register(reg, "n1", "http://only", "chrome", 2)
+            registry.report_inuse(reg, "n1", 2)          // node reports itself full
+            spec.assert_eq(registry.available(reg, "chrome"), 0, "full per node report")
+        }
+        spec.it("a lower node report FREES slots (the abandoned-session path)") callback {
+            reg = registry.registry_init()
+            registry.register(reg, "n1", "http://only", "chrome", 2)
+            registry.report_inuse(reg, "n1", 2)          // full
+            spec.assert_eq(registry.available(reg, "chrome"), 0, "full")
+            registry.report_inuse(reg, "n1", 1)          // node's next heartbeat: a session ended
+            spec.assert_eq(registry.available(reg, "chrome"), 1, "freed by the node's report")
+            id, addr = registry.pick_node(reg, "chrome")
+            spec.assert_str_eq(id, "n1", "pickable again")
+        }
+        spec.it("is an absolute SET, not a delta (unlike slot)") callback {
+            reg = registry.registry_init()
+            registry.register(reg, "n1", "http://only", "chrome", 5)
+            registry.slot(reg, "n1", 1)                  // hub-side +1 (legacy op)
+            registry.report_inuse(reg, "n1", 3)          // node says: actually 3
+            js = registry.status_json(reg)
+            spec.assert_true(string.index_of(js, "\"inuse\":3") >= 0, "set to 3, not 1+3")
+        }
+        spec.it("clamps a negative report to 0") callback {
+            reg = registry.registry_init()
+            registry.register(reg, "n1", "http://only", "chrome", 1)
+            registry.report_inuse(reg, "n1", 0 - 4)
+            js = registry.status_json(reg)
+            spec.assert_true(string.index_of(js, "\"inuse\":0") >= 0, "clamped to 0")
+        }
+        spec.it("is a no-op for an unknown id") callback {
+            reg = registry.registry_init()
+            registry.register(reg, "n1", "http://only", "chrome", 1)
+            registry.report_inuse(reg, "ghost", 9)       // no such node
+            spec.assert_eq(registry.count(reg), 1, "no phantom row created")
+            spec.assert_eq(registry.available(reg, "chrome"), 1, "n1 untouched")
+        }
+        spec.it("preserves max and address (only inuse changes)") callback {
+            reg = registry.registry_init()
+            registry.register(reg, "n1", "http://keep", "chrome", 7)
+            registry.report_inuse(reg, "n1", 2)
+            js = registry.status_json(reg)
+            spec.assert_true(string.index_of(js, "\"address\":\"http://keep\"") >= 0, "address kept")
+            spec.assert_true(string.index_of(js, "\"max\":7") >= 0, "max kept")
+            spec.assert_true(string.index_of(js, "\"inuse\":2") >= 0, "inuse set")
+        }
+    }
+
     spec.describe(fw, "grid registry: status_json (the /se/grid/status payload)") {
         spec.it("empty registry is an empty JSON array") callback {
             reg = registry.registry_init()
