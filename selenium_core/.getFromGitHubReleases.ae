@@ -33,14 +33,20 @@ import std.cryptography
 // The libselenium_core gh-release tag this node fetches. Single source of truth:
 // the repo-root SELENIUM_CORE_VERSION file (one dir up from this node's
 // selenium_core/ source dir), read at build time so the tag lives in ONE place
-// across every binding — no per-binding literal to drift. Falls back to the
-// baked default only if the file is unreadable.
+// across every binding — no per-binding literal to drift.
+//
+// NO baked-default fallback. It used to return "v0.8.0" when the file was
+// unreadable or empty, which is invisible precisely while that default happens
+// to match the file: the moment the repo tags v0.9.0, an unreadable file would
+// quietly fetch the OLD tag and report "no such release asset ...v0.8.0",
+// naming a version nobody asked for instead of saying the version file could not
+// be read. Returns "" now; the caller fails with the real reason and the path.
+// (Same trap found and fixed in the servirtium-vcr fetch node, whose stale
+// "v2.0.0" default outlived the real v2.0.0-alpha.1 tag.)
 _tag(srcdir: string) -> string {
     v, err = fs.read(string.concat(srcdir, "/../SELENIUM_CORE_VERSION"))
-    if string.length(err) > 0 { return "v0.8.0" }
-    t = string.trim(v)
-    if string.length(t) == 0 { return "v0.8.0" }
-    return t
+    if string.length(err) > 0 { return "" }
+    return string.trim(v)
 }
 _repo() -> string { return "aether-lang-dev/selaenium" }
 
@@ -48,6 +54,11 @@ aeb(cap) {
     bldr.build() {
         srcdir = bldr.source_dir(builder_context())
         tag = _tag(srcdir)
+        if string.length(tag) == 0 {
+            bldr.fail(builder_context(), string.concat(
+                "cannot read the release tag from ",
+                string.concat(srcdir, "/../SELENIUM_CORE_VERSION (missing or empty)")))
+        }
         os_ = _os_tag()
         arch = _arch()
         ext = _ext(os_)
