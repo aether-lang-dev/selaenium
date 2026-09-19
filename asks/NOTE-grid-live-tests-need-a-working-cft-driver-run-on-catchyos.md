@@ -1,163 +1,124 @@
-# NOTE: Grid live tests want a real browser — please run them on catchyOS 🚗💨
+# NOTE: Grid live tests on catchyOS — 4/5 green, one real non-driver bug ✅🐛
 
-**To:** whoever's next at a keyboard on **catchyOS** (`ssh paul@192.168.0.160`)
-**From:** the ChromeOS sandbox line, 2026-09-19 (ae 0.696.0 + aeb v0.319)
-**Re:** the distributed-Grid live tests — `grid/tests/{status,queue,distribute,heartbeat}_live.sh`
+**Ran on:** catchyOS, 2026-09-19 (ae 0.696.0 + aeb v0.319, matched CfT pair)
+**Re:** the original request below — run `grid/tests/*_live.sh` on a box with a
+healthy Chrome-for-Testing driver.
 
-## TL;DR
+## Result
 
-The distributed Grid is **built, unit-green, and its logic is live-proven** on the
-ChromeOS box. The one thing that box **cannot** do is complete a real Chrome
-session — its Chrome-for-Testing chromedriver is a broken build (details below).
-So the browser-round-trip legs of the `*_live.sh` scripts can't go green here.
-**catchyOS has a healthy CfT 152 pair** — please run them there and confirm green.
-It should be a 10-minute copy/paste.
+| script | result |
+|---|---|
+| `nodecount_live.sh` | ✅ PASS |
+| `heartbeat_live.sh` | ✅ PASS |
+| `distribute_live.sh` | ✅ PASS — full hub → node → driver → **real Chrome**, routed back, DELETE 200 |
+| `queue_live.sh` | ✅ PASS — saturate 1 slot, B queues, runs when A is deleted |
+| `status_live.sh` | ❌ **FAIL** — real bug, details below |
 
-## Why not here (root-caused, not hand-waved)
+The box drives browsers fine (Chrome **153.0.8010.36** via chromedriver 153,
+plus Firefox). The ChromeOS driver problem does **not** apply here, so every
+browser leg actually executed. The distributed session path, the queue, the
+node-authoritative 503 gate and heartbeat expiry are all **live-proven**.
 
-This sandbox has **Chrome 138.0.7204.49** and drivermgr correctly resolves the
-*matching* **chromedriver 138.0.7204.183** — the right pairing. But that cached
-138 driver **hangs on every `POST /session`**, standalone, outside the grid
-entirely:
+## 🐛 The find: the hub never applies a node's reported `inuse`
+
+`status_live.sh` fails at step 2:
 
 ```
-$ ~/.cache/selenium/chromedriver/linux64/138.0.7204.183/chromedriver --port=49998 &
-$ curl --max-time 40 -X POST :49998/session -d '{...--headless=new...}'
-  → 40s timeout, empty body.  Driver log says "started successfully", then silence.
+[FAIL] status did not show inuse=1 within ~4s of a session (node heartbeat):
+{"value":{"ready":true,"message":"selaenium Grid hub — 1 node(s) registered",
+ "nodes":[{"id":"node-5593","address":"http://127.0.0.1:5593",
+           "browsers":"chrome","max":1,"inuse":0}]}}
 ```
 
-Meanwhile the *system* `/usr/bin/chromedriver` (153) creates a session in **1s** —
-but it's 153 against Chrome 138, the wrong pairing. So: the only *working* driver
-mismatches the browser, and the *matching* driver is a broken CfT build. **No
-working Chrome grid session is possible on this box, independent of selaenium.**
-(This is the precise cause behind the long-standing "live tests flake in the
-headless env" note — it was never flake, it's a bad cached driver.)
+The session IS created (real Chrome, confirmed) — `inuse` just never leaves 0.
 
-The grid code is **faithfully proxying to a driver that never answers** — proven
-by bisecting hub→node→driver: a POST straight to the node hangs identically, and
-the node's log shows it *did* spawn the driver fine. Nothing above the driver is
-at fault.
+**It reproduces with NO browser at all**, so you can chase this on the ChromeOS
+box despite its broken driver. Start a hub and post a node descriptor by hand:
 
-## What IS proven here (so you know what you're confirming, not discovering)
-
-- **503 slot gate** (step 4b, node-authoritative): at capacity the node returns
-  `{"error":"session not created","message":"node has no free slot"}` — confirmed
-  live by hand.
-- **Node-reported `inuse`**: `/se/grid/status` shows `inuse` 0→1 across a session
-  via the node's heartbeat — confirmed live; the pure step-1 contract passes 3/3.
-- **Unit**: `registry_probe` 19/19 (incl. the abandoned-session-frees path),
-  `registry_stress` clean under repetition.
-
-The live scripts self-skip the browser legs when chromedriver is absent, so what's
-missing is specifically the **completed-session** assertions (status inuse=1 after
-a real distribute; the queue unblocking when a real slot frees). Those need a
-driver that actually drives.
-
-## Toolchain floor — check this FIRST ⚙️
-
-These tests build against the current pins (`ci/versions.env`), and the repo has a
-hard floor:
-
-| pin | value | why |
-|---|---|---|
-| `AETHER_REF` / `AETHER_FLOOR` | **ae 0.696.0** | aeb v0.319's `AETHER_PIN` is 0.696.0; the engine's own strict need is still only 0.681's `os.arch()`, but the floor tracks the aeb toolchain requirement |
-| `AEB_REF` | **aeb v0.319** | coupled with ae 0.696.0 (its `AETHER_PIN`) |
-
-⚠️ **catchyOS may be BELOW the floor** — the two-box workflow note last recorded
-**ae 0.613** there, which pre-dates the 0.696 floor by a mile. Bump it before
-building, and mind the ae/aetherc version-skew trap:
-
-```sh
-ae version install 0.696.0 && ae version use 0.696.0   # flips BOTH ae and aetherc
-ae version 2>/dev/null; aetherc --version 2>/dev/null    # both must read 0.696.0 — no skew
-# aeb: install the RELEASED v0.319 bundle (SHA-checked), not a dev build:
-#   BASE=https://github.com/aether-lang-dev/aeb/releases/download/v0.319
-#   curl -fsSL -O $BASE/aeb-linux-x86_64.tar.gz -O $BASE/aeb-linux-x86_64.tar.gz.sha256
-#   sha256sum -c aeb-linux-x86_64.tar.gz.sha256 && tar xzf aeb-linux-x86_64.tar.gz
-#   ./aeb-linux-x86_64/install.sh
-aeb --version    # → aeb v0.319
+```console
+$ SEL_HUB_PORT=4493 target/build/grid/bin/selaenium-hub &
+$ curl -s -X POST :4493/se/grid/register -H 'Content-Type: application/json' \
+    -d '{"id":"n1","address":"http://127.0.0.1:9999","browsers":["chrome"],"maxSessions":7,"inuse":3}'
+{"ok":true}
+$ curl -s :4493/se/grid/status
+... "id":"n1", "max":7, "inuse":0
 ```
 
-Verify bar (same as any bump): engine rebuilds clean and `nm -D` shows **66**
-`aether_sel_embed_*` exports; `aeb grid/.tests.ae` → grid 1/1. Then the live legs.
+`maxSessions:7` lands. `inuse:3` is dropped. Same on a re-POST to an existing
+row, so it is not a create-vs-update ordering race — it is deterministic.
 
-## How to run on catchyOS (the healthy box)
+### What I ruled out (so you don't re-walk it)
 
-catchyOS has cache-only **Chrome-for-Testing 152** (no system Chrome), so the node
-must be pointed at the CfT binary, and drivermgr must land on the matching 152
-driver. Setup (from the two-box workflow):
+- **Not the pure registry.** `grid/tests/registry_probe.ae` does exactly this
+  (`register` → `report_inuse(reg,"n1",3)` → `status_json` contains `"inuse":3`)
+  and passes — `aeb grid/.tests.ae` is 1/1, 19/19 probes.
+- **Not the wiring.** `register_node_handler` parses `inuse` with the same
+  `_int_field` that reads `maxSessions` (which works), and calls
+  `registry.report_inuse(ud, id, inuse)`. Both handlers get the same `reg_cell`.
+- **Not `sweep()`.** It runs after `report_inuse`, but `_fresh` copies rows
+  verbatim (`string.concat(row, "\n")`) — it never rebuilds fields.
+- **Not a stale build.** Reproduced after `rm -rf target/build/grid` + rebuild.
+- **Not `_find_row`/`_set_inuse` field order.** `_row` is newline-terminated and
+  field 4 is `inuse`; the probe asserts on `status_json` and passes.
 
-```sh
-ssh paul@192.168.0.160
-cd ~/scm/selenium
-git pull --ff-only origin main            # get 74c4cbf (4b) + 2db0eb4 (0.696) + this note
-export PATH="$HOME/.aether/bin:$HOME/scm/aeb:$PATH"   # ae + aeb not on login PATH
-export SEL_CHROME_BINARY="$HOME/.cache/selenium/chrome/linux64/152.0.7977.64/chrome"
-# (do the toolchain-floor bump above first if ae/aeb are older)
+So: the pure layer works single-threaded, and the same calls through the live
+HTTP server do not stick. The delta is the server context — worth a look at the
+CAS-COW publish/reclaim path under concurrent readers, which changed recently in
+`b4fb98c` (*"registry: reclaim displaced tables (close the _retire leak) via
+std.sync"*). The probe never exercises that with live readers.
 
-aeb grid/.build.ae                         # build hub + node
-# then each live script — they read SEL_CHROME_BINARY for the CfT Chrome:
-sh grid/tests/status_live.sh               # inuse 0 → 1 (heartbeat) → 0
-sh grid/tests/queue_live.sh                # saturate 1 slot, 2nd session QUEUES, unblocks on DELETE
-sh grid/tests/distribute_live.sh           # hub routes newSession to the node
-sh grid/tests/heartbeat_live.sh            # stale-node expiry after missed heartbeats
+**Severity is low-ish:** `queue_live` passing proves the real gate is
+node-authoritative (the node 503s when full), exactly as designed. The registry
+`inuse` is only the *hint* and the `/se/grid/status` figure — so this is a
+reporting bug, not an over-assignment bug.
+
+## 🔧 One fix applied here (test harness, not grid code)
+
+The scripts could not create a session on this box at all:
+
+```
+[FAIL] no session created: {"value":{"error":"session not created",
+  "message":"session not created\nfrom unknown error: cannot find Chrome binary"...
 ```
 
-### Two things to watch
+`status_live.sh`, `distribute_live.sh` and `queue_live.sh` hardcoded their caps
+with `goog:chromeOptions.args` but **no `binary`**. That is fine on a box with a
+system Chrome (the ChromeOS sandbox), but a cache-only Chrome-for-Testing box has
+none, so chromedriver cannot find a browser. The note said the scripts "read
+SEL_CHROME_BINARY" — they did not. They do now: when `SEL_CHROME_BINARY` is set
+the caps carry `"binary":"$SEL_CHROME_BINARY"`, which is the same env var every
+language binding honours. No change when it is unset.
 
-1. **`status_live` timing** — I updated it this session: `inuse` is now
-   **node-authoritative** (reported via heartbeat, `SEL_NODE_HEARTBEAT=800`), not
-   incremented by the hub at assign time. The script already **polls** for
-   `inuse:1`/`inuse:0` (up to ~4s) instead of reading once — so the small
-   report-lag is expected and handled. If it fails, capture the `st()` JSON it
-   prints on `[FAIL]`.
-2. **Driver resolution** — if the node still spawns a mismatched driver, check
-   what `driver.ensure("chrome", ...)` resolves to on that box (drivermgr detects
-   the CfT Chrome via `SEL_CHROME_BINARY` and should pick the cached 152 driver).
-   The healthy pairing is chromedriver **152.0.7977.64** ↔ CfT Chrome **152**.
+## Toolchain notes for the next person on this box
 
-## Plan B (bulletproof): point the node at a podman `standalone-chromium` 🐋
+The floor bump went fine (`ae version install 0.696.0 && ae version use 0.696.0`,
+then the released aeb v0.319 bundle, SHA verified). Two things bit on the way:
 
-catchyOS has **podman** — which sidesteps the whole cache-driver-resolution
-question. Run a container whose Chrome + chromedriver are guaranteed-matched, and
-point a selaenium **node** at it as its upstream W3C endpoint. That removes the one
-variable that bit this sandbox: the driver *always* answers.
+1. **Two stale `libaether.a` copies** shadowed the new toolchain —
+   `~/.local/lib/aether/libaether.a` (Aug 27) and `~/.local/lib/libaether.a`.
+   aeb diagnosed it precisely ("no os_arch_raw … stale leftover shadowing"). Fixed
+   for good by symlinking to the version-managed one, so it now follows
+   `ae version use` instead of going stale again:
+   `ln -sfn ~/.aether/current/lib/libaether.a ~/.local/lib/libaether.a`
+2. **Orphaned chromedrivers grab the node's port.** The node calls
+   `driver.release(dp)` (keeps the driver alive by design, reaped on DELETE), and
+   the scripts' cleanup kills hub+node but not the driver. A leftover chromedriver
+   then took `5593` as its ephemeral port and the next run's node could not bind —
+   presenting as a confusing empty session response. `pkill -x chromedriver`
+   between runs, or the scripts could reap on exit.
 
-```sh
-# a matched W3C endpoint on :4444, no host Chrome/driver involved
-podman run -d --rm --name se-chromium -p 4455:4444 --shm-size=2g \
-  docker.io/selenium/standalone-chromium:latest
-# (podman pulls docker.io/... transparently; :latest ships a matched pair)
-```
+Verify bar met: engine rebuilt clean, `nm -D` = **66** `aether_sel_embed_*`
+exports, `aeb grid/.tests.ae` 1/1.
 
-Two ways to use it, pick per what you're proving:
+---
 
-- **Fastest sanity check** — curl a session straight at the container to confirm
-  the *box* can drive a browser at all (isolates selaenium from the driver):
-  ```sh
-  curl --max-time 30 -X POST :4455/session \
-    -H 'Content-Type: application/json' \
-    -d '{"capabilities":{"alwaysMatch":{"browserName":"chrome"}}}'
-  # → a sessionId in ~1-2s means the container is healthy; then run the scripts.
-  ```
-- **True end-to-end through the grid** — if we want the `*_live.sh` scripts to
-  drive the *container's* driver rather than a host one, the node's driver layer
-  currently PATH/cache-resolves a local chromedriver (`driver.ensure`), so it
-  won't proxy to an arbitrary remote endpoint out of the box. That's the seam a
-  small `SEL_NODE_DRIVER_URL`-style override would open (a **new feature**, out of
-  4b's scope — flag it back to me and I'll add it on the next ChromeOS pass if we
-  want container-backed live tests to be first-class). For *now*, the container is
-  the clean way to prove "this box CAN complete a session," and the cached CfT 152
-  pair (above) is the way to run the scripts as-written.
+<details>
+<summary>Original note (ChromeOS, 2026-09-19) — kept for context</summary>
 
-Either path beats the broken 138 driver on ChromeOS. If even the podman
-`standalone-chromium` session hangs on catchyOS, that's a genuinely surprising
-box-level find worth writing up here.
+The ChromeOS box has Chrome 138 whose *matching* cached chromedriver
+138.0.7204.183 hangs on every `POST /session`, while the only working driver
+(system 153) mismatches the browser — so no Chrome grid session was possible
+there, independent of selaenium. That diagnosis still stands; it is simply not a
+constraint on this box.
 
-## If they go green
-
-Drop a one-line ✅ in this file (or delete it) and the step-4b live caveat is
-closed. If a browser leg fails for a *non-driver* reason, that's a real find —
-leave the `[FAIL]` JSON here and I'll pick it up on the next ChromeOS pass.
-
-Thanks — the plumbing's all there, it just needs a browser that breathes. 🌬️
+</details>

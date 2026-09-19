@@ -64,7 +64,15 @@ fi
 # once. (The old hub incremented inuse itself at assign time; the node-authoritative
 # model is what frees an ABANDONED session's slot — no DELETE needed — so the small
 # report lag is the deliberate trade.)
-caps='{"capabilities":{"alwaysMatch":{"browserName":"chrome","goog:chromeOptions":{"args":["--headless=new","--no-sandbox","--disable-gpu","--disable-dev-shm-usage"]}}}}'
+# A box with cache-only Chrome-for-Testing has no system Chrome, so chromedriver
+# fails with "cannot find Chrome binary" unless the capability carries the path.
+# SEL_CHROME_BINARY is the same env var the language bindings honour.
+if [ -n "${SEL_CHROME_BINARY:-}" ]; then
+    CHROME_BIN_CAP=",\"binary\":\"$SEL_CHROME_BINARY\""
+else
+    CHROME_BIN_CAP=""
+fi
+caps="{\"capabilities\":{\"alwaysMatch\":{\"browserName\":\"chrome\",\"goog:chromeOptions\":{\"args\":[\"--headless=new\",\"--no-sandbox\",\"--disable-gpu\",\"--disable-dev-shm-usage\"]$CHROME_BIN_CAP}}}}"
 resp="$(curl -s -X POST "http://127.0.0.1:$HUB_PORT/session" -H 'Content-Type: application/json' -d "$caps")"
 sid="$(printf '%s' "$resp" | sed -n 's/.*"sessionId":"\([^"]*\)".*/\1/p')"
 [ -n "$sid" ] || fail "no session created: $(printf '%s' "$resp" | head -c 200)"

@@ -59,7 +59,15 @@ echo "$nc" | grep -q '"nodes":1' || fail "node did not register (nodecount=$nc)"
 echo "  [ok] node registered: $nc"
 
 # POST newSession to the HUB
-caps='{"capabilities":{"alwaysMatch":{"browserName":"chrome","goog:chromeOptions":{"args":["--headless=new","--no-sandbox","--disable-gpu","--disable-dev-shm-usage"]}}}}'
+# A box with cache-only Chrome-for-Testing has no system Chrome, so chromedriver
+# fails with "cannot find Chrome binary" unless the capability carries the path.
+# SEL_CHROME_BINARY is the same env var the language bindings honour.
+if [ -n "${SEL_CHROME_BINARY:-}" ]; then
+    CHROME_BIN_CAP=",\"binary\":\"$SEL_CHROME_BINARY\""
+else
+    CHROME_BIN_CAP=""
+fi
+caps="{\"capabilities\":{\"alwaysMatch\":{\"browserName\":\"chrome\",\"goog:chromeOptions\":{\"args\":[\"--headless=new\",\"--no-sandbox\",\"--disable-gpu\",\"--disable-dev-shm-usage\"]$CHROME_BIN_CAP}}}}"
 resp="$(curl -s -X POST "http://127.0.0.1:$HUB_PORT/session" -H 'Content-Type: application/json' -d "$caps" || true)"
 sid="$(printf '%s' "$resp" | sed -n 's/.*"sessionId":"\([^"]*\)".*/\1/p')"
 [ -n "$sid" ] || fail "no sessionId from newSession (resp: $(printf '%s' "$resp" | head -c 300))"

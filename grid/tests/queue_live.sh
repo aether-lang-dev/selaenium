@@ -36,7 +36,15 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-CAPS='{"capabilities":{"alwaysMatch":{"browserName":"chrome","goog:chromeOptions":{"args":["--headless=new","--no-sandbox","--disable-gpu","--disable-dev-shm-usage"]}}}}'
+# A box with cache-only Chrome-for-Testing has no system Chrome, so chromedriver
+# fails with "cannot find Chrome binary" unless the capability carries the path.
+# SEL_CHROME_BINARY is the same env var the language bindings honour.
+if [ -n "${SEL_CHROME_BINARY:-}" ]; then
+    CHROME_BIN_CAP=",\"binary\":\"$SEL_CHROME_BINARY\""
+else
+    CHROME_BIN_CAP=""
+fi
+CAPS="{\"capabilities\":{\"alwaysMatch\":{\"browserName\":\"chrome\",\"goog:chromeOptions\":{\"args\":[\"--headless=new\",\"--no-sandbox\",\"--disable-gpu\",\"--disable-dev-shm-usage\"]$CHROME_BIN_CAP}}}}"
 new_session() { curl -s -X POST "http://127.0.0.1:$HUB_PORT/session" -H 'Content-Type: application/json' -d "$CAPS"; }
 sid_of() { sed -n 's/.*"sessionId":"\([^"]*\)".*/\1/p'; }
 fail() { echo "[FAIL] $1"; cat "$TMP/hub.log" 2>/dev/null; exit 1; }
