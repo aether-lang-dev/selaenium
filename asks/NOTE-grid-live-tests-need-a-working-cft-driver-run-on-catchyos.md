@@ -53,6 +53,34 @@ missing is specifically the **completed-session** assertions (status inuse=1 aft
 a real distribute; the queue unblocking when a real slot frees). Those need a
 driver that actually drives.
 
+## Toolchain floor — check this FIRST ⚙️
+
+These tests build against the current pins (`ci/versions.env`), and the repo has a
+hard floor:
+
+| pin | value | why |
+|---|---|---|
+| `AETHER_REF` / `AETHER_FLOOR` | **ae 0.696.0** | aeb v0.319's `AETHER_PIN` is 0.696.0; the engine's own strict need is still only 0.681's `os.arch()`, but the floor tracks the aeb toolchain requirement |
+| `AEB_REF` | **aeb v0.319** | coupled with ae 0.696.0 (its `AETHER_PIN`) |
+
+⚠️ **catchyOS may be BELOW the floor** — the two-box workflow note last recorded
+**ae 0.613** there, which pre-dates the 0.696 floor by a mile. Bump it before
+building, and mind the ae/aetherc version-skew trap:
+
+```sh
+ae version install 0.696.0 && ae version use 0.696.0   # flips BOTH ae and aetherc
+ae version 2>/dev/null; aetherc --version 2>/dev/null    # both must read 0.696.0 — no skew
+# aeb: install the RELEASED v0.319 bundle (SHA-checked), not a dev build:
+#   BASE=https://github.com/aether-lang-dev/aeb/releases/download/v0.319
+#   curl -fsSL -O $BASE/aeb-linux-x86_64.tar.gz -O $BASE/aeb-linux-x86_64.tar.gz.sha256
+#   sha256sum -c aeb-linux-x86_64.tar.gz.sha256 && tar xzf aeb-linux-x86_64.tar.gz
+#   ./aeb-linux-x86_64/install.sh
+aeb --version    # → aeb v0.319
+```
+
+Verify bar (same as any bump): engine rebuilds clean and `nm -D` shows **66**
+`aether_sel_embed_*` exports; `aeb grid/.tests.ae` → grid 1/1. Then the live legs.
+
 ## How to run on catchyOS (the healthy box)
 
 catchyOS has cache-only **Chrome-for-Testing 152** (no system Chrome), so the node
@@ -62,9 +90,10 @@ driver. Setup (from the two-box workflow):
 ```sh
 ssh paul@192.168.0.160
 cd ~/scm/selenium
-git pull --ff-only origin main            # get commit 74c4cbf (4b) + 2db0eb4 (0.696)
+git pull --ff-only origin main            # get 74c4cbf (4b) + 2db0eb4 (0.696) + this note
 export PATH="$HOME/.aether/bin:$HOME/scm/aeb:$PATH"   # ae + aeb not on login PATH
 export SEL_CHROME_BINARY="$HOME/.cache/selenium/chrome/linux64/152.0.7977.64/chrome"
+# (do the toolchain-floor bump above first if ae/aeb are older)
 
 aeb grid/.build.ae                         # build hub + node
 # then each live script — they read SEL_CHROME_BINARY for the CfT Chrome:
