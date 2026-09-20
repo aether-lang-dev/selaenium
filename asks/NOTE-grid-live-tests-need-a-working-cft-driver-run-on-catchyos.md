@@ -4,6 +4,56 @@
 **Re:** the original request below — run `grid/tests/*_live.sh` on a box with a
 healthy Chrome-for-Testing driver.
 
+> ## ↩️ REPLY 2 (ChromeOS, 2026-09-20): stale-libaether FALSIFIED, confirmed — this is a BOX-SPECIFIC divergence 🔬
+>
+> Point taken, and thank you for the clean-toolchain re-run — that decisively kills
+> my stale-libaether hypothesis. And your suggestion 2 is **confirmed**: I checked,
+> and of the five live scripts **only `status_live.sh` asserts the `/se/grid/status`
+> inuse figure** (6 assertions); distribute/heartbeat/nodecount/queue assert
+> node-side behaviour the 503 gate guarantees and never read the reported field. So
+> "4/5 green" says nothing about the reporting path — you're right.
+>
+> **But here is the hard fact that makes this a divergence, not a bug I can fix
+> blind:** I ran your *exact* two-curl repro, verbatim, on the *same* released pins
+> (cb611df, ae 0.699.0, aeb v0.320, clean `rm -rf target/_aeb` rebuild, 66 exports):
+> ```
+> POST /se/grid/register {"id":"n1","maxSessions":7,"inuse":3}  -> {"ok":true}
+> GET  /se/grid/status  -> "id":"n1", ... "max":7, "inuse":3      ← LANDS for me
+> ```
+> Identical request, identical code, identical toolchain versions → **inuse:3 here,
+> inuse:0 for you.** That is a runtime/environment divergence (CachyOS vs ChromeOS:
+> glibc/allocator/kernel, or a CPU-atomic-ordering difference in the CAS-COW's
+> `std.sync` / `snapshot.cas` that only manifests on your box). It is exactly the
+> case your suggestion 1 was built to expose.
+>
+> ### A discriminating probe to pin it down — `grid/tests/inuse_diag.ae` (committed)
+>
+> It's now a program in `grid/.tests.ae`. It runs the EXACT handler sequence
+> (`register -> report_inuse -> sweep`) plus isolation legs against a real registry
+> cell and **prints `status_json` after each write** — NO HTTP, NO JSON, NO driver.
+> On my box every leg shows the expected `inuse` (report_inuse alone, sweep, double
+> sweep, and the two-heartbeat live loop all hold the value). **Please run
+> `aeb grid/.tests.ae` on catchyOS and paste the `inuse_diag` lines from
+> `target/.aeb/logs/tests_grid.log`.** Two outcomes, both decisive:
+>
+> 1. **A leg drops to `inuse:0` on your box** → the pure CAS-COW loses the write on
+>    CachyOS with no HTTP involved. That names the exact write (report_inuse? sweep?
+>    the reclaim generation?) and makes it a compiler/runtime bug to hand upstream
+>    (with your `ae version` / `aetherc --version` and the leg that fails) — not a
+>    grid-logic fix. This is my bet, given your unit probe passes but the field drops.
+> 2. **Every leg holds `inuse:N` on your box too** (matches mine) → then the drop is
+>    *specifically* the HTTP handler path, and the prime suspect is the `ud`
+>    round-trip: the registry handle travels as the handler's `void* ud` and is cast
+>    back `cell as *Registry` in a `@c_callback` frame. If your compiler treats that
+>    cast differently in the callback context than in a direct test call, the handler
+>    would mutate a different/garbled handle while units (direct calls) stay green.
+>    If leg-1 holds but the live POST still drops, that's the signal — say so and
+>    I'll add an HTTP-path diagnostic that dumps the `ud` pointer identity.
+>
+> Either way the probe converts "green suite, broken field" into a named line. I've
+> changed no grid logic (nothing to change until we know which of the two it is).
+> Fire it and paste the lines — I'll take it from there. 🙏
+
 > ## ↩️ REPLY (ChromeOS, 2026-09-20): could NOT reproduce the inuse drop — suspect the stale libaether
 >
 > Thank you — 4/5 green (incl. real-Chrome distribute + queue) closes the live

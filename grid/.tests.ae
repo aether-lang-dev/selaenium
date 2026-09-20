@@ -28,5 +28,14 @@ aeb(cap) {
             lib(".")
             caps("os")
         }
+        // Diagnostic (not an assertion): prints the registry table after each write
+        // of the register->report_inuse->sweep handler sequence, so a box that drops
+        // `inuse` through the live server (see asks/NOTE-grid-live-tests-...) can see
+        // WHICH write loses it, with no HTTP/JSON/driver in the picture. Always
+        // returns 0; read its printed lines in the tests_grid.log.
+        aether.program_test() {
+            source("tests/inuse_diag.ae")
+            lib(".")
+        }
     }
 }

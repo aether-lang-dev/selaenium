@@ -1,0 +1,68 @@
+// inuse_diag.ae — a DISCRIMINATING diagnostic for the catchyOS `inuse`-dropped
+// finding (asks/NOTE-grid-live-tests-...). It runs the EXACT register_node_handler
+// write sequence — register -> report_inuse -> sweep — against a real registry
+// cell and prints status_json AFTER EACH STEP, plus a couple of isolation legs.
+//
+// WHY: se-co sees `POST /register {inuse:3}` -> `GET /status` report inuse:0 on a
+// clean 0.699 + v0.320 toolchain; the ChromeOS box sees inuse:3 on the same code.
+// The unit probe (register->report_inuse->sweep asserting status_json) passes on
+// BOTH boxes, yet the live HTTP path drops it on catchyOS. This probe removes HTTP
+// and JSON from the picture and prints the intermediate table, so whoever runs it
+// sees EXACTLY which write loses the value on their box (or that none does).
+//
+// Run:  aeb grid/.tests.ae      (this is one of its test programs)
+//   or build+run just this node if wired standalone.
+//
+// It ASSERTS nothing (it is a diagnostic, always "passes"); read the printed
+// lines. On a healthy box every "after report_inuse" / "after sweep" line shows
+// inuse":3. If a box drops it, the first line showing inuse":0 names the culprit.
+import std.string
+import registry
+
+_show(tag: string, reg: ptr) {
+    js = registry.status_json(reg)
+    println("  [${tag}] ${js}")
+}
+
+main() {
+    println("== inuse_diag: register -> report_inuse -> sweep, printing each step ==")
+
+    // Leg 1: the exact handler sequence, one node.
+    reg = registry.registry_init()
+    registry.register(reg, "n1", "http://127.0.0.1:9999", "chrome", 7)
+    _show("after register (expect inuse:0)", reg)
+    registry.report_inuse(reg, "n1", 3)
+    _show("after report_inuse 3 (expect inuse:3)", reg)
+    registry.sweep(reg)
+    _show("after sweep (expect inuse:3 STILL)", reg)
+
+    // Leg 2: report_inuse in ISOLATION (no sweep) — does the SET alone stick?
+    reg2 = registry.registry_init()
+    registry.register(reg2, "n2", "http://127.0.0.1:8888", "chrome", 5)
+    registry.report_inuse(reg2, "n2", 2)
+    _show("isolated report_inuse 2, no sweep (expect inuse:2)", reg2)
+
+    // Leg 3: sweep TWICE after report_inuse — does a second reclaim generation
+    // revert it? (probes the CAS-COW publish/reclaim path se-co suspected)
+    reg3 = registry.registry_init()
+    registry.register(reg3, "n3", "http://127.0.0.1:7777", "chrome", 9)
+    registry.report_inuse(reg3, "n3", 4)
+    registry.sweep(reg3)
+    registry.sweep(reg3)
+    _show("report_inuse 4 then sweep x2 (expect inuse:4)", reg3)
+
+    // Leg 4: re-register the SAME id after report_inuse (heartbeat re-POST shape:
+    // register resets inuse:0, then report_inuse restores it) — the LIVE loop.
+    reg4 = registry.registry_init()
+    registry.register(reg4, "n4", "http://127.0.0.1:6666", "chrome", 3)
+    registry.report_inuse(reg4, "n4", 1)
+    _show("first heartbeat: reg+report 1 (expect inuse:1)", reg4)
+    registry.register(reg4, "n4", "http://127.0.0.1:6666", "chrome", 3)  // 2nd heartbeat resets to 0
+    _show("  ...after 2nd register, before its report (expect inuse:0)", reg4)
+    registry.report_inuse(reg4, "n4", 1)
+    registry.sweep(reg4)
+    _show("second heartbeat: reg+report 1+sweep (expect inuse:1)", reg4)
+
+    println("== done — read the lines above; any 'expect inuse:N' showing inuse:0 is the drop point ==")
+    return 0
+}
