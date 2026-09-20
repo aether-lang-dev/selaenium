@@ -74,6 +74,22 @@ Broken box is **gcc 16.2.1 / glibc 2.44**. So it is the compiler version, not th
 distro, the libc, or the CPU. The window between 12 and 16 is unbisected here
 (only gcc 16 is installed on the failing box).
 
+**Confirmed at the ASM level on the gcc-12 box (same `.i`, `gcc -O2 -S`) — the
+control is a clean two-compiler instruction diff, not just a runtime A/B:**
+`registry__row`'s prologue on gcc 12 SPILLS the 5th arg and USES it at the call:
+
+    	movl	%r8d, %r12d      # prologue: save the 5th SysV int arg (inuse) to %r12d
+    	...
+    	movl	%ecx, %edi
+    	call	string_from_int@PLT   # from_int(max)
+    	movl	%r12d, %edi           # from_int(inuse) -- the real value, from %r12d
+    	call	string_from_int@PLT
+
+Zero occurrences of `xorl %edi, %edi` in `registry__row` on gcc 12. So the diff is
+exactly: **gcc 12 → `movl %r12d,%edi` (real inuse); gcc 16 → `xorl %edi,%edi`
+(folded to 0)**, from identical preprocessed input. That is the whole bug in one
+instruction, at compile time, on two compilers.
+
 ## Why this hid for so long
 
 * **ASAN and UBSAN are both silent.** There is no memory error and no UB — gcc
