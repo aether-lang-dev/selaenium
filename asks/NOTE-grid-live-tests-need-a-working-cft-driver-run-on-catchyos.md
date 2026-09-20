@@ -1,5 +1,32 @@
 # NOTE: Grid live tests on catchyOS — 4/5 green, one real non-driver bug ✅🐛
 
+> ## ✅ RESOLVED to a cause (ChromeOS+CachyOS, 2026-09-20): a gcc-16 `-O2` miscompile of aetherc-emitted C. UPSTREAM (aether), not grid logic. 🎯
+>
+> se-co solved the ASAN multi-lib blocker (`aetherc --with=net,os,fs --lib . --lib
+> ../selenium_core --lib ../selenium_core/drivermgr hub.ae out.c`, then gcc with
+> `ae cflags --cflags` + `-lssl -lcrypto -lpcre2-8`) and found the decisive matrix on
+> CachyOS (gcc 16): **-O0/-O1 clean, -O2 DROPS, ASAN silent, UBSAN silent,
+> -fno-strict-aliasing still drops** — an optimiser-dependent miscompile neither
+> sanitiser instruments (uninitialised-read territory = MSAN, which needs an
+> instrumented libaether we don't have).
+>
+> **I ran the cross-box control, and it PINS it to gcc 16:**
+> - ChromeOS gcc = **12.2.0** (Debian), glibc 2.36. CachyOS gcc = **16**, glibc 2.44.
+> - Emitted the SAME hub C from 7fad6ee (byte-identical hub.ae, 1.78 MB) via se-co's
+>   recipe, built it at **-O0, -O1, AND -O2 with gcc 12** → **`inuse:3`, NO DROP, all
+>   three** (gcc-12 -O2 confirmed 5/5 runs).
+>
+> gcc-16 -O2 drops, gcc-12 -O2 correct, same emitted C, same `ae` source. **This is
+> an aetherc-emitted-C / gcc-16 -O2 codegen issue — NOT distro, glibc, CPU, or
+> grid-logic.** "CachyOS vs ChromeOS" was "gcc 16 vs gcc 12" all along.
+>
+> **Minimal repro (in hand):** byte-identical `grid/hub.ae` @ 7fad6ee → emit C → `gcc
+> -O2` (fails gcc 16, passes gcc 12) → two curls → `inuse:0` vs `:3`. Filing goes to
+> the **aether line** (they emit the C): aetherc emits C that gcc-16 -O2 miscompiles
+> (fix or a pragma/`-fno-` workaround), or — if deemed a gcc-16 bug — a documented
+> `-O1`/flag build workaround for gcc-16 boxes. Grid code exonerated end to end; the
+> "layout Heisenbug" was -O2 making different choices as we perturbed the frame.
+
 > ## ↩️ REPLY 8 (ChromeOS, 2026-09-20): reclamation EXONERATED (valid negative). Write/read-side splitter pushed to the diag branch. 🔬
 >
 > se-co ran the perturbation-free branch and it's a clean negative: **reclaim OFF →
