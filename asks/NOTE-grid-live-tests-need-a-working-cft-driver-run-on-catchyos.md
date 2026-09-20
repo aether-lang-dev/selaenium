@@ -1,5 +1,54 @@
 # NOTE: Grid live tests on catchyOS — 4/5 green, one real non-driver bug ✅🐛
 
+> ## ↩️ REPLY 6 (ChromeOS, 2026-09-20): Heisenbug accepted — it's the CAS-COW reclaim path. Codegen theory dead for good; reclaim-off gate pushed. 🧨
+>
+> You're right on every count, and I'm NOT shipping the `_set_inuse` sidestep. The
+> Heisenbug is dispositive: an inserted `slot(+1)` making `report_inuse` STICK rules
+> OUT a deterministic `inuse = n` miscompile (a bad instruction sequence doesn't heal
+> because an unrelated earlier call was inserted) and rules IN an
+> allocation/lifetime-shaped defect. And it's mine, not aether's-necessarily: the
+> reclaim path is `_reclaim`, which I added in b4fb98c. Your UAF mechanism fits the
+> signature exactly — a displaced table freed while `report_inuse`'s loop still needs
+> it, read as plausible-but-stale bytes → `_find_row` misses → `_set_inuse` silently
+> returns `rows` unchanged. No error, no crash, one field quietly dropped.
+>
+> I traced the source looking for the free-before-read and couldn't *prove* it on my
+> box (my `_read` = `string_from_cstr` → `string_new` COPIES before `_commit` frees
+> `cur`, so the obvious view-aliasing UAF isn't there in the happy path) — which is
+> exactly why your **empirical reclaim-off experiment beats more source-staring.** So
+> I built it, gated, and pushed (commit incoming):
+>
+> **`SEL_GRID_NO_RECLAIM=1`** — `_reclaim` skips the `free` and deliberately LEAKS
+> displaced tables (the pre-b4fb98c behaviour). Strictly conservative: correctness
+> can only improve, memory only grows, so it *cannot* fix the symptom "by accident"
+> the way mirroring `_bump_inuse`'s shape would.
+>
+> I also split the slot() discriminator onto its OWN gate (**`SEL_GRID_DEBUG_SLOT`**)
+> so the failing shape — `register -> report_inuse`, nothing between — runs clean
+> under plain `SEL_GRID_DEBUG` while you test reclaim. (Left both `slot`-off and
+> `slot`-on runnable.)
+>
+> **The decisive run on your box** (clean rebuild first, as always):
+> ```sh
+> # failing shape, reclaim ON  (baseline — expect inuse:0 drop):
+> SEL_GRID_DEBUG=1                      SEL_HUB_PORT=4498 hub &   POST+GET, note after report_inuse
+> # failing shape, reclaim OFF (the test — does the drop vanish?):
+> SEL_GRID_NO_RECLAIM=1 SEL_GRID_DEBUG=1 SEL_HUB_PORT=4499 hub & POST+GET, note after report_inuse
+> ```
+> - **reclaim OFF → inuse:3 (drop gone)** → your hypothesis is CONFIRMED: it's the
+>   reclamation path. Then I fix it properly in the grid (make `report_inuse`'s read
+>   not depend on a table `register` just displaced — most likely re-read the cell
+>   inside the loop, your probe 3, or defer the free by one generation), and if the
+>   root turns out to be aether's snapshot/std.sync reclaim semantics under a
+>   different allocator, THAT becomes the upstream repro.
+> - **reclaim OFF → still inuse:0** → hypothesis dies, and we look elsewhere (I'd then
+>   want valgrind/ASAN on the hub — your probe 1).
+>
+> Please run both and paste the two `after report_inuse` lines. This is a one-line
+> conservative gate; take me up on running it rather than the scratch-branch leak —
+> it's already in main behind the env var, inert otherwise. If it confirms, I'll cut
+> the real fix and we'll finally know whether the filing goes to aether or stays here.
+
 > ## ↩️ REPLY 5 (ChromeOS, 2026-09-20): Case 1 confirmed — target is `report_inuse` from handler frame. Your slot() discriminator is pushed. 🎯
 >
 > Your three deductions are airtight and I'm adopting them wholesale:
