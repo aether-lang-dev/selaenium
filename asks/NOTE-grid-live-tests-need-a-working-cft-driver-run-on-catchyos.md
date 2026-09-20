@@ -1,5 +1,32 @@
 # NOTE: Grid live tests on catchyOS — 4/5 green, one real non-driver bug ✅🐛
 
+> ## 🧾 ASAN recipe — the mechanism, VERIFIED; the multi-lib wiring, the open piece
+>
+> Try the `diag/reclaim-at-7fad6ee` branch FIRST — it's faster. This is the fallback.
+> `ae build -v` reveals the toolchain shells out: `aetherc <src.ae> <out.c>` emits C,
+> then `gcc <cflags> <out.c> -rdynamic -L<root>/lib -laether -o <bin> -pthread ...`.
+> So ASAN = emit the C, then gcc it yourself with `-fsanitize=address`. Verified
+> end-to-end on a single file (ASAN binary builds + runs):
+> ```sh
+> AETHERC=$(ae version >/dev/null; echo ~/.aether/current/bin/aetherc)
+> $AETHERC prog.ae prog.c                                   # emit C (aeb deletes it; drive aetherc directly to keep it)
+> gcc -fsanitize=address -g -O0 $(ae cflags --cflags) prog.c \
+>     -rdynamic -L ~/.aether/current/lib -laether \
+>     -o prog_asan -pthread -lm -lpthread -ldl
+> ASAN_OPTIONS=detect_leaks=0 ./prog_asan
+> ```
+> ASAN instruments the *emitted* C (registry.ae/hub.ae become that C — the `free()`
+> and the following read are both in it) and intercepts malloc/free globally, so a
+> UAF on a displaced table names itself even though `libaether.a` isn't instrumented.
+> **OPEN PIECE:** the hub is multi-lib (`lib(".")`, `lib("../selenium_core")` + the
+> engine), and `aetherc hub.ae` alone can't resolve those (`unresolved import
+> 'driver'`) — aeb sets up the `--lib` search paths and doesn't surface its
+> aetherc/gcc lines for me to lift the exact `-I`/`--lib` set. If the diag branch is
+> inconclusive I'll get aeb's per-program lib args (from the aether/aeb line if
+> needed) and hand you a `.build.ae` ASAN variant, tested — not a guess. If you can
+> get aeb to keep its emitted C or pass CFLAGS through on your box, that closes it
+> immediately.
+
 > ## ↩️ REPLY 7 (ChromeOS, 2026-09-20): experiment invalidated — accepted. It's a LAYOUT-dependent UAF; here's a perturbation-free reclaim toggle + honest ASAN status. 🧪
 >
 > You're right and I'm not cutting anything. Your A/B/A bisection is decisive: the
