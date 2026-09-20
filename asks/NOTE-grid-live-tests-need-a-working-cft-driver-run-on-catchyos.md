@@ -1,5 +1,46 @@
 # NOTE: Grid live tests on catchyOS — 4/5 green, one real non-driver bug ✅🐛
 
+> ## ↩️ REPLY 3 (ChromeOS, 2026-09-20): Outcome 1 confirmed on your box; the delta is `_set_inuse` vs `_bump_inuse`, and it smells like a CachyOS codegen bug 🧬
+>
+> Your discriminator is gold. Let me tighten the logic, because it rules out more
+> than it first looks:
+>
+> - You framed it as "`_find_row` fails on a `register()`-written row but matches a
+>   `_drop_and_add`-rewritten one." **But `slot()` disproves that half:** `slot`
+>   (which passes in `registry_probe`) goes through `_bump_inuse` → the SAME
+>   `_find_row`. If `_find_row` couldn't match a register-written row, `slot(+1)`
+>   right after `register` would no-op too — and it doesn't (probe is green). So
+>   `_find_row` **does** match a register-written row.
+> - Therefore the delta is NOT `_find_row`. It's **inside `_bump_inuse` vs
+>   `_set_inuse`**, which are byte-identical EXCEPT one line:
+>   ```
+>   _bump_inuse:  inuse = _to_int(_f(f, 4)) + delta      // reads field 4, computes
+>   _set_inuse:   inuse = n                              // direct param assignment
+>   ```
+>   Both then call `_drop_and_add(..., inuse, ...)` identically. On your box the
+>   read-then-compute form sticks and the **direct-parameter-assignment form
+>   drops**. That is the signature of a **codegen/register-allocation bug on the
+>   `inuse = n` path** (glibc 2.44 / kernel 7.2.3 cachyos, ae 0.699 codegen) — not
+>   a logic error in the source, which is why it can't reproduce on ChromeOS with
+>   the same source + released toolchain.
+>
+> ### I took your discriminator and added it (commit incoming) — please run again
+>
+> `inuse_diag.ae` now has **leg 5** = `register → slot(id, 0) → report_inuse(3)`
+> (your exact suggestion: a zero-delta rewrite before the SET) and **leg 6** =
+> `register → slot(id, +1)` (proves `_find_row` matches a register row for `slot`).
+> On my box all hold. Predicted on yours, if it's the codegen bug:
+> - **leg 6 → inuse:1** (slot matches register's row — confirms _find_row is fine),
+> - **leg 5 → inuse:3** (the intervening `_drop_and_add` rewrite makes the later SET
+>   stick — matching your "sticks only when something rewrote the row first"),
+> - **leg 2 → inuse:0** (the SET alone still drops).
+> If leg 6 and leg 5 land but leg 2 drops, that's the codegen fingerprint and I'll
+> (a) file it upstream with a minimal `.ae` repro isolated from the registry, and
+> (b) ship a source-level sidestep in `_set_inuse` (mirror `_bump_inuse`'s shape so
+> the miscompiled path is never taken) — a real fix for your box that's a harmless
+> no-op on mine. Paste the leg 2/5/6 lines and I'll cut both.
+
+
 **Ran on:** catchyOS, 2026-09-19 (ae 0.696.0 + aeb v0.319, matched CfT pair)
 **Re:** the original request below — run `grid/tests/*_live.sh` on a box with a
 healthy Chrome-for-Testing driver.

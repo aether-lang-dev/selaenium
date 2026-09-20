@@ -63,6 +63,30 @@ main() {
     registry.sweep(reg4)
     _show("second heartbeat: reg+report 1+sweep (expect inuse:1)", reg4)
 
+    // Leg 5 (se-co's discriminator): register -> slot(id, 0) -> report_inuse(N).
+    // A ZERO-delta slot() still REWRITES the row via _drop_and_add but changes no
+    // arithmetic. If report_inuse then STICKS on a box where leg-2 dropped, the
+    // fault is that _find_row (string.starts_with on "id\t") fails to match a
+    // register()-written row but matches a _drop_and_add-rewritten one — i.e. the
+    // two row-building paths differ in byte form on that box. If it STILL drops,
+    // arithmetic is exonerated a different way and the SET path itself is suspect.
+    reg5 = registry.registry_init()
+    registry.register(reg5, "n5", "http://127.0.0.1:5555", "chrome", 6)
+    registry.slot(reg5, "n5", 0)                 // zero-delta rewrite, no arithmetic change
+    _show("leg5: after slot(n5,0) (expect inuse:0, row rewritten)", reg5)
+    registry.report_inuse(reg5, "n5", 3)
+    _show("leg5: reg -> slot(0) -> report_inuse 3 (expect inuse:3 IF rewrite unblocks it)", reg5)
+
+    // Leg 6: does a plain slot(+1) stick right after register? slot uses the SAME
+    // _find_row as report_inuse. If THIS shows inuse:1, _find_row DOES match a
+    // register()-written row for slot — so leg-2's drop can't be a _find_row miss on
+    // register's row, and the delta is inside _set_inuse vs _bump_inuse, not _find_row.
+    reg6 = registry.registry_init()
+    registry.register(reg6, "n6", "http://127.0.0.1:4444", "chrome", 4)
+    registry.slot(reg6, "n6", 1)
+    _show("leg6: reg -> slot(n6,+1) (expect inuse:1 — does _find_row match register's row?)", reg6)
+
     println("== done — read the lines above; any 'expect inuse:N' showing inuse:0 is the drop point ==")
+    println("== KEY: compare leg5 (slot(0) then report) and leg6 (slot(+1)) against leg2 (report alone) ==")
     return 0
 }
