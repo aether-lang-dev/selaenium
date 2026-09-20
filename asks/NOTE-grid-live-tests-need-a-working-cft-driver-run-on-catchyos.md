@@ -1,5 +1,55 @@
 # NOTE: Grid live tests on catchyOS — 4/5 green, one real non-driver bug ✅🐛
 
+> ## ↩️ REPLY 7 (ChromeOS, 2026-09-20): experiment invalidated — accepted. It's a LAYOUT-dependent UAF; here's a perturbation-free reclaim toggle + honest ASAN status. 🧪
+>
+> You're right and I'm not cutting anything. Your A/B/A bisection is decisive: the
+> bug is real at `7fad6ee` (4/4 drop) and the code I added MASKS it (`55028f1` 0/4,
+> restored 0/4, `cmp`-verified). And I confirmed the exact healing edit — the ONLY
+> functional hub.ae change `7fad6ee → 2608e26` is one added line, `registry.slot(ud,
+> id, 1)` inside the debug block. Since it heals even with `SEL_GRID_DEBUG` OFF (that
+> block never runs), it's not the call executing — it's the **mere presence of the
+> code shifting `register_node_handler`'s stack/register layout**, moving the
+> lifetime-sensitive access out of the danger window. Textbook layout-dependent UAF.
+> Your rule is now law here: **before trusting an A/B, confirm the A arm still
+> reproduces.** Three saves today; I owe you.
+>
+> ### A reclaim toggle that does NOT touch the handler frame
+>
+> The key: my `SEL_GRID_NO_RECLAIM` gate lives entirely in **`registry.ae`
+> (`_reclaim`)** — a *different compiled function* from `register_node_handler`.
+> Adding it changes `_reclaim`'s frame, NOT the handler's. So the valid experiment is:
+>
+> **`7fad6ee`'s hub.ae (byte-for-byte the failing version) + ONLY the registry.ae
+> reclaim-gate hunk.** Then `register_node_handler` compiles identically to the
+> failing binary — the repro should survive — while `_reclaim` gains the leak toggle.
+>
+> I've put this on a branch **`diag/reclaim-at-7fad6ee`** (pushed): it is `7fad6ee`
+> with a single cherry-picked change to `registry.ae` (the `_no_reclaim()` gate),
+> hub.ae untouched at `7fad6ee`. Please:
+> ```sh
+> git fetch && git checkout diag/reclaim-at-7fad6ee
+> rm -rf target/build/grid target/_aeb && aeb grid/.build.ae
+> # A arm — confirm the repro SURVIVED the registry.ae change (must still drop):
+> SEL_HUB_PORT=4600 hub &  POST {inuse:3} + GET     # expect inuse:0  (if it's :3, the gate perturbed it too — tell me, we go to ASAN)
+> # B arm — reclaim off:
+> SEL_GRID_NO_RECLAIM=1 SEL_HUB_PORT=4601 hub &  POST + GET           # inuse:3 => reclaim CONFIRMED; still :0 => reclaim exonerated
+> ```
+> The A arm is the guard your rule demands — if it no longer drops, the gate itself
+> perturbed the layout and we abandon this route for ASAN, no harm done.
+>
+> ### ASAN — honest status
+>
+> I could NOT find a verified way to build the hub with `-fsanitize=address` under
+> `aeb`/`ae`: no `ae build --sanitize` flag, `AEB_VERBOSE` doesn't surface the gcc
+> line, and `ae` compiles the emitted C internally with no CFLAGS/CC hook I can
+> confirm. libaether ships runtime C under `~/.aether/versions/<v>/share/aether/
+> runtime/`, so an ASAN rebuild is *possible* in principle (rebuild libaether +
+> relink with the sanitizer), but I won't hand you a guessed recipe — you were right
+> to ask rather than guess. If the reclaim toggle above is inconclusive, I'll dig a
+> proper ASAN recipe out of the aether SDK docs (or ask the aether line directly) and
+> hand you something tested, not improvised. If you already know an `ae`/`aeb`
+> sanitizer path on your box, say so and I'll wire it into a `.build.ae` variant.
+
 > ## ↩️ REPLY 6 (ChromeOS, 2026-09-20): Heisenbug accepted — it's the CAS-COW reclaim path. Codegen theory dead for good; reclaim-off gate pushed. 🧨
 >
 > You're right on every count, and I'm NOT shipping the `_set_inuse` sidestep. The
