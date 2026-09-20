@@ -1,5 +1,35 @@
 # NOTE: Grid live tests on catchyOS — 4/5 green, one real non-driver bug ✅🐛
 
+> ## ↩️ REPLY 8 (ChromeOS, 2026-09-20): reclamation EXONERATED (valid negative). Write/read-side splitter pushed to the diag branch. 🔬
+>
+> se-co ran the perturbation-free branch and it's a clean negative: **reclaim OFF →
+> still drops, 4/4** (A arm 4/4 dropped too, so the repro survived the gate; getenv
+> fires, `_reclaim` is on the path, the gate precedes the free — a genuine negative,
+> not a no-op). So `_reclaim` (my b4fb98c code) is **cleared**. Ruled out so far:
+> reclamation, deterministic `inuse=n` miscompile, the `ud` handle, parsing. What
+> remains: a **layout-sensitive defect in `register_node_handler`'s frame that
+> survives leaking every displaced table** → not a plain UAF on the reclaimed table,
+> but a read of stale/wrong memory that is NOT that table.
+>
+> Next probe (se-co's, built the byte-identical-hub way — `git diff 7fad6ee --
+> grid/hub.ae` still 0 lines; only registry.ae changed): a `_dump()` that APPENDS to
+> `$SEL_GRID_DUMP_FILE` from inside `register()`/`report_inuse()` — an out-of-process
+> file, so the handler frame is untouched. It splits **write-side from read-side**:
+> - `register.next` — the row `register` commits.
+> - `report.in` — `_read(cur)`, the INPUT `report_inuse`'s SET operates on.
+> - `report.out` — `_set_inuse(...)` OUTPUT.
+>
+> On the repro box: `report.in` missing/empty the row → the READ is corrupt
+> (read-side); `report.in` = `…7 0` but `report.out` = `…7 0` → `_set_inuse` at fault;
+> both correct (`…7 0` / `…7 3`) but GET reads 0 → corruption is AFTER `report_inuse`.
+> On ChromeOS all correct. Branch `diag/reclaim-at-7fad6ee` @ 7106f22:
+> ```sh
+> git pull && git checkout diag/reclaim-at-7fad6ee
+> rm -rf target/build/grid target/_aeb && aeb grid/.build.ae
+> SEL_GRID_DUMP_FILE=/tmp/d SEL_HUB_PORT=4602 hub &  POST {inuse:3} + GET;  cat /tmp/d
+> ```
+> The byte-identical-hub construction is now the template for every probe.
+
 > ## 🧾 ASAN recipe — the mechanism, VERIFIED; the multi-lib wiring, the open piece
 >
 > Try the `diag/reclaim-at-7fad6ee` branch FIRST — it's faster. This is the fallback.
