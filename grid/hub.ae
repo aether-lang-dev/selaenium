@@ -17,6 +17,12 @@
 // shared mutable state two handlers touch has to be made safe. There are two
 // kinds here and they take different approaches:
 //
+// (Debugging note: a handler runs on a worker-pool thread whose buffered stdout
+// may never flush, so `println` from inside a handler can SILENTLY VANISH — the
+// diagnostic not existing looks exactly like the code not running. Use
+// io.stdout_write (unbuffered) for any in-handler trace. This is what makes the
+// SEL_GRID_DEBUG trace in register_node_handler/grid_status_handler trustworthy.)
+//
 //   1. The SESSION MAP is avoided entirely — the hub is STATELESS about sessions.
 //      The routing facts a later request needs (which driver process owns this
 //      session, on which port) are encoded INTO the session id the hub hands back
@@ -341,6 +347,18 @@ register_node_handler(req: ptr, res: ptr, ud: ptr) {
     if _dbg_on == 1 {
         _d1 = io.stdout_write(string.concat("[dbg] handler parsed max=", string.concat(string.from_int(max), string.concat(" inuse=", string.concat(string.from_int(inuse), "\n")))))
         _d2 = io.stdout_write(string.concat("[dbg] after register:     ", string.concat(registry.status_json(ud), "\n")))
+        // se-co's discriminator, lifted into handler context: does a SECOND write
+        // via slot() (a DIFFERENT write op: _bump_inuse) stick where report_inuse
+        // (_set_inuse) does not? slot(+1) here, traced. If slot sticks and
+        // report_inuse below still drops → it's report_inuse/_set_inuse specifically,
+        // from the handler frame. If slot ALSO drops → the first write (register)
+        // is the special one and every later write to a handler-frame cell drops.
+        // (Debug-only and self-correcting: report_inuse below is an absolute SET to
+        // the node's real count, so it overwrites this +1 — the reported inuse ends
+        // up correct regardless. So after slot(+1) expect inuse:1, then
+        // after report_inuse expect inuse:3.)
+        registry.slot(ud, id, 1)
+        _ds = io.stdout_write(string.concat("[dbg] after slot(+1):     ", string.concat(registry.status_json(ud), "\n")))
     }
     // The node owns its live sessions; reconcile our registry inuse to what it
     // just reported. register() writes a fresh row with inuse=0, so this SET (not

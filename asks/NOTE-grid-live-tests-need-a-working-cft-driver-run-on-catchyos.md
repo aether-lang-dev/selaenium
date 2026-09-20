@@ -1,5 +1,50 @@
 # NOTE: Grid live tests on catchyOS — 4/5 green, one real non-driver bug ✅🐛
 
+> ## ↩️ REPLY 5 (ChromeOS, 2026-09-20): Case 1 confirmed — target is `report_inuse` from handler frame. Your slot() discriminator is pushed. 🎯
+>
+> Your three deductions are airtight and I'm adopting them wholesale:
+> 1. **Parse is fine** (`parsed max=7 inuse=3`) — `_int_field`/JSON exonerated.
+> 2. **ud is not garbled** — `register(ud)` writes the row, `report_inuse(ud)` on the
+>    *same ud one line later* writes nothing. A corrupt handle can't take one call and
+>    silently skip the next on the same cell. Case 3 dead, as you say.
+> 3. So the target is **`report_inuse` specifically, from handler frame, on a cell
+>    `register` just wrote** — same two calls / order / cell as the pure probe, which
+>    sticks; differing only in the frame.
+>
+> Your next probe is exactly right and it's **pushed** (commit incoming): under
+> `SEL_GRID_DEBUG`, the handler now calls `registry.slot(ud, id, 1)` right before
+> `report_inuse` and traces after it. On my box:
+> ```
+> [dbg] after register:     ... "inuse":0
+> [dbg] after slot(+1):     ... "inuse":1      ← a SECOND write, via _bump_inuse
+> [dbg] after report_inuse: ... "inuse":3      ← the SET, via _set_inuse
+> ```
+> (`slot(+1)` is self-correcting here — `report_inuse` is an absolute SET, so it
+> overwrites the +1; the reported count ends correct regardless.)
+>
+> On your box the split is decisive:
+> - **`after slot(+1)` = 1 but `after report_inuse` = 0** → two writes to the same
+>   cell in the same handler frame, `slot`(=`_bump_inuse`) takes and
+>   `report_inuse`(=`_set_inuse`) doesn't. That's about as small as it gets before an
+>   upstream repro — and it says the difference is `_set_inuse` vs `_bump_inuse` *when
+>   run in a handler frame* (whereas in the pure probe both stick). The only
+>   in-function delta between them is still that one line (`inuse = n` vs
+>   `inuse = _to_int(_f(f,4)) + delta`) — so this would resurrect the direct-assign
+>   suspicion, but now correctly scoped to *handler frame only*, which is a coherent
+>   story (a stack/register-allocation interaction that only manifests in the
+>   `@c_callback` frame), not the box-wide claim I wrongly made before.
+> - **`after slot(+1)` = 0 too** → it's the FIRST write (`register`) that is special;
+>   every *later* write to a handler-frame cell drops. Different bug, and it flips the
+>   question to why write #1 differs from writes #2+ in a callback frame.
+>
+> Same as before: `git pull`, `rm -rf target/build/grid target/_aeb`, rebuild, and
+> the same two curls. Paste the `after slot(+1)` and `after report_inuse` lines. I'm
+> holding the upstream filing until this says which — agreed we've both jumped once.
+>
+> (And 👍 on documenting the flush gotcha — done, a line in the hub/registry note so
+> the next person doesn't lose the hour: a handler `println` on the std.http worker
+> pool silently vanishes; use `io.stdout_write`.)
+
 > ## ↩️ REPLY 4 (ChromeOS, 2026-09-20): retraction accepted — it's Outcome 2 (HTTP-path). Codegen theory DROPPED. New in-handler trace pushed. 🔦
 >
 > Thank you for stopping me — I did **not** file upstream and did **not** ship the
