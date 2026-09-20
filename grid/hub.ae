@@ -40,6 +40,7 @@ import std.string
 import std.json
 import std.os
 import std.time
+import std.io
 import driver
 import hubcore
 import registry
@@ -292,6 +293,13 @@ grid_status_handler(req: ptr, res: ptr, ud: ptr) {
     nodes = "[]"
     n = 0
     if ud != null { nodes = registry.status_json(ud); n = registry.count(ud) }
+    // SEL_GRID_DEBUG: what does the GET handler read from ITS ud? Compare with the
+    // POST handler's "[dbg] after sweep" line — if they differ, the two handlers
+    // see different tables (a ud/cell divergence); if they match, the drop is
+    // upstream of the GET.
+    if string.length(os.getenv("SEL_GRID_DEBUG")) > 0 {
+        _dg = io.stdout_write(string.concat("[dbg] GET status reads:   ", string.concat(nodes, "\n")))
+    }
     msg = string.concat("selaenium Grid hub — ", string.concat(string.from_int(n), " node(s) registered"))
     body = string.concat("{\"value\":{\"ready\":true,\"message\":", string.concat(_qs_hub(msg),
         string.concat(",\"nodes\":", string.concat(nodes, "}}"))))
@@ -319,18 +327,34 @@ register_node_handler(req: ptr, res: ptr, ud: ptr) {
     if max <= 0 { max = 1 }
     if inuse < 0 { inuse = 0 }
 
+    // SEL_GRID_DEBUG: trace the inuse-through-the-handler path (the catchyOS drop).
+    // Prints the ud handle identity and the table after each write, so we see IF
+    // report_inuse's write sticks INSIDE the handler and whether sweep reverts it —
+    // isolating the HTTP-path drop from the pure registry path (which is clean).
+    _dbg = os.getenv("SEL_GRID_DEBUG")
+    _dbg_on = 0
+    if string.length(_dbg) > 0 { _dbg_on = 1 }
+
     registry.register(ud, id, address, browsers, max)
+    // Use io.stdout_write (UNBUFFERED) not println: this handler runs on a std.http
+    // worker-pool thread whose buffered stdout may never flush, so println is lost.
+    if _dbg_on == 1 {
+        _d1 = io.stdout_write(string.concat("[dbg] handler parsed max=", string.concat(string.from_int(max), string.concat(" inuse=", string.concat(string.from_int(inuse), "\n")))))
+        _d2 = io.stdout_write(string.concat("[dbg] after register:     ", string.concat(registry.status_json(ud), "\n")))
+    }
     // The node owns its live sessions; reconcile our registry inuse to what it
     // just reported. register() writes a fresh row with inuse=0, so this SET (not
     // a delta) restores the node's real count — and an abandoned session frees its
     // slot here as soon as the node's heartbeat reports the drop. No hub-side
     // session tracking; the node's report is the truth.
     registry.report_inuse(ud, id, inuse)
+    if _dbg_on == 1 { _d3 = io.stdout_write(string.concat("[dbg] after report_inuse: ", string.concat(registry.status_json(ud), "\n"))) }
     // Compact stale (dead-node) rows on this low-frequency write point, so the
     // table doesn't grow without bound. Reads already ignore stale rows, so this
     // is only physical cleanup — every register (incl. every heartbeat re-POST)
     // sweeps, which is a natural cadence tied to node liveness.
     registry.sweep(ud)
+    if _dbg_on == 1 { _d4 = io.stdout_write(string.concat("[dbg] after sweep:        ", string.concat(registry.status_json(ud), "\n"))) }
 
     out = json.obj()
     _o = json.set(out, "ok", json.str("true"))
@@ -412,6 +436,14 @@ main() {
     // (CAS for writes, lock-free load for reads), all on the http worker pool.
     // See registry.ae's header for why this is NOT an actor on released 0.681.
     reg_cell = registry.registry_init()
+    // SEL_GRID_DEBUG traces the inuse-through-the-handler path in
+    // register_node_handler (the catchyOS drop). We trace the TABLE after each
+    // write rather than raw pointer identity (ptr is not castable to a number), so
+    // we see whether report_inuse's write sticks INSIDE the handler and whether the
+    // GET reads the same table — pinpointing where the live-path drop enters.
+    if string.length(os.getenv("SEL_GRID_DEBUG")) > 0 {
+        println("[dbg] main: registry created; SEL_GRID_DEBUG on")
+    }
 
     // SEL_HUB_PORT overrides the conventional Grid port.
     port = 4444

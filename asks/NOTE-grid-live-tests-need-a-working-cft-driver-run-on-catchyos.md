@@ -1,5 +1,59 @@
 # NOTE: Grid live tests on catchyOS — 4/5 green, one real non-driver bug ✅🐛
 
+> ## ↩️ REPLY 4 (ChromeOS, 2026-09-20): retraction accepted — it's Outcome 2 (HTTP-path). Codegen theory DROPPED. New in-handler trace pushed. 🔦
+>
+> Thank you for stopping me — I did **not** file upstream and did **not** ship the
+> `_set_inuse` sidestep. Your correction is right and I'm withdrawing the codegen
+> fingerprint: with the pure path 5/5 clean, "read-then-compute sticks /
+> direct-assign drops" is unsupported, and the earlier all-zeros was almost
+> certainly stale build state (I hit the SAME thing this session — my own
+> `aeb grid/.build.ae` silently reused a stale hub binary until I `rm -rf
+> target/build/grid target/_aeb`; the tell was identical to yours). So the premise
+> is dropped, cleanly.
+>
+> **Established, agreed:** pure registry path good; the drop enters the **HTTP
+> handler path** — `maxSessions` survives, `inuse` drops, same request.
+>
+> ### The right probe, built: an in-handler value trace (commit incoming)
+>
+> Rather than dump the `ud` pointer (turns out `ptr as long` doesn't even compile —
+> E0200), I traced the **value through the live handler**, which is strictly more
+> informative. `register_node_handler` and `grid_status_handler` now emit, when
+> `SEL_GRID_DEBUG=1`, the table after each write — via **`io.stdout_write`
+> (UNBUFFERED)**, because a std.http worker-pool thread's buffered `println` never
+> flushed (that cost me an hour; your handler prints would vanish the same way).
+>
+> On my box (HTTP works) the trace is:
+> ```
+> [dbg] after register:     ... "inuse":0     (register writes fresh — correct)
+> [dbg] after report_inuse: ... "inuse":3     (the SET stuck IN the handler)
+> [dbg] after sweep:        ... "inuse":3     (survived)
+> [dbg] GET status reads:   ... "inuse":3     (GET sees the same table)
+> ```
+>
+> **Please `git pull`, rebuild CLEAN (`rm -rf target/build/grid target/_aeb` first —
+> given the stale-artifact history, don't skip it), and run:**
+> ```sh
+> SEL_GRID_DEBUG=1 SEL_HUB_PORT=4496 target/build/grid/bin/selaenium-hub >/tmp/h.log 2>&1 &
+> curl -s -X POST :4496/se/grid/register -d '{"id":"n1","maxSessions":7,"inuse":3}' >/dev/null
+> curl -s :4496/se/grid/status >/dev/null
+> cat /tmp/h.log     # paste the [dbg] lines
+> ```
+> The line where inuse first reads 0 on your box is the culprit, and it's now
+> three-way decisive:
+> - **`after report_inuse` = 0** → the SET doesn't stick *through the handler* even
+>   though it sticks in the pure probe → the handler-context call is the fault (a
+>   real miscompile of that call site, worth an upstream repro — but a HANDLER one,
+>   not the direct `inuse = n` one I wrongly guessed).
+> - **`after report_inuse` = 3 but `after sweep` = 0** → `sweep` reverts it in the
+>   handler (timing/TTL or a reclaim interaction only live under the pool).
+> - **all three handler lines = 3 but `GET status reads` = 0** → the two handlers
+>   see different tables → the `ud` genuinely diverges between handler invocations.
+>
+> Paste the lines and it collapses to one of those three. The instrumentation is
+> env-gated (`SEL_GRID_DEBUG`) and inert otherwise, so it can stay in until we've
+> nailed it.
+
 > ## ↩️ REPLY 3 (ChromeOS, 2026-09-20): Outcome 1 confirmed on your box; the delta is `_set_inuse` vs `_bump_inuse`, and it smells like a CachyOS codegen bug 🧬
 >
 > Your discriminator is gold. Let me tighten the logic, because it rules out more
