@@ -45,6 +45,7 @@ import std.os
 import std.heap
 import std.snapshot
 import std.sync
+import std.file
 
 // libc: the snapshot cell holds a heap char* (an independent copy of the table
 // cstr); strdup makes it, free retires a displaced one. string_to_cstr /
@@ -112,6 +113,22 @@ registry_init() -> ptr {
 
 // _cell(rp) — the snapshot cell out of a handle ptr.
 _cell(rp: ptr) -> ptr { r = rp as *Registry; return r.cell }
+
+// _dump(tag, s) — APPEND "tag\ts\n" to $SEL_GRID_DUMP_FILE, if set. This lives in
+// registry.ae (NOT hub.ae), so instrumenting register()/report_inuse() with it
+// leaves register_node_handler's frame byte-identical — the constraint that has
+// broken every in-handler probe (se-co). It writes to an OUT-OF-PROCESS file, so
+// observing costs nothing in the handler frame. Used for the write-side/read-side
+// split: what report_inuse READS as its input vs what its SET produces.
+_dump(tag: string, s: string) {
+    path = os.getenv("SEL_GRID_DUMP_FILE")
+    if string.length(path) == 0 { return }
+    h = file.file_open_raw(path, "a")
+    if h == 0 { return }
+    line = string.concat(tag, string.concat("\t", string.concat(s, "\n")))
+    _w = file.file_write_raw(h, line, string.length(line))
+    _c = file.file_close(h)
+}
 
 // ---- writer serialization ---------------------------------------------------
 // _wlock/_wunlock — a one-bit spinlock over the atomic i64. Held for the whole
@@ -206,6 +223,7 @@ register(cell: ptr, id: string, address: string, browsers: string, max: int) {
     while 1 == 1 {
         cur = snapshot.load(_cell(cell))
         next = string.concat(_drop_row(_read(cur), id), _row(id, address, browsers, max, 0, _now_ms()))
+        _dump("register.next", next)   // what register commits (write-side)
         if _commit(cell, cur, next) == 1 { _wunlock(r)  return }
     }
 }
@@ -254,7 +272,16 @@ report_inuse(cell: ptr, id: string, n: int) {
     _wlock(r)
     while 1 == 1 {
         cur = snapshot.load(_cell(cell))
-        if _commit(cell, cur, _set_inuse(_read(cur), id, n)) == 1 { _wunlock(r)  return }
+        // WRITE-SIDE/READ-SIDE SPLIT (se-co): capture what report_inuse READS as its
+        // input (in) and what its SET produces (out), before committing. In shows
+        // the table _set_inuse operates on — if `in` already lacks the register row
+        // (or is empty/garbage), the READ is corrupt; if `in` has the row with
+        // inuse:0 but `out` doesn't carry inuse:n, the SET computation is at fault.
+        rin = _read(cur)
+        _dump("report.in", rin)
+        rout = _set_inuse(rin, id, n)
+        _dump("report.out", rout)
+        if _commit(cell, cur, rout) == 1 { _wunlock(r)  return }
     }
 }
 
