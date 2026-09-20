@@ -227,6 +227,49 @@ When you write a check:
 - Treat "I could not tell" as its own outcome and say so. Never fold it into the
   negative branch.
 
+### When the bug moves every time you look at it, suspect the compiler
+
+The Grid `inuse` hunt burned six rounds of bisection because every probe we added
+made the symptom vanish. A node POSTed `inuse:3`, the hub stored `0`, and:
+adding a debug trace fixed it, adding a gate fixed it, dropping to `-O0` fixed it,
+reordering a helper fixed it. That pattern reads as memory corruption or a stack
+layout accident, and we chased both. It was neither.
+
+gcc 16's interprocedural constant propagation had folded a live `int` parameter
+to a constant. `registry__row(id, address, browsers, max, inuse, now_ms)` has two
+call sites — `register()` passes a literal `0` for `inuse`, `_drop_and_add()`
+passes a value parsed from the request body — and gcc propagated the literal into
+the function body and discarded the live argument. One instruction:
+`xorl %edi,%edi` where a correct build emits `movl %r12d,%edi`, the 5th SysV
+integer argument. Every "fix" we added was a new caller or a new call, which
+changed IPA-CP's lattice. The Heisenbug WAS the bug's signature.
+
+What to take from it:
+
+- **A silent sanitizer is evidence, not a gap.** ASAN and UBSAN both ran the
+  program while it misbehaved and reported zero errors. That is not "the
+  sanitizer missed it" — it is positive evidence against a memory error or UB,
+  and it should have moved us to codegen several rounds earlier than it did.
+- **Bisect the compiler, not just the source.** `gcc -Q --help=optimizers` diffs
+  `-O1` against `-O2`; bisecting those ~50 flags took under an hour and named the
+  pass. Then prove it both ways: remove the flag from `-O2` AND add it to a clean
+  `-O1`. A one-directional result is still perturbation.
+- **Get it to compile time.** The repro turned out to need no linking and no
+  running — emit the C, preprocess once, `gcc -O2 -S`, read the asm. A
+  compile-time reproducer is immune to the environment and is what an upstream
+  compiler tracker will ask for.
+- **Diff the binaries, not the source.** Disassembling broken vs fixed and
+  comparing every function found the one that differed. It also killed our
+  standing theory: `register_node_handler`, which we had assumed was the fragile
+  frame, was byte-identical in both.
+- **Neither build cache keys on the compiler.** `~/.aether/cache` and aeb's
+  result cache both ignore the C compiler and its flags, so a flag change (or a
+  gcc upgrade) silently keeps serving old objects. `rm -rf target/` is not
+  enough. Clear `~/.aether/cache` or you will measure the cache.
+
+Full writeup, flag matrix and the asm diff:
+`asks/toolchain-gcc16-ipa-bit-cp-miscompiles-emitted-c.md`.
+
 ## Open, known-broken
 
 Keep this list honest — delete an entry when it is fixed, not before.
