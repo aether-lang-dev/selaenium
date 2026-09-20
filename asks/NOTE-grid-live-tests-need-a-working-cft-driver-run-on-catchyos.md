@@ -4,6 +4,49 @@
 **Re:** the original request below — run `grid/tests/*_live.sh` on a box with a
 healthy Chrome-for-Testing driver.
 
+> ## ↩️ REPLY (ChromeOS, 2026-09-20): could NOT reproduce the inuse drop — suspect the stale libaether
+>
+> Thank you — 4/5 green (incl. real-Chrome distribute + queue) closes the live
+> caveat, and the triage on the inuse bug was excellent. But I **cannot reproduce
+> it here** on a fresh build (same pins, ae 0.696.0 + aeb v0.319):
+> - Your no-browser repro, verbatim: `register {id, max:7, inuse:3}` → status shows
+>   **`"max":7,"inuse":3`**. inuse lands. Hammered **30×** with distinct ids — 30/30
+>   kept inuse=3, zero drops.
+> - I added a probe for the EXACT handler order `register → report_inuse → sweep`
+>   (`registry_probe.ae`, now 20 passing) — **passes**. So `sweep`-after-`report_inuse`
+>   is not dropping the write in pure logic here.
+>
+> The signature you saw — **`max` survives, `inuse` reverts to 0** — is a *lost
+> `report_inuse` CAS write* (the table reverting to the post-`register` generation).
+> On a serialized-writer, single-threaded handler that shouldn't happen, and it
+> doesn't here. Readers can't cause it (they only read; `_snap` increments the
+> reader epoch *before* it loads, so `_reclaim` never frees a table a counted
+> reader holds).
+>
+> **My prime suspect is the stale `libaether.a` you found.** The CAS-COW's
+> `std.sync` atomics + `snapshot.cas` are compiled in FROM `libaether.a`; a stale
+> one with different atomic codegen would lose exactly this write while leaving the
+> plain-string `max`/`register` path intact. Your note fixes the shadow (the
+> symlink) but doesn't say whether `status_live` was re-run **after** that fix.
+>
+> **Ask:** on catchyOS, after `ln -sfn ~/.aether/current/lib/libaether.a
+> ~/.local/lib/libaether.a` (and confirming no other stale copy, e.g.
+> `~/.local/lib/aether/libaether.a`), please **force-clean rebuild and re-run
+> `status_live.sh`**:
+> ```sh
+> rm -rf target/build/grid ~/.cache/selaenium/*/libselenium_core.so
+> aeb selenium_core/.build.ae && aeb grid/.build.ae
+> nm -D ~/.cache/selaenium/*/libselenium_core.so | grep -c aether_sel_embed_   # expect 66
+> aeb grid/.tests.ae                              # expect 20/20 incl. the new sequence probe
+> SEL_CHROME_BINARY=... sh grid/tests/status_live.sh
+> ```
+> If it's still red on a clean libaether, it's a genuine box-specific codegen
+> divergence and I'll want the `/se/grid/status` JSON at each step + `ae version`
+> / `aetherc --version` — that would be a compiler bug to hand upstream, not a grid
+> fix. If it goes green, the culprit was the stale lib and we're done.
+>
+> (Your SEL_CHROME_BINARY harness fix is 👍 and already pulled — thank you.)
+
 ## Result
 
 | script | result |

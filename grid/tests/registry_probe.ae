@@ -147,6 +147,21 @@ main() {
             spec.assert_true(string.index_of(js, "\"max\":7") >= 0, "max kept")
             spec.assert_true(string.index_of(js, "\"inuse\":2") >= 0, "inuse set")
         }
+        // The EXACT register_node_handler sequence: register -> report_inuse ->
+        // sweep. A catchyOS live run (asks/NOTE-grid-live-tests-...) saw inuse get
+        // dropped back to 0 through the live server while max survived — i.e.
+        // report_inuse's write appeared to be lost after register. This asserts the
+        // three-op sequence keeps the reported inuse, so a regression here is caught
+        // without a browser.
+        spec.it("register -> report_inuse -> sweep keeps the reported inuse (the handler sequence)") callback {
+            reg = registry.registry_init()
+            registry.register(reg, "n1", "http://127.0.0.1:9999", "chrome", 7)
+            registry.report_inuse(reg, "n1", 3)
+            registry.sweep(reg)                          // <- the handler sweeps last
+            js = registry.status_json(reg)
+            spec.assert_true(string.index_of(js, "\"max\":7") >= 0, "max survives the sequence")
+            spec.assert_true(string.index_of(js, "\"inuse\":3") >= 0, "inuse survives the sequence (not dropped to 0)")
+        }
     }
 
     spec.describe(fw, "grid registry: status_json (the /se/grid/status payload)") {
