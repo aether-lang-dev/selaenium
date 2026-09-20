@@ -171,8 +171,24 @@ _commit(rp: ptr, cur: ptr, next_table: string) -> int {
 // displaced past process end, so nothing frees it early.
 _reclaim(r: *Registry, displaced: ptr) {
     if displaced == null { return }
+    // SEL_GRID_NO_RECLAIM: skip the free (deliberately leak displaced tables, the
+    // pre-b4fb98c behaviour). Diagnostic gate for the catchyOS inuse-drop: if the
+    // drop DISAPPEARS with reclaim off, the bug is in this reclamation path (a
+    // displaced table freed while a following op still reads it — a UAF that reads
+    // plausible-but-stale bytes, so _find_row misses and _set_inuse silently
+    // no-ops). Leaking is strictly conservative (correctness-safe; only memory
+    // grows), so this can't fix the symptom "by accident" the way mirroring
+    // _set_inuse's shape would. Env-checked per call — a bounded cost on the rare
+    // write path, only while diagnosing.
+    if _no_reclaim() == 1 { return }
     while sync.atomic_load(r.readers) != (0 as long) { }
     free(displaced)
+}
+
+// _no_reclaim() — 1 if SEL_GRID_NO_RECLAIM is set (leak displaced tables).
+_no_reclaim() -> int {
+    if string.length(os.getenv("SEL_GRID_NO_RECLAIM")) > 0 { return 1 }
+    return 0
 }
 
 // ---- write ops (write-locked; safe from any pool handler) -------------------
