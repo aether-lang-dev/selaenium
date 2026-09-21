@@ -26,7 +26,7 @@ const std = @import("std");
 
 // The engine gh-release tag whose fetch-cache this binding searches (matches
 // scripts/fetch-engine.sh's default TAG and every other binding's SELENIUM_CORE_VERSION).
-const SELENIUM_CORE_VERSION = "v0.8.0";
+const SELENIUM_CORE_VERSION = "v0.9.0";
 
 pub fn build(b: *std.Build) void {
     assertEngineVersionPinned(b);

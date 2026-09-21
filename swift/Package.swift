@@ -8,7 +8,7 @@ import PackageDescription
 
 // The engine gh-release tag whose fetch-cache this package searches (matches
 // scripts/fetch-engine.sh's default TAG and the SELENIUM_CORE_VERSION file).
-let seleniumCoreVersion = "v0.8.0"
+let seleniumCoreVersion = "v0.9.0"
 
 // The link paths below MUST be absolute and computed here, at
 // manifest-evaluation time. A relative "-L native" resolves against whatever

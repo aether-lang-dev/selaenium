@@ -24,7 +24,7 @@
 # forwarded to cabal unchanged.
 set -eu
 
-ENGINE_VERSION="${ENGINE_VERSION:-v0.8.0}"   # matches selenium.cabal note + scripts/fetch-engine.sh
+ENGINE_VERSION="${ENGINE_VERSION:-v0.9.0}"   # matches selenium.cabal note + scripts/fetch-engine.sh
 
 here="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"       # haskell/bin
 pkg="$(CDPATH= cd -- "$here/.." && pwd)"                  # haskell/

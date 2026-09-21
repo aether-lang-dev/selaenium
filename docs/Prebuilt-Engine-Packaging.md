@@ -48,7 +48,7 @@ is a substitute producer for the engine builder. It shells the shared
 verify + cache under `$XDG_CACHE_HOME/selaenium/<tag>/`, the same cache the
 runtime and link-time bindings use), stages the `.so` with native `std.fs`, and
 `publish_artifact`s the engine edges. The release tag it fetches is the single
-source of truth in the repo-root `SELENIUM_CORE_VERSION` file (currently `v0.8.0`),
+source of truth in the repo-root `SELENIUM_CORE_VERSION` file (currently `v0.9.0`),
 which `scripts/fetch-engine.sh` and every binding read (overridable via `TAG=`) —
 edit that one file, keeping it in step with the `AETHER_REF` engine cut, when
 re-gluing to a newer engine.

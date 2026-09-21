@@ -17,7 +17,7 @@ local F = {}
 
 -- The engine gh-release TAG this binding downloads from (distinct from the
 -- binding's own version). Bump when re-glued to a newer engine.
-F.ENGINE_VERSION = "v0.8.0"
+F.ENGINE_VERSION = "v0.9.0"
 F.REPO = "aether-lang-dev/selaenium"
 F.RELEASE_BASE = "https://github.com/" .. F.REPO .. "/releases/download"
 

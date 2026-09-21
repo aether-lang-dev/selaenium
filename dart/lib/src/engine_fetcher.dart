@@ -38,7 +38,7 @@ class EngineFetcher {
   /// the shared engine (NOT the package's own version) — that is the tag whose
   /// assets this fetcher downloads. Bump it when the package is re-glued to a
   /// newer engine.
-  static const String engineVersion = 'v0.8.0';
+  static const String engineVersion = 'v0.9.0';
 
   static const String repo = 'aether-lang-dev/selaenium';
 

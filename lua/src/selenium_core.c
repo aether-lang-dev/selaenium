@@ -29,7 +29,7 @@
 
 /* The engine gh-release tag the fetch cache is keyed by. MUST match
    engine_fetcher.lua's F.ENGINE_VERSION so engine_load() finds a fetched engine. */
-#define ENGINE_VERSION "v0.8.0"
+#define ENGINE_VERSION "v0.9.0"
 
 /* ---- the ABI, dlsym'd once ---- */
 typedef void* (*fn_open)(const char*);

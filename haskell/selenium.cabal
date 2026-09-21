@@ -18,7 +18,7 @@ build-type:         Simple
 -- `scripts/fetch-engine.sh`: that wrapper resolves the engine dir (in order
 -- SELENIUM_CORE_LIB -> bundled native/ -> the shared fetch cache
 -- $XDG_CACHE_HOME/selaenium/v0.8.0/ -> monorepo ../selenium_core/native) and
--- passes the --extra-lib-dirs / rpath flags above. ENGINE_VERSION pin: v0.8.0
+-- passes the --extra-lib-dirs / rpath flags above. ENGINE_VERSION pin: v0.9.0
 -- (the engine gh-release tag, matching scripts/fetch-engine.sh and the other
 -- bindings). The .tests.ae harness supplies the same flags from the aeb-built
 -- engine artifact for the toolchain path.

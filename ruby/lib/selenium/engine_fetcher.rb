@@ -27,7 +27,7 @@ module Selenium
       # The engine release this gem targets. It tracks the gh-release TAG of the
       # shared engine (NOT the gem's own VERSION) — that is the tag whose assets
       # this fetcher downloads. Bump it when the gem is re-glued to a newer engine.
-      ENGINE_VERSION = 'v0.8.0'
+      ENGINE_VERSION = 'v0.9.0'
 
       REPO = 'aether-lang-dev/selaenium'
 

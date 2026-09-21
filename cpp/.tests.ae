@@ -35,9 +35,9 @@ import std.string
 // drift. Falls back to the baked default only if the file is unreadable.
 SELENIUM_CORE_VERSION() -> string {
     v, err = file.read("SELENIUM_CORE_VERSION")
-    if string.length(err) > 0 { return "v0.8.0" }
+    if string.length(err) > 0 { return "v0.9.0" }
     t = string.trim(v)
-    if string.length(t) == 0 { return "v0.8.0" }
+    if string.length(t) == 0 { return "v0.9.0" }
     return t
 }
 

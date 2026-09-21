@@ -25,7 +25,7 @@ import urllib.request
 # shared engine (NOT the binding's own ``__version__``) — that is the tag whose
 # assets this fetcher downloads. Bump it when the binding is re-glued to a newer
 # engine.
-ENGINE_VERSION = "v0.8.0"
+ENGINE_VERSION = "v0.9.0"
 
 REPO = "aether-lang-dev/selaenium"
 

@@ -35,7 +35,7 @@ import (
 // file. go:embed cannot reach a parent dir, so this literal is kept in lockstep
 // with that file by TestEngineVersionPin (which reads the file and fails on
 // drift) — update both together when the tag bumps.
-const SeleniumCoreVersion = "v0.8.0"
+const SeleniumCoreVersion = "v0.9.0"
 
 // libFilename is the bare filename the loader/linker looks for on this OS
 // (the cache dir already keys by tag, so no tag/platform in the name).

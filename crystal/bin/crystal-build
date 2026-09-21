@@ -21,7 +21,7 @@
 # `crystal build` / `crystal spec` / `crystal run`.
 set -eu
 
-ENGINE_VERSION="${ENGINE_VERSION:-v0.8.0}"   # matches src/selenium.cr + scripts/fetch-engine.sh
+ENGINE_VERSION="${ENGINE_VERSION:-v0.9.0}"   # matches src/selenium.cr + scripts/fetch-engine.sh
 
 # The fetch cache dir (same convention as scripts/fetch-engine.sh and every binding).
 if [ -n "${XDG_CACHE_HOME:-}" ]; then

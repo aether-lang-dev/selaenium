@@ -60,7 +60,7 @@ export `CGO_LDFLAGS` as above (you can point it at `SELENIUM_CORE_LIB`'s dir).
 mirroring `rust/build.rs`'s `resolve_dir()` order
 (`SELENIUM_CORE_LIB` → bundled `native/` → fetch cache → monorepo sibling):
 
-- `const SeleniumCoreVersion = "v0.8.0"` — the gh-release tag whose cache is
+- `const SeleniumCoreVersion = "v0.9.0"` — the gh-release tag whose cache is
   searched (kept in lockstep with the repo-root `SELENIUM_CORE_VERSION` file by
   `TestSeleniumCoreVersionPin`, which reads the file and fails on drift; go:embed
   can't reach the parent dir, so the literal is guarded rather than file-read).
