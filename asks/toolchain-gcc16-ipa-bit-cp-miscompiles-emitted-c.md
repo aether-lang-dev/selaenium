@@ -156,3 +156,116 @@ then GET `/se/grid/status`:
 A write/read-side dump inside `report_inuse` on the failing build shows the inputs
 are all intact — `n` is 3, the table read is correct, `_find_row` returns the right
 row — and only the rebuilt row carries `0`. That is the folded parameter, nothing else.
+
+---
+
+## OUTCOME (2026-09-21): confirmed a gcc bug, not UB in the emitted C
+
+Nic raised the right objection on aether#2128 — if the varying value were
+indeterminate on some path, reading it is undefined and gcc's bit lattice may
+legitimately meet `0` with "anything" and yield `0`. ASAN/UBSAN silence and
+"every probe fixes it" are both consistent with that, and aetherc does hoist
+branch-locals as bare declarations (`hoist_if_branch_vars`/`hoist_loop_vars`),
+which aether#2131 now zero-initializes. Tested on the failing box. It is not
+the cause here, on three independent grounds.
+
+### 1. Defining every automatic does not stop the fold
+
+    gcc -O2                                  -> folded to 0
+    gcc -O2 -ftrivial-auto-var-init=zero     -> folded to 0
+    gcc -O2 -ftrivial-auto-var-init=pattern  -> folded to 0
+    gcc -O2 -fno-ipa-bit-cp -ftrivial-auto-var-init=zero -> correct
+
+`-ftrivial-auto-var-init` defines *every* automatic in the TU, which is a
+superset of what aether#2131's hoisted-declaration initializers do. The fold
+survives it. `-Wtrivial-auto-var-init` reports nothing it could not initialize,
+and `-Wmaybe-uninitialized -Wuninitialized` over the whole TU: **0 warnings**.
+
+### 2. No hoisted branch-local exists anywhere on the `inuse` chain
+
+Bare (uninitialized) scalar declarations in each function of the chain:
+
+| function | bare uninitialized scalar decls |
+|---|---|
+| `register_node_handler` | 0 |
+| `registry_report_inuse` | 0 |
+| `registry__set_inuse` | 0 |
+| `registry__drop_and_add` | 0 |
+| `registry__row` | 0 |
+
+Every binding is initialized at its declaration and defined on every path:
+
+    int inuse = ae_int_field(root, "inuse");   // handler; ae_int_field returns
+    if (inuse < 0) { inuse = 0; }              //   0 or json_get_int(v) — total
+    registry_report_inuse(ud, id, inuse);      // -> param n
+      registry__set_inuse(rows, id, n)
+        int inuse = n;                          // initialized
+        registry__drop_and_add(..., inuse, ...) // -> param
+          registry__row(..., inuse, ...)        // -> param #4
+
+The hoisted `int nl; int line_end; int max; int inuse;` shape Nic describes IS
+present in this file — in `registry__pick`, `registry__find_row` and
+`registry__drop_row`. None of them is on this chain, and none feeds param #4.
+(aether#2131 is still a good change on its own merits; it just is not this.)
+
+### 3. gcc's own lattice dump shows the defect, and it is not a constant fold
+
+`-fdump-ipa-cp-details` on the failing build. The value lattice is **VARIABLE** —
+gcc did *not* conclude the parameter is a constant. It is the **known-bits mask**
+that is wrong:
+
+    Node: registry__row/298:
+      param [4]: VARIABLE                       <- correctly NOT a constant
+           Bits: value = 0x0, mask = 0xf..f00000000
+           [irange] int [0, +INF]
+
+In this dump, a mask bit of 1 means "unknown". `mask = 0xf..f00000000` says bits
+32-63 are unknown and **bits 0-31 are known to be 0** — i.e. for a 32-bit `int`,
+the whole value is known zero. Codegen then materialises `xorl %edi,%edi`.
+
+The caller's entry for the same parameter contradicts itself:
+
+    Node: registry__drop_and_add/302:
+      param [6]: VARIABLE
+           Bits: value = 0x0, mask = 0xf..f00000000        <- low 32 known zero
+           [irange] int [0, +INF] MASK 0x7fffffff VALUE 0x0 <- low 31 UNKNOWN
+
+The irange carries the correct `MASK 0x7fffffff` (the clamp `if (inuse < 0)
+{ inuse = 0 }` makes it non-negative, so 31 unknown bits). The Bits lattice for
+the same parameter has lost exactly those unknown bits. `0xf..f7fffffff` — the
+correct mask — appears 11 times elsewhere in the same dump, so the representation
+is capable of expressing it.
+
+Control, from the same dump: `registry__f`'s `int i` parameter genuinely takes
+0..5 across its call sites and gets `mask = 0xf..f00000007` — low 3 bits unknown.
+Correct, and confirms the mask convention.
+
+The jump functions are also correct, so the wrong mask is not bad input:
+
+    registry_register/288    -> registry__row/298 : param 4: CONST: 0  [irange] int [0,0]
+    registry__drop_and_add/302 -> registry__row/298 : param 4: PASS THROUGH: 6, Unknown VR
+
+A `CONST 0` met with an unknown must yield unknown. The value lattice got that
+right (VARIABLE); the bits lattice did not.
+
+### Correction to this document's earlier framing
+
+Above, this was described as "IPA-CP folded the literal 0 from one call site into
+the callee". The dump shows that is not what happened — the constant lattice
+stayed VARIABLE. The defect is in **IPA bit-CP's known-bits mask**, which drops
+the unknown-bit mask for a non-negative `int` parameter and leaves every bit
+known-zero. Same wrong instruction, different mechanism; the distinction matters
+for an upstream report and for anyone reading this later.
+
+### Consequence
+
+`-fno-ipa-bit-cp` is the correct response, and it is not papering over UB. Only
+`-fno-ipa-bit-cp` / `-fno-ipa-cp` change the outcome; `-fno-ipa-vrp`,
+`-fno-tree-vrp`, `-fno-ipa-sra`, `-fno-wrapv`, `-fno-inline` and
+`-ftrivial-auto-var-init` all leave the fold in place. Gating on gcc >= 16 is
+reasonable. aether#2131 should land on its own merits and is orthogonal.
+
+Artifacts on the failing box (gcc 16.2.1, CachyOS), regenerable with the three
+commands at the top of this document: `hub_main.c` (1.77 MB emitted),
+`hub_main.i` (2.53 MB preprocessed, self-contained), `cp.dump` (10.9 MB
+`-fdump-ipa-cp-details`).
