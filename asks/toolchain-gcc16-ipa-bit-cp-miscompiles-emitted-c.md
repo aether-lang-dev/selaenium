@@ -265,6 +265,42 @@ for an upstream report and for anyone reading this later.
 `-ftrivial-auto-var-init` all leave the fold in place. Gating on gcc >= 16 is
 reasonable. aether#2131 should land on its own merits and is orthogonal.
 
+### Direct test against aether#2131 (2026-09-21, aetherc 0.701.0)
+
+The three grounds above were established on aetherc 0.699.0, which predates
+aether#2131. Retested with the real fix rather than a proxy for it.
+
+aetherc **0.701.0** contains #2131 (`617a24e6`, merged as `98a4c6af`) and the
+change is visibly present in the emitted C:
+
+    0.699.0:  int at = 0;  int nl;      int line_end;      int max;
+    0.701.0:  int at = 0;  int nl = 0;  int line_end = 0;  int max = 0;
+
+Bare uninitialized scalar declarations across the whole hub TU fall from **436
+to 144** — and all 144 remaining are **struct field declarations**
+(`typedef struct LocalTime { int year; int month; ... }`), not function locals.
+**Zero uninitialized function locals remain in the translation unit.** #2131 is
+complete for its purpose on this input.
+
+The fold survives it, in the asm and at runtime:
+
+    aetherc 0.701.0 + gcc 16.2.1 -O2                      -> FOLDED to 0    "inuse":0
+    aetherc 0.701.0 + gcc 16.2.1 -O2 -fno-ipa-bit-cp      -> real arg       "inuse":3
+    aetherc 0.701.0 + gcc 16.2.1 -O2 -ftrivial-auto-var-init=zero -> FOLDED to 0
+    aetherc 0.699.0 + gcc 16.2.1 -O2                      -> FOLDED to 0    (unchanged)
+
+Runtime legs are a hand-link of `hub_701.c` against 0.701.0's `libaether`, POST a
+node with `maxSessions:7, inuse:3`, then GET `/se/grid/status`. Chain functions
+under 0.701.0 still carry zero bare uninitialized scalars, as under 0.699.0.
+
+So the test Nic proposed — *"if the fold survives with every local defined, it's
+a real gcc 16 bug and `-fno-ipa-bit-cp` is the right response"* — has been run
+against his own fix, and the fold survives. #2131 remains a good change; it is
+simply not this bug.
+
+Not yet covered: aether `8f1c041b` and `127a348d` (further hoisted-local fixes)
+land after 0.701.0 and are not in this test. Worth re-running on 0.702.0.
+
 Artifacts on the failing box (gcc 16.2.1, CachyOS), regenerable with the three
 commands at the top of this document: `hub_main.c` (1.77 MB emitted),
 `hub_main.i` (2.53 MB preprocessed, self-contained), `cp.dump` (10.9 MB
