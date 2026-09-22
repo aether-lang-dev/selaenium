@@ -52,6 +52,18 @@ aeb(cap) {
             source("side_probe.ae")
             lib("..")
         }
+        // Desktop-driver (WinAppDriver / Appium) proof — stands up a real
+        // W3C-speaking HTTP endpoint that impersonates a desktop driver and
+        // drives it through the engine. Proves the protocol path is genuinely
+        // browser-agnostic (vendor caps, native locators, click/text/attribute)
+        // and pins the one place it is not: By-normalization rewrites
+        // id/name/class name to CSS, which desktop drivers reject. No Windows,
+        // no Appium install, ~1s. caps("net") for the in-process server+client.
+        aether.program_test() {
+            source("desktop_probe.ae")
+            lib("..")
+            caps("net")
+        }
         // BiDi live slice — drives real Chrome through the shape-C demux:
         // commands, concurrency, AND the event round-trip (session.subscribe →
         // navigate → async browsingContext.load via the event queue). Self-skips

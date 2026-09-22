@@ -1,0 +1,361 @@
+// desktop_probe.ae — proof that the engine drives a NON-BROWSER W3C endpoint:
+// a desktop driver (WinAppDriver / Appium-Windows / appium-mac2, and the same
+// shape as Appium's mobile drivers).
+//
+// WHY THIS EXISTS. "WebDriver" is a wire protocol, not a browser protocol. A
+// desktop driver speaks the same /session, /element, /click, /text routes over
+// the same JSON envelopes; what differs is the capabilities (vendor-prefixed,
+// no browserName) and the locator strategies (UI Automation properties, not
+// CSS). If the engine is honestly protocol-generic then desktop support is not
+// a feature to build — it is a thing that already works, and every one of the
+// 28 bindings inherits it the moment the engine does, because the bindings
+// carry no protocol logic (the one rule). This probe pins that claim down, and
+// pins the ONE place it is not true.
+//
+// It stands up a real HTTP server that impersonates WinAppDriver driving the
+// Windows Calculator, and drives it through the real engine code path
+// (session_new + execute). No mock of the engine, no Windows, no Appium
+// install: the engine does genuine HTTP against a genuine W3C endpoint, so the
+// wire contract is exercised rather than described. Runs anywhere, in ~a second.
+//
+// THE FINDING (asserted below, not just narrated): the command path is fully
+// browser-agnostic and needs nothing. By-normalization is NOT. `accessibility
+// id` and `xpath` reach the wire untouched and work. But "id", "name" and
+// "class name" are rewritten to CSS selectors — correct for a browser, fatal
+// for a desktop driver, which has no CSS engine and rejects them with
+// invalid argument. See the "the one real gap" block at the bottom.
+
+import selenium_core
+import std.http
+import std.json
+import std.string
+import std.spec
+
+// ---- the fake desktop driver ----------------------------------------------
+// Recorded state so the assertions can inspect what actually reached the wire,
+// rather than trusting what we think we sent. A bare ptr is the handler `ud`
+// type; handlers cast it back.
+struct Seen {
+    caps: string        // the raw newSession capabilities payload
+    using: string       // the `using` of the last findElement
+    value: string       // the `value` of the last findElement
+    clicked: string     // element id of the last click ("" if none)
+    closed: int         // 1 once DELETE /session/:id arrived
+}
+
+seen_new() -> ptr {
+    s = heap.new(Seen)
+    s.caps = ""
+    s.using = ""
+    s.value = ""
+    s.clicked = ""
+    s.closed = 0
+    return s as ptr
+}
+
+_json_str(root: ptr, key: string) -> string {
+    v, _e = json.object_get(root, key)
+    if v == null { return "" }
+    s, serr = json.get_string(v)
+    if string.length(serr) > 0 { return "" }
+    return s
+}
+
+_send(res: ptr, status: int, body: string) {
+    http.response_set_status(res, status)
+    http.response_set_header(res, "Content-Type", "application/json; charset=utf-8")
+    http.response_set_body(res, body)
+}
+
+// A W3C error envelope, exactly as a real driver returns one.
+_w3c_err(res: ptr, status: int, code: string, msg: string) {
+    _send(res, status, "{\"value\":{\"error\":\"${code}\",\"message\":\"${msg}\",\"stacktrace\":\"\"}}")
+}
+
+// POST /session — WinAppDriver's newSession. A desktop driver has NO
+// browserName; it wants platformName plus vendor-prefixed app/automation caps.
+// We assert on those rather than echoing, so a caps payload the engine mangled
+// would fail here instead of passing silently.
+new_session_handler(req: ptr, res: ptr, ud: ptr) {
+    st = ud as *Seen
+    body = http.request_body(req)
+    st.caps = string.concat(body, "")
+    root, perr = json.parse(body)
+    if string.length(perr) > 0 {
+        _w3c_err(res, 400, "invalid argument", "malformed capabilities")
+        return
+    }
+    always, _a = json.object_get(root, "capabilities")
+    am = null
+    if always != null { am, _b = json.object_get(always, "alwaysMatch") }
+    platform = ""
+    app = ""
+    automation = ""
+    if am != null {
+        platform = _json_str(am, "platformName")
+        app = _json_str(am, "appium:app")
+        automation = _json_str(am, "appium:automationName")
+    }
+    json.free(root)
+    // A real desktop driver refuses a session it cannot host. Reproduce that,
+    // so "the engine dropped the vendor caps" shows up as a failed session and
+    // not as a green test.
+    if string.length(platform) == 0 {
+        _w3c_err(res, 400, "invalid argument", "platformName is required")
+        return
+    }
+    if string.length(app) == 0 {
+        _w3c_err(res, 400, "invalid argument", "appium:app is required")
+        return
+    }
+    _send(res, 200, "{\"value\":{\"sessionId\":\"desktop-1\",\"capabilities\":{\"platformName\":\"${platform}\",\"appium:automationName\":\"${automation}\",\"appium:app\":\"${app}\"}}}")
+}
+
+// POST /session/:id/element — UI Automation locators. This is where a desktop
+// driver differs from a browser: it resolves AutomationId / Name / ClassName,
+// and has no CSS engine at all.
+find_element(req: ptr, res: ptr, st: *Seen) {
+    body = http.request_body(req)
+    root, perr = json.parse(body)
+    if string.length(perr) > 0 {
+        _w3c_err(res, 400, "invalid argument", "malformed locator")
+        return
+    }
+    using = _json_str(root, "using")
+    value = _json_str(root, "value")
+    json.free(root)
+    st.using = string.concat(using, "")
+    st.value = string.concat(value, "")
+
+    // What WinAppDriver actually supports.
+    if string.equals(using, "accessibility id") == 1 {
+        if string.equals(value, "num7Button") == 1 {
+            _send(res, 200, "{\"value\":{\"element-6066-11e4-a52e-4f735466cecf\":\"e-num7\"}}")
+            return
+        }
+        _w3c_err(res, 404, "no such element", "no element with AutomationId ${value}")
+        return
+    }
+    if string.equals(using, "name") == 1 {
+        // NATIVE name = the UIA Name property, NOT an HTML name attribute.
+        if string.equals(value, "Seven") == 1 {
+            _send(res, 200, "{\"value\":{\"element-6066-11e4-a52e-4f735466cecf\":\"e-num7\"}}")
+            return
+        }
+        _w3c_err(res, 404, "no such element", "no element named ${value}")
+        return
+    }
+    if string.equals(using, "xpath") == 1 {
+        if string.equals(value, "//Button[@Name='Seven']") == 1 {
+            _send(res, 200, "{\"value\":{\"element-6066-11e4-a52e-4f735466cecf\":\"e-num7\"}}")
+            return
+        }
+        _w3c_err(res, 404, "no such element", "xpath matched nothing")
+        return
+    }
+    // The point of the whole probe: a desktop driver has no CSS engine.
+    if string.equals(using, "css selector") == 1 {
+        _w3c_err(res, 400, "invalid argument", "css selector is not supported by this driver")
+        return
+    }
+    _w3c_err(res, 400, "invalid argument", "unsupported locator strategy: ${using}")
+}
+
+// ONE handler per METHOD, dispatching on the path — the shape grid/hub.ae
+// uses. `*` in this router is a catch-all to the end of the path, so sibling
+// patterns like "/session/*/element" and "/session/*/click" collapse onto each
+// other and the last registration silently wins. (Found the hard way:
+// findElement was being answered by the click route, which returns
+// {"value":null}, so the engine saw rc=0 with a null value and the locator
+// assertions failed with an empty `using` — a route bug wearing a
+// By-normalization costume.) One dispatcher per method cannot collapse.
+session_post_handler(req: ptr, res: ptr, ud: ptr) {
+    st = ud as *Seen
+    path = http.request_path(req)
+    // POST /session/:id/element/:eid/click
+    if string.index_of(path, "/click") >= 0 {
+        st.clicked = "e-num7"
+        if string.index_of(path, "/element/e-num7/click") < 0 { st.clicked = "" }
+        _send(res, 200, "{\"value\":null}")
+        return
+    }
+    // POST /session/:id/element   (findElement)
+    if string.ends_with(path, "/element") == 1 {
+        find_element(req, res, st)
+        return
+    }
+    _w3c_err(res, 404, "unknown command", "no route for ${path}")
+}
+
+session_get_handler(req: ptr, res: ptr, ud: ptr) {
+    _u = ud
+    path = http.request_path(req)
+    // GET /session/:id/element/:eid/text
+    if string.ends_with(path, "/text") == 1 {
+        _send(res, 200, "{\"value\":\"7\"}")
+        return
+    }
+    // GET /session/:id/element/:eid/attribute/:name — a desktop driver serves
+    // UIA properties through the standard attribute endpoint.
+    if string.index_of(path, "/attribute/") >= 0 {
+        _send(res, 200, "{\"value\":\"Display is 7\"}")
+        return
+    }
+    _w3c_err(res, 404, "unknown command", "no route for ${path}")
+}
+
+delete_handler(req: ptr, res: ptr, ud: ptr) {
+    st = ud as *Seen
+    _p = http.request_path(req)
+    st.closed = 1
+    _send(res, 200, "{\"value\":null}")
+}
+
+main() {
+    fw = spec.init()
+    st = seen_new()
+    seen = st as *Seen
+
+    // --- stand up the fake WinAppDriver on an ephemeral port ---------------
+    server = http.server_create(0)
+    if server == 0 {
+        println("desktop probe: FAIL could not create server")
+        return 1
+    }
+    _b = http.server_bind(server, "127.0.0.1", 0)
+    http.server_post(server, "/session", new_session_handler, st)
+    http.server_post(server, "/session/*", session_post_handler, st)
+    http.server_get(server, "/session/*", session_get_handler, st)
+    http.server_delete(server, "/session/*", delete_handler, st)
+    berr = http.server_start_background(server)
+    if string.length(berr) > 0 {
+        println("desktop probe: FAIL ${berr}")
+        return 1
+    }
+    port = http.http_server_port(server)
+    base = "http://127.0.0.1:${port}"
+
+    sp = selenium_core.session_new(base)
+
+    // --- 1. a desktop session, with vendor-prefixed capabilities ----------
+    // No browserName anywhere. If the engine mangled or dropped the
+    // appium:-prefixed keys, the fake driver rejects the session above.
+    spec.describe(fw, "desktop session (WinAppDriver shape)") {
+        spec.it("opens a session from vendor-prefixed, browserless capabilities") callback {
+            caps = "{\"capabilities\":{\"alwaysMatch\":{\"platformName\":\"Windows\",\"appium:automationName\":\"Windows\",\"appium:app\":\"Microsoft.WindowsCalculator_8wekyb3d8bbwe!App\"}}}"
+            rc = selenium_core.execute(sp, "newSession", caps)
+            spec.assert_eq(rc, 0, "newSession rc")
+            spec.assert_str_eq(selenium_core.session_id_of(sp), "desktop-1", "session id captured")
+        }
+        spec.it("passes the vendor capability keys through to the wire untouched") callback {
+            spec.assert_contains(seen.caps, "appium:app", "appium:app reached the driver")
+            spec.assert_contains(seen.caps, "appium:automationName", "appium:automationName reached the driver")
+            spec.assert_contains(seen.caps, "Microsoft.WindowsCalculator", "the app id survived verbatim")
+        }
+    }
+
+    // --- 2. the native locators a desktop driver actually uses ------------
+    spec.describe(fw, "UI Automation locators") {
+        spec.it("accessibility id reaches the wire unchanged (AutomationId)") callback {
+            loc = selenium_core.by_locator("accessibility id", "num7Button")
+            rc = selenium_core.execute(sp, "findElement", loc)
+            spec.assert_eq(rc, 0, "findElement rc")
+            spec.assert_str_eq(seen.using, "accessibility id", "using NOT rewritten")
+            spec.assert_str_eq(seen.value, "num7Button", "value NOT rewritten")
+            spec.assert_contains(selenium_core.last_value_of(sp), "e-num7", "element returned")
+        }
+        spec.it("xpath reaches the wire unchanged (UIA tree)") callback {
+            loc = selenium_core.by_locator("xpath", "//Button[@Name='Seven']")
+            rc = selenium_core.execute(sp, "findElement", loc)
+            spec.assert_eq(rc, 0, "findElement rc")
+            spec.assert_str_eq(seen.using, "xpath", "using NOT rewritten")
+            spec.assert_contains(selenium_core.last_value_of(sp), "e-num7", "element returned")
+        }
+    }
+
+    // --- 3. the command path is browser-agnostic --------------------------
+    spec.describe(fw, "commands against a non-browser driver") {
+        spec.it("clicks a desktop control") callback {
+            p = json.obj()
+            _s1 = json.set(p, "id", json.str("e-num7"))
+            pj, _pe = json.encode(p)
+            json.free(p)
+            rc = selenium_core.execute(sp, "clickElement", pj)
+            spec.assert_eq(rc, 0, "click rc")
+            spec.assert_str_eq(seen.clicked, "e-num7", "the click reached the right element")
+        }
+        spec.it("reads a desktop control's text") callback {
+            p = json.obj()
+            _s1 = json.set(p, "id", json.str("e-num7"))
+            pj, _pe = json.encode(p)
+            json.free(p)
+            rc = selenium_core.execute(sp, "getElementText", pj)
+            spec.assert_eq(rc, 0, "getElementText rc")
+            spec.assert_contains(selenium_core.last_value_of(sp), "7", "text")
+        }
+        spec.it("reads a UIA property through getDomAttribute") callback {
+            p = json.obj()
+            _s1 = json.set(p, "id", json.str("e-num7"))
+            _s2 = json.set(p, "name", json.str("Name"))
+            pj, _pe = json.encode(p)
+            json.free(p)
+            rc = selenium_core.execute(sp, "getDomAttribute", pj)
+            spec.assert_eq(rc, 0, "getDomAttribute rc")
+            spec.assert_contains(selenium_core.last_value_of(sp), "Display is 7", "attribute value")
+        }
+    }
+
+    // --- 4. the one real gap ----------------------------------------------
+    // By-normalization is the only browser-specific thing in the path. For a
+    // browser, rewriting id/name/class name to CSS is correct and is what
+    // Selenium itself does. For a desktop driver it is fatal: "name" is the UIA
+    // Name property, "class name" is the UIA ClassName, and there is no CSS
+    // engine to receive the rewrite.
+    //
+    // These assertions pin the CURRENT behaviour deliberately. They are not a
+    // wish-list: if by_locator is ever made desktop-aware, they fail loudly and
+    // point whoever changed it at this file, which is the right outcome.
+    spec.describe(fw, "the one real gap: By-normalization is browser-specific") {
+        spec.it("\"name\" is rewritten to CSS, which a desktop driver rejects") callback {
+            loc = selenium_core.by_locator("name", "Seven")
+            spec.assert_contains(loc, "css selector", "engine currently emits css selector")
+            rc = selenium_core.execute(sp, "findElement", loc)
+            spec.assert_not_eq(rc, 0, "the desktop driver rejects it")
+            spec.assert_str_eq(seen.using, "css selector", "what actually reached the wire")
+            spec.assert_contains(selenium_core.last_error_of(sp), "css selector is not supported",
+                "driver's reason")
+        }
+        spec.it("the SAME lookup works when the strategy is passed natively") callback {
+            // Identical intent, expressed as the native strategy: this is what a
+            // desktop-aware By-normalization would have to produce.
+            loc = selenium_core.by_locator("name", "Seven")
+            _unused = loc
+            native = "{\"using\":\"name\",\"value\":\"Seven\"}"
+            rc = selenium_core.execute(sp, "findElement", native)
+            spec.assert_eq(rc, 0, "native name findElement rc")
+            spec.assert_str_eq(seen.using, "name", "native strategy on the wire")
+            spec.assert_contains(selenium_core.last_value_of(sp), "e-num7", "element returned")
+        }
+        spec.it("\"id\" and \"class name\" have the same browser-shaped rewrite") callback {
+            spec.assert_contains(selenium_core.by_locator("id", "num7Button"), "css selector", "id -> css")
+            spec.assert_contains(selenium_core.by_locator("class name", "Button"), "css selector", "class name -> css")
+            // accessibility id is the strategy that already works today, and is
+            // what a binding should use against a desktop driver until/unless
+            // by_locator learns a desktop mode.
+            spec.assert_contains(selenium_core.by_locator("accessibility id", "num7Button"),
+                "accessibility id", "accessibility id passes through")
+        }
+    }
+
+    // --- 5. teardown -------------------------------------------------------
+    spec.describe(fw, "teardown") {
+        spec.it("quit closes the desktop session") callback {
+            rc = selenium_core.execute(sp, "quit", "{}")
+            spec.assert_eq(rc, 0, "quit rc")
+            spec.assert_eq(seen.closed, 1, "driver saw DELETE /session/:id")
+        }
+    }
+
+    selenium_core.session_free(sp)
+    return spec.run_summary(fw)
+}
