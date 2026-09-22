@@ -23,7 +23,14 @@ describe Selenium do
   end
 
   it "locator id rewrite" do
-    Selenium.locator(Selenium::By::ID, "main").should contain("*[id=")
+    # locator() hands the strategy to the engine RAW; normalization happens in
+    # the engine, inside execute, where the session is known. AGENTS.md: "A test
+    # asserting By.id(...) yields CSS is testing the wrong layer." Asserting
+    # "*[id=" here pinned the binding to browser-only behaviour, which is why
+    # desktop locators could not survive the trip.
+    Selenium.locator(Selenium::By::ID, "main").should eq(%({"using":"id","value":"main"}))
+    Selenium.locator(Selenium::By::ACCESSIBILITY_ID, "num7")
+      .should eq(%({"using":"accessibility id","value":"num7"}))
   end
 
   it "By factory yields a Locator carrying strategy + value" do

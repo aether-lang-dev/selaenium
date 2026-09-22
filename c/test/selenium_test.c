@@ -26,7 +26,12 @@ int main(void) {
     sel_free(loc);
 
     sel_str idloc = sel_locator("id", "main");
-    check(strstr(idloc.ptr, "*[id=") != NULL, "locator id rewrite to CSS");
+    /* sel_locator hands the strategy to the engine RAW; normalization happens
+       in the engine, inside execute, where the session is known. AGENTS.md: "A
+       test asserting By.id(...) yields CSS is testing the wrong layer."
+       Asserting "*[id=" here pinned the binding to browser-only behaviour. */
+    check(strcmp(idloc.ptr, "{\"using\":\"id\",\"value\":\"main\"}") == 0,
+          "locator passes the strategy through raw");
     sel_free(idloc);
 
     /* ---- transport failure path ---- */

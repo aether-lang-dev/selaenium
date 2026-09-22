@@ -13,8 +13,15 @@ using .Selenium
     @test route("nope") == ""
     @test errorcode("no such element") == 17
     @test errorcode("") == 0
+    # locator() hands the strategy to the engine RAW. Normalization happens in
+    # the engine, inside execute, where the session is known — browser rules
+    # against a browser, Appium's native strategies against a desktop driver.
+    # AGENTS.md: "A test asserting By.id(...) yields CSS is testing the wrong
+    # layer." This used to assert "*[id=" here, which pinned the binding to
+    # browser-only behaviour and is why desktop locators could not survive.
     @test locator(By.CSS, "div.foo") == "{\"using\":\"css selector\",\"value\":\"div.foo\"}"
-    @test occursin("*[id=", locator(By.ID, "main"))
+    @test locator(By.ID, "main") == "{\"using\":\"id\",\"value\":\"main\"}"
+    @test locator(By.ACCESSIBILITY_ID, "num7") == "{\"using\":\"accessibility id\",\"value\":\"num7\"}"
 
     # By factory (Selenium 4.x shape): returns a Locator carrying strategy+value.
     loc = By.id("hdr")

@@ -149,6 +149,58 @@ module Selenium
     def self.xpath(value : String) : Locator
       Locator.new("xpath", value)
     end
+
+    # --- desktop / native strategies (WinAppDriver, Appium) --------------
+    # Against a native driver the engine does NOT rewrite id/name/class name to
+    # CSS: they are the driver's own UIA AutomationId / Name / ClassName, and a
+    # native driver has no CSS engine. So the factories above keep working on
+    # desktop; these add the strategies that only exist there. Values match
+    # Appium's AppiumBy.
+    ACCESSIBILITY_ID    = "accessibility id"
+    ANDROID_UIAUTOMATOR = "androidUIAutomator"
+    ANDROID_VIEWTAG     = "androidViewTag"
+    ANDROID_DATAMATCHER = "androidDataMatcher"
+    ANDROID_VIEWMATCHER = "androidViewMatcher"
+    IOS_PREDICATE       = "iOSPredicateString"
+    IOS_CLASS_CHAIN     = "iOSClassChain"
+    IMAGE               = "image"
+    CUSTOM              = "custom"
+
+    def self.accessibility_id(value : String) : Locator
+      Locator.new("accessibility id", value)
+    end
+
+    def self.android_uiautomator(value : String) : Locator
+      Locator.new("androidUIAutomator", value)
+    end
+
+    def self.android_view_tag(value : String) : Locator
+      Locator.new("androidViewTag", value)
+    end
+
+    def self.android_data_matcher(value : String) : Locator
+      Locator.new("androidDataMatcher", value)
+    end
+
+    def self.android_view_matcher(value : String) : Locator
+      Locator.new("androidViewMatcher", value)
+    end
+
+    def self.ios_predicate(value : String) : Locator
+      Locator.new("iOSPredicateString", value)
+    end
+
+    def self.ios_class_chain(value : String) : Locator
+      Locator.new("iOSClassChain", value)
+    end
+
+    def self.image(value : String) : Locator
+      Locator.new("image", value)
+    end
+
+    def self.custom(value : String) : Locator
+      Locator.new("custom", value)
+    end
   end
 
   # Special keys — the W3C WebDriver Unicode private-use code points for non-text
@@ -262,8 +314,14 @@ module Selenium
     LibSel.error_code(w3c_error)
   end
 
+  # The {"using","value"} params for a locator, with the strategy passed through
+  # RAW. The engine normalizes inside execute, for the session it is talking to:
+  # browser rules against a browser, Appium's native strategies against a
+  # desktop driver. Pre-normalizing here through the session-unaware by_locator
+  # destroyed By.id into a CSS selector before the engine could see what kind of
+  # driver this is, which is exactly what broke desktop.
   def self.locator(by : String, value : String) : String
-    take(LibSel.by_locator(by, value))
+    {"using" => by, "value" => value}.to_json
   end
 
   # ---- driver orchestration (spawn / adopt a driver process in-binding) ----

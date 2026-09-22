@@ -294,6 +294,32 @@ module By
     link_text(value::AbstractString) = Locator("link text", value)
     partial_link_text(value::AbstractString) = Locator("partial link text", value)
     xpath(value::AbstractString) = Locator("xpath", value)
+
+    # --- desktop / native strategies (WinAppDriver, Appium) ---------------
+    # Against a native driver the engine does NOT rewrite id/name/class name to
+    # CSS: they are the driver's own UIA AutomationId / Name / ClassName, and a
+    # native driver has no CSS engine. So the constructors above keep working on
+    # desktop; these add the strategies that only exist there. Values match
+    # Appium's AppiumBy.
+    const ACCESSIBILITY_ID = "accessibility id"
+    const ANDROID_UIAUTOMATOR = "androidUIAutomator"
+    const ANDROID_VIEWTAG = "androidViewTag"
+    const ANDROID_DATAMATCHER = "androidDataMatcher"
+    const ANDROID_VIEWMATCHER = "androidViewMatcher"
+    const IOS_PREDICATE = "iOSPredicateString"
+    const IOS_CLASS_CHAIN = "iOSClassChain"
+    const IMAGE = "image"
+    const CUSTOM = "custom"
+
+    accessibility_id(value::AbstractString) = Locator("accessibility id", value)
+    android_uiautomator(value::AbstractString) = Locator("androidUIAutomator", value)
+    android_view_tag(value::AbstractString) = Locator("androidViewTag", value)
+    android_data_matcher(value::AbstractString) = Locator("androidDataMatcher", value)
+    android_view_matcher(value::AbstractString) = Locator("androidViewMatcher", value)
+    ios_predicate(value::AbstractString) = Locator("iOSPredicateString", value)
+    ios_class_chain(value::AbstractString) = Locator("iOSClassChain", value)
+    image(value::AbstractString) = Locator("image", value)
+    custom(value::AbstractString) = Locator("custom", value)
 end
 
 # Re-export the locator type at the parent level so `Selenium.Locator` works.
@@ -498,8 +524,31 @@ route(command::AbstractString)::String =
 errorcode(w3cerror::AbstractString)::Cint =
     ccall((:aether_sel_embed_error_code, LIB), Cint, (Cstring,), w3cerror)
 
+# The {"using","value"} params for a locator, with the strategy passed through
+# RAW. The engine normalizes inside execute, for the session it is talking to:
+# browser rules against a browser, Appium's native strategies against a desktop
+# driver. Pre-normalizing here through the session-unaware by_locator would
+# destroy By.id into a CSS selector before the engine could see which kind of
+# driver this is, which is exactly what broke desktop.
 locator(by::AbstractString, value::AbstractString)::String =
-    take(ccall((:aether_sel_embed_by_locator, LIB), Ptr{Cchar}, (Cstring, Cstring), by, value))
+    "{\"using\":" * _jsonstr(by) * ",\"value\":" * _jsonstr(value) * "}"
+
+# Minimal JSON string escaping for a locator strategy/value.
+function _jsonstr(v::AbstractString)::String
+    out = IOBuffer()
+    print(out, '"')
+    for c in v
+        if c == '"'       print(out, "\\\"")
+        elseif c == '\\' print(out, "\\\\")
+        elseif c == '\n' print(out, "\\n")
+        elseif c == '\r' print(out, "\\r")
+        elseif c == '\t' print(out, "\\t")
+        else              print(out, c)
+        end
+    end
+    print(out, '"')
+    return String(take!(out))
+end
 
 # ---- TLS config ----
 

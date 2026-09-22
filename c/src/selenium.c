@@ -254,7 +254,7 @@ static sel_element *make_element(sel_driver *d, char *id, int shadow) {
 static sel_element *find_one(sel_driver *d, const char *command, const char *strategy,
                              const char *value, const char *scope_id) {
     if (d == NULL) return NULL;
-    sel_str loc = take(aether_sel_embed_by_locator(strategy, value)); /* {"using":..,"value":..} */
+    sel_str loc = sel_locator(strategy, value); /* {"using":..,"value":..} RAW */
     buf x; buf_init(&x);
     /* splice locator members + optional id */
     buf_add(&x, "{");
@@ -398,6 +398,36 @@ void sel_process_stop(sel_process *p) {
 /* ---- pure helpers ---- */
 sel_str sel_route(const char *command) { return take(aether_sel_embed_route(command)); }
 int sel_error_code(const char *w3c_error) { return aether_sel_embed_error_code(w3c_error); }
+/* JSON-escape one string into buf x (quotes included). */
+static void buf_add_jstr(buf *x, const char *v) {
+    buf_add(x, "\"");
+    for (const char *p = v; p && *p; p++) {
+        switch (*p) {
+            case '"':  buf_add(x, "\\\""); break;
+            case '\\': buf_add(x, "\\\\"); break;
+            case '\n': buf_add(x, "\\n");  break;
+            case '\r': buf_add(x, "\\r");  break;
+            case '\t': buf_add(x, "\\t");  break;
+            default: {
+                char one[2]; one[0] = *p; one[1] = 0; buf_add(x, one);
+            }
+        }
+    }
+    buf_add(x, "\"");
+}
+
+/* The {"using","value"} params for a locator, with the strategy passed through
+   RAW. The engine normalizes inside execute, for the session it is talking to:
+   browser rules against a browser, Appium's native strategies against a desktop
+   driver. Pre-normalizing here through the session-unaware by_locator destroyed
+   SEL_BY_ID into a CSS selector before the engine could see what kind of driver
+   this is, which is exactly what broke desktop. */
 sel_str sel_locator(const char *strategy, const char *value) {
-    return take(aether_sel_embed_by_locator(strategy, value));
+    buf x; buf_init(&x);
+    buf_add(&x, "{\"using\":");
+    buf_add_jstr(&x, strategy);
+    buf_add(&x, ",\"value\":");
+    buf_add_jstr(&x, value);
+    buf_add(&x, "}");
+    sel_str r; r.ptr = x.b; r.len = x.len; return r;
 }
