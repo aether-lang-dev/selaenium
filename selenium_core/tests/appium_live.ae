@@ -1,0 +1,144 @@
+// Live proof against a REAL Appium server (not our fake endpoint): open a
+// desktop-shaped session, drive native locators, and confirm the engine's
+// desktop mode fires against software we did not write.
+import selenium_core
+import std.string
+import std.os
+import std.spec
+import std.file
+
+main() {
+    // SELF-SKIPS GREEN when no Appium is reachable, so this is presubmit-safe
+    // on a box without one — the same contract bidi_slice has for chromedriver.
+    // It does NOT skip on a wrong answer: a reachable Appium that misbehaves
+    // fails loudly. SEL_APPIUM_URL defaults to Appium's conventional port.
+    base = os.getenv("SEL_APPIUM_URL")
+    if string.length(base) == 0 { base = "http://127.0.0.1:4723" }
+    // Write the app fixture ourselves rather than shipping a file and hoping
+    // the test's cwd matches. Appium needs an ABSOLUTE path, and a repo-relative
+    // one silently became "unknown error" at newSession when the node ran from
+    // a different directory. Seven lines of XML is not worth a path bug.
+    app = os.getenv("SEL_APPIUM_APP")
+    if string.length(app) == 0 {
+        tmp = os.getenv("TMPDIR")
+        if string.length(tmp) == 0 { tmp = "/tmp" }
+        app = string.concat(tmp, "/selaenium-appium-fake-app.xml")
+        if _write_app(app) == 0 {
+            println("SKIPPED: could not write the app fixture to ${app}")
+            return 0
+        }
+    }
+    if _appium_ready(base) == 0 {
+        println("SKIPPED: no Appium server at ${base} (start one with the fake driver to run this)")
+        return 0
+    }
+    fw = spec.init()
+    sp = selenium_core.session_new(base)
+
+    spec.describe(fw, "real Appium: desktop session") {
+        spec.it("opens with vendor-prefixed, browserless capabilities") callback {
+            caps = string.concat("{\"capabilities\":{\"alwaysMatch\":{\"platformName\":\"Fake\",\"appium:automationName\":\"Fake\",\"appium:app\":\"", string.concat(app, "\"}}}"))
+            rc = selenium_core.execute(sp, "newSession", caps)
+            spec.assert_eq(rc, 0, "newSession rc")
+            spec.assert_true(string.length(selenium_core.session_id_of(sp)) > 0, "session id captured")
+        }
+        spec.it("is DETECTED as native from Appium's own capabilities") callback {
+            // Appium returns automationName UNPREFIXED and platformName "Fake",
+            // which is not in the native-platform list — so this passes only
+            // because detection accepts the unprefixed automationName too.
+            spec.assert_eq(selenium_core.session_is_native(sp), 1, "detected native")
+        }
+    }
+
+    spec.describe(fw, "real Appium: native locators survive the engine") {
+        spec.it("By.id reaches the wire as `id`, NOT as a CSS selector") callback {
+            // The decisive one. Appium's fake driver maps `id` to an xpath
+            // //*[@id="..."] lookup. Had the engine CSS-rewritten it to
+            // *[id="num7Button"], that would route to cssQuery and match
+            // nothing. Success here means the raw strategy survived.
+            rc = selenium_core.execute(sp, "findElement", "{\"using\":\"id\",\"value\":\"num7Button\"}")
+            spec.assert_eq(rc, 0, "findElement by id rc")
+            spec.assert_contains(selenium_core.last_value_of(sp), "element-6066", "element ref")
+        }
+        spec.it("accessibility id works") callback {
+            rc = selenium_core.execute(sp, "findElement", "{\"using\":\"accessibility id\",\"value\":\"display\"}")
+            spec.assert_eq(rc, 0, "findElement by accessibility id rc")
+        }
+        spec.it("class name is the NATIVE class, not a CSS class") callback {
+            // classQuery does xpath //Button — a CSS rewrite would have made
+            // this ".Button" and matched nothing.
+            rc = selenium_core.execute(sp, "findElement", "{\"using\":\"class name\",\"value\":\"Button\"}")
+            spec.assert_eq(rc, 0, "findElement by class name rc")
+        }
+        spec.it("xpath works") callback {
+            rc = selenium_core.execute(sp, "findElement", "{\"using\":\"xpath\",\"value\":\"//Button[@name='Seven']\"}")
+            spec.assert_eq(rc, 0, "findElement by xpath rc")
+        }
+    }
+
+    spec.describe(fw, "real Appium: commands and errors") {
+        spec.it("sendKeys then getElementText round-trips through the driver") callback {
+            // The fake driver seeds element text only from setValue, never from
+            // the XML — its own model, so we write before we read. That makes
+            // this a genuine two-command round trip rather than a fixture read.
+            _r = selenium_core.execute(sp, "findElement", "{\"using\":\"id\",\"value\":\"display\"}")
+            eid = _elem_id(selenium_core.last_value_of(sp))
+            spec.assert_true(string.length(eid) > 0, "got an element id")
+            keys_p = string.concat("{\"id\":\"", string.concat(eid, "\",\"text\":\"7\"}"))
+            rcs = selenium_core.execute(sp, "sendKeysToElement", keys_p)
+            spec.assert_eq(rcs, 0, "sendKeys rc")
+            p = string.concat("{\"id\":\"", string.concat(eid, "\"}"))
+            rc = selenium_core.execute(sp, "getElementText", p)
+            spec.assert_eq(rc, 0, "getElementText rc")
+            spec.assert_contains(selenium_core.last_value_of(sp), "7", "text came back")
+        }
+        spec.it("a REAL Appium error envelope decodes to the right W3C code") callback {
+            // Appium's own error shape, not ours. no such element == 17.
+            rc = selenium_core.execute(sp, "findElement", "{\"using\":\"id\",\"value\":\"nope-not-here\"}")
+            spec.assert_eq(rc, 17, "no such element")
+            spec.assert_true(string.length(selenium_core.last_error_of(sp)) > 0, "message present")
+        }
+        spec.it("quit closes the real session") callback {
+            rc = selenium_core.execute(sp, "quit", "{}")
+            spec.assert_eq(rc, 0, "quit rc")
+        }
+    }
+
+    selenium_core.session_free(sp)
+    return spec.run_summary(fw)
+}
+
+// The fake driver's app model: an XML tree shaped like a desktop window. The
+// editable element must be a MockInputField — that is the only type its
+// setValue accepts. Returns 1 on success.
+_write_app(path: string) -> int {
+    xml = "<app>\n  <Window id=\"mainWindow\" name=\"Calculator\">\n    <Button id=\"num7Button\" name=\"Seven\">7</Button>\n    <Button id=\"plusButton\" name=\"Plus\">+</Button>\n    <MockInputField id=\"display\" name=\"Display\"/>\n  </Window>\n</app>\n"
+    h = file.file_open_raw(path, "w")
+    if h == 0 { return 0 }
+    _w = file.file_write_raw(h, xml, string.length(xml))
+    _c = file.file_close(h)
+    return 1
+}
+
+// Is an Appium server answering /status at `base`? A transport failure or a
+// non-ready body means no — and that is a SKIP, not a failure.
+_appium_ready(base: string) -> int {
+    probe = selenium_core.session_new(base)
+    rc = selenium_core.execute(probe, "status", "{}")
+    v = selenium_core.last_value_of(probe)
+    selenium_core.session_free(probe)
+    if rc != 0 { return 0 }
+    if string.index_of(v, "\"ready\"") < 0 { return 0 }
+    return 1
+}
+
+// Pull the element id out of a {"element-6066-...":"<id>"} value.
+_elem_id(v: string) -> string {
+    key = "\"element-6066-11e4-a52e-4f735466cecf\":\""
+    at = string.index_of(v, key)
+    if at < 0 { return "" }
+    rest = string.substring(v, at + string.length(key), string.length(v))
+    end = string.index_of(rest, "\"")
+    if end < 0 { return "" }
+    return string.substring(rest, 0, end)
+}

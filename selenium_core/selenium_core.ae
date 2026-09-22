@@ -828,6 +828,11 @@ response_error_code(resp_body: string) -> int {
 route(name: string) -> string {
     return match (name) {
         // Session management
+        // GET /status — the W3C readiness probe (spec 8.3). Session-free: it is how a
+        // client asks whether a remote end is up and willing, before any session
+        // exists. Every real driver implements it (chromedriver, geckodriver, Appium,
+        // a Grid hub); the table was simply missing it, so a caller had no way to ask.
+        "status" -> "GET /status"
         "newSession" -> "POST /session"
         "quit" -> "DELETE /session/:sessionId"
         // Server status
