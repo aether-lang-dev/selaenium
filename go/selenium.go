@@ -35,6 +35,9 @@ int    aether_sel_embed_last_error_code(void* h);
 char*  aether_sel_embed_last_error(void* h);
 char*  aether_sel_embed_session_id(void* h);
 char*  aether_sel_embed_by_locator(const char* strategy, const char* value);
+char*  aether_sel_embed_by_locator_for(void* h, const char* strategy, const char* value);
+int    aether_sel_embed_is_native(void* h);
+void   aether_sel_embed_set_native(void* h, int on);
 char*  aether_sel_embed_route(const char* name);
 char*  aether_sel_embed_build_request(const char* name, const char* session_id, const char* params_json);
 int    aether_sel_embed_error_code(const char* w3c_error);
@@ -167,6 +170,21 @@ func (byFactory) TagName(value string) Selector         { return Selector{"tag n
 func (byFactory) LinkText(value string) Selector        { return Selector{"link text", value} }
 func (byFactory) PartialLinkText(value string) Selector { return Selector{"partial link text", value} }
 func (byFactory) Xpath(value string) Selector           { return Selector{"xpath", value} }
+
+// Desktop / native strategies (WinAppDriver, Appium). Against a native driver
+// the engine does NOT rewrite Id/Name/ClassName to CSS — they are the driver's
+// own UIA AutomationId / Name / ClassName, and a native driver has no CSS
+// engine — so the factory methods above keep working on desktop. These add the
+// strategies that only exist there. Values match Appium's AppiumBy.
+func (byFactory) AccessibilityId(value string) Selector    { return Selector{"accessibility id", value} }
+func (byFactory) AndroidUIAutomator(value string) Selector { return Selector{"androidUIAutomator", value} }
+func (byFactory) AndroidViewTag(value string) Selector     { return Selector{"androidViewTag", value} }
+func (byFactory) AndroidDataMatcher(value string) Selector { return Selector{"androidDataMatcher", value} }
+func (byFactory) AndroidViewMatcher(value string) Selector { return Selector{"androidViewMatcher", value} }
+func (byFactory) IOSPredicate(value string) Selector       { return Selector{"iOSPredicateString", value} }
+func (byFactory) IOSClassChain(value string) Selector      { return Selector{"iOSClassChain", value} }
+func (byFactory) Image(value string) Selector              { return Selector{"image", value} }
+func (byFactory) Custom(value string) Selector             { return Selector{"custom", value} }
 
 // ---- string ownership ------------------------------------------------------
 
@@ -513,10 +531,14 @@ func nonEmpty(s, fallback string) string {
 
 // decodeBy asks the engine for the {"using","value"} locator (sharing the ONE
 // By-normalization + CSS-escape path with every other binding).
-func decodeBy(sel Selector) map[string]interface{} {
+// decodeBy asks the ENGINE for the {"using","value"} locator, passing the
+// session handle so it can apply the right rules: browser normalization
+// (id/name/class name -> CSS) against a browser, Appium's native strategies
+// against a desktop driver, where those must reach the wire intact.
+func decodeBy(h unsafe.Pointer, sel Selector) map[string]interface{} {
 	cs := cstr(sel.Strategy)
 	cv := cstr(sel.Value)
-	raw := takeString(C.aether_sel_embed_by_locator(cs, cv))
+	raw := takeString(C.aether_sel_embed_by_locator_for(h, cs, cv))
 	C.free(unsafe.Pointer(cs))
 	C.free(unsafe.Pointer(cv))
 	var m map[string]interface{}
@@ -542,7 +564,7 @@ func (d *WebDriver) Refresh() error { _, err := d.execute("refresh", nil); retur
 // ---- elements ----
 
 func (d *WebDriver) FindElement(sel Selector) (*WebElement, error) {
-	v, err := d.execute("findElement", decodeBy(sel))
+	v, err := d.execute("findElement", decodeBy(d.h, sel))
 	if err != nil {
 		return nil, err
 	}
@@ -554,7 +576,7 @@ func (d *WebDriver) FindElement(sel Selector) (*WebElement, error) {
 }
 
 func (d *WebDriver) FindElements(sel Selector) ([]*WebElement, error) {
-	v, err := d.execute("findElements", decodeBy(sel))
+	v, err := d.execute("findElements", decodeBy(d.h, sel))
 	if err != nil {
 		return nil, err
 	}
@@ -1239,6 +1261,22 @@ func Locator(sel Selector) string {
 	defer C.free(unsafe.Pointer(cs))
 	defer C.free(unsafe.Pointer(cv))
 	return takeString(C.aether_sel_embed_by_locator(cs, cv))
+}
+
+// IsNative reports whether this session was detected as (or set to) a desktop /
+// native driver. Valid after the session is open.
+func (d *WebDriver) IsNative() bool { return int(C.aether_sel_embed_is_native(d.h)) == 1 }
+
+// SetNative forces desktop (on=true) or browser (false) By-normalization.
+// Normally unnecessary — the engine detects a native endpoint from the
+// newSession capabilities — but available for one that does not advertise
+// itself clearly.
+func (d *WebDriver) SetNative(on bool) {
+	v := C.int(0)
+	if on {
+		v = C.int(1)
+	}
+	C.aether_sel_embed_set_native(d.h, v)
 }
 
 // ---- driver orchestration (spawn / adopt a driver process in-binding) -------

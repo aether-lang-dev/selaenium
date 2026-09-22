@@ -410,7 +410,7 @@ func (d *WebDriver) WaitForAlert(timeout time.Duration) error {
 // FindElement finds a descendant of this element matching sel (W3C
 // findElementFromElement). Same locator normalization as WebDriver.FindElement.
 func (e *WebElement) FindElement(sel Selector) (*WebElement, error) {
-	v, err := e.exec("findChildElement", decodeBy(sel))
+	v, err := e.exec("findChildElement", decodeBy(e.driver.h, sel))
 	if err != nil {
 		return nil, err
 	}
@@ -424,7 +424,7 @@ func (e *WebElement) FindElement(sel Selector) (*WebElement, error) {
 // FindElements finds all descendants of this element matching sel (W3C
 // findElementsFromElement).
 func (e *WebElement) FindElements(sel Selector) ([]*WebElement, error) {
-	v, err := e.exec("findChildElements", decodeBy(sel))
+	v, err := e.exec("findChildElements", decodeBy(e.driver.h, sel))
 	if err != nil {
 		return nil, err
 	}
@@ -474,7 +474,7 @@ func (s *ShadowRoot) exec(command string, params map[string]interface{}) (interf
 // FindElement finds one descendant of this shadow root matching sel (W3C
 // findElementFromShadowRoot), scoped inside the shadow tree.
 func (s *ShadowRoot) FindElement(sel Selector) (*WebElement, error) {
-	v, err := s.exec("findElementFromShadowRoot", decodeBy(sel))
+	v, err := s.exec("findElementFromShadowRoot", decodeBy(s.driver.h, sel))
 	if err != nil {
 		return nil, err
 	}
@@ -488,7 +488,7 @@ func (s *ShadowRoot) FindElement(sel Selector) (*WebElement, error) {
 // FindElements finds all descendants of this shadow root matching sel (W3C
 // findElementsFromShadowRoot), scoped inside the shadow tree.
 func (s *ShadowRoot) FindElements(sel Selector) ([]*WebElement, error) {
-	v, err := s.exec("findElementsFromShadowRoot", decodeBy(sel))
+	v, err := s.exec("findElementsFromShadowRoot", decodeBy(s.driver.h, sel))
 	if err != nil {
 		return nil, err
 	}
