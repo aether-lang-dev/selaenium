@@ -19,7 +19,15 @@ main() {
     // 2. newSession with webSocketUrl:true. Let ChromeDriver locate Chrome
     // (system install or the driver manager's cache); an explicit binary path
     // can be added via SEL_CHROME_BINARY when the box has no default Chrome.
+    // Chrome comes from Chrome-for-Testing, the same way the rest of selaenium
+    // gets it: driver.browser_binary downloads/caches a CfT build and returns
+    // its path, or "" when a system Chrome already exists (nothing to
+    // provision). A binding sets goog:chromeOptions.binary to that — this test
+    // is no different, and relying on a system Chrome instead was why it died
+    // on a box that has chromedriver but no browser.
+    // SEL_CHROME_BINARY still wins, for pointing at a specific local build.
     chromebin = os.getenv("SEL_CHROME_BINARY")
+    if string.length(chromebin) == 0 { chromebin = driver.browser_binary("chrome", "") }
     binpart = ""
     if string.length(chromebin) > 0 { binpart = "\"binary\":\"${chromebin}\"," }
     caps = "{\"capabilities\":{\"alwaysMatch\":{\"webSocketUrl\":true,\"goog:chromeOptions\":{${binpart}\"args\":[\"--headless=new\",\"--no-sandbox\",\"--disable-gpu\",\"--disable-dev-shm-usage\"]}}}}"
@@ -37,17 +45,12 @@ main() {
     capsv, _cv = json.object_get(value, "capabilities")
     wsurlv, _w = json.object_get(capsv, "webSocketUrl")
     if wsurlv == null {
-        // A box can have chromedriver and still have no Chrome — chromedriver
-        // resolves and launches, then refuses the session with "session not
-        // created / cannot find Chrome binary". That is the SAME "this box
-        // cannot run this test" condition as the driver check above, so it must
-        // skip green, not fail: otherwise the whole engine test node goes red on
-        // any box without Chrome and takes presubmit with it.
-        //
-        // Deliberately narrow. Only the auto-locate failure skips. Every other
-        // session-not-created — including a bad explicit SEL_CHROME_BINARY,
-        // which is user error, not an absent browser — stays a hard failure, so
-        // this cannot quietly swallow a real protocol regression.
+        // Chrome was provisioned above (CfT) or found on the system, so a
+        // failure here is REAL — not "this box has no browser". The one
+        // genuine can't-test-here case is CfT having nothing to offer: offline,
+        // or a platform CfT does not publish (Linux arm64). That is the same
+        // condition as "no chromedriver resolvable" and skips the same way;
+        // everything else fails loudly, including a bad SEL_CHROME_BINARY.
         errv, _ev = json.object_get(value, "error")
         msgv, _mv = json.object_get(value, "message")
         ecode = ""
@@ -56,9 +59,11 @@ main() {
         if msgv != null { emsg, _e2 = json.get_string(msgv) }
         if string.equals(ecode, "session not created") == 1 {
             if string.index_of(emsg, "cannot find Chrome binary") >= 0 {
-                println("SKIPPED: chromedriver resolved but no Chrome binary on this box")
-                driver.stop(dh)
-                exit(0)
+                if string.length(chromebin) == 0 {
+                    println("SKIPPED: no system Chrome and CfT could not provision one (offline, or a platform CfT does not publish)")
+                    driver.stop(dh)
+                    exit(0)
+                }
             }
         }
         println("FAIL no webSocketUrl: ${body}")
