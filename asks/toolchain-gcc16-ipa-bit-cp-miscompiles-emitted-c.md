@@ -298,8 +298,37 @@ a real gcc 16 bug and `-fno-ipa-bit-cp` is the right response"* — has been run
 against his own fix, and the fold survives. #2131 remains a good change; it is
 simply not this bug.
 
-Not yet covered: aether `8f1c041b` and `127a348d` (further hoisted-local fixes)
-land after 0.701.0 and are not in this test. Worth re-running on 0.702.0.
+### Caveat closed: 0.702.0 and 0.706.0 (2026-09-22)
+
+`8f1c041b` and `127a348d` (the further hoisted-local fixes) land after 0.701.0.
+Re-ran on **0.702.0**, which contains both, and on **0.706.0**, the newest
+published release at the time of writing. Identical results on each:
+
+| toolchain | `-O2` | `-O2 -fno-ipa-bit-cp` | `-O2 -ftrivial-auto-var-init=zero` | runtime `-O2` |
+|---|---|---|---|---|
+| 0.701.0 | FOLDED | ok | FOLDED | `"inuse":0` |
+| 0.702.0 | FOLDED | ok | FOLDED | `"inuse":0` |
+| 0.706.0 | FOLDED | ok | FOLDED | `"inuse":0` |
+
+Bare uninitialized scalar declarations stay at 144 across 0.701/0.702/0.706 —
+all struct fields, zero function locals — and all five chain functions carry
+zero. The hoisted-local work is done and the fold is unaffected by it.
+
+**A false negative to record, because it is this document's own failure mode.**
+The first 0.702.0 run reported the asm as clean while the runtime still returned
+`"inuse":0`. The asm was not clean; the detector was blind. The pattern
+`xorl[ \t]+%edi, %edi` does not match a tab under GNU grep — in an ERE bracket
+expression `\t` is the set {space, backslash, `t`}, not a tab. It worked in an
+interactive shell (whose `grep` resolves to a `ugrep` shim that does interpret
+`\t`) and silently failed under `#!/bin/bash`. Every interactive result in this
+document was produced by the working path and stands; exactly one scripted run
+was affected, and the runtime leg is what caught it.
+
+The retest script now runs a **discrimination self-test** before it will report
+anything: it must match a known-folded line and reject a known-good one, or it
+aborts rather than print a verdict. This is the rule already in `LLM.md` —
+*a probe that cannot produce a negative is not measuring anything* — applied to
+a probe that could not produce a positive.
 
 Artifacts on the failing box (gcc 16.2.1, CachyOS), regenerable with the three
 commands at the top of this document: `hub_main.c` (1.77 MB emitted),
