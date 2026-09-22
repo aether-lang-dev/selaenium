@@ -42,6 +42,22 @@ public struct By {
     public static func linkText(_ value: String) -> By { By(strategy: "link text", value: value) }
     public static func partialLinkText(_ value: String) -> By { By(strategy: "partial link text", value: value) }
     public static func xpath(_ value: String) -> By { By(strategy: "xpath", value: value) }
+
+    // --- desktop / native strategies (WinAppDriver, Appium) ---------------
+    // Against a native driver the engine does NOT rewrite id/name/className to
+    // CSS: they are the driver's own UIA AutomationId / Name / ClassName, and a
+    // native driver has no CSS engine. So the factories above keep working on
+    // desktop; these add the strategies that only exist there. Values match
+    // Appium's AppiumBy.
+    public static func accessibilityId(_ value: String) -> By { By(strategy: "accessibility id", value: value) }
+    public static func androidUIAutomator(_ value: String) -> By { By(strategy: "androidUIAutomator", value: value) }
+    public static func androidViewTag(_ value: String) -> By { By(strategy: "androidViewTag", value: value) }
+    public static func androidDataMatcher(_ value: String) -> By { By(strategy: "androidDataMatcher", value: value) }
+    public static func androidViewMatcher(_ value: String) -> By { By(strategy: "androidViewMatcher", value: value) }
+    public static func iOSPredicate(_ value: String) -> By { By(strategy: "iOSPredicateString", value: value) }
+    public static func iOSClassChain(_ value: String) -> By { By(strategy: "iOSClassChain", value: value) }
+    public static func image(_ value: String) -> By { By(strategy: "image", value: value) }
+    public static func custom(_ value: String) -> By { By(strategy: "custom", value: value) }
 }
 
 /// A frame target for `WebDriver.switchToFrame(_:)`. The W3C `switchToFrame`
@@ -148,6 +164,15 @@ public final class WebDriver {
     }
 
     deinit { aether_sel_embed_close(handle) }
+
+    /// True when this session was detected as (or set to) a desktop / native
+    /// driver. Valid once the session is open.
+    public var isNative: Bool { aether_sel_embed_is_native(handle) == 1 }
+
+    /// Force desktop (`true`) or browser (`false`) By-normalization. Normally
+    /// unnecessary — the engine detects a native endpoint from the newSession
+    /// capabilities.
+    public func setNative(_ on: Bool) { aether_sel_embed_set_native(handle, on ? 1 : 0) }
 
     // ---- factories ----
 
@@ -397,7 +422,7 @@ public final class WebDriver {
     /// Returns a `WebElement`, throwing a typed WebDriverError on a protocol /
     /// transport error (e.g. no such element).
     public func findElement(_ by: By) throws -> WebElement {
-        let params = take(aether_sel_embed_by_locator(by.strategy, by.value))
+        let params = take(aether_sel_embed_by_locator_for(handle, by.strategy, by.value))
         let value = try execute("findElement", params)
         guard let id = WebElement.extractElementId(value) else {
             throw WebDriverError(message: "element reference key missing", code: WebDriverError.noSuchElement)
@@ -407,7 +432,7 @@ public final class WebDriver {
 
     /// Find every element matching `by` (may be empty).
     public func findElements(_ by: By) throws -> [WebElement] {
-        let params = take(aether_sel_embed_by_locator(by.strategy, by.value))
+        let params = take(aether_sel_embed_by_locator_for(handle, by.strategy, by.value))
         let value = try execute("findElements", params)
         let arr = (decodeJSON(value) as? [[String: Any]]) ?? []
         return arr.compactMap { ref in
@@ -730,7 +755,7 @@ public final class WebElement {
     // The {"using","value"} object for a By, decoded from the engine's locator
     // JSON so id/name are rewritten to CSS exactly as the driver-level finds are.
     private func decodeBy(_ by: By) -> [String: Any] {
-        let raw = take(aether_sel_embed_by_locator(by.strategy, by.value))
+        let raw = take(aether_sel_embed_by_locator_for(driver.handle, by.strategy, by.value))
         return (decodeJSON(raw) as? [String: Any]) ?? ["using": by.strategy, "value": by.value]
     }
 }
@@ -780,7 +805,7 @@ public final class ShadowRoot {
     }
 
     private func decodeBy(_ by: By) -> [String: Any] {
-        let raw = take(aether_sel_embed_by_locator(by.strategy, by.value))
+        let raw = take(aether_sel_embed_by_locator_for(driver.handle, by.strategy, by.value))
         return (decodeJSON(raw) as? [String: Any]) ?? ["using": by.strategy, "value": by.value]
     }
 }
