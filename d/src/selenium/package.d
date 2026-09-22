@@ -36,6 +36,9 @@ private extern (C) nothrow @nogc {
     char* aether_sel_embed_last_error(void* h);
     char* aether_sel_embed_session_id(void* h);
     char* aether_sel_embed_by_locator(const(char)* strategy, const(char)* value);
+    char* aether_sel_embed_by_locator_for(void* h, const(char)* strategy, const(char)* value);
+    int   aether_sel_embed_is_native(void* h);
+    void  aether_sel_embed_set_native(void* h, int on);
     char* aether_sel_embed_route(const(char)* name);
     char* aether_sel_embed_build_request(const(char)* name, const(char)* session_id, const(char)* params_json);
     int   aether_sel_embed_error_code(const(char)* w3c_error);
@@ -196,6 +199,22 @@ struct By {
     static By linkText(string value)        { return By("link text", value); }
     static By partialLinkText(string value) { return By("partial link text", value); }
     static By xpath(string value)           { return By("xpath", value); }
+
+    // --- desktop / native strategies (WinAppDriver, Appium) --------------
+    // Against a native driver the engine does NOT rewrite id/name/className to
+    // CSS: they are the driver's own UIA AutomationId / Name / ClassName, and a
+    // native driver has no CSS engine. So the factories above keep working on
+    // desktop; these add the strategies that only exist there. Values match
+    // Appium's AppiumBy.
+    static By accessibilityId(string value)    { return By("accessibility id", value); }
+    static By androidUIAutomator(string value) { return By("androidUIAutomator", value); }
+    static By androidViewTag(string value)     { return By("androidViewTag", value); }
+    static By androidDataMatcher(string value) { return By("androidDataMatcher", value); }
+    static By androidViewMatcher(string value) { return By("androidViewMatcher", value); }
+    static By iOSPredicate(string value)       { return By("iOSPredicateString", value); }
+    static By iOSClassChain(string value)      { return By("iOSClassChain", value); }
+    static By image(string value)              { return By("image", value); }
+    static By custom(string value)             { return By("custom", value); }
 }
 
 /// The W3C element-reference key present in every returned element JSON.
@@ -221,8 +240,12 @@ string locator(string by, string value) {
     return takeString(aether_sel_embed_by_locator(by.toStringz, value.toStringz));
 }
 
-private JSONValue decodeBy(By by) {
-    return parseJSON(locator(by.strategy, by.value));
+// Ask the ENGINE for the locator, passing the session handle so it applies the
+// right rules: browser normalization against a browser, Appium's native
+// strategies against a desktop driver, where those must reach the wire intact.
+private JSONValue decodeBy(void* h, By by) {
+    return parseJSON(takeString(
+        aether_sel_embed_by_locator_for(h, by.strategy.toStringz, by.value.toStringz)));
 }
 
 // ---- WebDriver / WebElement ------------------------------------------------
@@ -310,12 +333,12 @@ final class WebDriver {
 
     // --- find ---
     WebElement findElement(By by) {
-        auto v = execute("findElement", decodeBy(by));
+        auto v = execute("findElement", decodeBy(handle, by));
         return new WebElement(this, v[w3cElementKey].str);
     }
 
     WebElement[] findElements(By by) {
-        auto v = execute("findElements", decodeBy(by));
+        auto v = execute("findElements", decodeBy(handle, by));
         WebElement[] outv;
         foreach (item; v.array)
             outv ~= new WebElement(this, item[w3cElementKey].str);
@@ -669,11 +692,11 @@ final class WebElement {
     string screenshotBase64() { return elExec("takeElementScreenshot", emptyObj).str; }
 
     WebElement findElement(By by) {
-        auto v = elExec("findChildElement", decodeBy(by));
+        auto v = elExec("findChildElement", decodeBy(driver.handle, by));
         return new WebElement(driver, v[w3cElementKey].str);
     }
     WebElement[] findElements(By by) {
-        auto v = elExec("findChildElements", decodeBy(by));
+        auto v = elExec("findChildElements", decodeBy(driver.handle, by));
         WebElement[] outv;
         foreach (item; v.array)
             outv ~= new WebElement(driver, item[w3cElementKey].str);
@@ -705,13 +728,13 @@ struct ShadowRoot {
 
     /// The first descendant of this shadow root matching `by`.
     WebElement findElement(By by) {
-        auto v = srExec("findElementFromShadowRoot", decodeBy(by));
+        auto v = srExec("findElementFromShadowRoot", decodeBy(driver.handle, by));
         return new WebElement(driver, v[w3cElementKey].str);
     }
 
     /// All descendants of this shadow root matching `by`.
     WebElement[] findElements(By by) {
-        auto v = srExec("findElementsFromShadowRoot", decodeBy(by));
+        auto v = srExec("findElementsFromShadowRoot", decodeBy(driver.handle, by));
         WebElement[] outv;
         foreach (item; v.array)
             outv ~= new WebElement(driver, item[w3cElementKey].str);

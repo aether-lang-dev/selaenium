@@ -24,6 +24,12 @@ const c = struct {
     extern "c" fn aether_sel_embed_last_error(h: ?*anyopaque) [*c]u8;
     extern "c" fn aether_sel_embed_session_id(h: ?*anyopaque) [*c]u8;
     extern "c" fn aether_sel_embed_by_locator(strategy: [*c]const u8, value: [*c]const u8) [*c]u8;
+    // Session-aware By normalization: browser rules against a browser, Appium's
+    // native strategies against a desktop driver (WinAppDriver / Appium). The
+    // engine decides from the session; the binding just passes the handle.
+    extern "c" fn aether_sel_embed_by_locator_for(h: ?*anyopaque, strategy: [*c]const u8, value: [*c]const u8) [*c]u8;
+    extern "c" fn aether_sel_embed_is_native(h: ?*anyopaque) c_int;
+    extern "c" fn aether_sel_embed_set_native(h: ?*anyopaque, on: c_int) void;
     extern "c" fn aether_sel_embed_route(name: [*c]const u8) [*c]u8;
     extern "c" fn aether_sel_embed_build_request(name: [*c]const u8, session_id: [*c]const u8, params_json: [*c]const u8) [*c]u8;
     extern "c" fn aether_sel_embed_error_code(w3c_error: [*c]const u8) c_int;
@@ -115,6 +121,40 @@ pub const By = struct {
     }
     pub fn xpath(value: []const u8) Locator {
         return .{ .using = "xpath", .value = value };
+    }
+
+    // --- desktop / native strategies (WinAppDriver, Appium) --------------
+    // Against a native driver the engine does NOT rewrite id/name/className to
+    // CSS: they are the driver's own UIA AutomationId / Name / ClassName, and a
+    // native driver has no CSS engine. So the factories above keep working on
+    // desktop; these add the strategies that only exist there. Values match
+    // Appium's AppiumBy.
+    pub fn accessibilityId(value: []const u8) Locator {
+        return .{ .using = "accessibility id", .value = value };
+    }
+    pub fn androidUIAutomator(value: []const u8) Locator {
+        return .{ .using = "androidUIAutomator", .value = value };
+    }
+    pub fn androidViewTag(value: []const u8) Locator {
+        return .{ .using = "androidViewTag", .value = value };
+    }
+    pub fn androidDataMatcher(value: []const u8) Locator {
+        return .{ .using = "androidDataMatcher", .value = value };
+    }
+    pub fn androidViewMatcher(value: []const u8) Locator {
+        return .{ .using = "androidViewMatcher", .value = value };
+    }
+    pub fn iOSPredicate(value: []const u8) Locator {
+        return .{ .using = "iOSPredicateString", .value = value };
+    }
+    pub fn iOSClassChain(value: []const u8) Locator {
+        return .{ .using = "iOSClassChain", .value = value };
+    }
+    pub fn image(value: []const u8) Locator {
+        return .{ .using = "image", .value = value };
+    }
+    pub fn custom(value: []const u8) Locator {
+        return .{ .using = "custom", .value = value };
     }
 };
 
@@ -325,6 +365,17 @@ pub fn locator(allocator: std.mem.Allocator, by: []const u8, value: []const u8) 
     return takeString(allocator, c.aether_sel_embed_by_locator(bc.ptr, vc.ptr));
 }
 
+/// Ask the ENGINE for the locator, passing the session handle so it applies the
+/// right rules: browser normalization against a browser, Appium's native
+/// strategies against a desktop driver, where those must reach the wire intact.
+pub fn locatorFor(allocator: std.mem.Allocator, h: ?*anyopaque, by: []const u8, value: []const u8) Error![]u8 {
+    const bc = try cstr(allocator, by);
+    defer allocator.free(bc);
+    const vc = try cstr(allocator, value);
+    defer allocator.free(vc);
+    return takeString(allocator, c.aether_sel_embed_by_locator_for(h, bc.ptr, vc.ptr));
+}
+
 // ---- driver orchestration (spawn/adopt a driver process in-binding) ---------
 // The engine can resolve, download-or-cache, and launch a browser driver itself,
 // so a caller needs neither a driver on PATH nor a running Grid.
@@ -415,7 +466,7 @@ pub const ShadowRoot = struct {
     /// Find the first descendant of this shadow root matching `by`
     /// (`findElementFromShadowRoot`), scoped inside the shadow tree.
     pub fn findElement(self: *const ShadowRoot, by: Locator) Error!WebElement {
-        const loc = try locator(self.driver.allocator, by.using, by.value);
+        const loc = try locatorFor(self.driver.allocator, self.driver.handle, by.using, by.value);
         defer self.driver.allocator.free(loc);
         const p = try std.fmt.allocPrint(self.driver.allocator, "{{\"id\":\"{s}\",{s}", .{ self.id, loc[1..] });
         defer self.driver.allocator.free(p);
@@ -428,7 +479,7 @@ pub const ShadowRoot = struct {
     /// Find every descendant of this shadow root matching `by`
     /// (`findElementsFromShadowRoot`). Owned slice; free each `.deinit()` + slice.
     pub fn findElements(self: *const ShadowRoot, by: Locator) Error![]WebElement {
-        const loc = try locator(self.driver.allocator, by.using, by.value);
+        const loc = try locatorFor(self.driver.allocator, self.driver.handle, by.using, by.value);
         defer self.driver.allocator.free(loc);
         const p = try std.fmt.allocPrint(self.driver.allocator, "{{\"id\":\"{s}\",{s}", .{ self.id, loc[1..] });
         defer self.driver.allocator.free(p);
@@ -775,7 +826,7 @@ pub const WebDriver = struct {
 
     // ---- elements ----
     pub fn findElement(self: *WebDriver, by: Locator) Error!WebElement {
-        const loc = try locator(self.allocator, by.using, by.value);
+        const loc = try locatorFor(self.allocator, self.handle, by.using, by.value);
         defer self.allocator.free(loc);
         var v = try self.execute("findElement", loc);
         defer v.deinit();
@@ -787,7 +838,7 @@ pub const WebDriver = struct {
     /// slice of `WebElement` (empty when none match); free each `.deinit()` and
     /// then the slice.
     pub fn findElements(self: *WebDriver, by: Locator) Error![]WebElement {
-        const loc = try locator(self.allocator, by.using, by.value);
+        const loc = try locatorFor(self.allocator, self.handle, by.using, by.value);
         defer self.allocator.free(loc);
         var v = try self.execute("findElements", loc);
         defer v.deinit();
@@ -1000,7 +1051,7 @@ pub const WebDriver = struct {
     /// Find the first descendant of `parent` matching `by` (element-scoped
     /// `findChildElement`).
     pub fn findChildElement(self: *WebDriver, parent: *const WebElement, by: Locator) Error!WebElement {
-        const loc = try locator(self.allocator, by.using, by.value);
+        const loc = try locatorFor(self.allocator, self.handle, by.using, by.value);
         defer self.allocator.free(loc);
         // {"id":"<parent>","using":"...","value":"..."} — merge the parent id
         // into the locator object by replacing its leading `{`.
@@ -1015,7 +1066,7 @@ pub const WebDriver = struct {
     /// Find EVERY descendant of `parent` matching `by` (element-scoped
     /// `findChildElements`). Owned slice; free each `.deinit()` + the slice.
     pub fn findChildElements(self: *WebDriver, parent: *const WebElement, by: Locator) Error![]WebElement {
-        const loc = try locator(self.allocator, by.using, by.value);
+        const loc = try locatorFor(self.allocator, self.handle, by.using, by.value);
         defer self.allocator.free(loc);
         const p = try std.fmt.allocPrint(self.allocator, "{{\"id\":\"{s}\",{s}", .{ parent.id, loc[1..] });
         defer self.allocator.free(p);

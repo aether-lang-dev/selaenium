@@ -79,6 +79,13 @@ proc selLastError(h: pointer): cstring {.importc: "aether_sel_embed_last_error",
 proc selSessionId(h: pointer): cstring {.importc: "aether_sel_embed_session_id", cdecl.}
 proc selByLocator(strategy, value: cstring): cstring
   {.importc: "aether_sel_embed_by_locator", cdecl.}
+## Session-aware By normalization: browser rules against a browser, Appium's
+## native strategies against a desktop driver (WinAppDriver / Appium). The
+## engine decides from the session; the binding just passes the handle.
+proc selByLocatorFor(h: pointer, strategy, value: cstring): cstring
+  {.importc: "aether_sel_embed_by_locator_for", cdecl.}
+proc selIsNative(h: pointer): cint {.importc: "aether_sel_embed_is_native", cdecl.}
+proc selSetNative(h: pointer, on: cint) {.importc: "aether_sel_embed_set_native", cdecl.}
 proc selRoute(name: cstring): cstring {.importc: "aether_sel_embed_route", cdecl.}
 proc selBuildRequest(name, sessionId, paramsJson: cstring): cstring
   {.importc: "aether_sel_embed_build_request", cdecl.}
@@ -239,6 +246,30 @@ proc partialLinkText*(_: typedesc[By], value: string): By =
 proc xpath*(_: typedesc[By], value: string): By =
   By(strategy: "xpath", value: value)
 
+## Desktop / native strategies (WinAppDriver, Appium). Against a native driver
+## the engine does NOT rewrite id/name/className to CSS: they are the driver's
+## own UIA AutomationId / Name / ClassName, and a native driver has no CSS
+## engine. So the factories above keep working on desktop; these add the
+## strategies that only exist there. Values match Appium's AppiumBy.
+proc accessibilityId*(_: typedesc[By], value: string): By =
+  By(strategy: "accessibility id", value: value)
+proc androidUIAutomator*(_: typedesc[By], value: string): By =
+  By(strategy: "androidUIAutomator", value: value)
+proc androidViewTag*(_: typedesc[By], value: string): By =
+  By(strategy: "androidViewTag", value: value)
+proc androidDataMatcher*(_: typedesc[By], value: string): By =
+  By(strategy: "androidDataMatcher", value: value)
+proc androidViewMatcher*(_: typedesc[By], value: string): By =
+  By(strategy: "androidViewMatcher", value: value)
+proc iOSPredicate*(_: typedesc[By], value: string): By =
+  By(strategy: "iOSPredicateString", value: value)
+proc iOSClassChain*(_: typedesc[By], value: string): By =
+  By(strategy: "iOSClassChain", value: value)
+proc image*(_: typedesc[By], value: string): By =
+  By(strategy: "image", value: value)
+proc custom*(_: typedesc[By], value: string): By =
+  By(strategy: "custom", value: value)
+
 const w3cElementKey = "element-6066-11e4-a52e-4f735466cecf"
 const w3cShadowKey = "shadow-6066-11e4-a52e-4f735466cecf"
   ## The W3C shadow-root reference key, distinct from the element key.
@@ -257,8 +288,11 @@ proc locator*(by, value: string): string =
   ## The W3C {"using","value"} locator JSON for a (by, value) pair.
   takeString(selByLocator(by.cstring, value.cstring))
 
-proc decodeBy(by: By): JsonNode =
-  parseJson(locator(by.strategy, by.value))
+proc decodeBy(h: pointer, by: By): JsonNode =
+  ## Ask the ENGINE for the locator, passing the session handle so it applies
+  ## the right rules: browser normalization against a browser, Appium's native
+  ## strategies against a desktop driver, where those must reach the wire intact.
+  parseJson(takeString(selByLocatorFor(h, by.strategy.cstring, by.value.cstring)))
 
 # ---- WebDriver ----
 
@@ -456,10 +490,10 @@ proc elementFrom(d: WebDriver, v: JsonNode): WebElement =
   WebElement(driver: d, id: v[w3cElementKey].getStr)
 
 proc findElement*(d: WebDriver, by: By): WebElement =
-  d.elementFrom(d.execute("findElement", decodeBy(by)))
+  d.elementFrom(d.execute("findElement", decodeBy(d.handle, by)))
 
 proc findElements*(d: WebDriver, by: By): seq[WebElement] =
-  for e in d.execute("findElements", decodeBy(by)):
+  for e in d.execute("findElements", decodeBy(d.handle, by)):
     result.add d.elementFrom(e)
 
 proc findRelative*(d: WebDriver, baseCss: string,
@@ -564,14 +598,14 @@ proc screenshotBase64*(e: WebElement): string =
 proc findElement*(e: WebElement, by: By): WebElement =
   ## Find a single descendant of this element (W3C findChildElement). The search
   ## is scoped to `e`'s subtree, not the whole document.
-  var params = decodeBy(by)
+  var params = decodeBy(e.driver.handle, by)
   params["id"] = %e.id
   e.driver.elementFrom(e.driver.execute("findChildElement", params))
 
 proc findElements*(e: WebElement, by: By): seq[WebElement] =
   ## Find all descendants of this element matching `by` (W3C findChildElements),
   ## scoped to `e`'s subtree. Empty seq if none.
-  var params = decodeBy(by)
+  var params = decodeBy(e.driver.handle, by)
   params["id"] = %e.id
   for child in e.driver.execute("findChildElements", params):
     result.add e.driver.elementFrom(child)
@@ -593,12 +627,12 @@ proc srExec(s: ShadowRoot, command: string, params: JsonNode): JsonNode =
 proc findElement*(s: ShadowRoot, by: By): WebElement =
   ## Find a single descendant of this shadow root (W3C findElementFromShadowRoot),
   ## scoped inside the shadow tree.
-  s.driver.elementFrom(s.srExec("findElementFromShadowRoot", decodeBy(by)))
+  s.driver.elementFrom(s.srExec("findElementFromShadowRoot", decodeBy(s.driver.handle, by)))
 
 proc findElements*(s: ShadowRoot, by: By): seq[WebElement] =
   ## Find all descendants of this shadow root matching `by` (W3C
   ## findElementsFromShadowRoot), scoped inside the shadow tree. Empty seq if none.
-  for child in s.srExec("findElementsFromShadowRoot", decodeBy(by)):
+  for child in s.srExec("findElementsFromShadowRoot", decodeBy(s.driver.handle, by)):
     result.add s.driver.elementFrom(child)
 
 # ---- script ----
