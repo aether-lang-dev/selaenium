@@ -198,6 +198,17 @@ sel_embed_side_run(h: ptr, side_json: string) -> string {
 // protocol error (see sel_embed_error_code_name), or -1 on transport failure.
 // After the call, drain the result via the accessors below.
 sel_embed_execute(h: ptr, name: string, params_json: string) -> int {
+    // The webdriver manager hot-downloads Chromium as well as chromedriver.
+    // resolve_driver already fetches the driver from Chrome-for-Testing; this
+    // points a LOCAL session's capabilities at the matching CfT Chromium, so a
+    // box with no system browser works with nothing installed. Heavily gated
+    // (see driver.with_browser_binary) and a no-op when a system Chrome exists,
+    // so it can only turn a failing session into a working one. Every binding
+    // funnels through here, so all of them inherit it with no change.
+    if string.equals(name, "newSession") == 1 {
+        return selenium_core.execute(h, name,
+            driver.with_browser_binary(params_json, selenium_core.base_url_of(h)))
+    }
     return selenium_core.execute(h, name, params_json)
 }
 

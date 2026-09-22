@@ -19,6 +19,7 @@ import std.list
 import std.mem
 import std.string
 import std.heap
+import std.json
 import resolve
 
 // One live driver process: the spawn token (for kill/wait) and the port it was
@@ -64,6 +65,83 @@ browser_binary(browser: string, hint: string) -> string {
 
 // The conventional driver executable name for a browser. PURE — the first datum
 // the Selenium-Manager port will expand (per-browser modules).
+// _is_loopback(url) — does this session talk to a driver on THIS machine?
+_is_loopback(url: string) -> int {
+    if string.index_of(url, "//127.0.0.1") >= 0 { return 1 }
+    if string.index_of(url, "//localhost") >= 0 { return 1 }
+    if string.index_of(url, "//[::1]") >= 0 { return 1 }
+    return 0
+}
+
+// with_browser_binary(caps_json, base_url) — the "hot download" half of the
+// webdriver manager. resolve_driver already fetches chromedriver from
+// Chrome-for-Testing; this fetches the matching CfT Chromium and points the
+// session's capabilities at it, so a box with no system browser can run a live
+// session with nothing installed. Without it the driver launches and then says
+// "cannot find Chrome binary", which is what every live test hit.
+//
+// Returns caps unchanged unless ALL of these hold, so it can only ever turn a
+// failing session into a working one:
+//   1. the caps ask for chrome/chromium
+//   2. they do not already set goog:chromeOptions.binary (the caller wins)
+//   3. the session talks to loopback — a locally launched driver, not a remote
+//      Grid node, where a local path would be meaningless
+//   4. browser_binary() returns a path, which it only does when there is NO
+//      system Chrome (with one installed it returns "" and we inject nothing)
+//
+// Gate 4 is the important one: on a box that works today nothing changes,
+// because a system Chrome short-circuits the whole thing.
+//
+// Works on the PARSED capabilities, not the text. The first cut did string
+// surgery to preserve the caller's formatting and silently did nothing for
+// Python, whose json.dumps writes `"alwaysMatch": {` with a space where Go's
+// encoder writes `"alwaysMatch":{`. Caps are caller-authored JSON from 28
+// languages with 28 encoders; matching their punctuation is not a contract we
+// can hold.
+with_browser_binary(caps_json: string, base_url: string) -> string {
+    if _is_loopback(base_url) == 0 { return caps_json }
+    root, perr = json.parse(caps_json)
+    if string.length(perr) > 0 { return caps_json }
+    caps, _c = json.object_get(root, "capabilities")
+    if caps == null { json.free(root)  return caps_json }
+    am, _a = json.object_get(caps, "alwaysMatch")
+    if am == null { json.free(root)  return caps_json }
+
+    // (1) does this ask for chrome/chromium?
+    wants = 0
+    bn, _b = json.object_get(am, "browserName")
+    if bn != null {
+        bname, _bs = json.get_string(bn)
+        if string.equals(bname, "chrome") == 1 { wants = 1 }
+        if string.equals(bname, "chromium") == 1 { wants = 1 }
+    }
+    opts, _o = json.object_get(am, "goog:chromeOptions")
+    if opts != null { wants = 1 }
+    if wants == 0 { json.free(root)  return caps_json }
+
+    // (2) caller already chose a binary — leave it alone.
+    if opts != null {
+        existing, _e = json.object_get(opts, "binary")
+        if existing != null { json.free(root)  return caps_json }
+    }
+
+    // (4) a CfT Chromium, only when there is no system Chrome.
+    bin = browser_binary("chrome", "")
+    if string.length(bin) == 0 { json.free(root)  return caps_json }
+
+    if opts == null {
+        newopts = json.obj()
+        _s1 = json.set(newopts, "binary", json.str(bin))
+        _s2 = json.set(am, "goog:chromeOptions", newopts)
+    } else {
+        _s3 = json.set(opts, "binary", json.str(bin))
+    }
+    out, oerr = json.encode(root)
+    json.free(root)
+    if string.length(oerr) > 0 { return caps_json }
+    return out
+}
+
 driver_exe_for(browser: string) -> string {
     if string.equals(browser, "chrome") == 1 { return "chromedriver" }
     if string.equals(browser, "chromium") == 1 { return "chromedriver" }

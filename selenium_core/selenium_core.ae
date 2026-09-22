@@ -262,6 +262,14 @@ timers_json_of(sp: ptr) -> string {
     return out
 }
 
+// The base URL this session was opened against. Needed by the driver layer to
+// tell a locally-launched driver from a remote Grid before it augments caps.
+base_url_of(sp: ptr) -> string {
+    if sp == null { return "" }
+    s = sp as *Session
+    return s.base_url
+}
+
 session_id_of(sp: ptr) -> string {
     if sp == null { return "" }
     s = sp as *Session
