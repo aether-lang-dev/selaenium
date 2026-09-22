@@ -45,6 +45,9 @@ extern "C" {
     fn aether_sel_embed_last_error(h: Handle) -> *mut c_char;
     fn aether_sel_embed_session_id(h: Handle) -> *mut c_char;
     fn aether_sel_embed_by_locator(strategy: *const c_char, value: *const c_char) -> *mut c_char;
+    fn aether_sel_embed_by_locator_for(h: *mut c_void, strategy: *const c_char, value: *const c_char) -> *mut c_char;
+    fn aether_sel_embed_is_native(h: *mut c_void) -> i32;
+    fn aether_sel_embed_set_native(h: *mut c_void, on: i32);
     fn aether_sel_embed_route(name: *const c_char) -> *mut c_char;
     fn aether_sel_embed_build_request(name: *const c_char, session_id: *const c_char, params_json: *const c_char) -> *mut c_char;
     fn aether_sel_embed_error_code(w3c_error: *const c_char) -> c_int;
@@ -286,6 +289,39 @@ impl By {
     pub fn link_text(value: impl Into<String>) -> By {
         By { strategy: "link text", value: value.into() }
     }
+    // --- desktop / native strategies (WinAppDriver, Appium) ---------------
+    // Against a native driver the engine does NOT rewrite id/name/class_name to
+    // CSS: they are the driver's own UIA AutomationId / Name / ClassName, and a
+    // native driver has no CSS engine. So the constructors above keep working
+    // on desktop; these add the strategies that only exist there. Values match
+    // Appium's AppiumBy.
+    pub fn accessibility_id(value: impl Into<String>) -> By {
+        By { strategy: "accessibility id", value: value.into() }
+    }
+    pub fn android_uiautomator(value: impl Into<String>) -> By {
+        By { strategy: "androidUIAutomator", value: value.into() }
+    }
+    pub fn android_view_tag(value: impl Into<String>) -> By {
+        By { strategy: "androidViewTag", value: value.into() }
+    }
+    pub fn android_data_matcher(value: impl Into<String>) -> By {
+        By { strategy: "androidDataMatcher", value: value.into() }
+    }
+    pub fn android_view_matcher(value: impl Into<String>) -> By {
+        By { strategy: "androidViewMatcher", value: value.into() }
+    }
+    pub fn ios_predicate(value: impl Into<String>) -> By {
+        By { strategy: "iOSPredicateString", value: value.into() }
+    }
+    pub fn ios_class_chain(value: impl Into<String>) -> By {
+        By { strategy: "iOSClassChain", value: value.into() }
+    }
+    pub fn image(value: impl Into<String>) -> By {
+        By { strategy: "image", value: value.into() }
+    }
+    pub fn custom(value: impl Into<String>) -> By {
+        By { strategy: "custom", value: value.into() }
+    }
     pub fn partial_link_text(value: impl Into<String>) -> By {
         By { strategy: "partial link text", value: value.into() }
     }
@@ -353,15 +389,23 @@ pub fn error_code(w3c_error: &str) -> i32 {
     unsafe { aether_sel_embed_error_code(c.as_ptr()) }
 }
 
-/// The W3C {"using","value"} locator JSON for a (by, value) pair.
+/// The W3C {"using","value"} locator JSON for a (by, value) pair, using the
+/// browser rules. Prefer the session-aware path (`find_element`) on a desktop
+/// driver, where id/name/class name must NOT be rewritten to CSS.
 pub fn locator(by: &str, value: &str) -> String {
     let bc = cstr(by);
     let vc = cstr(value);
     take_string(unsafe { aether_sel_embed_by_locator(bc.as_ptr(), vc.as_ptr()) })
 }
 
-fn decode_by(by: &By) -> Json {
-    json::parse(&locator(by.strategy, &by.value)).unwrap_or(Json::Null)
+/// Ask the ENGINE for the locator, passing the session handle so it applies the
+/// right rules: browser normalization against a browser, Appium's native
+/// strategies against a desktop driver, where those must reach the wire intact.
+fn decode_by_for(h: *mut c_void, by: &By) -> Json {
+    let bc = cstr(by.strategy);
+    let vc = cstr(&by.value);
+    let raw = take_string(unsafe { aether_sel_embed_by_locator_for(h, bc.as_ptr(), vc.as_ptr()) });
+    json::parse(&raw).unwrap_or(Json::Null)
 }
 
 pub(crate) const W3C_ELEMENT_KEY: &str = "element-6066-11e4-a52e-4f735466cecf";
@@ -675,12 +719,25 @@ impl WebDriver {
     }
 
     // ---- elements ----
+    /// Whether this session was detected as (or set to) a desktop / native
+    /// driver. Valid once the session is open.
+    pub fn is_native(&self) -> bool {
+        unsafe { aether_sel_embed_is_native(self.handle) == 1 }
+    }
+
+    /// Force desktop (`true`) or browser (`false`) By-normalization. Normally
+    /// unnecessary — the engine detects a native endpoint from the newSession
+    /// capabilities — but available for one that does not advertise itself.
+    pub fn set_native(&self, on: bool) {
+        unsafe { aether_sel_embed_set_native(self.handle, if on { 1 } else { 0 }) }
+    }
+
     pub fn find_element(&self, by: By) -> Result<WebElement> {
-        let result = self.execute("findElement", decode_by(&by))?;
+        let result = self.execute("findElement", decode_by_for(self.handle, &by))?;
         self.element_from(&result)
     }
     pub fn find_elements(&self, by: By) -> Result<Vec<WebElement>> {
-        let result = self.execute("findElements", decode_by(&by))?;
+        let result = self.execute("findElements", decode_by_for(self.handle, &by))?;
         let arr = result.as_array().cloned().unwrap_or_default();
         arr.iter().map(|e| self.element_from(e)).collect()
     }
@@ -1506,14 +1563,14 @@ if(f.requestSubmit){f.requestSubmit();}else{f.submit();}";
     /// `findChildElement`). The returned element is tied to the same driver
     /// borrow as this one.
     pub fn find_element(&self, by: By) -> Result<WebElement<'a>> {
-        let result = self.exec("findChildElement", decode_by(&by))?;
+        let result = self.exec("findChildElement", decode_by_for(self.driver.handle, &by))?;
         self.driver.element_from(&result)
     }
 
     /// Find all descendants of this element matching `by` (element-scoped
     /// `findChildElements`). Used by [`Select`] to enumerate `<option>` children.
     pub fn find_elements(&self, by: By) -> Result<Vec<WebElement<'a>>> {
-        let result = self.exec("findChildElements", decode_by(&by))?;
+        let result = self.exec("findChildElements", decode_by_for(self.driver.handle, &by))?;
         let arr = result.as_array().cloned().unwrap_or_default();
         arr.iter().map(|e| self.driver.element_from(e)).collect()
     }
@@ -1561,14 +1618,14 @@ impl<'a> ShadowRoot<'a> {
     /// Find one descendant of this shadow root matching `by`
     /// (`findElementFromShadowRoot`), scoped inside the shadow tree.
     pub fn find_element(&self, by: By) -> Result<WebElement<'a>> {
-        let result = self.exec("findElementFromShadowRoot", decode_by(&by))?;
+        let result = self.exec("findElementFromShadowRoot", decode_by_for(self.driver.handle, &by))?;
         self.driver.element_from(&result)
     }
 
     /// Find all descendants of this shadow root matching `by`
     /// (`findElementsFromShadowRoot`), scoped inside the shadow tree.
     pub fn find_elements(&self, by: By) -> Result<Vec<WebElement<'a>>> {
-        let result = self.exec("findElementsFromShadowRoot", decode_by(&by))?;
+        let result = self.exec("findElementsFromShadowRoot", decode_by_for(self.driver.handle, &by))?;
         let arr = result.as_array().cloned().unwrap_or_default();
         arr.iter().map(|e| self.driver.element_from(e)).collect()
     }
