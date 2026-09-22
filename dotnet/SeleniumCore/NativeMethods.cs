@@ -49,6 +49,18 @@ internal static class NativeMethods
     [DllImport(Lib, EntryPoint = "aether_sel_embed_by_locator", CharSet = CharSet.Ansi)]
     internal static extern IntPtr ByLocator(string strategy, string value);
 
+    // Session-aware By normalization: browser rules against a browser, Appium's
+    // native strategies against a desktop driver (WinAppDriver / Appium). The
+    // engine decides from the session; the binding just passes the handle.
+    [DllImport(Lib, EntryPoint = "aether_sel_embed_by_locator_for", CharSet = CharSet.Ansi)]
+    internal static extern IntPtr ByLocatorFor(IntPtr handle, string strategy, string value);
+
+    [DllImport(Lib, EntryPoint = "aether_sel_embed_is_native")]
+    internal static extern int IsNative(IntPtr handle);
+
+    [DllImport(Lib, EntryPoint = "aether_sel_embed_set_native")]
+    internal static extern void SetNative(IntPtr handle, int on);
+
     [DllImport(Lib, EntryPoint = "aether_sel_embed_route", CharSet = CharSet.Ansi)]
     internal static extern IntPtr Route(string name);
 

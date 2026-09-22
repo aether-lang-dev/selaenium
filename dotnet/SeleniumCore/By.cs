@@ -47,5 +47,30 @@ public class By
     [Obsolete("Use By.XPath (mainstream capitalization).")]
     public static By Xpath(string value) => XPath(value);
 
+    // --- desktop / native strategies (WinAppDriver, Appium) ----------------
+    // Against a native driver the engine does NOT rewrite Id/Name/ClassName to
+    // CSS: they are the driver's own UIA AutomationId / Name / ClassName, and a
+    // native driver has no CSS engine. So the factories above keep working on
+    // desktop; these add the strategies that only exist there. Values match
+    // Appium's AppiumBy.
+
+    public static By AccessibilityId(string value) => new("accessibility id", value);
+
+    public static By AndroidUIAutomator(string value) => new("androidUIAutomator", value);
+
+    public static By AndroidViewTag(string value) => new("androidViewTag", value);
+
+    public static By AndroidDataMatcher(string value) => new("androidDataMatcher", value);
+
+    public static By AndroidViewMatcher(string value) => new("androidViewMatcher", value);
+
+    public static By IOSPredicate(string value) => new("iOSPredicateString", value);
+
+    public static By IOSClassChain(string value) => new("iOSClassChain", value);
+
+    public static By Image(string value) => new("image", value);
+
+    public static By Custom(string value) => new("custom", value);
+
     public override string ToString() => $"By.{Strategy}: {Value}";
 }

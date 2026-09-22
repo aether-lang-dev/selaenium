@@ -144,7 +144,7 @@ public class RemoteWebElement : IWebElement
     /// <c>findChildElement</c>, scoped to this element via the <c>:id</c> path param).</summary>
     public IWebElement FindElement(By by)
     {
-        JsonElement result = Exec("findChildElement", RemoteWebDriver.DecodeBy(by.Strategy, by.Value))!.Value;
+        JsonElement result = Exec("findChildElement", RemoteWebDriver.DecodeBy(_driver.Handle, by.Strategy, by.Value))!.Value;
         return new RemoteWebElement(_driver, result.GetProperty(RemoteWebDriver.W3CElementKey).GetString()!);
     }
 
@@ -152,7 +152,7 @@ public class RemoteWebElement : IWebElement
     /// <c>findChildElements</c>, scoped to this element).</summary>
     public ReadOnlyCollection<IWebElement> FindElements(By by)
     {
-        JsonElement result = Exec("findChildElements", RemoteWebDriver.DecodeBy(by.Strategy, by.Value))!.Value;
+        JsonElement result = Exec("findChildElements", RemoteWebDriver.DecodeBy(_driver.Handle, by.Strategy, by.Value))!.Value;
         return new ReadOnlyCollection<IWebElement>(result.EnumerateArray()
             .Select(e => (IWebElement)new RemoteWebElement(_driver, e.GetProperty(RemoteWebDriver.W3CElementKey).GetString()!))
             .ToList());
@@ -197,13 +197,13 @@ public sealed class ShadowRoot : ISearchContext
 
     public IWebElement FindElement(By by)
     {
-        JsonElement result = Exec("findElementFromShadowRoot", RemoteWebDriver.DecodeBy(by.Strategy, by.Value))!.Value;
+        JsonElement result = Exec("findElementFromShadowRoot", RemoteWebDriver.DecodeBy(_driver.Handle, by.Strategy, by.Value))!.Value;
         return new RemoteWebElement(_driver, result.GetProperty(RemoteWebDriver.W3CElementKey).GetString()!);
     }
 
     public ReadOnlyCollection<IWebElement> FindElements(By by)
     {
-        JsonElement result = Exec("findElementsFromShadowRoot", RemoteWebDriver.DecodeBy(by.Strategy, by.Value))!.Value;
+        JsonElement result = Exec("findElementsFromShadowRoot", RemoteWebDriver.DecodeBy(_driver.Handle, by.Strategy, by.Value))!.Value;
         return new ReadOnlyCollection<IWebElement>(result.EnumerateArray()
             .Select(e => (IWebElement)new RemoteWebElement(_driver, e.GetProperty(RemoteWebDriver.W3CElementKey).GetString()!))
             .ToList());

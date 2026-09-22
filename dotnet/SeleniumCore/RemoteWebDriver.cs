@@ -270,9 +270,32 @@ public class RemoteWebDriver : IWebDriver, ITakesScreenshot
         _ => new WebDriverException(message, code),
     };
 
-    internal static Dictionary<string, object?> DecodeBy(string by, string value)
+    /// <summary>
+    /// Ask the ENGINE for the {"using","value"} locator, passing the session
+    /// handle so it applies the right rules: browser normalization
+    /// (id/name/class name -&gt; CSS) against a browser, and Appium's native
+    /// strategies against a desktop driver (WinAppDriver / Appium), where those
+    /// same strategies must reach the wire intact — a native driver has no CSS
+    /// engine. IntPtr.Zero falls back to the browser rules.
+    /// </summary>
+    /// <summary>True when this session was detected as (or set to) a desktop /
+    /// native driver. Valid once the session is open.</summary>
+    public bool IsNative => NativeMethods.IsNative(_handle) == 1;
+
+    /// <summary>Force desktop (true) or browser (false) By-normalization.
+    /// Normally unnecessary — the engine detects a native endpoint from the
+    /// newSession capabilities.</summary>
+    public void SetNative(bool on) => NativeMethods.SetNative(_handle, on ? 1 : 0);
+
+    /// <summary>The raw session handle, for element- and shadow-root-scoped
+    /// finds that need session-aware By normalization.</summary>
+    internal IntPtr Handle => _handle;
+
+    internal static Dictionary<string, object?> DecodeBy(IntPtr handle, string by, string value)
     {
-        string raw = NativeMethods.TakeString(NativeMethods.ByLocator(by, value));
+        string raw = handle == IntPtr.Zero
+            ? NativeMethods.TakeString(NativeMethods.ByLocator(by, value))
+            : NativeMethods.TakeString(NativeMethods.ByLocatorFor(handle, by, value));
         using var doc = JsonDocument.Parse(raw);
         return new Dictionary<string, object?>
         {
@@ -323,7 +346,7 @@ public class RemoteWebDriver : IWebDriver, ITakesScreenshot
             }
             return found[0];
         }
-        JsonElement result = Execute("findElement", DecodeBy(by.Strategy, by.Value))!.Value;
+        JsonElement result = Execute("findElement", DecodeBy(_handle, by.Strategy, by.Value))!.Value;
         return new RemoteWebElement(this, result.GetProperty(W3CElementKey).GetString()!);
     }
 
@@ -335,7 +358,7 @@ public class RemoteWebDriver : IWebDriver, ITakesScreenshot
                 FindRelative(relative.BaseCss, System.Linq.Enumerable.ToArray(relative.EngineFilters))
                     .Select(e => (IWebElement)e).ToList());
         }
-        JsonElement result = Execute("findElements", DecodeBy(by.Strategy, by.Value))!.Value;
+        JsonElement result = Execute("findElements", DecodeBy(_handle, by.Strategy, by.Value))!.Value;
         return new ReadOnlyCollection<IWebElement>(result.EnumerateArray()
             .Select(e => (IWebElement)new RemoteWebElement(this, e.GetProperty(W3CElementKey).GetString()!))
             .ToList());
