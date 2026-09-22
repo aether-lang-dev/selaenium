@@ -195,6 +195,12 @@ session_get_handler(req: ptr, res: ptr, ud: ptr) {
         _send(res, 200, "{\"value\":\"7\"}")
         return
     }
+    // GET /session/:id/element/:eid/displayed — the W3C endpoint a desktop
+    // driver implements natively (no JS engine to run an atom in).
+    if string.ends_with(path, "/displayed") == 1 {
+        _send(res, 200, "{\"value\":true}")
+        return
+    }
     // GET /session/:id/element/:eid/attribute/:name — a desktop driver serves
     // UIA properties through the standard attribute endpoint.
     if string.index_of(path, "/attribute/") >= 0 {
@@ -218,8 +224,27 @@ delete_handler(req: ptr, res: ptr, ud: ptr) {
 // than not supporting desktop at all.
 // The browser control's findElement: records what actually reached the wire so
 // the centralization test can assert the BROWSER rules still apply there.
-browser_find_handler(req: ptr, res: ptr, ud: ptr) {
+// ONE POST dispatcher for the browser control, for the same reason the desktop
+// side has one: `*` is a catch-all to the end of the path, so a sibling
+// "/session" and "/session/*" collapse and the LAST registration wins. Two
+// handlers here meant newSession was being answered by the find route, the
+// session id came back empty, and a later assertion passed for the wrong
+// reason. One dispatcher cannot collapse.
+browser_post_handler(req: ptr, res: ptr, ud: ptr) {
     st = ud as *Seen
+    path = http.request_path(req)
+    if string.equals(path, "/session") == 1 {
+        browser_new_session(req, res)
+        return
+    }
+    // POST /session/:id/execute/sync — a BROWSER runs the atom as injected JS.
+    // Recording it here is what lets the control prove the browser path is
+    // unchanged, rather than merely that the desktop path works.
+    if string.index_of(path, "/execute/sync") >= 0 {
+        st.using = "executeScript"
+        _send(res, 200, "{\"value\":\"atom-ran\"}")
+        return
+    }
     body = http.request_body(req)
     root, perr = json.parse(body)
     if string.length(perr) > 0 {
@@ -232,8 +257,7 @@ browser_find_handler(req: ptr, res: ptr, ud: ptr) {
     _send(res, 200, "{\"value\":{\"element-6066-11e4-a52e-4f735466cecf\":\"b-el\"}}")
 }
 
-browser_session_handler(req: ptr, res: ptr, ud: ptr) {
-    _u = ud
+browser_new_session(req: ptr, res: ptr) {
     _b = http.request_body(req)
     _send(res, 200, "{\"value\":{\"sessionId\":\"browser-1\",\"capabilities\":{\"browserName\":\"chrome\",\"browserVersion\":\"141.0\",\"platformName\":\"linux\"}}}")
 }
@@ -272,8 +296,8 @@ main() {
         return 1
     }
     _bb = http.server_bind(bserver, "127.0.0.1", 0)
-    http.server_post(bserver, "/session", browser_session_handler, st)
-    http.server_post(bserver, "/session/*", browser_find_handler, st)
+    http.server_post(bserver, "/session", browser_post_handler, st)
+    http.server_post(bserver, "/session/*", browser_post_handler, st)
     bberr = http.server_start_background(bserver)
     if string.length(bberr) > 0 {
         println("desktop probe: FAIL ${bberr}")
@@ -468,7 +492,9 @@ main() {
         spec.it("a RAW browser strategy is still rewritten to CSS on a browser") callback {
             bp = selenium_core.session_new(bbase)
             caps = "{\"capabilities\":{\"alwaysMatch\":{\"browserName\":\"chrome\"}}}"
-            _rc0 = selenium_core.execute(bp, "newSession", caps)
+            rc0 = selenium_core.execute(bp, "newSession", caps)
+            spec.assert_eq(rc0, 0, "browser newSession rc")
+            spec.assert_str_eq(selenium_core.session_id_of(bp), "browser-1", "session id captured")
             rc = selenium_core.execute(bp, "findElement", "{\"using\":\"id\",\"value\":\"hdr\"}")
             spec.assert_eq(rc, 0, "findElement rc")
             spec.assert_str_eq(seen.using, "css selector", "engine rewrote id -> css")
@@ -489,6 +515,45 @@ main() {
             rc = selenium_core.execute(sp, "clickElement", "{\"id\":\"e-num7\"}")
             spec.assert_eq(rc, 0, "click rc")
             spec.assert_str_eq(seen.clicked, "e-num7", "id survived")
+        }
+    }
+
+    // --- 4d. the OTHER browser assumption: JS atoms ------------------------
+    // isDisplayed / getAttribute / getText have no W3C route in mainstream
+    // Selenium's world — it injects a JS "atom" via executeScript, and we match
+    // that for wire fidelity. A desktop driver has NO JS engine, so that path is
+    // dead there: executeScript fails and three commands every binding exposes
+    // as ordinary API stop working. W3C defines real endpoints for all three
+    // and Appium / WinAppDriver implement them, so a native session routes to
+    // those instead. Same shape as By-normalization: engine-side, session-aware,
+    // every binding inherits it.
+    spec.describe(fw, "atom-backed commands on a desktop driver") {
+        spec.it("isDisplayed uses the native /displayed endpoint, not a script") callback {
+            rc = selenium_core.execute_atom(sp, "isDisplayed", "e-num7", "")
+            spec.assert_eq(rc, 0, "isDisplayed rc")
+            spec.assert_contains(selenium_core.last_value_of(sp), "true", "displayed")
+        }
+        spec.it("getText uses the native /text endpoint") callback {
+            rc = selenium_core.execute_atom(sp, "getText", "e-num7", "")
+            spec.assert_eq(rc, 0, "getText rc")
+            spec.assert_contains(selenium_core.last_value_of(sp), "7", "text")
+        }
+        spec.it("getAttribute uses the native /attribute/:name endpoint") callback {
+            rc = selenium_core.execute_atom(sp, "getAttribute", "e-num7",
+                selenium_core.atom_str_arg("Name"))
+            spec.assert_eq(rc, 0, "getAttribute rc")
+            spec.assert_contains(selenium_core.last_value_of(sp), "Display is 7", "attribute")
+        }
+        spec.it("CONTROL: a BROWSER session still runs the atom via executeScript") callback {
+            bp = selenium_core.session_new(bbase)
+            caps = "{\"capabilities\":{\"alwaysMatch\":{\"browserName\":\"chrome\"}}}"
+            rc0 = selenium_core.execute(bp, "newSession", caps)
+            spec.assert_eq(rc0, 0, "browser newSession rc")
+            spec.assert_eq(selenium_core.session_is_native(bp), 0, "browser session")
+            rc = selenium_core.execute_atom(bp, "getText", "b-el", "")
+            spec.assert_eq(rc, 0, "getText rc")
+            spec.assert_str_eq(seen.using, "executeScript", "the browser injected the atom")
+            selenium_core.session_free(bp)
         }
     }
 

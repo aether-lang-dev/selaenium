@@ -575,9 +575,55 @@ _execute_inner(sp: ptr, name: string, params_json: string) -> int {
 // any extra args (e.g. ["href"] for getAttribute), "" for none. Result drains via
 // the normal last_value_of accessor. Returns 0 / a W3C error code / -1, exactly
 // like execute(). An unknown atom is reported as "invalid argument".
+// _atom_native(s, atom_name, elem_id, extra_json) — the NATIVE W3C endpoint
+// that does the same job as an atom, for a desktop session.
+//
+// isDisplayed / getAttribute / getText have no W3C route in a BROWSER's world
+// the way mainstream Selenium implements them: it injects a JS "atom" through
+// executeScript, and we match that for wire fidelity. A desktop driver has no
+// JS engine at all, so executeScript fails outright and those three commands —
+// which every binding exposes as ordinary API — are dead on desktop.
+//
+// They do not have to be. W3C defines real HTTP endpoints for all three, and
+// Appium / WinAppDriver implement them: /element/:id/displayed, /text and
+// /attribute/:name. So on a native session we route to those instead of
+// injecting JS. Returns "" when there is no native equivalent.
+_atom_native(atom_name: string) -> string {
+    if string.equals(atom_name, "isDisplayed") == 1 { return "isElementDisplayed" }
+    if string.equals(atom_name, "getText") == 1 { return "getElementText" }
+    if string.equals(atom_name, "getAttribute") == 1 { return "getDomAttribute" }
+    return ""
+}
+
+// The attribute name out of an atom's extra-args array ("[\"href\"]" -> href).
+_atom_first_arg(extra_json: string) -> string {
+    arr, perr = json.parse(extra_json)
+    if string.length(perr) > 0 { return "" }
+    first, _f = json.array_get(arr, 0)
+    if first == null { json.free(arr)  return "" }
+    v, verr = json.get_string(first)
+    json.free(arr)
+    if string.length(verr) > 0 { return "" }
+    return v
+}
+
 execute_atom(sp: ptr, atom_name: string, elem_id: string, extra_json: string) -> int {
     if sp == null { return -1 }
     s = sp as *Session
+    // Desktop: use the real endpoint, not an injected script.
+    if s.native == 1 {
+        nat = _atom_native(atom_name)
+        if string.length(nat) > 0 {
+            p = json.obj()
+            _pi = json.set(p, "id", json.str(elem_id))
+            if string.equals(nat, "getDomAttribute") == 1 {
+                _pn = json.set(p, "name", json.str(_atom_first_arg(extra_json)))
+            }
+            pj, _pe = json.encode(p)
+            json.free(p)
+            return execute(sp, nat, pj)
+        }
+    }
     params = atoms.atom_params(atom_name, elem_id, extra_json)
     if string.length(params) == 0 {
         s.last_status = 0
@@ -837,6 +883,7 @@ route(name: string) -> string {
         "getElementText" -> "GET /session/:sessionId/element/:id/text"
         "getAriaRole" -> "GET /session/:sessionId/element/:id/computedrole"
         "getAccessibleName" -> "GET /session/:sessionId/element/:id/computedlabel"
+        "isElementDisplayed" -> "GET /session/:sessionId/element/:id/displayed"
         "isElementEnabled" -> "GET /session/:sessionId/element/:id/enabled"
         "isElementSelected" -> "GET /session/:sessionId/element/:id/selected"
         // Cookie management

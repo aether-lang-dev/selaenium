@@ -157,11 +157,19 @@ _qjson(str_val: string) -> string {
     // A JSON string literal for arbitrary script text: escape backslash, quote,
     // and the control chars that appear in JS (newline/tab/CR). The atoms here are
     // single-line, but be safe.
+    // replace_all, NOT replace: string.replace substitutes only the FIRST
+    // occurrence. With it, an atom containing more than one backslash or quote
+    // produced a JSON string with the rest unescaped, and executeScript was
+    // rejected by the engine's own parser before it ever reached the wire
+    // ("Invalid params JSON" -> invalid argument). getText is exactly that case
+    // — its regex has two backslashes — so the getText atom has never worked.
+    // Nothing caught it because no test ran an atom against a server; the unit
+    // tests assert the params SHAPE, which is built from the same broken quoter.
     out = str_val
-    out = string.replace(out, "\\", "\\\\")
-    out = string.replace(out, "\"", "\\\"")
-    out = string.replace(out, "\n", "\\n")
-    out = string.replace(out, "\t", "\\t")
-    out = string.replace(out, "\r", "\\r")
+    out = string.replace_all(out, "\\", "\\\\")
+    out = string.replace_all(out, "\"", "\\\"")
+    out = string.replace_all(out, "\n", "\\n")
+    out = string.replace_all(out, "\t", "\\t")
+    out = string.replace_all(out, "\r", "\\r")
     return string.concat("\"", string.concat(out, "\""))
 }
