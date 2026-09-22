@@ -46,6 +46,21 @@ M.By.link_text = by_locator("link text")
 M.By.partial_link_text = by_locator("partial link text")
 M.By.xpath = by_locator("xpath")
 
+-- Desktop / native strategies (WinAppDriver, Appium). Against a native driver
+-- the engine does NOT rewrite id/name/class name to CSS: they are the driver's
+-- own UIA AutomationId / Name / ClassName, and a native driver has no CSS
+-- engine. So the factories above keep working on desktop; these add the
+-- strategies that only exist there. Values match Appium's AppiumBy.
+M.By.accessibility_id = by_locator("accessibility id")
+M.By.android_uiautomator = by_locator("androidUIAutomator")
+M.By.android_view_tag = by_locator("androidViewTag")
+M.By.android_data_matcher = by_locator("androidDataMatcher")
+M.By.android_view_matcher = by_locator("androidViewMatcher")
+M.By.ios_predicate = by_locator("iOSPredicateString")
+M.By.ios_class_chain = by_locator("iOSClassChain")
+M.By.image = by_locator("image")
+M.By.custom = by_locator("custom")
+
 -- Keys: mainstream Selenium's special-key constants — the W3C Unicode
 -- private-use code points (U+E000..U+E03D, W3C §17.4.2). Append one to a string
 -- or use Keys.chord(...) to build a modifier chord, then pass to send_keys. The
@@ -575,8 +590,14 @@ function WebDriver:forward() self:execute("goForward", {}) end
 function WebDriver:refresh() self:execute("refresh", {}) end
 
 -- elements (return an element id string)
+-- The {using, value} params for a locator, with the strategy passed through
+-- RAW. The engine normalizes inside execute, for the session it is talking to:
+-- browser rules against a browser, Appium's native strategies against a desktop
+-- driver. Pre-normalizing here through the session-unaware native.by_locator
+-- destroyed By.id into a CSS selector before the engine could see what kind of
+-- driver this is, which is exactly what broke desktop.
 local function decode_by(by, value)
-  return json.decode(native.by_locator(by, value))
+  return { using = by, value = value }
 end
 
 -- Normalize find args to (strategy, value). The Selenium 4.x shape is a single

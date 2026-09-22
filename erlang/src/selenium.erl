@@ -1198,9 +1198,15 @@ ack(Raw) -> decode(Raw).
 %% ---- pure engine helpers ----
 route(Command) -> selenium_nif:route(to_bin(Command)).
 error_code(W3cError) -> selenium_nif:error_code(to_bin(W3cError)).
-locator(By, Value) -> selenium_nif:by_locator(to_bin(By), to_bin(Value)).
+%% The {using, value} params for a locator, with the strategy passed through
+%% RAW. The engine normalizes inside execute, for the session it is talking to:
+%% browser rules against a browser, Appium's native strategies against a desktop
+%% driver. Pre-normalizing here through the session-unaware by_locator destroyed
+%% by:id/1 into a CSS selector before the engine could see what kind of driver
+%% this is, which is exactly what broke desktop.
+locator(By, Value) -> encode(decode_by(By, Value)).
 
-decode_by(By, Value) -> decode(selenium_nif:by_locator(to_bin(By), to_bin(Value))).
+decode_by(By, Value) -> #{<<"using">> => to_bin(By), <<"value">> => to_bin(Value)}.
 
 to_bin(B) when is_binary(B) -> B;
 to_bin(L) when is_list(L) -> unicode:characters_to_binary(L);

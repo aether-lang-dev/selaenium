@@ -213,6 +213,15 @@ instance Exception WebDriverError
 
 -- | Locator strategies.
 data By = ById | ByName | ByCss | ByClassName | ByTagName | ByLinkText | ByPartialLinkText | ByXpath
+        -- Desktop / native strategies (WinAppDriver, Appium). Against a native
+        -- driver the engine does NOT rewrite ById/ByName/ByClassName to CSS:
+        -- they are the driver's own UIA AutomationId / Name / ClassName, and a
+        -- native driver has no CSS engine. So the constructors above keep
+        -- working on desktop; these add the strategies that only exist there.
+        -- Values match Appium's AppiumBy.
+        | ByAccessibilityId | ByAndroidUIAutomator | ByAndroidViewTag
+        | ByAndroidDataMatcher | ByAndroidViewMatcher | ByIOSPredicate
+        | ByIOSClassChain | ByImage | ByCustom
 
 byString :: By -> String
 byString ById = "id"
@@ -223,6 +232,15 @@ byString ByTagName = "tag name"
 byString ByLinkText = "link text"
 byString ByPartialLinkText = "partial link text"
 byString ByXpath = "xpath"
+byString ByAccessibilityId = "accessibility id"
+byString ByAndroidUIAutomator = "androidUIAutomator"
+byString ByAndroidViewTag = "androidViewTag"
+byString ByAndroidDataMatcher = "androidDataMatcher"
+byString ByAndroidViewMatcher = "androidViewMatcher"
+byString ByIOSPredicate = "iOSPredicateString"
+byString ByIOSClassChain = "iOSClassChain"
+byString ByImage = "image"
+byString ByCustom = "custom"
 
 -- | A locator carrying a (strategy, value) pair — what the @by*@ smart
 -- constructors return and what 'findElement' takes (Selenium 4.x one-arg find).
@@ -234,7 +252,9 @@ data Locator = Locator
 
 -- Smart constructors mirroring Java's @By.id("x")@ etc. Each returns a
 -- 'Locator'. @byClassName@ carries the W3C @"class name"@ strategy.
-byId, byName, byCss, byClassName, byTagName, byLinkText, byPartialLinkText, byXpath
+byId, byName, byCss, byClassName, byTagName, byLinkText, byPartialLinkText, byXpath,
+  byAccessibilityId, byAndroidUIAutomator, byAndroidViewTag, byAndroidDataMatcher,
+  byAndroidViewMatcher, byIOSPredicate, byIOSClassChain, byImage, byCustom
   :: String -> Locator
 byId = Locator (byString ById)
 byName = Locator (byString ByName)
@@ -244,6 +264,15 @@ byTagName = Locator (byString ByTagName)
 byLinkText = Locator (byString ByLinkText)
 byPartialLinkText = Locator (byString ByPartialLinkText)
 byXpath = Locator (byString ByXpath)
+byAccessibilityId = Locator (byString ByAccessibilityId)
+byAndroidUIAutomator = Locator (byString ByAndroidUIAutomator)
+byAndroidViewTag = Locator (byString ByAndroidViewTag)
+byAndroidDataMatcher = Locator (byString ByAndroidDataMatcher)
+byAndroidViewMatcher = Locator (byString ByAndroidViewMatcher)
+byIOSPredicate = Locator (byString ByIOSPredicate)
+byIOSClassChain = Locator (byString ByIOSClassChain)
+byImage = Locator (byString ByImage)
+byCustom = Locator (byString ByCustom)
 
 w3cElementKey :: String
 w3cElementKey = "element-6066-11e4-a52e-4f735466cecf"
@@ -260,9 +289,27 @@ route = N.selRoute
 errorCode :: String -> IO Int
 errorCode = N.selErrorCode
 
--- | The @{"using","value"}@ locator JSON for a (by, value) pair.
+-- | The @{"using","value"}@ locator JSON for a (by, value) pair, with the
+-- strategy passed through RAW. The engine normalizes inside @execute@, for the
+-- session it is talking to: browser rules against a browser, Appium's native
+-- strategies against a desktop driver. Pre-normalizing here through the
+-- session-unaware @by_locator@ destroyed 'byId' into a CSS selector before the
+-- engine could see what kind of driver this is, which is what broke desktop.
 locator :: By -> String -> IO String
-locator by value = N.selByLocator (byString by) value
+locator by value = pure (rawLocator (byString by) value)
+
+-- | @{"using":..,"value":..}@ with both fields JSON-escaped.
+rawLocator :: String -> String -> String
+rawLocator strategy value =
+  "{\"using\":" ++ jstr strategy ++ ",\"value\":" ++ jstr value ++ "}"
+  where
+    jstr v = '"' : concatMap esc v ++ "\""
+    esc '"'  = "\\\""
+    esc '\\' = "\\\\"
+    esc '\n' = "\\n"
+    esc '\r' = "\\r"
+    esc '\t' = "\\t"
+    esc c    = [c]
 
 -- | Build a modifier chord string (e.g. @keysChord "\xE009" "a"@ for Ctrl+A):
 -- the modifier, the text, then a trailing NULL key that releases held
@@ -378,7 +425,7 @@ refresh d = execute_ d "refresh" "{}"
 -- the response carries no element reference.
 findElement :: WebDriver -> Locator -> IO String
 findElement d (Locator strategy value) = do
-  loc <- N.selByLocator strategy value
+  let loc = rawLocator strategy value
   v <- execute d "findElement" loc
   case extractElementId v of
     Just eid -> pure eid
@@ -388,7 +435,7 @@ findElement d (Locator strategy value) = do
 -- (possibly empty).
 findElements :: WebDriver -> Locator -> IO [String]
 findElements d (Locator strategy value) = do
-  loc <- N.selByLocator strategy value
+  let loc = rawLocator strategy value
   v <- execute d "findElements" loc
   pure (extractElementIds v)
 
@@ -396,7 +443,7 @@ findElements d (Locator strategy value) = do
 -- @findChildElement@).
 findChildElement :: WebDriver -> String -> Locator -> IO String
 findChildElement d eid (Locator strategy value) = do
-  loc <- N.selByLocator strategy value
+  let loc = rawLocator strategy value
   -- The engine's findChildElement route takes the parent id plus the locator's
   -- using/value; merge the parent id into the locator object.
   v <- execute d "findChildElement" (mergeId eid loc)
@@ -408,7 +455,7 @@ findChildElement d eid (Locator strategy value) = do
 -- @findChildElements@).
 findChildElements :: WebDriver -> String -> Locator -> IO [String]
 findChildElements d eid (Locator strategy value) = do
-  loc <- N.selByLocator strategy value
+  let loc = rawLocator strategy value
   v <- execute d "findChildElements" (mergeId eid loc)
   pure (extractElementIds v)
 
@@ -432,7 +479,7 @@ getShadowRoot d eid = do
 -- scoped to the shadow tree via the shadow id). Returns the element id.
 shadowFindElement :: WebDriver -> ShadowRoot -> Locator -> IO String
 shadowFindElement d (ShadowRoot sid) (Locator strategy value) = do
-  loc <- N.selByLocator strategy value
+  let loc = rawLocator strategy value
   v <- execute d "findElementFromShadowRoot" (mergeId sid loc)
   case extractElementId v of
     Just cid -> pure cid
@@ -442,7 +489,7 @@ shadowFindElement d (ShadowRoot sid) (Locator strategy value) = do
 -- (@findElementsFromShadowRoot@). Returns the list of element ids.
 shadowFindElements :: WebDriver -> ShadowRoot -> Locator -> IO [String]
 shadowFindElements d (ShadowRoot sid) (Locator strategy value) = do
-  loc <- N.selByLocator strategy value
+  let loc = rawLocator strategy value
   v <- execute d "findElementsFromShadowRoot" (mergeId sid loc)
   pure (extractElementIds v)
 

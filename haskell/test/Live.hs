@@ -32,7 +32,12 @@ main = do
   ec <- errorCode "no such element"
   check (ec == 17) "errorCode no such element"
   loc <- locator ById "main"
-  check ("*[id=" `isInfixOf` loc) "locator id rewrite"
+  -- locator hands the strategy to the engine RAW; normalization happens in the
+  -- engine, inside execute, where the session is known. AGENTS.md: "A test
+  -- asserting By.id(...) yields CSS is testing the wrong layer." Asserting
+  -- "*[id=" here pinned the binding to browser-only behaviour, which is why
+  -- desktop locators could not survive the trip.
+  check (loc == "{\"using\":\"id\",\"value\":\"main\"}") "locator passes the strategy through raw"
   -- By factory (Selenium 4.x shape): a smart constructor returns a Locator.
   check (locStrategy (byId "hdr") == "id") "byId strategy"
   check (locStrategy (byClassName "b") == "class name") "byClassName -> class name"
