@@ -326,7 +326,7 @@ was affected, and the runtime leg is what caught it.
 
 The retest script now runs a **discrimination self-test** before it will report
 anything: it must match a known-folded line and reject a known-good one, or it
-aborts rather than print a verdict. This is the rule already in `LLM.md` —
+aborts rather than print a verdict. This is the rule already in `AGENTS.md` —
 *a probe that cannot produce a negative is not measuring anything* — applied to
 a probe that could not produce a positive.
 
