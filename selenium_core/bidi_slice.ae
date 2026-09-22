@@ -36,7 +36,35 @@ main() {
     value, _v = json.object_get(parsed, "value")
     capsv, _cv = json.object_get(value, "capabilities")
     wsurlv, _w = json.object_get(capsv, "webSocketUrl")
-    if wsurlv == null { println("FAIL no webSocketUrl: ${body}"); driver.stop(dh); exit(1) }
+    if wsurlv == null {
+        // A box can have chromedriver and still have no Chrome — chromedriver
+        // resolves and launches, then refuses the session with "session not
+        // created / cannot find Chrome binary". That is the SAME "this box
+        // cannot run this test" condition as the driver check above, so it must
+        // skip green, not fail: otherwise the whole engine test node goes red on
+        // any box without Chrome and takes presubmit with it.
+        //
+        // Deliberately narrow. Only the auto-locate failure skips. Every other
+        // session-not-created — including a bad explicit SEL_CHROME_BINARY,
+        // which is user error, not an absent browser — stays a hard failure, so
+        // this cannot quietly swallow a real protocol regression.
+        errv, _ev = json.object_get(value, "error")
+        msgv, _mv = json.object_get(value, "message")
+        ecode = ""
+        emsg = ""
+        if errv != null { ecode, _e1 = json.get_string(errv) }
+        if msgv != null { emsg, _e2 = json.get_string(msgv) }
+        if string.equals(ecode, "session not created") == 1 {
+            if string.index_of(emsg, "cannot find Chrome binary") >= 0 {
+                println("SKIPPED: chromedriver resolved but no Chrome binary on this box")
+                driver.stop(dh)
+                exit(0)
+            }
+        }
+        println("FAIL no webSocketUrl: ${body}")
+        driver.stop(dh)
+        exit(1)
+    }
     wsurl, _wu = json.get_string(wsurlv)
     println("  ok: newSession -> webSocketUrl")
 
