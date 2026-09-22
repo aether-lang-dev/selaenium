@@ -168,6 +168,15 @@ def _ensure_loaded() -> None:
     g["by_locator"] = _decl(
         "aether_sel_embed_by_locator", _CSTR, [ctypes.c_char_p, ctypes.c_char_p]
     )
+    # Session-aware By normalization: browser rules against a browser, Appium's
+    # native strategies against a desktop driver (WinAppDriver / Appium). The
+    # engine decides from the session; the binding just passes the handle.
+    g["by_locator_for"] = _decl(
+        "aether_sel_embed_by_locator_for", _CSTR,
+        [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_char_p],
+    )
+    g["is_native"] = _decl("aether_sel_embed_is_native", ctypes.c_int, [ctypes.c_void_p])
+    g["set_native"] = _decl("aether_sel_embed_set_native", None, [ctypes.c_void_p, ctypes.c_int])
     g["route"] = _decl("aether_sel_embed_route", _CSTR, [ctypes.c_char_p])
     g["build_request"] = _decl(
         "aether_sel_embed_build_request", _CSTR,

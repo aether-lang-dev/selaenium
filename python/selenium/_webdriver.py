@@ -36,6 +36,23 @@ class By:
     PARTIAL_LINK_TEXT = "partial link text"
     XPATH = "xpath"
 
+    # --- desktop / native strategies (WinAppDriver, Appium) -----------------
+    # Against a native driver the engine does NOT rewrite ID/NAME/CLASS_NAME to
+    # CSS: they are the driver's own properties (UIA AutomationId / Name /
+    # ClassName), and a native driver has no CSS engine. The same By constants
+    # above therefore keep working on desktop; these add the strategies that
+    # only exist there. Names and values match Appium's AppiumBy, so a script
+    # written against an Appium client reads the same here.
+    ACCESSIBILITY_ID = "accessibility id"
+    ANDROID_UIAUTOMATOR = "androidUIAutomator"
+    ANDROID_VIEWTAG = "androidViewTag"
+    ANDROID_DATA_MATCHER = "androidDataMatcher"
+    ANDROID_VIEW_MATCHER = "androidViewMatcher"
+    IOS_PREDICATE = "iOSPredicateString"
+    IOS_CLASS_CHAIN = "iOSClassChain"
+    IMAGE = "image"
+    CUSTOM = "custom"
+
 
 class WebDriverException(Exception):
     """Base for all remote-end errors, matching the Selenium/W3C error taxonomy.
@@ -407,13 +424,13 @@ class WebElement:
         raise NoSuchShadowRootException("no such shadow root")
 
     def find_element(self, by: str = By.ID, value: str | None = None) -> "WebElement":
-        loc = _decode_by(by, value)
+        loc = _decode_by(by, value, self._driver._handle)
         loc["id"] = self._id
         result = self._driver._execute("findChildElement", loc)
         return WebElement(self._driver, result[_W3C_ELEMENT_KEY])
 
     def find_elements(self, by: str = By.ID, value: str | None = None) -> list["WebElement"]:
-        loc = _decode_by(by, value)
+        loc = _decode_by(by, value, self._driver._handle)
         loc["id"] = self._id
         result = self._driver._execute("findChildElements", loc)
         return [WebElement(self._driver, e[_W3C_ELEMENT_KEY]) for e in result]
@@ -661,10 +678,23 @@ def _is_relative_by(by) -> bool:
     return hasattr(by, "_engine_query") and hasattr(by, "filters")
 
 
-def _decode_by(by: str, value: str) -> dict:
+def _decode_by(by: str, value: str, handle=None) -> dict:
     """Ask the engine for the {"using","value"} locator (shares the ONE By
-    normalization + CSS-escape path with every other binding)."""
-    raw = _native.take_string(_native.by_locator(_native.encode(by), _native.encode(value)))
+    normalization + CSS-escape path with every other binding).
+
+    Pass the session handle so the engine can apply the right rules: browser
+    normalization (id/name/class name -> CSS) against a browser, and Appium's
+    native strategies against a desktop driver, where those same strategies must
+    reach the wire intact. Without a handle the engine uses the browser rules,
+    which is what the old session-unaware call did."""
+    if handle is not None:
+        raw = _native.take_string(
+            _native.by_locator_for(handle, _native.encode(by), _native.encode(value))
+        )
+    else:
+        raw = _native.take_string(
+            _native.by_locator(_native.encode(by), _native.encode(value))
+        )
     return json.loads(raw)
 
 
@@ -793,13 +823,13 @@ class WebDriver:
             if not elements:
                 raise NoSuchElementException("no relative element found")
             return elements[0]
-        result = self._execute("findElement", _decode_by(by, value))
+        result = self._execute("findElement", _decode_by(by, value, self._handle))
         return WebElement(self, result[_W3C_ELEMENT_KEY])
 
     def find_elements(self, by: str = By.ID, value: str | None = None) -> list[WebElement]:
         if _is_relative_by(by):
             return self._find_relative_by(by)
-        result = self._execute("findElements", _decode_by(by, value))
+        result = self._execute("findElements", _decode_by(by, value, self._handle))
         return [WebElement(self, e[_W3C_ELEMENT_KEY]) for e in result]
 
     def _find_relative_by(self, relative_by) -> list[WebElement]:
