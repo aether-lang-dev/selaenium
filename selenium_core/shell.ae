@@ -181,7 +181,10 @@ _find(sp: ptr, sel: string) -> string {
     else { if string.starts_with(s, "#") == 1 { strategy = "id"; value = string.substring(s, 1, string.length(s)) }
     else { value = s } } } }
 
-    loc = selenium_core.by_locator(strategy, value)  // {"using":..,"value":..}
+    // Session-aware: browser rules against a browser, Appium's native
+    // strategies against a desktop driver. The shell/.side/REPL path therefore
+    // works against WinAppDriver with no change at the call site.
+    loc = selenium_core.by_locator_for(sp, strategy, value)  // {"using":..,"value":..}
     rc = selenium_core.execute(sp, "findElement", loc)
     if rc != 0 { return "" }
     v = selenium_core.last_value_of(sp)

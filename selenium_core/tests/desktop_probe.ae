@@ -211,6 +211,17 @@ delete_handler(req: ptr, res: ptr, ud: ptr) {
     _send(res, 200, "{\"value\":null}")
 }
 
+// POST /browser-session — the CONTROL. Returns a BROWSER's newSession
+// response (browserName present, platformName linux). Auto-detection must NOT
+// flip this session into native mode; if it did, By.id/By.name would silently
+// break for every browser user of every binding, which is the one outcome worse
+// than not supporting desktop at all.
+browser_session_handler(req: ptr, res: ptr, ud: ptr) {
+    _u = ud
+    _b = http.request_body(req)
+    _send(res, 200, "{\"value\":{\"sessionId\":\"browser-1\",\"capabilities\":{\"browserName\":\"chrome\",\"browserVersion\":\"141.0\",\"platformName\":\"linux\"}}}")
+}
+
 main() {
     fw = spec.init()
     st = seen_new()
@@ -234,6 +245,25 @@ main() {
     }
     port = http.http_server_port(server)
     base = "http://127.0.0.1:${port}"
+
+    // A SECOND endpoint that answers newSession like a BROWSER. The control for
+    // auto-detection: same engine, same code path, only the driver's answer
+    // differs. Standing up a real second server (rather than asserting on a
+    // hand-made string) keeps the control on the same footing as the subject.
+    bserver = http.server_create(0)
+    if bserver == 0 {
+        println("desktop probe: FAIL could not create browser control server")
+        return 1
+    }
+    _bb = http.server_bind(bserver, "127.0.0.1", 0)
+    http.server_post(bserver, "/session", browser_session_handler, st)
+    bberr = http.server_start_background(bserver)
+    if string.length(bberr) > 0 {
+        println("desktop probe: FAIL ${bberr}")
+        return 1
+    }
+    bport = http.http_server_port(bserver)
+    bbase = "http://127.0.0.1:${bport}"
 
     sp = selenium_core.session_new(base)
 
@@ -305,45 +335,101 @@ main() {
         }
     }
 
-    // --- 4. the one real gap ----------------------------------------------
-    // By-normalization is the only browser-specific thing in the path. For a
-    // browser, rewriting id/name/class name to CSS is correct and is what
-    // Selenium itself does. For a desktop driver it is fatal: "name" is the UIA
-    // Name property, "class name" is the UIA ClassName, and there is no CSS
-    // engine to receive the rewrite.
-    //
-    // These assertions pin the CURRENT behaviour deliberately. They are not a
-    // wish-list: if by_locator is ever made desktop-aware, they fail loudly and
-    // point whoever changed it at this file, which is the right outcome.
-    spec.describe(fw, "the one real gap: By-normalization is browser-specific") {
-        spec.it("\"name\" is rewritten to CSS, which a desktop driver rejects") callback {
-            loc = selenium_core.by_locator("name", "Seven")
-            spec.assert_contains(loc, "css selector", "engine currently emits css selector")
-            rc = selenium_core.execute(sp, "findElement", loc)
-            spec.assert_not_eq(rc, 0, "the desktop driver rejects it")
-            spec.assert_str_eq(seen.using, "css selector", "what actually reached the wire")
-            spec.assert_contains(selenium_core.last_error_of(sp), "css selector is not supported",
-                "driver's reason")
+    // --- 4. desktop mode: the By-normalization that used to be the gap -----
+    // by_locator rewrites id/name/class name to CSS. Correct for a browser and
+    // what Selenium itself does; fatal for a desktop driver, where "name" is
+    // the UIA Name property, "class name" is the UIA ClassName, and there is no
+    // CSS engine. The engine now has a desktop mode, detected from the
+    // newSession response, and by_locator_for dispatches on it. The
+    // compatibility target is Appium's extended locator set — what AppiumBy
+    // puts on the wire — so a caller who knows Appium finds what they expect.
+    spec.describe(fw, "desktop mode is detected, not configured") {
+        spec.it("newSession against a native driver flips the session to native") callback {
+            spec.assert_eq(selenium_core.session_is_native(sp), 1, "detected from capabilities")
         }
-        spec.it("the SAME lookup works when the strategy is passed natively") callback {
-            // Identical intent, expressed as the native strategy: this is what a
-            // desktop-aware By-normalization would have to produce.
-            loc = selenium_core.by_locator("name", "Seven")
-            _unused = loc
-            native = "{\"using\":\"name\",\"value\":\"Seven\"}"
-            rc = selenium_core.execute(sp, "findElement", native)
-            spec.assert_eq(rc, 0, "native name findElement rc")
-            spec.assert_str_eq(seen.using, "name", "native strategy on the wire")
+    }
+
+    spec.describe(fw, "desktop By-normalization (Appium strategy set)") {
+        spec.it("\"name\" now reaches the wire as the native Name property") callback {
+            loc = selenium_core.by_locator_for(sp, "name", "Seven")
+            spec.assert_contains(loc, "\"using\":\"name\"", "native, not css selector")
+            rc = selenium_core.execute(sp, "findElement", loc)
+            spec.assert_eq(rc, 0, "findElement rc")
+            spec.assert_str_eq(seen.using, "name", "what reached the wire")
             spec.assert_contains(selenium_core.last_value_of(sp), "e-num7", "element returned")
         }
-        spec.it("\"id\" and \"class name\" have the same browser-shaped rewrite") callback {
-            spec.assert_contains(selenium_core.by_locator("id", "num7Button"), "css selector", "id -> css")
-            spec.assert_contains(selenium_core.by_locator("class name", "Button"), "css selector", "class name -> css")
-            // accessibility id is the strategy that already works today, and is
-            // what a binding should use against a desktop driver until/unless
-            // by_locator learns a desktop mode.
-            spec.assert_contains(selenium_core.by_locator("accessibility id", "num7Button"),
-                "accessibility id", "accessibility id passes through")
+        spec.it("\"id\" and \"class name\" pass through natively too") callback {
+            spec.assert_contains(selenium_core.by_locator_for(sp, "id", "num7Button"),
+                "\"using\":\"id\"", "id native")
+            spec.assert_contains(selenium_core.by_locator_for(sp, "class name", "Button"),
+                "\"using\":\"class name\"", "class name native")
+            spec.assert_contains(selenium_core.by_locator_for(sp, "className", "Button"),
+                "\"using\":\"class name\"", "className alias -> wire value")
+        }
+        spec.it("accessibility id still works, by alias and by wire value") callback {
+            spec.assert_contains(selenium_core.by_locator_for(sp, "accessibility id", "num7Button"),
+                "\"using\":\"accessibility id\"", "wire value")
+            spec.assert_contains(selenium_core.by_locator_for(sp, "accessibilityId", "num7Button"),
+                "\"using\":\"accessibility id\"", "AppiumBy-shaped alias")
+        }
+        spec.it("the platform-specific AppiumBy strategies map to their wire values") callback {
+            spec.assert_contains(selenium_core.by_locator_for(sp, "androidUIAutomator", "new UiSelector()"),
+                "-android uiautomator", "androidUIAutomator")
+            spec.assert_contains(selenium_core.by_locator_for(sp, "iOSPredicateString", "name == 'Seven'"),
+                "-ios predicate string", "iOSPredicateString")
+            spec.assert_contains(selenium_core.by_locator_for(sp, "iOSClassChain", "**/XCUIElementTypeButton"),
+                "-ios class chain", "iOSClassChain")
+            spec.assert_contains(selenium_core.by_locator_for(sp, "image", "iVBORw0KGgo="), "-image", "image")
+        }
+        spec.it("xpath is unchanged in both modes") callback {
+            spec.assert_contains(selenium_core.by_locator_for(sp, "xpath", "//Button[@Name='Seven']"),
+                "\"using\":\"xpath\"", "native xpath")
+            spec.assert_contains(selenium_core.by_locator("xpath", "//Button[@Name='Seven']"),
+                "\"using\":\"xpath\"", "browser xpath")
+        }
+        spec.it("asking for css against a native driver still fails honestly") callback {
+            // Not a bug: the caller asked for CSS and a native driver has none.
+            // The alias is still normalized so the error names a real strategy.
+            loc = selenium_core.by_locator_for(sp, "css", "#num7Button")
+            spec.assert_contains(loc, "css selector", "alias normalized")
+            rc = selenium_core.execute(sp, "findElement", loc)
+            spec.assert_not_eq(rc, 0, "driver rejects it")
+            spec.assert_contains(selenium_core.last_error_of(sp), "css selector is not supported", "reason")
+        }
+    }
+
+    // --- 4b. THE CONTROL: browser sessions must be untouched ---------------
+    // A desktop mode that also changed browser behaviour would be a far worse
+    // bug than the one it fixes — By.id/By.name silently breaking for every
+    // browser user of all 28 bindings. Prove the detection does not flip on a
+    // browser's newSession response, and that browser normalization is byte-for
+    // -byte what it always was.
+    spec.describe(fw, "CONTROL: a browser session is unaffected") {
+        spec.it("a browser newSession does NOT flip to native") callback {
+            bp = selenium_core.session_new(bbase)
+            caps = "{\"capabilities\":{\"alwaysMatch\":{\"browserName\":\"chrome\"}}}"
+            rc = selenium_core.execute(bp, "newSession", caps)
+            spec.assert_eq(rc, 0, "browser newSession rc")
+            spec.assert_str_eq(selenium_core.session_id_of(bp), "browser-1", "browser session id")
+            spec.assert_eq(selenium_core.session_is_native(bp), 0, "stays browser")
+            selenium_core.session_free(bp)
+        }
+        spec.it("browser By-normalization is unchanged (by_locator, ABI-stable)") callback {
+            spec.assert_contains(selenium_core.by_locator("id", "q"), "css selector", "id -> css")
+            spec.assert_contains(selenium_core.by_locator("name", "q"), "css selector", "name -> css")
+            spec.assert_contains(selenium_core.by_locator("class name", "q"), "css selector", "class name -> css")
+            spec.assert_contains(selenium_core.by_locator("css", "#q"), "css selector", "css alias")
+        }
+        spec.it("by_locator_for on a BROWSER session uses the browser rules") callback {
+            bp2 = selenium_core.session_new(bbase)
+            spec.assert_eq(selenium_core.session_is_native(bp2), 0, "browser by default")
+            spec.assert_contains(selenium_core.by_locator_for(bp2, "name", "q"), "css selector",
+                "browser session still gets the CSS rewrite")
+            selenium_core.session_free(bp2)
+        }
+        spec.it("a null session falls back to the browser rules") callback {
+            spec.assert_str_eq(selenium_core.by_locator_for(null, "name", "q"),
+                selenium_core.by_locator("name", "q"), "null == by_locator")
         }
     }
 

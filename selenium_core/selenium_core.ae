@@ -37,6 +37,12 @@ struct Session {
     last_error: string      // human-readable error / transport-failure message
     ca_file: string         // TLS: pin the peer cert against THIS CA (""=system store)
     insecure: int           // TLS: 1 = skip verification (self-signed dev Grid); 0 = verify
+    // --- desktop/native mode. 0 = browser (default), 1 = a native automation
+    // endpoint: WinAppDriver, appium-windows-driver, appium-mac2-driver, and
+    // the mobile drivers, all of which speak W3C WebDriver but have no CSS
+    // engine. Set explicitly via session_set_native, or detected from the
+    // newSession response (see _detect_native). Only by_locator_for reads it.
+    native: int
     // --- Runner Phase 0: opt-in structured trace + named timers (shared by all
     // bindings). trace_on=1 makes execute() append a JSON Event per command to
     // trace_json; timers_json accumulates named spans. Both are drained + reset
@@ -72,6 +78,7 @@ session_new(base_url: string) -> ptr {
     s.last_error = ""
     s.ca_file = ""
     s.insecure = 0
+    s.native = 0
     s.trace_on = 0
     s.trace_json = ""
     s.trace_count = 0
@@ -111,6 +118,25 @@ session_free(sp: ptr) {
 // drains the JSON. Off by default; a disabled session pays one int-compare.
 
 // session_set_trace(sp, on) — 1 enables per-command Event recording, 0 disables.
+// Desktop/native mode: 1 = the remote end is a native automation driver
+// (WinAppDriver / Appium), 0 = a browser. Changes ONLY By-normalization, via
+// by_locator_for: in native mode id/name/class name are the driver's own
+// locator strategies and must reach the wire intact, where a browser wants them
+// rewritten to CSS. Normally you do not call this — newSession detects it — but
+// it is here for an endpoint that does not advertise itself clearly.
+session_set_native(sp: ptr, on: int) {
+    if sp == null { return }
+    s = sp as *Session
+    s.native = on
+}
+
+// 1 when this session is in desktop/native mode. Valid after newSession.
+session_is_native(sp: ptr) -> int {
+    if sp == null { return 0 }
+    s = sp as *Session
+    return s.native
+}
+
 session_set_trace(sp: ptr, on: int) {
     if sp == null { return }
     s = sp as *Session
@@ -533,6 +559,49 @@ body_without_path_params(params: ptr, path_tmpl: string) -> string {
     return result
 }
 
+// _detect_native(s, value) — set desktop/native mode from the newSession
+// response capabilities, so a binding gets desktop By-normalization without
+// knowing it asked for it (the engine owns By-normalization; bindings carry no
+// protocol logic).
+//
+// The test is deliberately asymmetric. A browser ALWAYS reports browserName in
+// its returned capabilities, so an absent browserName is necessary — but it is
+// not sufficient on its own, and we require a POSITIVE native signal too:
+// appium:automationName, or a platformName that is a native platform. The two
+// mistakes are not equally bad. Failing to detect a desktop session costs a
+// caller one explicit session_set_native(sp, 1); wrongly flipping a browser
+// session to native would silently break By.id/By.name for every browser user
+// of every binding. So we only flip on evidence.
+_detect_native(s: *Session, value: ptr) {
+    caps, _cv = json.object_get(value, "capabilities")
+    if caps == null { return }
+    bn, _bv = json.object_get(caps, "browserName")
+    if bn != null {
+        bname, _bs = json.get_string(bn)
+        if string.length(bname) > 0 { return }       // a browser; leave mode alone
+    }
+    // Positive signal 1: an Appium automation backend.
+    an, _av = json.object_get(caps, "appium:automationName")
+    if an == null { an, _av2 = json.object_get(caps, "automationName") }
+    if an != null {
+        aname, _as = json.get_string(an)
+        if string.length(aname) > 0 { s.native = 1  return }
+    }
+    // Positive signal 2: a native platformName. "linux"/"any" are NOT in this
+    // list — they are what a browser-only Grid node reports.
+    pn, _pv = json.object_get(caps, "platformName")
+    if pn == null { return }
+    pname, _ps = json.get_string(pn)
+    lower = string.to_lower(pname)
+    if string.equals(lower, "windows") == 1 { s.native = 1  return }
+    if string.equals(lower, "mac") == 1 { s.native = 1  return }
+    if string.equals(lower, "macos") == 1 { s.native = 1  return }
+    if string.equals(lower, "ios") == 1 { s.native = 1  return }
+    if string.equals(lower, "android") == 1 { s.native = 1  return }
+    if string.equals(lower, "tizen") == 1 { s.native = 1  return }
+    if string.equals(lower, "roku") == 1 { s.native = 1  return }
+}
+
 // Decode a W3C response body: the top-level object has a `value` field. If
 // `value` is an object with a string `error` field, it's a failure — set the
 // decoded code + message. Otherwise `value` is the success payload, stored as
@@ -570,13 +639,15 @@ decode_response(sp: ptr, name: string, resp_body: string) -> int {
             }
         }
     }
-    // Success. Capture session id on newSession.
+    // Success. Capture session id on newSession, and work out whether the
+    // remote end is a browser or a native automation driver.
     if name == "newSession" {
         sidval, _si = json.object_get(value, "sessionId")
         if sidval != null {
             sid, _sis = json.get_string(sidval)
             s.session_id = sid
         }
+        _detect_native(s, value)
     }
     // Stash the value payload as JSON text.
     vtext, _vt = json.stringify(value)
@@ -890,6 +961,74 @@ by_locator(strategy: string, value: string) -> string {
     out, _err = json.encode(obj)
     json.free(obj)
     return out
+}
+
+// by_locator_native(strategy, value) — By-normalization for a NATIVE automation
+// driver (WinAppDriver, appium-windows-driver, appium-mac2-driver, and the
+// mobile drivers). The compatibility target is Appium's extended locator set —
+// what AppiumBy/MobileBy put on the wire in the existing clients — so a caller
+// that knows Appium finds the strategies where it expects them.
+//
+// The ONE structural difference from the browser mapping: "id", "name" and
+// "class name" are NOT rewritten to CSS. On a native driver they are the
+// driver's own properties — the UIA AutomationId, the UIA Name, the UIA
+// ClassName (android resource-id / widget class, XCUIElementType) — and a
+// native driver has no CSS engine to receive a rewrite. Rewriting them is
+// exactly what makes a browser client fail against a desktop driver.
+//
+// Friendly camelCase aliases are accepted alongside the wire values so a
+// binding can expose AppiumBy-shaped names without carrying a mapping table —
+// the engine owns By-normalization, bindings carry no protocol logic.
+by_locator_native(strategy: string, value: string) -> string {
+    using = strategy
+    match (strategy) {
+        // --- the strategies a browser mapping would have destroyed ----------
+        "id" -> { }                        // native id, NOT *[id="..."]
+        "name" -> { }                      // native Name, NOT *[name="..."]
+        "class name" -> { }                // native ClassName, NOT .foo
+        "className" -> { using = "class name" }
+        // --- Appium's accessibility id (the single most used desktop strategy)
+        "accessibilityId" -> { using = "accessibility id" }
+        "accessibility id" -> { }
+        // --- platform-specific strategies, wire values are already correct ---
+        "androidUIAutomator" -> { using = "-android uiautomator" }
+        "androidViewTag" -> { using = "-android viewtag" }
+        "androidDataMatcher" -> { using = "-android datamatcher" }
+        "androidViewMatcher" -> { using = "-android viewmatcher" }
+        "iOSPredicateString" -> { using = "-ios predicate string" }
+        "iOSClassChain" -> { using = "-ios class chain" }
+        "image" -> { using = "-image" }
+        "custom" -> { using = "-custom" }
+        // --- the alias normalization the browser mapping also does -----------
+        // A native driver will reject css selector, which is correct and
+        // honest: the caller asked for CSS. We still normalize the alias so the
+        // error names the real strategy rather than an invalid `using`.
+        "css" -> { using = "css selector" }
+        _ -> {
+            // xpath, accessibility id, -ios predicate string, -android
+            // uiautomator, link text, tag name, and any strategy a driver
+            // invents pass through unchanged — those ARE the wire values.
+        }
+    }
+    obj = json.obj()
+    _n1 = json.set(obj, "using", json.str(using))
+    _n2 = json.set(obj, "value", json.str(value))
+    out, _nerr = json.encode(obj)
+    json.free(obj)
+    return out
+}
+
+// by_locator_for(sp, strategy, value) — the session-aware entry point, and the
+// one a binding should call. Dispatches to the native mapping when the session
+// is a desktop/native one and to the browser mapping otherwise, so the SAME
+// caller code works against chromedriver and WinAppDriver. A null session (or a
+// browser session) behaves exactly like by_locator, which is unchanged and
+// stays for ABI compatibility.
+by_locator_for(sp: ptr, strategy: string, value: string) -> string {
+    if sp == null { return by_locator(strategy, value) }
+    s = sp as *Session
+    if s.native == 1 { return by_locator_native(strategy, value) }
+    return by_locator(strategy, value)
 }
 
 // Minimal CSS identifier escape: prefix a leading digit and escape the
