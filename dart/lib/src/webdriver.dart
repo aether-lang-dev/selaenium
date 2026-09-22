@@ -46,6 +46,22 @@ class By {
   static By partialLinkText(String value) => By('partial link text', value);
   static By xpath(String value) => By('xpath', value);
 
+  // --- desktop / native strategies (WinAppDriver, Appium) -----------------
+  // Against a native driver the engine does NOT rewrite id/name/className to
+  // CSS: they are the driver's own UIA AutomationId / Name / ClassName, and a
+  // native driver has no CSS engine. So the factories above keep working on
+  // desktop; these add the strategies that only exist there. Values match
+  // Appium's AppiumBy.
+  static By accessibilityId(String value) => By('accessibility id', value);
+  static By androidUIAutomator(String value) => By('androidUIAutomator', value);
+  static By androidViewTag(String value) => By('androidViewTag', value);
+  static By androidDataMatcher(String value) => By('androidDataMatcher', value);
+  static By androidViewMatcher(String value) => By('androidViewMatcher', value);
+  static By iOSPredicate(String value) => By('iOSPredicateString', value);
+  static By iOSClassChain(String value) => By('iOSClassChain', value);
+  static By image(String value) => By('image', value);
+  static By custom(String value) => By('custom', value);
+
   @override
   String toString() => 'By.$strategy: $value';
 }
@@ -125,8 +141,17 @@ String locator(String by, String value) => _withCStr(
     (b) => _withCStr(value,
         (v) => Native.instance.takeString(Native.instance.byLocator(b, v))));
 
-Map<String, dynamic> _decodeBy(By by) =>
-    jsonDecode(locator(by.strategy, by.value)) as Map<String, dynamic>;
+/// Ask the ENGINE for the locator, passing the session handle so it applies the
+/// right rules: browser normalization (id/name/class name -> CSS) against a
+/// browser, and Appium's native strategies against a desktop driver, where those
+/// same strategies must reach the wire intact — a native driver has no CSS
+/// engine.
+Map<String, dynamic> _decodeBy(ffi.Pointer<ffi.Void> handle, By by) => _withCStr(
+    by.strategy,
+    (b) => _withCStr(
+        by.value,
+        (v) => jsonDecode(Native.instance
+            .takeString(Native.instance.byLocatorFor(handle, b, v))))) as Map<String, dynamic>;
 
 /// The element operations the convenience tier ([Select], [Actions]) relies on.
 /// [WebElement] implements it; a test fake can too, so those helpers are
@@ -226,7 +251,7 @@ class WebElement implements ElementLike {
   /// Find the first descendant matching [by], scoped to this element (W3C
   /// findElementFromElement). Mirrors [WebDriver.findElement].
   WebElement findElement(By by) {
-    final r = _exec('findChildElement', _decodeBy(by)) as Map<String, dynamic>;
+    final r = _exec('findChildElement', _decodeBy(_driver.sessionHandle, by)) as Map<String, dynamic>;
     return WebElement(_driver, r[w3cElementKey] as String);
   }
 
@@ -234,7 +259,7 @@ class WebElement implements ElementLike {
   /// findElementsFromElement). Mirrors [WebDriver.findElements].
   @override
   List<WebElement> findElements(By by) {
-    final r = _exec('findChildElements', _decodeBy(by)) as List<dynamic>;
+    final r = _exec('findChildElements', _decodeBy(_driver.sessionHandle, by)) as List<dynamic>;
     return r
         .map((e) => WebElement(
             _driver, (e as Map<String, dynamic>)[w3cElementKey] as String))
@@ -274,7 +299,7 @@ class ShadowRoot {
   /// (`findElementFromShadowRoot`).
   WebElement findElement(By by) {
     final r =
-        _exec('findElementFromShadowRoot', _decodeBy(by)) as Map<String, dynamic>;
+        _exec('findElementFromShadowRoot', _decodeBy(_driver.sessionHandle, by)) as Map<String, dynamic>;
     return WebElement(_driver, r[w3cElementKey] as String);
   }
 
@@ -282,7 +307,7 @@ class ShadowRoot {
   /// (`findElementsFromShadowRoot`).
   List<WebElement> findElements(By by) {
     final r =
-        _exec('findElementsFromShadowRoot', _decodeBy(by)) as List<dynamic>;
+        _exec('findElementsFromShadowRoot', _decodeBy(_driver.sessionHandle, by)) as List<dynamic>;
     return r
         .map((e) => WebElement(
             _driver, (e as Map<String, dynamic>)[w3cElementKey] as String))
@@ -317,6 +342,18 @@ class Frame {
 
 class WebDriver implements DriverLike {
   ffi.Pointer<ffi.Void> _handle;
+
+  /// The raw session handle. Element- and shadow-root-scoped finds need it so
+  /// they can ask the engine for SESSION-AWARE By normalization (browser rules
+  /// against a browser, Appium's native strategies against a desktop driver).
+  ffi.Pointer<ffi.Void> get sessionHandle => _handle;
+
+  /// True when this session was detected as (or set to) a desktop/native driver.
+  bool get isNative => Native.instance.isNative(_handle) == 1;
+
+  /// Force desktop (true) or browser (false) By-normalization. Normally
+  /// unnecessary — the engine detects a native endpoint from newSession.
+  void setNative(bool on) => Native.instance.setNative(_handle, on ? 1 : 0);
 
   // The BiDi endpoint negotiated at newSession (webSocketUrl), and the channel
   // opened lazily over it on first `.bidi` use — a classic script never opens
@@ -549,12 +586,12 @@ class WebDriver implements DriverLike {
 
   // ---- elements ----
   WebElement findElement(By by) {
-    final r = execute('findElement', _decodeBy(by)) as Map<String, dynamic>;
+    final r = execute('findElement', _decodeBy(_handle, by)) as Map<String, dynamic>;
     return WebElement(this, r[w3cElementKey] as String);
   }
 
   List<WebElement> findElements(By by) {
-    final r = execute('findElements', _decodeBy(by)) as List<dynamic>;
+    final r = execute('findElements', _decodeBy(_handle, by)) as List<dynamic>;
     return r
         .map((e) => WebElement(
             this, (e as Map<String, dynamic>)[w3cElementKey] as String))

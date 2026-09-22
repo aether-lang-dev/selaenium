@@ -28,6 +28,22 @@ final class By
     public const LINK_TEXT = 'link text';
     public const PARTIAL_LINK_TEXT = 'partial link text';
     public const XPATH = 'xpath';
+
+    // --- desktop / native strategies (WinAppDriver, Appium) ---------------
+    // Against a native driver the engine does NOT rewrite ID/NAME/CLASS_NAME to
+    // CSS: they are the driver's own UIA AutomationId / Name / ClassName, and a
+    // native driver has no CSS engine. So the constants above keep working on
+    // desktop; these add the strategies that only exist there. Values match
+    // Appium's AppiumBy.
+    public const ACCESSIBILITY_ID = 'accessibility id';
+    public const ANDROID_UIAUTOMATOR = 'androidUIAutomator';
+    public const ANDROID_VIEWTAG = 'androidViewTag';
+    public const ANDROID_DATAMATCHER = 'androidDataMatcher';
+    public const ANDROID_VIEWMATCHER = 'androidViewMatcher';
+    public const IOS_PREDICATE = 'iOSPredicateString';
+    public const IOS_CLASS_CHAIN = 'iOSClassChain';
+    public const IMAGE = 'image';
+    public const CUSTOM = 'custom';
 }
 
 class WebDriverException extends \RuntimeException
@@ -257,11 +273,32 @@ final class WebDriver
         };
     }
 
-    /** The {"using","value"} locator array for a (by, value) pair (engine-normalized). */
+    /**
+     * The {"using","value"} locator array for a (by, value) pair, normalized by
+     * the ENGINE for THIS session: browser rules (id/name/class name -> CSS)
+     * against a browser, and Appium's native strategies against a desktop
+     * driver (WinAppDriver / Appium), where those same strategies must reach
+     * the wire intact because a native driver has no CSS engine.
+     */
     public function decodeBy(string $by, string $value): array
     {
-        $raw = Native::takeString($this->ffi, $this->ffi->aether_sel_embed_by_locator($by, $value));
+        $raw = Native::takeString(
+            $this->ffi,
+            $this->ffi->aether_sel_embed_by_locator_for($this->handle, $by, $value)
+        );
         return \json_decode($raw, true);
+    }
+
+    /** True when this session was detected as (or set to) a desktop/native driver. */
+    public function isNative(): bool
+    {
+        return $this->ffi->aether_sel_embed_is_native($this->handle) === 1;
+    }
+
+    /** Force desktop (true) or browser (false) By-normalization. */
+    public function setNative(bool $on): void
+    {
+        $this->ffi->aether_sel_embed_set_native($this->handle, $on ? 1 : 0);
     }
 
     // navigation

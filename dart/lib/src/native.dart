@@ -39,6 +39,11 @@ typedef _StrToStr = ffi.Pointer<pkgffi.Utf8> Function(ffi.Pointer<pkgffi.Utf8>);
 
 typedef _Str2ToStrC = ffi.Pointer<pkgffi.Utf8> Function(
     ffi.Pointer<pkgffi.Utf8>, ffi.Pointer<pkgffi.Utf8>);
+// Session-aware By normalization: handle first, then (strategy, value).
+typedef _HandleStr2ToStrC = ffi.Pointer<pkgffi.Utf8> Function(
+    ffi.Pointer<ffi.Void>, ffi.Pointer<pkgffi.Utf8>, ffi.Pointer<pkgffi.Utf8>);
+typedef _HandleStr2ToStr = ffi.Pointer<pkgffi.Utf8> Function(
+    ffi.Pointer<ffi.Void>, ffi.Pointer<pkgffi.Utf8>, ffi.Pointer<pkgffi.Utf8>);
 typedef _Str2ToStr = ffi.Pointer<pkgffi.Utf8> Function(
     ffi.Pointer<pkgffi.Utf8>, ffi.Pointer<pkgffi.Utf8>);
 
@@ -206,6 +211,11 @@ class Native {
   final _HandleToStr lastError;
   final _HandleToStr sessionId;
   final _Str2ToStr byLocator;
+  /// Browser rules against a browser, Appium's native strategies against a
+  /// desktop driver. The engine decides from the session; we pass the handle.
+  final _HandleStr2ToStr byLocatorFor;
+  final _HandleToInt isNative;
+  final _HandleIntToVoid setNative;
   final _StrToStr route;
   final _Str3ToStr buildRequest;
   final _StrToInt errorCode;
@@ -271,6 +281,12 @@ class Native {
             'aether_sel_embed_session_id'),
         byLocator = lib.lookupFunction<_Str2ToStrC, _Str2ToStr>(
             'aether_sel_embed_by_locator'),
+        byLocatorFor = lib.lookupFunction<_HandleStr2ToStrC, _HandleStr2ToStr>(
+            'aether_sel_embed_by_locator_for'),
+        isNative = lib.lookupFunction<_HandleToIntC, _HandleToInt>(
+            'aether_sel_embed_is_native'),
+        setNative = lib.lookupFunction<_HandleIntToVoidC, _HandleIntToVoid>(
+            'aether_sel_embed_set_native'),
         route =
             lib.lookupFunction<_StrToStrC, _StrToStr>('aether_sel_embed_route'),
         buildRequest = lib.lookupFunction<_Str3ToStrC, _Str3ToStr>(

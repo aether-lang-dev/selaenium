@@ -33,6 +33,12 @@ final class Native
         char* aether_sel_embed_last_error(void* h);
         char* aether_sel_embed_session_id(void* h);
         char* aether_sel_embed_by_locator(const char* strategy, const char* value);
+        /* Session-aware By normalization: browser rules against a browser,
+           Appium's native strategies against a desktop driver (WinAppDriver /
+           Appium). The engine decides from the session; we pass the handle. */
+        char* aether_sel_embed_by_locator_for(void* h, const char* strategy, const char* value);
+        int aether_sel_embed_is_native(void* h);
+        void aether_sel_embed_set_native(void* h, int on);
         char* aether_sel_embed_route(const char* name);
         char* aether_sel_embed_build_request(const char* name, const char* session_id, const char* params_json);
         int   aether_sel_embed_error_code(const char* w3c_error);
