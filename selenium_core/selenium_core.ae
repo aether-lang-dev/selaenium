@@ -441,6 +441,71 @@ execute(sp: ptr, name: string, params_json: string) -> int {
     return rc
 }
 
+// _is_find_command(name) — the six commands whose params carry a locator.
+_is_find_command(name: string) -> int {
+    if string.equals(name, "findElement") == 1 { return 1 }
+    if string.equals(name, "findElements") == 1 { return 1 }
+    if string.equals(name, "findChildElement") == 1 { return 1 }
+    if string.equals(name, "findChildElements") == 1 { return 1 }
+    if string.equals(name, "findElementFromShadowRoot") == 1 { return 1 }
+    if string.equals(name, "findElementsFromShadowRoot") == 1 { return 1 }
+    return 0
+}
+
+// _normalize_find_params(sp, name, params_json) — By-normalization at the ONE
+// place that has both halves: the session (browser or desktop) and the params.
+//
+// This is where By-normalization was always supposed to happen. AGENTS.md says
+// a binding's By.id("x") "carries {using: 'id'} and the ENGINE rewrites it",
+// but until now the engine only offered it as a SEPARATE call (by_locator),
+// which every binding had to make itself before calling execute. That pushed
+// work outward for no reason, and when desktop mode arrived it meant twenty
+// bindings each needed editing to reach it. Doing it here instead means a
+// binding can hand over the raw strategy and get correct normalization for
+// whatever kind of driver the session turned out to be — browser or desktop —
+// with no FFI call of its own and no session handle to thread.
+//
+// IDEMPOTENT, which is what makes the migration safe. A binding that still
+// pre-normalizes sends an already-normalized locator ("css selector",
+// "accessibility id", "xpath"): every one of those hits the pass-through arm
+// and comes back unchanged. So old and new bindings both work, and they can be
+// converted one at a time.
+//
+// Note the one thing this CANNOT undo: a binding that pre-normalizes through
+// the session-UNAWARE by_locator on a desktop session has already turned
+// By.id into a CSS selector, and the original strategy is gone. That is why
+// the bindings still want converting — not to make this work, but so desktop
+// locators survive the trip.
+_normalize_find_params(sp: ptr, name: string, params_json: string) -> string {
+    if _is_find_command(name) == 0 { return params_json }
+    root, perr = json.parse(params_json)
+    if string.length(perr) > 0 { return params_json }
+    uv, _uu = json.object_get(root, "using")
+    vv, _vv = json.object_get(root, "value")
+    if uv == null { json.free(root)  return params_json }
+    if vv == null { json.free(root)  return params_json }
+    using, _us = json.get_string(uv)
+    value, _vs = json.get_string(vv)
+    loc = by_locator_for(sp, using, value)
+    lroot, lerr = json.parse(loc)
+    if string.length(lerr) > 0 { json.free(root)  return params_json }
+    nu, _nu = json.object_get(lroot, "using")
+    nv, _nv = json.object_get(lroot, "value")
+    if nu == null { json.free(lroot)  json.free(root)  return params_json }
+    if nv == null { json.free(lroot)  json.free(root)  return params_json }
+    nus, _ns = json.get_string(nu)
+    nvs, _vs2 = json.get_string(nv)
+    json.free(lroot)
+    // Rewrite in place so every OTHER key the caller sent (the element id on a
+    // child find, the shadow-root id) survives untouched.
+    _su = json.set(root, "using", json.str(nus))
+    _sv = json.set(root, "value", json.str(nvs))
+    out, oerr = json.encode(root)
+    json.free(root)
+    if string.length(oerr) > 0 { return params_json }
+    return out
+}
+
 _execute_inner(sp: ptr, name: string, params_json: string) -> int {
     if sp == null {
         return -1
@@ -451,9 +516,14 @@ _execute_inner(sp: ptr, name: string, params_json: string) -> int {
     s.last_error_code = 0
     s.last_error = ""
 
+    // By-normalization lives here, not in the caller. See
+    // _normalize_find_params: idempotent, so a binding that still pre-normalizes
+    // is unaffected.
+    eff_params = _normalize_find_params(sp, name, params_json)
+
     // Build the wire request (shared, tested path). Returns
     // "METHOD\tPATH\tBODY" or "ERR\t<message>\t".
-    reqline = build_request(name, s.session_id, params_json)
+    reqline = build_request(name, s.session_id, eff_params)
     t1 = string.index_of(reqline, "\t")
     field0 = string.substring(reqline, 0, t1)
     if field0 == "ERR" {

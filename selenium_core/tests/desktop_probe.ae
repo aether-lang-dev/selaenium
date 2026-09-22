@@ -216,6 +216,22 @@ delete_handler(req: ptr, res: ptr, ud: ptr) {
 // flip this session into native mode; if it did, By.id/By.name would silently
 // break for every browser user of every binding, which is the one outcome worse
 // than not supporting desktop at all.
+// The browser control's findElement: records what actually reached the wire so
+// the centralization test can assert the BROWSER rules still apply there.
+browser_find_handler(req: ptr, res: ptr, ud: ptr) {
+    st = ud as *Seen
+    body = http.request_body(req)
+    root, perr = json.parse(body)
+    if string.length(perr) > 0 {
+        _w3c_err(res, 400, "invalid argument", "malformed locator")
+        return
+    }
+    st.using = string.concat(_json_str(root, "using"), "")
+    st.value = string.concat(_json_str(root, "value"), "")
+    json.free(root)
+    _send(res, 200, "{\"value\":{\"element-6066-11e4-a52e-4f735466cecf\":\"b-el\"}}")
+}
+
 browser_session_handler(req: ptr, res: ptr, ud: ptr) {
     _u = ud
     _b = http.request_body(req)
@@ -257,6 +273,7 @@ main() {
     }
     _bb = http.server_bind(bserver, "127.0.0.1", 0)
     http.server_post(bserver, "/session", browser_session_handler, st)
+    http.server_post(bserver, "/session/*", browser_find_handler, st)
     bberr = http.server_start_background(bserver)
     if string.length(bberr) > 0 {
         println("desktop probe: FAIL ${bberr}")
@@ -430,6 +447,48 @@ main() {
         spec.it("a null session falls back to the browser rules") callback {
             spec.assert_str_eq(selenium_core.by_locator_for(null, "name", "q"),
                 selenium_core.by_locator("name", "q"), "null == by_locator")
+        }
+    }
+
+    // --- 4c. CENTRALIZATION: the engine normalizes inside execute ----------
+    // By-normalization used to be a SEPARATE engine call every binding had to
+    // make for itself before calling execute. It now happens inside execute,
+    // which is the one place that has both halves — the session and the params.
+    // A binding can hand over the RAW strategy and get correct normalization
+    // for whatever kind of driver the session turned out to be, with no FFI
+    // call of its own and no handle to thread.
+    spec.describe(fw, "CENTRALIZED: execute normalizes the locator itself") {
+        spec.it("a RAW native strategy reaches a desktop driver intact") callback {
+            // Exactly what a binding would send with no pre-normalization.
+            rc = selenium_core.execute(sp, "findElement", "{\"using\":\"name\",\"value\":\"Seven\"}")
+            spec.assert_eq(rc, 0, "findElement rc")
+            spec.assert_str_eq(seen.using, "name", "engine kept the native strategy")
+            spec.assert_contains(selenium_core.last_value_of(sp), "e-num7", "element returned")
+        }
+        spec.it("a RAW browser strategy is still rewritten to CSS on a browser") callback {
+            bp = selenium_core.session_new(bbase)
+            caps = "{\"capabilities\":{\"alwaysMatch\":{\"browserName\":\"chrome\"}}}"
+            _rc0 = selenium_core.execute(bp, "newSession", caps)
+            rc = selenium_core.execute(bp, "findElement", "{\"using\":\"id\",\"value\":\"hdr\"}")
+            spec.assert_eq(rc, 0, "findElement rc")
+            spec.assert_str_eq(seen.using, "css selector", "engine rewrote id -> css")
+            spec.assert_contains(seen.value, "hdr", "the CSS carries the id")
+            selenium_core.session_free(bp)
+        }
+        spec.it("IDEMPOTENT: an already-normalized locator passes through unchanged") callback {
+            // What every binding sends TODAY, having pre-normalized. Must not be
+            // double-rewritten, or migration would break the unconverted ones.
+            rc = selenium_core.execute(sp, "findElement",
+                "{\"using\":\"accessibility id\",\"value\":\"num7Button\"}")
+            spec.assert_eq(rc, 0, "findElement rc")
+            spec.assert_str_eq(seen.using, "accessibility id", "unchanged")
+            spec.assert_str_eq(seen.value, "num7Button", "value unchanged")
+        }
+        spec.it("other params on a child find survive the rewrite") callback {
+            // The element id must not be lost when using/value are replaced.
+            rc = selenium_core.execute(sp, "clickElement", "{\"id\":\"e-num7\"}")
+            spec.assert_eq(rc, 0, "click rc")
+            spec.assert_str_eq(seen.clicked, "e-num7", "id survived")
         }
     }
 
