@@ -270,6 +270,37 @@ What to take from it:
 Full writeup, flag matrix and the asm diff:
 `asks/toolchain-gcc16-ipa-bit-cp-miscompiles-emitted-c.md`.
 
+### A probe that cannot produce a POSITIVE is not measuring anything either
+
+The negative-polarity version of this is above. The positive one bit us at the
+end of the same hunt, and it is sneakier, because a blind detector reports the
+result you were hoping for.
+
+A retest script checked whether gcc had stopped folding a parameter to zero:
+
+    grep -qE 'xorl[ \t]+%edi, %edi'   # never matches a tab under GNU grep
+
+Inside an ERE **bracket expression**, `\t` is not a tab — it is the set
+{space, backslash, `t`}. The detector could not match, so every run printed
+"clean". Worse, it worked when pasted into an interactive shell here, where
+`grep` resolves to a `ugrep` shim that *does* interpret `\t`, and failed only
+under `#!/bin/bash`. A detector that lies only under automation is the worst
+kind. Use `[[:space:]]`, or a literal tab.
+
+It was caught because a second, independent measurement disagreed: the asm check
+said "fixed", the runtime leg still returned the wrong value. Keep two
+independent measurements even when one looks sufficient — the disagreement is
+the signal, and with only the asm check a non-existent fix would have shipped.
+
+So, for any probe, in both directions:
+
+- Before trusting a verdict, prove the probe **discriminates** — feed it a case
+  that must trip it and a case that must not. Abort rather than report if it
+  fails either. The retest script does this now.
+- Be suspicious of a check that only ever returns one answer. "Clean every time"
+  and "broken every time" are both consistent with a detector that is not
+  looking.
+
 ## Open, known-broken
 
 Keep this list honest — delete an entry when it is fixed, not before.
