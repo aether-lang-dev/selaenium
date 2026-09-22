@@ -174,6 +174,15 @@ final class Native {
                 FunctionDescriptor.of(C_STR, C_PTR));
         static final MethodHandle BY_LOCATOR = down("aether_sel_embed_by_locator",
                 FunctionDescriptor.of(C_STR, C_PTR, C_PTR));
+        // Session-aware By normalization: browser rules against a browser,
+        // Appium's native strategies against a desktop driver (WinAppDriver /
+        // Appium). The engine decides from the session; we pass the handle.
+        static final MethodHandle BY_LOCATOR_FOR = down("aether_sel_embed_by_locator_for",
+                FunctionDescriptor.of(C_STR, C_PTR, C_PTR, C_PTR));
+        static final MethodHandle IS_NATIVE = down("aether_sel_embed_is_native",
+                FunctionDescriptor.of(C_INT, C_PTR));
+        static final MethodHandle SET_NATIVE = down("aether_sel_embed_set_native",
+                FunctionDescriptor.ofVoid(C_PTR, C_INT));
         static final MethodHandle ROUTE = down("aether_sel_embed_route",
                 FunctionDescriptor.of(C_STR, C_PTR));
         static final MethodHandle BUILD_REQUEST = down("aether_sel_embed_build_request",
@@ -341,6 +350,31 @@ final class Native {
                     a.allocateFrom(strategy), a.allocateFrom(value)));
         } catch (Throwable t) {
             throw wrap(t, "by_locator");
+        }
+    }
+
+    static String byLocatorFor(MemorySegment h, String strategy, String value) {
+        try (Arena a = Arena.ofConfined()) {
+            return takeString((MemorySegment) MH.BY_LOCATOR_FOR.invokeExact(
+                    h, a.allocateFrom(strategy), a.allocateFrom(value)));
+        } catch (Throwable t) {
+            throw wrap(t, "by_locator_for");
+        }
+    }
+
+    static boolean isNative(MemorySegment h) {
+        try {
+            return (int) MH.IS_NATIVE.invokeExact(h) == 1;
+        } catch (Throwable t) {
+            throw wrap(t, "is_native");
+        }
+    }
+
+    static void setNative(MemorySegment h, int on) {
+        try {
+            MH.SET_NATIVE.invokeExact(h, on);
+        } catch (Throwable t) {
+            throw wrap(t, "set_native");
         }
     }
 

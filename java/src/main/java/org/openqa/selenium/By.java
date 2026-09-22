@@ -65,6 +65,50 @@ public class By {
         return new By("xpath", value);
     }
 
+    // --- desktop / native strategies (WinAppDriver, Appium) ----------------
+    // Against a native driver the engine does NOT rewrite id/name/className to
+    // CSS: they are the driver's own UIA AutomationId / Name / ClassName, and a
+    // native driver has no CSS engine. So the factories above keep working on
+    // desktop; these add the strategies that only exist there. Values match
+    // Appium's AppiumBy, so a script written against an Appium client reads the
+    // same here.
+
+    public static By accessibilityId(String value) {
+        return new By("accessibility id", value);
+    }
+
+    public static By androidUIAutomator(String value) {
+        return new By("androidUIAutomator", value);
+    }
+
+    public static By androidViewTag(String value) {
+        return new By("androidViewTag", value);
+    }
+
+    public static By androidDataMatcher(String value) {
+        return new By("androidDataMatcher", value);
+    }
+
+    public static By androidViewMatcher(String value) {
+        return new By("androidViewMatcher", value);
+    }
+
+    public static By iOSPredicate(String value) {
+        return new By("iOSPredicateString", value);
+    }
+
+    public static By iOSClassChain(String value) {
+        return new By("iOSClassChain", value);
+    }
+
+    public static By image(String value) {
+        return new By("image", value);
+    }
+
+    public static By custom(String value) {
+        return new By("custom", value);
+    }
+
     /**
      * Find the first element in {@code context} matching this locator (upstream
      * {@code by.findElement(driver)} form). Delegates to

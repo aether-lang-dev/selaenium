@@ -371,8 +371,15 @@ public class RemoteWebDriver
     }
 
     @SuppressWarnings("unchecked")
+    /**
+     * Ask the ENGINE for the {"using","value"} locator, passing this session's
+     * handle so it applies the right rules: browser normalization
+     * (id/name/class name -&gt; CSS) against a browser, and Appium's native
+     * strategies against a desktop driver (WinAppDriver / Appium), where those
+     * same strategies must reach the wire intact because there is no CSS engine.
+     */
     Map<String, Object> decodeBy(String by, String value) {
-        return (Map<String, Object>) Json.decode(Native.byLocator(by, value));
+        return (Map<String, Object>) Json.decode(Native.byLocatorFor(handle, by, value));
     }
 
     // ---- navigation ----
