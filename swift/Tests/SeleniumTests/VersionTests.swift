@@ -7,7 +7,7 @@
 // is NOT visible to this test target's code, and there is NO source-level
 // (Sources/) version constant to compare against either. So this test cannot
 // assert seleniumCoreVersion == file directly. Instead it asserts the source-of-truth
-// file exists and holds the tag this package was written for ("v0.8.0"): if the
+// file exists and holds the tag this package was written for ("v0.9.0"): if the
 // engine is bumped, this test fails and is the reminder that Package.swift's
 // `let seleniumCoreVersion` must be updated in LOCKSTEP (it can't be read from here
 // because it is manifest-scope). Keep this expected value and Package.swift's
@@ -19,7 +19,7 @@ final class VersionTests: XCTestCase {
 
     // The tag Package.swift's `let seleniumCoreVersion` is pinned to. Must be updated
     // together with that literal whenever the engine release is bumped.
-    private static let expectedSeleniumCoreVersion = "v0.8.0"
+    private static let expectedSeleniumCoreVersion = "v0.9.0"
 
     func testSeleniumCoreVersionPin() throws {
         // Reach the repo root from THIS file's location (CWD under `swift test`
