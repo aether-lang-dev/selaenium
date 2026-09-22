@@ -45,9 +45,17 @@ const W3C_ELEMENT_KEY = 'element-6066-11e4-a52e-4f735466cecf'
 // getShadowRoot result is { "shadow-6066-11e4-a52e-4f735466cecf": "<id>" }.
 const W3C_SHADOW_KEY = 'shadow-6066-11e4-a52e-4f735466cecf'
 
-// Unpack a By locator into the engine's normalized { using, value }. The engine
-// rewrites id/name/class name to CSS. NO engine change.
-function decodeBy(locator) {
+// Unpack a By locator into the engine's normalized { using, value }. Pass the
+// session handle so the ENGINE applies the right rules: browser normalization
+// (id/name/class name -> CSS) against a browser, and Appium's native strategies
+// against a desktop driver, where those must reach the wire intact. Without a
+// handle it uses the browser rules, as the old session-unaware call did.
+function decodeBy(locator, handle) {
+  if (handle !== undefined && handle !== null) {
+    return JSON.parse(
+      native.takeString(native.byLocatorFor(handle, locator.using, locator.value)),
+    )
+  }
   return JSON.parse(native.takeString(native.byLocator(locator.using, locator.value)))
 }
 
@@ -198,7 +206,7 @@ class WebElement {
         if (typeof loc === 'function') {
           return this._driver._resolveElementFn(loc, this)
         }
-        const decoded = decodeBy(loc)
+        const decoded = decodeBy(loc, this._driver._handle)
         const result = this._driver._execute('findChildElement', {
           id: this._id,
           using: decoded.using,
@@ -214,7 +222,7 @@ class WebElement {
     if (typeof loc === 'function') {
       return this._driver._resolveElementsFn(loc, this)
     }
-    const decoded = decodeBy(loc)
+    const decoded = decodeBy(loc, this._driver._handle)
     const result = this._driver._execute('findChildElements', {
       id: this._id,
       using: decoded.using,
@@ -260,7 +268,7 @@ class ShadowRoot {
     return newWebElementPromise(
       this._driver,
       (async () => {
-        const decoded = decodeBy(checkedLocator(locator))
+        const decoded = decodeBy(checkedLocator(locator), this._driver._handle)
         const result = this._driver._execute('findElementFromShadowRoot', {
           id: this._id,
           using: decoded.using,
@@ -272,7 +280,7 @@ class ShadowRoot {
   }
 
   async findElements(locator) {
-    const decoded = decodeBy(checkedLocator(locator))
+    const decoded = decodeBy(checkedLocator(locator), this._driver._handle)
     const result = this._driver._execute('findElementsFromShadowRoot', {
       id: this._id,
       using: decoded.using,
@@ -742,7 +750,7 @@ class WebDriver {
         if (typeof loc === 'function') {
           return this._resolveElementFn(loc, this)
         }
-        const result = this._execute('findElement', decodeBy(loc))
+        const result = this._execute('findElement', decodeBy(loc, this._handle))
         return new WebElement(this, result[W3C_ELEMENT_KEY])
       })(),
     )
@@ -758,7 +766,7 @@ class WebDriver {
     }
     let result
     try {
-      result = this._execute('findElements', decodeBy(loc))
+      result = this._execute('findElements', decodeBy(loc, this._handle))
     } catch (ex) {
       if (ex instanceof error.NoSuchElementError) return []
       throw ex

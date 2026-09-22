@@ -89,6 +89,12 @@ module Selenium
       [:last_error,      'aether_sel_embed_last_error',      VOIDP, [VOIDP]],
       [:session_id,      'aether_sel_embed_session_id',      VOIDP, [VOIDP]],
       [:by_locator,      'aether_sel_embed_by_locator',      VOIDP, [VOIDP, VOIDP]],
+      # Session-aware By normalization: browser rules against a browser,
+      # Appium's native strategies against a desktop driver (WinAppDriver /
+      # Appium). The engine decides from the session; we just pass the handle.
+      [:by_locator_for,  'aether_sel_embed_by_locator_for',  VOIDP, [VOIDP, VOIDP, VOIDP]],
+      [:is_native,       'aether_sel_embed_is_native',       :int,  [VOIDP]],
+      [:set_native,      'aether_sel_embed_set_native',      :void, [VOIDP, :int]],
       [:route,           'aether_sel_embed_route',           VOIDP, [VOIDP]],
       [:build_request,   'aether_sel_embed_build_request',   VOIDP, [VOIDP, VOIDP, VOIDP]],
       [:error_code,      'aether_sel_embed_error_code',      INT,   [VOIDP]],

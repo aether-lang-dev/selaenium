@@ -35,6 +35,12 @@ const fakeNative = {
   lastError: () => '',
   sessionId: () => '__SESSION__',
   byLocator: (using, value) => JSON.stringify({ using, value }),
+  // Session-aware By normalization. The real engine decides browser vs native
+  // from the session; this double keeps the same SHAPE (handle first) so a
+  // mismatch with the ABI shows up here rather than only against a live driver.
+  byLocatorFor: (_h, using, value) => JSON.stringify({ using, value }),
+  isNative: () => 0,
+  setNative: () => {},
   // atom-backed calls (isDisplayed / getAttribute / findRelative)
   isDisplayed: () => 0,
   getAttribute: () => 0,

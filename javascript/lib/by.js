@@ -95,6 +95,39 @@ class By {
   static partialLinkText(text) {
     return new By('partial link text', text)
   }
+  // --- desktop / native strategies (WinAppDriver, Appium) ----------------
+  // Against a native driver the engine does NOT rewrite id/name/className to
+  // CSS: they are the driver's own UIA AutomationId / Name / ClassName, and a
+  // native driver has no CSS engine. So the factories above keep working on
+  // desktop; these add the strategies that only exist there. Values match
+  // Appium's AppiumBy.
+  static accessibilityId(value) {
+    return new By('accessibility id', value)
+  }
+  static androidUIAutomator(value) {
+    return new By('androidUIAutomator', value)
+  }
+  static androidViewTag(value) {
+    return new By('androidViewTag', value)
+  }
+  static androidDataMatcher(value) {
+    return new By('androidDataMatcher', value)
+  }
+  static androidViewMatcher(value) {
+    return new By('androidViewMatcher', value)
+  }
+  static iOSPredicate(value) {
+    return new By('iOSPredicateString', value)
+  }
+  static iOSClassChain(value) {
+    return new By('iOSClassChain', value)
+  }
+  static image(value) {
+    return new By('image', value)
+  }
+  static custom(value) {
+    return new By('custom', value)
+  }
   static xpath(xpath) {
     return new By('xpath', xpath)
   }

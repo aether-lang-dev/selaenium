@@ -18,6 +18,22 @@ module Selenium
       PARTIAL_LINK_TEXT = 'partial link text'
       XPATH             = 'xpath'
 
+      # Desktop / native strategies (WinAppDriver, Appium). Against a native
+      # driver the engine does NOT rewrite ID/NAME/CLASS_NAME to CSS: they are
+      # the driver's own UIA AutomationId / Name / ClassName, and a native
+      # driver has no CSS engine. So the constants above keep working on
+      # desktop; these add the strategies that only exist there. Values match
+      # Appium's AppiumBy.
+      ACCESSIBILITY_ID    = 'accessibility id'
+      ANDROID_UIAUTOMATOR = 'androidUIAutomator'
+      ANDROID_VIEWTAG     = 'androidViewTag'
+      ANDROID_DATAMATCHER = 'androidDataMatcher'
+      ANDROID_VIEWMATCHER = 'androidViewMatcher'
+      IOS_PREDICATE       = 'iOSPredicateString'
+      IOS_CLASS_CHAIN     = 'iOSClassChain'
+      IMAGE               = 'image'
+      CUSTOM              = 'custom'
+
       # Map the Ruby keyword/symbol finder forms (:id, :class, :css, :link, ...)
       # onto the engine strategy strings. Accepts the authentic Ruby short names
       # (:class -> "class name", :css -> "css selector", :link -> "link text",
@@ -228,9 +244,18 @@ module Selenium
   # Decode a finder call into the W3C {"using","value"} params Hash. Accepts the
   # authentic Ruby forms: find_element(id: 'x') (keyword hash), find_element(:id,
   # 'x') (symbol), or find_element(By::ID, 'x') (canonical strategy string).
-  def decode_by(how, what = nil)
+  # Pass the session handle so the ENGINE can apply the right rules: browser
+  # normalization (id/name/class name -> CSS) against a browser, Appium's native
+  # strategies against a desktop driver, where those must reach the wire intact.
+  # With no handle it uses the browser rules, as the old call did.
+  def decode_by(how, what = nil, handle = nil)
     strategy, value = By.normalize(how, what)
-    JSON.parse(locator(strategy, value))
+    raw = if handle
+            Native.take_string(Native.call(:by_locator_for, handle, strategy, value))
+          else
+            locator(strategy, value)
+          end
+    JSON.parse(raw)
   end
 
   # Serialize execute_script args, encoding any WebElement as its W3C
@@ -345,7 +370,7 @@ module Selenium
     end
 
     def find_element(how, what = nil)
-      params = WebDriver.decode_by(how, what)
+      params = WebDriver.decode_by(how, what, @driver.send(:handle))
       params['id'] = @id
       result = @driver.send(:execute, 'findChildElement', params)
       WebElement.new(@driver, result.fetch(W3C_ELEMENT_KEY))
@@ -353,7 +378,7 @@ module Selenium
 
     # Plural child finder (mainstream Element#find_elements).
     def find_elements(how, what = nil)
-      params = WebDriver.decode_by(how, what)
+      params = WebDriver.decode_by(how, what, @driver.send(:handle))
       params['id'] = @id
       result = @driver.send(:execute, 'findChildElements', params)
       result.map { |e| WebElement.new(@driver, e.fetch(W3C_ELEMENT_KEY)) }
@@ -452,14 +477,14 @@ module Selenium
     end
 
     def find_element(how, what = nil)
-      params = WebDriver.decode_by(how, what)
+      params = WebDriver.decode_by(how, what, @driver.send(:handle))
       params['id'] = @id
       result = @driver.send(:execute, 'findElementFromShadowRoot', params)
       WebElement.new(@driver, result.fetch(W3C_ELEMENT_KEY))
     end
 
     def find_elements(how, what = nil)
-      params = WebDriver.decode_by(how, what)
+      params = WebDriver.decode_by(how, what, @driver.send(:handle))
       params['id'] = @id
       result = @driver.send(:execute, 'findElementsFromShadowRoot', params)
       result.map { |e| WebElement.new(@driver, e.fetch(W3C_ELEMENT_KEY)) }
@@ -577,6 +602,28 @@ module Selenium
       end
     end
 
+    # The raw session handle. Needed by element- and shadow-root-scoped finds so
+    # they can ask the engine for SESSION-AWARE By normalization (browser rules
+    # against a browser, Appium's native strategies against a desktop driver).
+    # Not part of the public surface — reached via send(:handle) internally.
+    def handle
+      @handle
+    end
+    private :handle
+
+    # True when this session was detected as (or set to) a desktop / native
+    # driver. Valid once the session is open.
+    def native?
+      Native.call(:is_native, @handle) == 1
+    end
+
+    # Force desktop (true) or browser (false) By-normalization. Normally
+    # unnecessary — the engine detects a native endpoint from the newSession
+    # capabilities — but available for one that does not advertise itself.
+    def native=(on)
+      Native.call(:set_native, @handle, on ? 1 : 0)
+    end
+
     def initialize(command_executor, capabilities, ca_path: nil, insecure: false)
       @handle = Native.call(:open, command_executor)
       raise WebDriverError.new('failed to open session handle', -1) if @handle.nil? || @handle.null?
@@ -611,12 +658,12 @@ module Selenium
     # Authentic Ruby finder grammar: find_element(id: 'x') (keyword hash),
     # find_element(:id, 'x') (symbol), or find_element(By::ID, 'x').
     def find_element(how, what = nil)
-      result = execute('findElement', WebDriver.decode_by(how, what))
+      result = execute('findElement', WebDriver.decode_by(how, what, @handle))
       WebElement.new(self, result.fetch(W3C_ELEMENT_KEY))
     end
 
     def find_elements(how, what = nil)
-      result = execute('findElements', WebDriver.decode_by(how, what))
+      result = execute('findElements', WebDriver.decode_by(how, what, @handle))
       result.map { |e| WebElement.new(self, e.fetch(W3C_ELEMENT_KEY)) }
     end
 
