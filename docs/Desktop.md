@@ -129,5 +129,16 @@ Tools built on Selenium 3 and earlier (Marathon, for example) speak the JSON
 Wire Protocol: `desiredCapabilities`, a `{"sessionId","status","value"}`
 envelope, and routes like `/accept_alert` and `/buttondown`. That is a
 different dialect, not a locator difference, and it is not implemented here —
-nor by Selenium's own 4.x clients. See
-`asks/` for the analysis.
+nor by Selenium's own 4.x clients.
+
+It **fails loudly**, which it did not always do. JSONWP reports failure with a
+top-level numeric `status` and no `value.error`, so a decoder looking only for
+`value.error` found nothing and returned success — every error from such an
+endpoint read as a pass. A session against one now stops at `newSession`:
+
+    remote end speaks the JSON Wire Protocol (Selenium 3 and earlier),
+    which is not supported; this engine is W3C-only. Command: newSession
+
+A JSONWP *success* is refused too, deliberately: its session id lives at the
+top level rather than inside `value`, so the session would open with an empty
+id and fail confusingly on the next command. Better to stop at the door.

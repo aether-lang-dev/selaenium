@@ -784,6 +784,38 @@ _detect_native(s: *Session, value: ptr) {
     if string.equals(lower, "roku") == 1 { s.native = 1  return }
 }
 
+// _jsonwp_status(parsed) — the JSON Wire Protocol's top-level integer `status`,
+// or -1 when this is not a JSONWP envelope.
+//
+// JSONWP (Selenium 3 and earlier) reports failure with a top-level numeric
+// status and NO `value.error` string:
+//
+//   {"sessionId":"s1","status":7,"value":{"message":"no such element"}}
+//
+// W3C reports it with `value.error`. Our decoder only looked for the latter,
+// found nothing, and returned SUCCESS — so every error from a JSONWP endpoint
+// read as a pass. That is the worst possible failure mode and the reason this
+// check exists: a wrong answer, silently, with the caller none the wiser.
+_jsonwp_status(parsed: ptr) -> int {
+    sv, _s = json.object_get(parsed, "status")
+    if sv == null { return -1 }
+    if json.json_type(sv) != 2 { return -1 }        // JSON_NUMBER
+    return json.get_int(sv)
+}
+
+// The JSONWP status codes that differ from their W3C names. The numeric values
+// are mostly shared, so an unmapped status passes through as itself.
+_jsonwp_message(parsed: ptr) -> string {
+    value, _v = json.object_get(parsed, "value")
+    if value == null { return "" }
+    if json.json_type(value) != 5 { return "" }
+    mv, _m = json.object_get(value, "message")
+    if mv == null { return "" }
+    msg, merr = json.get_string(mv)
+    if string.length(merr) > 0 { return "" }
+    return msg
+}
+
 // First 120 chars of a body, single-line — enough to recognise what came back
 // without pasting an entire HTML error page into an exception message.
 _snip(body: string) -> string {
@@ -824,6 +856,36 @@ decode_response(sp: ptr, name: string, resp_body: string) -> int {
             string.concat(": ", _snip(resp_body))))))
         return s.last_error_code
     }
+    // JSON Wire Protocol (Selenium 3 and earlier) — a DIFFERENT dialect, not a
+    // locator difference: `desiredCapabilities` on the way in, a
+    // {"sessionId","status","value"} envelope on the way back, and routes this
+    // engine does not have (/accept_alert, /buttondown, /sessions). It is not
+    // implemented here, and Selenium's own 4.x clients dropped it too.
+    //
+    // What must NOT happen is reading it as success. Fail, and say which
+    // dialect, so the caller is not left hunting a phantom bug in their test.
+    jstatus = _jsonwp_status(parsed)
+    if jstatus >= 0 {
+        jmsg = _jsonwp_message(parsed)
+        if jstatus != 0 {
+            s.last_error_code = jstatus
+            s.last_error = string.concat("remote end speaks the JSON Wire Protocol (Selenium 3 and earlier), which is not supported; its status ",
+                string.concat(string.from_int(jstatus),
+                string.concat(" for ", string.concat(name,
+                string.concat(": ", jmsg)))))
+            json.free(parsed)
+            return s.last_error_code
+        }
+        // status 0 is a JSONWP SUCCESS, which is just as unusable: newSession
+        // puts the session id at the TOP level, not inside `value`, so we would
+        // capture nothing and every later command would build a path with an
+        // empty session id. Refuse at the door rather than half-work.
+        s.last_error_code = error_code("unknown error")
+        s.last_error = string.concat("remote end speaks the JSON Wire Protocol (Selenium 3 and earlier), which is not supported; this engine is W3C-only. Command: ", name)
+        json.free(parsed)
+        return s.last_error_code
+    }
+
     value, _ve = json.object_get(parsed, "value")
     if value == null {
         // No `value` field — store the whole body and treat as success.
@@ -876,6 +938,10 @@ response_error_code(resp_body: string) -> int {
     if perr != "" {
         return -1
     }
+    // Same JSONWP guard as decode_response, so the offline classifier cannot
+    // disagree with the live path about whether a body is an error.
+    js = _jsonwp_status(parsed)
+    if js > 0 { json.free(parsed)  return js }
     value, _ve = json.object_get(parsed, "value")
     code = 0
     if value != null {

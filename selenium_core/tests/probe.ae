@@ -120,6 +120,28 @@ main() {
                 "{\"value\":{\"error\":\"stale element reference\"}}"), 23, "err stale")
             spec.assert_eq(selenium_core.response_error_code(
                 "{\"value\":{\"element-6066-11e4-a52e-4f735466cecf\":\"e.1\"}}"), 0, "success object")
+        }
+        spec.it("a JSON Wire Protocol error is NOT read as success") callback {
+            // JSONWP (Selenium 3 and earlier) signals failure with a top-level
+            // numeric `status` and no `value.error` string. Looking only for
+            // value.error found nothing and returned 0 — so every error from a
+            // JSONWP endpoint read as a PASS. A wrong answer, silently. This is
+            // the regression guard for that.
+            spec.assert_eq(selenium_core.response_error_code(
+                "{\"sessionId\":\"s1\",\"status\":7,\"value\":{\"message\":\"no such element\"}}"),
+                7, "JSONWP status 7 is an error")
+            spec.assert_eq(selenium_core.response_error_code(
+                "{\"sessionId\":\"s1\",\"status\":13,\"value\":{\"message\":\"boom\"}}"),
+                13, "JSONWP status 13 is an error")
+            // status 0 is a JSONWP SUCCESS, so it is not an error envelope —
+            // the live decode_response refuses it separately, because its
+            // session id lives at the top level and we would capture nothing.
+            spec.assert_eq(selenium_core.response_error_code(
+                "{\"sessionId\":\"s1\",\"status\":0,\"value\":{}}"), 0, "JSONWP success is not an error")
+            // A W3C body with a `status` that is NOT a number must not be
+            // mistaken for JSONWP.
+            spec.assert_eq(selenium_core.response_error_code(
+                "{\"value\":{\"status\":\"ready\"}}"), 0, "string status is not JSONWP")
             spec.assert_eq(selenium_core.response_error_code("{\"value\":\"Some Title\"}"), 0, "success string")
             spec.assert_eq(selenium_core.response_error_code("{\"value\":null}"), 0, "success null")
         }
