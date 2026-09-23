@@ -1,0 +1,121 @@
+// Live proof against a REAL desktop driver driving a REAL application:
+// KDE's selenium-webdriver-at-spi (W3C WebDriver over Linux AT-SPI2) driving
+// Kate. Not our fake endpoint, and not Appium's fake driver either — an actual
+// GUI application, found and read through the accessibility bus.
+import selenium_core
+import std.string
+import std.os
+import std.spec
+
+main() {
+    base = os.getenv("SEL_ATSPI_URL")
+    if string.length(base) == 0 { base = "http://127.0.0.1:4724" }
+    // SELF-SKIPS GREEN when no AT-SPI driver is reachable — presubmit-safe on a
+    // box with no KDE/accessibility stack. It does NOT skip on a wrong answer:
+    // a reachable driver that misbehaves fails loudly.
+    if _atspi_ready(base) == 0 {
+        println("SKIPPED: no AT-SPI WebDriver at ${base} — see the header for how to run one")
+        return 0
+    }
+    fw = spec.init()
+    sp = selenium_core.session_new(base)
+
+    spec.describe(fw, "KDE AT-SPI: a real application session") {
+        spec.it("launches Kate and opens a session") callback {
+            caps = "{\"capabilities\":{\"alwaysMatch\":{\"appium:app\":\"org.kde.kate.desktop\"}}}"
+            rc = selenium_core.execute(sp, "newSession", caps)
+            spec.assert_eq(rc, 0, "newSession rc")
+            spec.assert_true(string.length(selenium_core.session_id_of(sp)) > 0, "session id")
+        }
+        spec.it("does NOT auto-detect as native — and that is the documented gap") callback {
+            // This driver's newSession returns only {"app":"kate"}: no
+            // browserName, but also no automationName and no platformName. So
+            // _detect_native has no POSITIVE signal to act on and correctly
+            // leaves the session in browser mode. That is the asymmetric
+            // trade-off by design — missing a desktop session costs one
+            // explicit call; wrongly flipping a browser session would break
+            // By.id for every browser user of every binding.
+            spec.assert_eq(selenium_core.session_is_native(sp), 0, "not auto-detected")
+            selenium_core.session_set_native(sp, 1)
+            spec.assert_eq(selenium_core.session_is_native(sp), 1, "explicit set_native works")
+        }
+    }
+
+    spec.describe(fw, "KDE AT-SPI: native locators against a live GUI") {
+        spec.it("accessibility id finds Kate's main window") callback {
+            rc = selenium_core.execute(sp, "findElement",
+                "{\"using\":\"accessibility id\",\"value\":\"QApplication.MainWindow#1\"}")
+            spec.assert_eq(rc, 0, "findElement rc")
+            spec.assert_contains(selenium_core.last_value_of(sp), "element-6066", "element ref")
+        }
+        spec.it("`name` is the widget's accessible name, NOT a CSS attribute lookup") callback {
+            // The decisive one. This driver resolves `name` against the AT-SPI
+            // accessible name. Had the engine rewritten it to
+            // *[name="Folder:"] the driver would have rejected it as an
+            // unsupported strategy, because it has no CSS engine at all.
+            rc = selenium_core.execute(sp, "findElement",
+                "{\"using\":\"name\",\"value\":\"New File\"}")
+            spec.assert_eq(rc, 0, "findElement by name rc")
+            spec.assert_contains(selenium_core.last_value_of(sp), "element-6066", "element ref")
+        }
+        spec.it("xpath walks the real accessibility tree") callback {
+            rc = selenium_core.execute(sp, "findElement", "{\"using\":\"xpath\",\"value\":\"//frame\"}")
+            spec.assert_eq(rc, 0, "findElement by xpath rc")
+        }
+        spec.it("a missing element is a real W3C no-such-element") callback {
+            rc = selenium_core.execute(sp, "findElement",
+                "{\"using\":\"accessibility id\",\"value\":\"no.such.widget.anywhere\"}")
+            spec.assert_eq(rc, 17, "no such element")
+        }
+    }
+
+    spec.describe(fw, "KDE AT-SPI: reading a live widget") {
+        spec.it("reads text off a real Kate widget through the engine") callback {
+            rc = selenium_core.execute(sp, "findElement", "{\"using\":\"name\",\"value\":\"New File\"}")
+            spec.assert_eq(rc, 0, "find rc")
+            eid = _elem_id(selenium_core.last_value_of(sp))
+            spec.assert_true(string.length(eid) > 0, "element id")
+            p = string.concat("{\"id\":\"", string.concat(eid, "\"}"))
+            rc2 = selenium_core.execute(sp, "getElementText", p)
+            spec.assert_eq(rc2, 0, "getElementText rc")
+            spec.assert_contains(selenium_core.last_value_of(sp), "New File", "the button's real text")
+        }
+        spec.it("isDisplayed routes to the NATIVE endpoint, not a JS atom") callback {
+            // There is no JavaScript engine anywhere near this driver. If the
+            // engine still went through executeScript this would fail outright.
+            rc = selenium_core.execute(sp, "findElement", "{\"using\":\"name\",\"value\":\"New File\"}")
+            spec.assert_eq(rc, 0, "find rc")
+            eid = _elem_id(selenium_core.last_value_of(sp))
+            rc2 = selenium_core.execute_atom(sp, "isDisplayed", eid, "")
+            spec.assert_eq(rc2, 0, "isDisplayed rc")
+        }
+        spec.it("quit closes the session and the app") callback {
+            rc = selenium_core.execute(sp, "quit", "{}")
+            spec.assert_eq(rc, 0, "quit rc")
+        }
+    }
+
+    selenium_core.session_free(sp)
+    return spec.run_summary(fw)
+}
+
+// Is KDE's AT-SPI WebDriver answering /status at `base`?
+_atspi_ready(base: string) -> int {
+    probe = selenium_core.session_new(base)
+    rc = selenium_core.execute(probe, "status", "{}")
+    v = selenium_core.last_value_of(probe)
+    selenium_core.session_free(probe)
+    if rc != 0 { return 0 }
+    if string.index_of(v, "ready") < 0 { return 0 }
+    return 1
+}
+
+_elem_id(v: string) -> string {
+    key = "\"element-6066-11e4-a52e-4f735466cecf\":\""
+    at = string.index_of(v, key)
+    if at < 0 { return "" }
+    rest = string.substring(v, at + string.length(key), string.length(v))
+    end = string.index_of(rest, "\"")
+    if end < 0 { return "" }
+    return string.substring(rest, 0, end)
+}

@@ -77,6 +77,17 @@ aeb(cap) {
             lib("..")
             caps("net")
         }
+        // AT-SPI live proof — drives KDE's selenium-webdriver-at-spi (W3C
+        // WebDriver over Linux AT-SPI2) against a REAL running application
+        // (Kate): native accessibility id / name / xpath locators, reading a
+        // live widget's text, and isDisplayed routing to the native endpoint
+        // rather than a JS atom (there is no JS engine anywhere near AT-SPI).
+        // Self-skips green when no such driver answers /status.
+        aether.program_test() {
+            source("atspi_live.ae")
+            lib("..")
+            caps("net")
+        }
         // BiDi live slice — drives real Chrome through the shape-C demux:
         // commands, concurrency, AND the event round-trip (session.subscribe →
         // navigate → async browsingContext.load via the event queue). Self-skips
