@@ -784,6 +784,14 @@ _detect_native(s: *Session, value: ptr) {
     if string.equals(lower, "roku") == 1 { s.native = 1  return }
 }
 
+// First 120 chars of a body, single-line — enough to recognise what came back
+// without pasting an entire HTML error page into an exception message.
+_snip(body: string) -> string {
+    one = string.replace_all(body, "\n", " ")
+    if string.length(one) <= 120 { return one }
+    return string.concat(string.substring(one, 0, 120), " ...")
+}
+
 // Decode a W3C response body: the top-level object has a `value` field. If
 // `value` is an object with a string `error` field, it's a failure — set the
 // decoded code + message. Otherwise `value` is the success payload, stored as
@@ -792,8 +800,28 @@ decode_response(sp: ptr, name: string, resp_body: string) -> int {
     s = sp as *Session
     parsed, perr = json.parse(resp_body)
     if perr != "" {
+        // A body that is not JSON is almost never a protocol error — it is a
+        // web server answering for a route the remote end does not implement.
+        // The HTTP status says which, and reporting it as a bare "unknown
+        // error" throws that away: a caller asking a DESKTOP driver for
+        // getTitle got code 1 and a dump of Flask's HTML 404 page, when the
+        // truth is "this driver has no such command". Classify by status, and
+        // do NOT paste a whole HTML document into the message.
+        if s.last_status == 404 {
+            s.last_error_code = error_code("unknown command")
+            s.last_error = string.concat("remote end has no route for this command (HTTP 404): ", name)
+            return s.last_error_code
+        }
+        if s.last_status == 405 {
+            s.last_error_code = error_code("unknown method")
+            s.last_error = string.concat("remote end rejects this method (HTTP 405): ", name)
+            return s.last_error_code
+        }
         s.last_error_code = error_code("unknown error")
-        s.last_error = string.concat("Unable to parse response: ", resp_body)
+        s.last_error = string.concat("non-JSON response (HTTP ",
+            string.concat(string.from_int(s.last_status),
+            string.concat(") for ", string.concat(name,
+            string.concat(": ", _snip(resp_body))))))
         return s.last_error_code
     }
     value, _ve = json.object_get(parsed, "value")
