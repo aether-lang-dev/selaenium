@@ -516,6 +516,11 @@ _execute_inner(sp: ptr, name: string, params_json: string) -> int {
     s.last_error_code = 0
     s.last_error = ""
 
+    // Desktop mode from the CALLER'S declared intent, before the request goes
+    // out — so a terse driver that echoes nothing back is still driven with the
+    // right By rules. See _detect_native_request.
+    if string.equals(name, "newSession") == 1 { _detect_native_request(s, params_json) }
+
     // By-normalization lives here, not in the caller. See
     // _normalize_find_params: idempotent, so a binding that still pre-normalizes
     // is unaffected.
@@ -681,6 +686,59 @@ body_without_path_params(params: ptr, path_tmpl: string) -> string {
     result, _err = json.encode(out)
     json.free(out)
     return result
+}
+
+// _detect_native_request(s, params_json) — set desktop/native mode from what the
+// CALLER ASKED FOR, before the request is even sent.
+//
+// Response-side detection (below) is not enough on its own. KDE's
+// selenium-webdriver-at-spi answers newSession with only {"app":"kate"} — no
+// browserName, no automationName, no platformName — so there is nothing in the
+// reply to detect, and every binding would have needed an is_native/set_native
+// accessor on its public API just to say "this is a desktop driver". That is
+// twenty languages of API surface to work around one driver being terse.
+//
+// The caller already said so, though: you do not send appium:app or
+// appium:automationName to a browser. Reading the REQUEST means intent is
+// honoured wherever it was declared, with no per-binding API at all — a binding
+// that can pass capabilities (all of them can) can drive a desktop driver.
+//
+// Gated on there being NO browserName in the request, because Appium drives
+// browsers too: appium:automationName + browserName is a browser session and
+// must keep the browser By rules. As with the response-side test, this only
+// ever turns native ON — never off — so an explicit session_set_native(sp, 0)
+// before newSession is still respected... except that newSession is what sets
+// it, so the escape hatch remains session_set_native AFTER the call.
+_detect_native_request(s: *Session, params_json: string) {
+    root, perr = json.parse(params_json)
+    if string.length(perr) > 0 { return }
+    caps, _cv = json.object_get(root, "capabilities")
+    am = null
+    if caps != null { am, _av = json.object_get(caps, "alwaysMatch") }
+    if am == null {
+        // Legacy shape some callers still send.
+        am, _dv = json.object_get(root, "desiredCapabilities")
+    }
+    if am == null { json.free(root)  return }
+    // A browser session, even via Appium: leave the browser rules alone.
+    bn, _bv = json.object_get(am, "browserName")
+    if bn != null {
+        bname, _bs = json.get_string(bn)
+        if string.length(bname) > 0 { json.free(root)  return }
+    }
+    // Any appium: vendor capability is a declaration that this is an Appium-
+    // family endpoint, which is a native automation driver when no browser is
+    // named. appium:app is the common one; automationName and bundleId too.
+    n = json.object_size(am)
+    i = 0
+    hit = 0
+    while i < n {
+        k, _kvv, _kerr = json.object_entry(am, i)
+        if string.starts_with(k, "appium:") == 1 { hit = 1 }
+        i = i + 1
+    }
+    if hit == 1 { s.native = 1 }
+    json.free(root)
 }
 
 // _detect_native(s, value) — set desktop/native mode from the newSession

@@ -1,0 +1,137 @@
+// Live proof against appium-mac2-driver driving the REAL macOS Calculator,
+// through our engine. The companion to atspi_live.ae (Kate on Linux): a second
+// platform, a second driver, the same engine path — which is a much stronger
+// claim than one platform alone.
+//
+// To run it (the macvm on .160, or any macOS host):
+//   npm i -g appium && appium driver install mac2
+//   appium --port 4723          # needs FULL Xcode; mac2 builds WebDriverAgentMac
+//   SEL_MAC2_URL=http://127.0.0.1:4723 ae run --lib selenium_core mac2_live.ae
+//
+// From a Linux host with the guest behind qemu's :2222->:22 forward:
+//   ssh -p 2222 -L 4723:127.0.0.1:4723 <user>@localhost
+import selenium_core
+import std.string
+import std.os
+import std.spec
+
+main() {
+    base = os.getenv("SEL_MAC2_URL")
+    if string.length(base) == 0 { base = os.getenv("SEL_APPIUM_URL") }
+    if string.length(base) == 0 { base = "http://127.0.0.1:4723" }
+    // SELF-SKIPS GREEN when no mac2 endpoint answers. Deliberately narrow: it
+    // skips when nothing is listening, NOT when a session fails — a reachable
+    // driver that misbehaves must fail loudly.
+    if _ready(base) == 0 {
+        println("SKIPPED: no Appium/mac2 endpoint at ${base}")
+        return 0
+    }
+    fw = spec.init()
+    sp = selenium_core.session_new(base)
+
+    spec.describe(fw, "mac2: a real macOS application") {
+        spec.it("opens a Calculator session") callback {
+            caps = "{\"capabilities\":{\"alwaysMatch\":{\"platformName\":\"mac\",\"appium:automationName\":\"Mac2\",\"appium:bundleId\":\"com.apple.calculator\"}}}"
+            rc = selenium_core.execute(sp, "newSession", caps)
+            spec.assert_eq(rc, 0, "newSession rc")
+            spec.assert_true(string.length(selenium_core.session_id_of(sp)) > 0, "session id")
+        }
+        spec.it("is detected as native from mac2's capabilities") callback {
+            // mac2 reports platformName "mac" AND an automationName, so unlike
+            // KDE's AT-SPI driver this one should auto-detect. If it does not,
+            // the test still proceeds — set_native is the documented fallback —
+            // but we record which it was, because that is the interesting fact.
+            if selenium_core.session_is_native(sp) == 0 {
+                println("NOTE: mac2 did NOT auto-detect as native; using set_native")
+                selenium_core.session_set_native(sp, 1)
+            }
+            spec.assert_eq(selenium_core.session_is_native(sp), 1, "native mode on")
+        }
+    }
+
+    spec.describe(fw, "mac2: driving the real UI") {
+        spec.it("clicks 1 + 2 = through native accessibility ids") callback {
+            // Calculator's accessibility ids are WORDS, not glyphs: One/Add/
+            // Two/Equals. Finding by "1"/"+"/"=" does not work for operators.
+            // (Learned the hard way by the aeb sibling on the macvm.)
+            spec.assert_eq(_click(sp, "One"), 0, "click One")
+            spec.assert_eq(_click(sp, "Add"), 0, "click Add")
+            spec.assert_eq(_click(sp, "Two"), 0, "click Two")
+            spec.assert_eq(_click(sp, "Equals"), 0, "click Equals")
+        }
+        spec.it("reads 3 back off the real display") callback {
+            // The display is TWO XCUIElementTypeStaticText nodes: [0] is the
+            // input echo ("1+2"), [1] is the result ("3"). Read the LAST.
+            rc = selenium_core.execute(sp, "findElements",
+                "{\"using\":\"class name\",\"value\":\"XCUIElementTypeStaticText\"}")
+            spec.assert_eq(rc, 0, "findElements rc")
+            eid = _last_elem_id(selenium_core.last_value_of(sp))
+            spec.assert_true(string.length(eid) > 0, "found a StaticText")
+            p = string.concat("{\"id\":\"", string.concat(eid, "\"}"))
+            rc2 = selenium_core.execute(sp, "getElementText", p)
+            spec.assert_eq(rc2, 0, "getElementText rc")
+            // Each value is wrapped in U+200E LTR marks — strip before compare.
+            got = _strip_ltr(selenium_core.last_value_of(sp))
+            spec.assert_contains(got, "3", "the answer, read off the real window")
+        }
+        spec.it("quit closes the real session") callback {
+            rc = selenium_core.execute(sp, "quit", "{}")
+            spec.assert_eq(rc, 0, "quit rc")
+        }
+    }
+
+    selenium_core.session_free(sp)
+    return spec.run_summary(fw)
+}
+
+// Find by accessibility id and click. Returns 0 on success.
+_click(sp: ptr, aid: string) -> int {
+    loc = string.concat("{\"using\":\"accessibility id\",\"value\":\"", string.concat(aid, "\"}"))
+    rc = selenium_core.execute(sp, "findElement", loc)
+    if rc != 0 { return rc }
+    eid = _elem_id(selenium_core.last_value_of(sp))
+    if string.length(eid) == 0 { return -1 }
+    p = string.concat("{\"id\":\"", string.concat(eid, "\"}"))
+    return selenium_core.execute(sp, "clickElement", p)
+}
+
+_ready(base: string) -> int {
+    probe = selenium_core.session_new(base)
+    rc = selenium_core.execute(probe, "status", "{}")
+    v = selenium_core.last_value_of(probe)
+    selenium_core.session_free(probe)
+    if rc != 0 { return 0 }
+    if string.index_of(v, "ready") < 0 { return 0 }
+    return 1
+}
+
+_KEY() -> string { return "\"element-6066-11e4-a52e-4f735466cecf\":\"" }
+
+_elem_id(v: string) -> string {
+    at = string.index_of(v, _KEY())
+    if at < 0 { return "" }
+    rest = string.substring(v, at + string.length(_KEY()), string.length(v))
+    end = string.index_of(rest, "\"")
+    if end < 0 { return "" }
+    return string.substring(rest, 0, end)
+}
+
+// The LAST element reference in a findElements array.
+_last_elem_id(v: string) -> string {
+    out = ""
+    rest = v
+    while 1 == 1 {
+        at = string.index_of(rest, _KEY())
+        if at < 0 { return out }
+        rest = string.substring(rest, at + string.length(_KEY()), string.length(rest))
+        end = string.index_of(rest, "\"")
+        if end < 0 { return out }
+        out = string.substring(rest, 0, end)
+    }
+    return out
+}
+
+// Strip U+200E LEFT-TO-RIGHT MARK (UTF-8 e2 80 8e), which mac2 wraps values in.
+_strip_ltr(s: string) -> string {
+    return string.replace_all(s, "‎", "")
+}

@@ -468,6 +468,31 @@ main() {
                 "browser session still gets the CSS rewrite")
             selenium_core.session_free(bp2)
         }
+        spec.it("CONTROL: appium caps + browserName stays a BROWSER session") callback {
+            // Appium drives browsers too. A request carrying appium:* AND a
+            // browserName is a browser session and must keep the browser By
+            // rules — otherwise request-side detection would break every
+            // Appium-driven Chrome/Safari run in existence.
+            bp3 = selenium_core.session_new(bbase)
+            caps = "{\"capabilities\":{\"alwaysMatch\":{\"browserName\":\"chrome\",\"appium:automationName\":\"Chromium\",\"appium:chromedriverExecutable\":\"/usr/bin/chromedriver\"}}}"
+            rc = selenium_core.execute(bp3, "newSession", caps)
+            spec.assert_eq(rc, 0, "newSession rc")
+            spec.assert_eq(selenium_core.session_is_native(bp3), 0, "appium+browserName == browser")
+            spec.assert_contains(selenium_core.by_locator_for(bp3, "id", "q"), "css selector",
+                "still gets the CSS rewrite")
+            selenium_core.session_free(bp3)
+        }
+        spec.it("REQUEST-side detection fires on appium:* with no browserName") callback {
+            bp4 = selenium_core.session_new(bbase)
+            // The browser control endpoint replies with browserName, but the
+            // REQUEST declared a native intent and no browser — the caller's
+            // declaration wins, which is the whole point: a terse or even
+            // misleading driver cannot strand a desktop caller.
+            caps = "{\"capabilities\":{\"alwaysMatch\":{\"appium:app\":\"org.example.app\"}}}"
+            _rc = selenium_core.execute(bp4, "newSession", caps)
+            spec.assert_eq(selenium_core.session_is_native(bp4), 1, "detected from appium:app")
+            selenium_core.session_free(bp4)
+        }
         spec.it("a null session falls back to the browser rules") callback {
             spec.assert_str_eq(selenium_core.by_locator_for(null, "name", "q"),
                 selenium_core.by_locator("name", "q"), "null == by_locator")

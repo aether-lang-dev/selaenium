@@ -27,17 +27,19 @@ main() {
             spec.assert_eq(rc, 0, "newSession rc")
             spec.assert_true(string.length(selenium_core.session_id_of(sp)) > 0, "session id")
         }
-        spec.it("does NOT auto-detect as native — and that is the documented gap") callback {
-            // This driver's newSession returns only {"app":"kate"}: no
-            // browserName, but also no automationName and no platformName. So
-            // _detect_native has no POSITIVE signal to act on and correctly
-            // leaves the session in browser mode. That is the asymmetric
-            // trade-off by design — missing a desktop session costs one
-            // explicit call; wrongly flipping a browser session would break
-            // By.id for every browser user of every binding.
-            spec.assert_eq(selenium_core.session_is_native(sp), 0, "not auto-detected")
-            selenium_core.session_set_native(sp, 1)
-            spec.assert_eq(selenium_core.session_is_native(sp), 1, "explicit set_native works")
+        spec.it("auto-detects as native from the CALLER'S capabilities") callback {
+            // This driver's newSession RESPONSE carries nothing to detect —
+            // only {"app":"kate"}: no browserName, no automationName, no
+            // platformName. Response-side detection alone would leave this in
+            // browser mode and every binding would need an is_native/set_native
+            // accessor just to say "this is a desktop driver" — twenty
+            // languages of API to work around one terse driver.
+            //
+            // The REQUEST said it, though: appium:app. Nobody sends that to a
+            // browser. Reading the caller's declared intent means this works
+            // from any binding that can pass capabilities, which is all of
+            // them, with no per-binding API at all.
+            spec.assert_eq(selenium_core.session_is_native(sp), 1, "auto-detected from appium:app")
         }
     }
 
