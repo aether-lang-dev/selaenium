@@ -5,6 +5,13 @@ Design notes for the Selenium-on-Aether port.
 - **[Architecture](./Architecture.md)** — what the repo is: one pure-Aether
   engine + 18 thin FFI bindings, aeb not Bazel, why a reboot rather than a
   migration, and the remaining capability gaps vs classic.
+- **[Desktop testing](./Desktop.md)** — driving desktop applications, not just
+  browsers: the same engine, bindings and `find_element`, pointed at a desktop
+  driver (WinAppDriver / Appium mac2 / KDE's AT-SPI one). Covers how desktop
+  mode is decided from your capabilities, the Appium locator set, why the
+  JS-atom commands route to real endpoints there, and a MEASURED matrix of what
+  each driver supports. Proven live against Kate on Linux and Calculator on
+  macOS.
 - **[WebDriver-BiDi](./WebDriver-BiDi.md)** — design note for the BiDi layer
   (the persistent-WebSocket, event-driven protocol). Transport + model proven
   live (`selenium_core/bidi_probe.ae`); the engine-layer + ABI plan awaits

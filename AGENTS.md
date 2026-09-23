@@ -25,6 +25,15 @@ caller-owned-string bridge (`sel_embed_dup` / `sel_embed_free`). It cannot be
 Aether because `std.mem` is access-only with no allocation primitive, and the
 bindings free returned pointers with C `free()`.
 
+**Desktop is not browser-only.** The same engine drives desktop applications
+through any W3C desktop driver (WinAppDriver, Appium mac2, KDE's AT-SPI one):
+desktop mode is decided from the caller's capabilities, By-normalization stops
+rewriting id/name/class name to CSS, and the JS-atom commands
+(isDisplayed/getAttribute/getText) route to real W3C endpoints because a
+desktop driver has no JavaScript engine. No binding carries any of that. Proven
+live against Kate (Linux) and Calculator (macOS) — see `docs/Desktop.md` and
+`selenium_core/tests/{atspi,mac2}_live.ae`.
+
 `grid/` is the newer half: `hub.ae` is a **standalone Grid hub** — we are a Grid
 client *and* now a Grid server. See `docs/Grid.md`.
 
