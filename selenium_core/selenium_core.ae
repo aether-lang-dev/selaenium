@@ -38,7 +38,7 @@ struct Session {
     ca_file: string         // TLS: pin the peer cert against THIS CA (""=system store)
     insecure: int           // TLS: 1 = skip verification (self-signed dev Grid); 0 = verify
     // --- desktop/native mode. 0 = browser (default), 1 = a native automation
-    // endpoint: WinAppDriver, appium-windows-driver, appium-mac2-driver, and
+    // endpoint: appium-novawindows-driver, appium-mac2-driver, KDE's AT-SPI one, and
     // the mobile drivers, all of which speak W3C WebDriver but have no CSS
     // engine. Set explicitly via session_set_native, or detected from the
     // newSession response (see _detect_native). Only by_locator_for reads it.
@@ -785,13 +785,21 @@ _detect_native(s: *Session, value: ptr) {
 }
 
 // The way forward, appended to every JSONWP refusal. Without it the message
-// says only "not supported", which strands the reader — and the single most
-// likely way to meet a JSONWP endpoint in 2026 is pointing at WinAppDriver
-// directly. WinAppDriver has spoken JSONWP since 2015 and its last release was
-// 2020; Appium's windows driver wraps it and speaks W3C, which is the route
-// Appium and Selenium both take. So name it.
+// says only "not supported", which strands the reader — and the likeliest way
+// to meet a JSONWP endpoint is pointing at WinAppDriver directly.
+//
+// This hint USED to say "wrap it with appium-windows-driver". That was wrong in
+// practice and cost the sibling who proved Windows a debugging round: on
+// Windows 11 10.0.26200, appium-windows-driver launches WinAppDriver, the inner
+// port listens, and every session dies with "WinAppDriver ... fails to respond
+// with a proper status". WinAppDriver's last release is 1.2.x (2021) and it is
+// unmaintained. Wrapping a dead driver does not revive it.
+//
+// appium-novawindows-driver drives UI Automation natively, with no
+// WinAppDriver.exe at all, and is what selaenium's Windows support is proven
+// against (selenium_core/tests/windows_live.ae, green on a real Win11 VM).
 _JSONWP_HINT() -> string {
-    return " — if this is WinAppDriver, drive it through appium-windows-driver (Appium 2/3), which wraps it and speaks W3C; Selenium 4 dropped JSON Wire Protocol support for the same reason."
+    return " — if this is WinAppDriver: it speaks JSONWP, is unmaintained (last release 2021) and its sessions fail outright on current Windows 11. Use appium-novawindows-driver instead, which drives UI Automation natively and speaks W3C. Selenium 4 dropped JSON Wire Protocol support for the same reason."
 }
 
 // _jsonwp_status(parsed) — the JSON Wire Protocol's top-level integer `status`,
@@ -1257,7 +1265,7 @@ by_locator(strategy: string, value: string) -> string {
 }
 
 // by_locator_native(strategy, value) — By-normalization for a NATIVE automation
-// driver (WinAppDriver, appium-windows-driver, appium-mac2-driver, and the
+// driver (appium-novawindows-driver, appium-mac2-driver, KDE's AT-SPI one, and the
 // mobile drivers). The compatibility target is Appium's extended locator set —
 // what AppiumBy/MobileBy put on the wire in the existing clients — so a caller
 // that knows Appium finds the strategies where it expects them.

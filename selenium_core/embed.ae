@@ -293,7 +293,7 @@ sel_embed_by_locator(strategy: string, value: string) -> string {
 // The locator JSON for a (strategy, value) pair, normalized for THIS session:
 // browser rules (id/name/className -> CSS) against a browser, and Appium's
 // native strategies against a desktop/native driver (WinAppDriver,
-// appium-windows-driver, appium-mac2-driver, the mobile drivers), where those
+// appium-novawindows-driver, appium-mac2-driver, the mobile drivers), where those
 // same strategies must reach the wire intact because there is no CSS engine.
 // This is the one a binding should call — the same caller code then works
 // against chromedriver and WinAppDriver. Caller frees.

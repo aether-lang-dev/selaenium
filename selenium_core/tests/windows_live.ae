@@ -40,7 +40,7 @@ main() {
     // An explicit URL is the only way to know the endpoint is the one meant.
     base = os.getenv("SEL_WINDOWS_URL")
     if string.length(base) == 0 {
-        println("SKIPPED: SEL_WINDOWS_URL unset (point it at appium-windows-driver, e.g. http://<win-host>:4723)")
+        println("SKIPPED: SEL_WINDOWS_URL unset (point it at an appium-novawindows-driver endpoint, e.g. http://<win-host>:4723 — NOT appium-windows-driver/WinAppDriver, which is dead on current Win11)")
         return 0
     }
     ready = _ready(base)

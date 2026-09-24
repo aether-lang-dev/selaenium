@@ -88,11 +88,13 @@ aeb(cap) {
             lib("..")
             caps("net")
         }
-        // Windows live proof — appium-windows-driver against Calculator. NOT
-        // yet run against real hardware (no Windows machine in reach); it
-        // self-skips when nothing answers, and FAILS LOUDLY when something
-        // answers in the wrong dialect, which is what pointing it at raw
-        // WinAppDriver (JSON Wire Protocol) would do.
+        // Windows live proof — appium-novawindows-driver against Notepad.
+        // GREEN against a real Windows 11 VM. NOT appium-windows-driver:
+        // WinAppDriver is unmaintained (last release 2021) and its sessions
+        // fail outright on current Win11, so NovaWindows drives UI Automation
+        // natively instead. Self-skips when nothing answers, and FAILS LOUDLY
+        // when something answers in the wrong dialect, which is what pointing
+        // it at raw WinAppDriver (JSON Wire Protocol) would do.
         aether.program_test() {
             source("windows_live.ae")
             lib("..")
