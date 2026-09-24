@@ -1,0 +1,53 @@
+// appium_probe.ae — the PURE half of desktop driver provisioning
+// (drivermgr/appium.ae): which names are Appium-hosted, how an installed driver
+// is recognised in `appium driver list --installed --json`, and path handling
+// for node installs on both Windows and Unix. The install/launch half is proven
+// live (a real `ensure_driver("novawindows")` on Windows).
+import appium
+import std.string
+import std.list
+import std.spec
+
+main() {
+    fw = spec.init()
+    spec.describe(fw, "appium: which drivers are Appium-hosted") {
+        spec.it("maps desktop driver names to npm packages") callback {
+            spec.assert_str_eq(appium.npm_pkg("novawindows"), "appium-novawindows-driver", "novawindows")
+            spec.assert_str_eq(appium.npm_pkg("mac2"), "appium-mac2-driver", "mac2")
+        }
+        spec.it("leaves browsers to the browser driver manager") callback {
+            spec.assert_str_eq(appium.npm_pkg("chrome"), "", "chrome")
+            spec.assert_str_eq(appium.npm_pkg("chromedriver"), "", "chromedriver")
+            spec.assert_str_eq(appium.npm_pkg(""), "", "empty")
+        }
+    }
+    spec.describe(fw, "appium: recognising an installed driver") {
+        // Real shape of `appium driver list --installed --json` (appium 3.7).
+        listed = "{\"windows\":{\"pkgName\":\"appium-windows-driver\"},\"novawindows\":{\"pkgName\":\"appium-novawindows-driver\"}}"
+        spec.it("finds a listed driver by its key") callback {
+            spec.assert_eq(appium.lists_driver(listed, "novawindows"), 1, "novawindows listed")
+        }
+        spec.it("does not take a suffix match for the driver") callback {
+            only_windows = "{\"windows\":{\"pkgName\":\"appium-windows-driver\"}}"
+            spec.assert_eq(appium.lists_driver(only_windows, "novawindows"), 0, "windows is not novawindows")
+            spec.assert_eq(appium.lists_driver("{\"novawindows\":{}}", "windows"), 0, "novawindows is not windows")
+        }
+        spec.it("an empty or failed listing lists nothing") callback {
+            spec.assert_eq(appium.lists_driver("", "novawindows"), 0, "empty")
+            spec.assert_eq(appium.lists_driver("{}", "novawindows"), 0, "no drivers")
+        }
+    }
+    spec.describe(fw, "appium: node install layouts") {
+        spec.it("dirname handles Windows and Unix separators") callback {
+            spec.assert_str_eq(appium.dirname("C:\\Program Files\\nodejs\\node.exe"), "C:\\Program Files\\nodejs", "windows")
+            spec.assert_str_eq(appium.dirname("/usr/bin/node"), "/usr/bin", "unix")
+            spec.assert_str_eq(appium.dirname("C:/x\\y/node.exe"), "C:/x\\y", "mixed")
+            spec.assert_str_eq(appium.dirname("node"), "", "bare")
+        }
+        spec.it("looks for npm beside node, then under ../lib") callback {
+            spec.assert_str_eq(appium.npm_cli_candidate("/usr/bin", 0), "/usr/bin/node_modules/npm/bin/npm-cli.js", "windows layout")
+            spec.assert_str_eq(appium.npm_cli_candidate("/usr/bin", 1), "/usr/bin/../lib/node_modules/npm/bin/npm-cli.js", "unix layout")
+        }
+    }
+    return spec.run_summary(fw)
+}

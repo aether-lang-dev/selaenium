@@ -147,7 +147,8 @@ Wire Protocol anyway; pointing a session straight at it gets a refusal, by
 design — see the JSONWP note below.)
 
 Use **NovaWindows**, an actively-maintained driver that drives UI Automation
-**natively** — no WinAppDriver.exe at all — and speaks W3C:
+**natively** — no WinAppDriver.exe at all — and speaks W3C. To run it by hand
+(or skip to the next section and let the engine do it):
 
 ```sh
 npm i -g appium
@@ -166,6 +167,53 @@ real Windows 11 VM: it opens Notepad, finds the editor by its native ClassName
 NovaWindows Appium endpoint and run it; there is deliberately no default port,
 because 4723 is Appium's generic port and says nothing about which driver is
 behind it.
+
+### Local, with nothing set up: `ensure_driver("novawindows")`
+
+The steps above are what the engine does for you when the test runs on the
+Windows machine itself. It does for desktop what it already does for
+chromedriver (the Selenium-Manager part):
+
+```js
+const { WebDriver, By, ensureDriver } = require('selenium-webdriver')
+const appium = ensureDriver('novawindows')      // installs anything missing, launches
+const d = new WebDriver(appium.url, { platformName: 'Windows',
+  'appium:automationName': 'NovaWindows',
+  'appium:app': 'Microsoft.WindowsCalculator_8wekyb3d8bbwe!App' })
+await d.implicitlyWait(10000)
+for (const id of ['num1Button', 'plusButton', 'num2Button', 'equalButton'])
+  await (await d.findElement(By.accessibilityId(id))).click()
+await (await d.findElement(By.accessibilityId('CalculatorResults'))).getText() // 'Display is 3'
+await d.quit(); appium.stop()
+```
+
+`ensure_driver` is the existing ABI entry every binding already has, so this
+works from all of them. Given `"novawindows"` (or `"mac2"`: same mechanism, not
+yet run on a Mac), the engine
+(`selenium_core/drivermgr/appium.ae`):
+
+1. finds `node` on PATH. **Node is not installed for you.** Like a browser, it
+   has an OS installer, so no node means no driver (`null`, and a live test
+   skips);
+2. runs `npm i -g appium` if appium is missing;
+3. runs `appium driver install --source=npm appium-novawindows-driver` if the
+   driver is missing;
+4. starts `node <appium>/index.js --address 127.0.0.1 --port <free port>` and
+   waits for it. `stop()` kills that node process.
+
+Pass hint `"offline"` to skip the installs and only use what is already there.
+If nothing needs installing, startup takes about 3s. The first run, which
+installs the driver, took about 45s.
+
+Two things are fixed on purpose. Appium **listens on loopback only**, because
+an Appium server gives unauthenticated control of the desktop. And **the caller
+must run in the logged-in desktop session**, because appium inherits the
+caller's session. From an ssh or service session (Session 0) appium starts, but
+it cannot attach to the user's applications.
+
+Proven on a Windows 11 VM (2026-09-24). The JS binding ran with no Appium
+running and drove Calculator to `1 + 2 = 3`, three times out of three. Separately,
+starting from an empty `APPIUM_HOME`, it installed NovaWindows from npm.
 
 (If a WinAppDriver that supports the current Windows build ever ships — e.g.
 microsoft/WinAppDriver#2022 — `automationName: Windows` would work too. Until

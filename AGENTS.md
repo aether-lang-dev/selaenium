@@ -209,6 +209,18 @@ against Chrome for the WebAuthn and log-type commands.
   `builder <fn>(` in `~/.local/share/aeb/lib/<sdk>/module.ae` — allowing for
   builders that take arguments, e.g. `kotlin_test(test_class)`.
 
+- **An Aether local's name goes into the emitted C verbatim, so a C macro
+  can take it.** A local called `unix` compiled for Windows and broke the
+  Linux build, because gcc predefines `unix` as `1` there. It fails with
+  `expected identifier or '(' before numeric constant`, pointing at a line
+  that looks fine. Other names gcc predefines include `linux` and `i386`.
+- **Do not return a string you took out of a local list.** In
+  `drivermgr/appium.ae`, a function built its candidate paths with
+  `string.concat`, put them in a local list, and returned the one that
+  existed. The string did not outlive the list's scope. About half of all
+  resolves on Windows handed node a freed path (`"C"`, or garbage), and every
+  pure test passed. Return the value straight from the call that built it.
+
 ### A non-answer is not a negative answer
 
 The single most expensive class of bug in this repo's history, in five costumes:

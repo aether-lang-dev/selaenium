@@ -21,6 +21,7 @@ import std.string
 import std.heap
 import std.json
 import resolve
+import appium
 
 // One live driver process: the spawn token (for kill/wait) and the port it was
 // launched on (for the base URL a session binds to).
@@ -45,6 +46,9 @@ resolve_driver(browser: string, hint: string) -> string {
     if string.equals(browser, "chromium") == 1 { return resolve.resolve_chrome(hint) }
     if string.equals(browser, "firefox") == 1 { return resolve.resolve_firefox(hint) }
     if string.equals(browser, "edge") == 1 { return resolve.resolve_edge(hint) }
+    // Appium-hosted desktop drivers resolve to appium's entry script (a .js run
+    // under node), installing appium + the driver if missing.
+    if string.length(appium.npm_pkg(browser)) > 0 { return appium.resolve(browser, hint) }
     exe = driver_exe_for(browser)
     if string.length(exe) == 0 { return "" }
     return which(exe)
@@ -195,9 +199,56 @@ launch(driver_path: string, timeout_ms: int) -> ptr {
 // bindings call. Returns a Driver handle, or null (the binding's cue to SKIP its
 // live test: same "no driver" semantics every binding already has).
 ensure(browser: string, hint: string, timeout_ms: int) -> ptr {
+    if string.length(appium.npm_pkg(browser)) > 0 {
+        return ensure_appium(browser, hint, timeout_ms)
+    }
     path = resolve_driver(browser, hint)
     if string.length(path) == 0 { return null }
     return launch(path, timeout_ms)
+}
+
+// ensure() for an Appium-hosted desktop driver ("novawindows", "mac2"): install
+// appium + the driver if missing (drivermgr/appium.ae), then run appium's own
+// entry script under node on a free LOOPBACK port. Same Driver handle as a
+// chromedriver — url_of/stop/pid_of all apply, and stop() kills node itself.
+//
+// Bound to 127.0.0.1 deliberately: an Appium server is unauthenticated control
+// of the whole desktop, so it must never listen beyond this machine.
+//
+// The timeout is floored at 60s: a cold appium loads every installed driver
+// before it listens, which takes seconds where chromedriver takes milliseconds.
+//
+// A DESKTOP driver needs a desktop. Launched from a service or ssh session
+// (Windows Session 0) appium comes up, but sessions cannot attach to the user's
+// applications — run the calling program from the logged-in desktop.
+ensure_appium(name: string, hint: string, timeout_ms: int) -> ptr {
+    entry = appium.resolve(name, hint)
+    if string.length(entry) == 0 { return null }
+    node = appium.node_path()
+    if string.length(node) == 0 { return null }
+    port = free_port()
+    if port <= 0 { return null }
+    argv = list.new()
+    list.add(argv, entry)
+    list.add(argv, "--address")
+    list.add(argv, "127.0.0.1")
+    list.add(argv, "--port")
+    list.add(argv, string.from_int(port))
+    list.add(argv, "--log-level")
+    list.add(argv, "error")
+    token, err = os.spawn_proc(node, argv, null)
+    list.free(argv)
+    if string.length(err) > 0 { return null }
+    wait = timeout_ms
+    if wait < 60000 { wait = 60000 }
+    if wait_ready(port, wait) == 0 {
+        _kill_and_reap(token)
+        return null
+    }
+    d = heap.new(Driver)
+    d.token = token
+    d.port = port
+    return d as ptr
 }
 
 // The "http://127.0.0.1:<port>" a session binds to (sel_embed_open). Owned by

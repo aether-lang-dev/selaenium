@@ -21,6 +21,14 @@ aeb(cap) {
             source("bidi_demux_probe.ae")
             lib("..")
         }
+        // Desktop driver provisioning unit test — the pure half of
+        // drivermgr/appium.ae (Appium-hosted driver names, recognising an
+        // installed driver, node install layouts). The install + launch half
+        // is proven live via ensure_driver("novawindows") on Windows.
+        aether.program_test() {
+            source("appium_probe.ae")
+            lib("../drivermgr")
+        }
         // Atom builders unit test — the executeScript params assembly for the
         // atom-backed commands (isDisplayed/getAttribute/getText), pure (no
         // browser/FFI). lib("..") resolves atoms.
