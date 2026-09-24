@@ -16,10 +16,18 @@ d = WebDriver("http://127.0.0.1:4723", {"platformName": "mac",
               "appium:bundleId": "com.apple.calculator"})
 for aid in ("One", "Add", "Two", "Equals"):
     d.find_element(By.ACCESSIBILITY_ID, aid).click()
+
+# Windows — appium-novawindows-driver, driving Notepad
+d = WebDriver("http://127.0.0.1:4723", {"platformName": "Windows",
+              "appium:automationName": "NovaWindows",
+              "appium:app": "C:/Windows/System32/notepad.exe"})
+ed = d.find_element(By.CLASS_NAME, "RichEditD2DPT")   # native UIA class, not CSS
+ed.send_keys("hello"); ed.text                        # 'hello'
 ```
 
-Both of those are run as tests in this repo — `selenium_core/tests/atspi_live.ae`
-and `mac2_live.ae` — against the real drivers and real applications.
+All three are run as tests in this repo — `selenium_core/tests/atspi_live.ae`,
+`mac2_live.ae` and `windows_live.ae` — against the real drivers and real
+applications.
 
 ## What makes it work
 
@@ -82,19 +90,24 @@ Support is **per driver, not per platform**. The engine does not keep a list of
 "things desktop cannot do", because such a list would be wrong. Measured
 against both drivers:
 
-| command | KDE AT-SPI | mac2 |
-|---|---|---|
-| `findElement` / `findElements` | yes | yes |
-| `clickElement`, `sendKeysToElement` | yes | yes |
-| `getElementText`, `isElementDisplayed` | yes | yes |
-| `isElementEnabled`, `isElementSelected` | yes | yes |
-| `getElementRect`, `getDomAttribute` | yes | yes (driver-specific attribute names) |
-| `getPageSource` | yes (accessibility tree as XML) | yes |
-| `executeScript` | extension commands only | extension commands only |
-| `screenshot` | needs the C++ helper | yes |
-| `setTimeout`, `getElementTagName`, `get` | no | yes |
-| `getTitle`, `getCurrentUrl`, `getCookies` | no | no |
-| `switchToFrame`, window handles | no | no |
+| command | KDE AT-SPI | mac2 | Windows (NovaWindows) |
+|---|---|---|---|
+| `findElement` / `findElements` | yes | yes | yes |
+| `clickElement`, `sendKeysToElement` | yes | yes | yes |
+| `getElementText`, `isElementDisplayed` | yes | yes | yes |
+| `isElementEnabled`, `isElementSelected` | yes | yes | yes |
+| `getElementRect`, `getDomAttribute` | yes | yes (driver-specific attribute names) | yes |
+| `getPageSource` | yes (accessibility tree as XML) | yes | yes (UIA tree as XML) |
+| `executeScript` | extension commands only | extension commands only | extension commands only |
+| `screenshot` | needs the C++ helper | yes | **no** |
+| `setTimeout`, `getElementTagName` | no | yes | yes |
+| `getTitle` | no | no | **yes** |
+| `get`, `getCurrentUrl`, `getCookies` | no | mac2: `get` yes | no |
+| `switchToFrame`, window handles | no | no | no |
+
+Windows has its own column, not a copy of either: NovaWindows supports `getTitle`
+(neither other driver does) but not `screenshot`. "Per driver, not per platform"
+is the point — measure it, don't assume it.
 
 An unsupported command comes back as **`unknown command` (28)** naming the
 command — not as a mystery error.
@@ -115,7 +128,7 @@ Anything that speaks W3C WebDriver over HTTP:
 
 | platform | driver | notes |
 |---|---|---|
-| Windows | **appium-windows-driver** (not WinAppDriver directly — see below) | UI Automation |
+| Windows | **appium-novawindows-driver** (NOT WinAppDriver — see below) | UI Automation, native (no WinAppDriver.exe) |
 | macOS | appium-mac2-driver | XCTest/WebDriverAgentMac; needs **full Xcode** |
 | Linux | KDE's `selenium-webdriver-at-spi` | AT-SPI2; the Flask server alone is enough for everything but screenshots |
 | mobile | appium XCUITest / UiAutomator2 | same shape |
@@ -123,26 +136,40 @@ Anything that speaks W3C WebDriver over HTTP:
 We are a **client** of these. selaenium does not implement OS-level automation
 and does not fork the drivers that do — they speak the standard, and so do we.
 
-### Windows: go through Appium, not WinAppDriver directly
+### Windows: NovaWindows, not WinAppDriver
 
-WinAppDriver speaks the **JSON Wire Protocol**, not W3C — its responses carry a
-top-level numeric `status`, which is precisely the field Selenium uses to tell
-the two dialects apart. Selenium 4 dropped JSONWP, and so has this engine, so
-pointing a session straight at WinAppDriver gets a refusal naming the fix.
+**WinAppDriver is dead on modern Windows 11.** Microsoft's WinAppDriver (last
+release 1.2.x, 2021) is unmaintained and does not work on recent builds
+(10.0.26200 here): `appium-windows-driver` launches it, it *listens* on its inner
+port, but every session fails with *"WinAppDriver ... fails to respond with a
+proper status"* — it never completes. (And WinAppDriver speaks the pre-W3C JSON
+Wire Protocol anyway; pointing a session straight at it gets a refusal, by
+design — see the JSONWP note below.)
 
-Use Appium's windows driver, which wraps WinAppDriver and speaks W3C:
+Use **NovaWindows**, an actively-maintained driver that drives UI Automation
+**natively** — no WinAppDriver.exe at all — and speaks W3C:
 
 ```sh
-npm i -g appium && appium driver install --source=npm appium-windows-driver
-appium --port 4723          # it launches WinAppDriver for you
+npm i -g appium
+appium driver install --source=npm appium-novawindows-driver
+appium --address 127.0.0.1 --port 4723
 ```
 
-`selenium_core/tests/windows_live.ae` is written to the same shape as the Linux
-and macOS live tests — Calculator, `1 + 2 =`, read the result — but **has not
-been run against real hardware**, because this project has had no Windows
-machine in reach. Set `SEL_WINDOWS_URL` and run it; there is deliberately no
-default port, because 4723 is Appium's generic port and says nothing about
-which driver is behind it.
+Run appium from the **interactive desktop session**, not a service/SSH (Session 0)
+session — a desktop driver needs a desktop to attach to. Bind it to `127.0.0.1`
+and reach it over an authenticated tunnel rather than exposing `0.0.0.0`.
+
+`selenium_core/tests/windows_live.ae` is **live-proven** (2026-09-24) against a
+real Windows 11 VM: it opens Notepad, finds the editor by its native ClassName
+(`RichEditD2DPT`), types text, reads it back, and quits — 5/5. Both the engine
+*and* the python binding's public API drove it. Set `SEL_WINDOWS_URL` at a
+NovaWindows Appium endpoint and run it; there is deliberately no default port,
+because 4723 is Appium's generic port and says nothing about which driver is
+behind it.
+
+(If a WinAppDriver that supports the current Windows build ever ships — e.g.
+microsoft/WinAppDriver#2022 — `automationName: Windows` would work too. Until
+then, NovaWindows is what works.)
 
 ### Not supported: the pre-W3C wire protocol
 
