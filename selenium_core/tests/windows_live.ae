@@ -1,0 +1,148 @@
+// Windows desktop, through appium-windows-driver — the third platform, same
+// engine path as atspi_live.ae (Kate/Linux) and mac2_live.ae (Calculator/macOS).
+//
+// NOT YET RUN. There is no Windows machine in this project's reach, so unlike
+// its two siblings this file has never driven a real application. It is written
+// to the same shape deliberately: when a Windows box appears, running it is the
+// whole job. Treat a green result here as the first real evidence, not a
+// re-confirmation.
+//
+// IMPORTANT — do NOT point this at WinAppDriver directly (:4723 by default).
+// WinAppDriver speaks the JSON Wire Protocol, not W3C: its responses carry a
+// top-level numeric `status`, which is exactly the field Selenium uses to tell
+// the dialects apart. Selenium 4 dropped JSONWP, and so has this engine — you
+// will get a refusal naming this fix. Use Appium's windows driver, which wraps
+// WinAppDriver and speaks W3C:
+//
+//   npm i -g appium && appium driver install --source=npm appium-windows-driver
+//   appium --port 4723        # it launches WinAppDriver itself
+//
+// Calculator's AutomationIds are WORDS on modern Windows (num7Button,
+// plusButton, equalButton, CalculatorResults) — the same lesson mac2 taught us
+// about macOS. If a find fails, dump getPageSource and read the real ids rather
+// than guessing glyphs.
+import selenium_core
+import std.string
+import std.os
+import std.spec
+
+main() {
+    // NO DEFAULT PORT, deliberately. 4723 is Appium's generic port and says
+    // nothing about which driver is behind it — defaulting there made this test
+    // open a session against a local fake-driver Appium and fail with
+    // "invalid session id", which looks like a Windows bug and is not one.
+    // An explicit URL is the only way to know the endpoint is the one meant.
+    base = os.getenv("SEL_WINDOWS_URL")
+    if string.length(base) == 0 {
+        println("SKIPPED: SEL_WINDOWS_URL unset (point it at appium-windows-driver, e.g. http://<win-host>:4723)")
+        return 0
+    }
+    ready = _ready(base)
+    if ready == 0 {
+        println("SKIPPED: no Appium/windows endpoint at ${base}")
+        return 0
+    }
+    if ready < 0 {
+        // NOT a skip. Something IS listening, it just speaks the wrong dialect
+        // — overwhelmingly likely raw WinAppDriver on its default port. Skipping
+        // green here would report "nothing to test" when the truth is "your
+        // endpoint cannot be driven", which is the non-answer-as-negative-answer
+        // trap this repo keeps a section about.
+        println("FAILED: ${base} answered, but not as a W3C endpoint:")
+        println("  ${_why(base)}")
+        return 1
+    }
+    fw = spec.init()
+    sp = selenium_core.session_new(base)
+
+    spec.describe(fw, "windows: a real Windows application") {
+        spec.it("opens a Calculator session") callback {
+            caps = "{\"capabilities\":{\"alwaysMatch\":{\"platformName\":\"Windows\",\"appium:automationName\":\"Windows\",\"appium:app\":\"Microsoft.WindowsCalculator_8wekyb3d8bbwe!App\"}}}"
+            rc = selenium_core.execute(sp, "newSession", caps)
+            spec.assert_eq(rc, 0, "newSession rc")
+            spec.assert_true(string.length(selenium_core.session_id_of(sp)) > 0, "session id")
+        }
+        spec.it("is detected as native from the request capabilities") callback {
+            // platformName Windows + appium:* and no browserName. This fires on
+            // the REQUEST, so it works even if the driver echoes nothing back.
+            spec.assert_eq(selenium_core.session_is_native(sp), 1, "native mode on")
+        }
+    }
+
+    spec.describe(fw, "windows: driving the real UI") {
+        spec.it("clicks 1 + 2 = through native AutomationIds") callback {
+            spec.assert_eq(_click(sp, "num1Button"), 0, "click 1")
+            spec.assert_eq(_click(sp, "plusButton"), 0, "click +")
+            spec.assert_eq(_click(sp, "num2Button"), 0, "click 2")
+            spec.assert_eq(_click(sp, "equalButton"), 0, "click =")
+        }
+        spec.it("reads 3 back off the real display") callback {
+            rc = selenium_core.execute(sp, "findElement",
+                "{\"using\":\"accessibility id\",\"value\":\"CalculatorResults\"}")
+            spec.assert_eq(rc, 0, "find result field")
+            eid = _elem_id(selenium_core.last_value_of(sp))
+            spec.assert_true(string.length(eid) > 0, "element id")
+            p = string.concat("{\"id\":\"", string.concat(eid, "\"}"))
+            rc2 = selenium_core.execute(sp, "getElementText", p)
+            spec.assert_eq(rc2, 0, "getElementText rc")
+            // UIA reports it as "Display is 3".
+            spec.assert_contains(selenium_core.last_value_of(sp), "3", "the answer")
+        }
+        spec.it("quit closes the real session") callback {
+            rc = selenium_core.execute(sp, "quit", "{}")
+            spec.assert_eq(rc, 0, "quit rc")
+        }
+    }
+
+    selenium_core.session_free(sp)
+    return spec.run_summary(fw)
+}
+
+_click(sp: ptr, aid: string) -> int {
+    loc = string.concat("{\"using\":\"accessibility id\",\"value\":\"", string.concat(aid, "\"}"))
+    rc = selenium_core.execute(sp, "findElement", loc)
+    if rc != 0 { return rc }
+    eid = _elem_id(selenium_core.last_value_of(sp))
+    if string.length(eid) == 0 { return -1 }
+    p = string.concat("{\"id\":\"", string.concat(eid, "\"}"))
+    return selenium_core.execute(sp, "clickElement", p)
+}
+
+// 1 = a W3C endpoint is ready; 0 = nothing is listening (skip); -1 = something
+// answered but we cannot drive it (fail, and say why).
+_ready(base: string) -> int {
+    probe = selenium_core.session_new(base)
+    rc = selenium_core.execute(probe, "status", "{}")
+    v = selenium_core.last_value_of(probe)
+    err = selenium_core.last_error_of(probe)
+    selenium_core.session_free(probe)
+    if rc == 0 {
+        if string.index_of(v, "ready") < 0 { return 0 }
+        return 1
+    }
+    // A transport failure means nothing is there. Anything else means the port
+    // answered and we could not use the answer.
+    if string.index_of(err, "JSON Wire Protocol") >= 0 { return -1 }
+    if string.index_of(err, "connection") >= 0 { return 0 }
+    if string.index_of(err, "transport") >= 0 { return 0 }
+    return 0
+}
+
+_why(base: string) -> string {
+    probe = selenium_core.session_new(base)
+    _rc = selenium_core.execute(probe, "status", "{}")
+    e = selenium_core.last_error_of(probe)
+    selenium_core.session_free(probe)
+    return e
+}
+
+_KEY() -> string { return "\"element-6066-11e4-a52e-4f735466cecf\":\"" }
+
+_elem_id(v: string) -> string {
+    at = string.index_of(v, _KEY())
+    if at < 0 { return "" }
+    rest = string.substring(v, at + string.length(_KEY()), string.length(v))
+    end = string.index_of(rest, "\"")
+    if end < 0 { return "" }
+    return string.substring(rest, 0, end)
+}

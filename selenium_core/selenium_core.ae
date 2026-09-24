@@ -784,6 +784,16 @@ _detect_native(s: *Session, value: ptr) {
     if string.equals(lower, "roku") == 1 { s.native = 1  return }
 }
 
+// The way forward, appended to every JSONWP refusal. Without it the message
+// says only "not supported", which strands the reader — and the single most
+// likely way to meet a JSONWP endpoint in 2026 is pointing at WinAppDriver
+// directly. WinAppDriver has spoken JSONWP since 2015 and its last release was
+// 2020; Appium's windows driver wraps it and speaks W3C, which is the route
+// Appium and Selenium both take. So name it.
+_JSONWP_HINT() -> string {
+    return " — if this is WinAppDriver, drive it through appium-windows-driver (Appium 2/3), which wraps it and speaks W3C; Selenium 4 dropped JSON Wire Protocol support for the same reason."
+}
+
 // _jsonwp_status(parsed) — the JSON Wire Protocol's top-level integer `status`,
 // or -1 when this is not a JSONWP envelope.
 //
@@ -869,10 +879,10 @@ decode_response(sp: ptr, name: string, resp_body: string) -> int {
         jmsg = _jsonwp_message(parsed)
         if jstatus != 0 {
             s.last_error_code = jstatus
-            s.last_error = string.concat("remote end speaks the JSON Wire Protocol (Selenium 3 and earlier), which is not supported; its status ",
+            s.last_error = string.concat("JSON Wire Protocol endpoint (status ",
                 string.concat(string.from_int(jstatus),
-                string.concat(" for ", string.concat(name,
-                string.concat(": ", jmsg)))))
+                string.concat(") for ", string.concat(name,
+                string.concat(": ", string.concat(jmsg, _JSONWP_HINT()))))))
             json.free(parsed)
             return s.last_error_code
         }
@@ -881,7 +891,8 @@ decode_response(sp: ptr, name: string, resp_body: string) -> int {
         // capture nothing and every later command would build a path with an
         // empty session id. Refuse at the door rather than half-work.
         s.last_error_code = error_code("unknown error")
-        s.last_error = string.concat("remote end speaks the JSON Wire Protocol (Selenium 3 and earlier), which is not supported; this engine is W3C-only. Command: ", name)
+        s.last_error = string.concat("JSON Wire Protocol endpoint (Selenium 3 and earlier); this engine is W3C-only. Command: ",
+            string.concat(name, _JSONWP_HINT()))
         json.free(parsed)
         return s.last_error_code
     }

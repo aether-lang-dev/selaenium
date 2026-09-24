@@ -115,13 +115,34 @@ Anything that speaks W3C WebDriver over HTTP:
 
 | platform | driver | notes |
 |---|---|---|
-| Windows | WinAppDriver, appium-windows-driver | UI Automation |
+| Windows | **appium-windows-driver** (not WinAppDriver directly — see below) | UI Automation |
 | macOS | appium-mac2-driver | XCTest/WebDriverAgentMac; needs **full Xcode** |
 | Linux | KDE's `selenium-webdriver-at-spi` | AT-SPI2; the Flask server alone is enough for everything but screenshots |
 | mobile | appium XCUITest / UiAutomator2 | same shape |
 
 We are a **client** of these. selaenium does not implement OS-level automation
 and does not fork the drivers that do — they speak the standard, and so do we.
+
+### Windows: go through Appium, not WinAppDriver directly
+
+WinAppDriver speaks the **JSON Wire Protocol**, not W3C — its responses carry a
+top-level numeric `status`, which is precisely the field Selenium uses to tell
+the two dialects apart. Selenium 4 dropped JSONWP, and so has this engine, so
+pointing a session straight at WinAppDriver gets a refusal naming the fix.
+
+Use Appium's windows driver, which wraps WinAppDriver and speaks W3C:
+
+```sh
+npm i -g appium && appium driver install --source=npm appium-windows-driver
+appium --port 4723          # it launches WinAppDriver for you
+```
+
+`selenium_core/tests/windows_live.ae` is written to the same shape as the Linux
+and macOS live tests — Calculator, `1 + 2 =`, read the result — but **has not
+been run against real hardware**, because this project has had no Windows
+machine in reach. Set `SEL_WINDOWS_URL` and run it; there is deliberately no
+default port, because 4723 is Appium's generic port and says nothing about
+which driver is behind it.
 
 ### Not supported: the pre-W3C wire protocol
 
