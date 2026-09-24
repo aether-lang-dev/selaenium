@@ -171,6 +171,22 @@ behind it.
 microsoft/WinAppDriver#2022 — `automationName: Windows` would work too. Until
 then, NovaWindows is what works.)
 
+### Print `repr()` before you believe a widget's text
+
+Desktop drivers return text that *looks* right and does not compare equal. This
+has bitten on two platforms already, for two unrelated reasons:
+
+- **macOS (mac2)** wraps every value in U+200E LEFT-TO-RIGHT MARKs, so `"3"` is
+  really `"\u200e3\u200e"`.
+- **Windows (NovaWindows)** dropped the first character of typed input, and
+  accumulated text across sessions until `clear()` was called.
+
+Neither is visible in a log. Both look like a driver bug, an engine bug, or a
+flaky test, and cost a debugging round each. Print the repr of what you actually
+received before concluding anything — and prefer a substring assertion to
+equality, since several drivers decorate values (Windows Calculator reports
+`"Display is 3"`, not `"3"`).
+
 ### Not supported: the pre-W3C wire protocol
 
 Tools built on Selenium 3 and earlier (Marathon, for example) speak the JSON

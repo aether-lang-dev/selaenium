@@ -281,6 +281,28 @@ What to take from it:
 Full writeup, flag matrix and the asm diff:
 `asks/toolchain-gcc16-ipa-bit-cp-miscompiles-emitted-c.md`.
 
+### An error message that recommends a route is a claim, and claims go stale
+
+The JSONWP refusal in the engine told the reader to "drive it through
+appium-windows-driver". True when written, and wrong within days: WinAppDriver
+is unmaintained and its sessions fail outright on current Windows 11, so the
+message confidently sent people down a dead end — and it only ever appears when
+someone is *already* lost and most likely to trust it. It cost the sibling
+proving Windows a debugging round.
+
+The same stale pointer had also been copied into a test's SKIP message and a
+build-node comment, so fixing the engine alone would have left two live traps.
+
+- A message that names a tool, version, flag or URL has a shelf life. When the
+  recommendation changes, **grep for it** — it is rarely in one place.
+- Prefer naming the *property* you need over the product that currently has it
+  ("a W3C endpoint", not "appium-windows-driver") when you are not certain the
+  product will keep having it.
+- **Keep the history, delete only the advice.** The comments explaining "this
+  used to say X; X launches, listens, and then fails" are what stop the next
+  reader re-deriving the dead route from the same upstream README we both did.
+  Deleting them resets the trap.
+
 ### A probe that cannot produce a POSITIVE is not measuring anything either
 
 The negative-polarity version of this is above. The positive one bit us at the
