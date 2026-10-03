@@ -94,7 +94,7 @@ proxy(port: int, method: string, path: string, body: string) -> string {
     if string.equals(method, "POST") == 1 {
         b = body
         if string.length(b) == 0 { b = "{}" }
-        _sb = client.set_body(req, b, string.length(b), "application/json; charset=utf-8")
+        _sb = client.set_body(req, string.bytes(b), "application/json; charset=utf-8")
     }
     _to = client.set_timeout(req, 300s)
     resp, err = client.send_request(req)
@@ -217,7 +217,7 @@ register_with_hub(hub_url: string, node_id: string, address: string, browsers: s
     url = string.concat(hub_url, "/se/grid/register")
     req = client.request("POST", url)
     _h = client.set_header(req, "Accept", "application/json")
-    _sb = client.set_body(req, body, string.length(body), "application/json; charset=utf-8")
+    _sb = client.set_body(req, string.bytes(body), "application/json; charset=utf-8")
     _to = client.set_timeout(req, 10s)
     resp, err = client.send_request(req)
     client.request_free(req)

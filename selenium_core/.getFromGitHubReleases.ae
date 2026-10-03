@@ -90,7 +90,7 @@ aeb(cap) {
         if need == 1 {
             body, blen = _download_bytes(string.concat(base, string.concat("/", asset)))
             if blen <= 0 { bldr.fail(builder_context(), string.concat("fetch failed: ", asset)) }
-            _w = fs.write_binary(cached, body, blen)
+            _w = fs.write_binary(cached, string.bytes(body)[0..blen])
             if string.length(want) > 0 {
                 got, _ge = cryptography.sha256_file(cached)
                 if got != want {
@@ -179,7 +179,7 @@ _download_bytes(url: string) -> (string, int) {
     if string.length(err) > 0 { return "", 0 }
     if client.response_status(resp) != 200 { return "", 0 }
     body = client.response_body(resp)
-    len = client.response_body_length(resp)
+    len = client.response_body_bytes(resp).len
     return body, len
 }
 

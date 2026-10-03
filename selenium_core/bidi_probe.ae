@@ -93,7 +93,7 @@ main() {
     caps = "${"{"}\"capabilities\":${"{"}\"alwaysMatch\":${"{"}\"webSocketUrl\":true,\"goog:chromeOptions\":${"{"}${binpart}\"args\":[\"--headless=new\",\"--no-sandbox\",\"--disable-gpu\",\"--disable-dev-shm-usage\"]${"}"}${"}"}${"}"}${"}"}"
     req = client.request("POST", "${base}/session")
     _h = client.set_header(req, "Content-Type", "application/json")
-    _b = client.set_body(req, caps, string.length(caps), "application/json")
+    _b = client.set_body(req, string.bytes(caps), "application/json")
     _t = client.set_timeout(req, 60000000000ns)
     resp, err = client.send_request(req)
     client.request_free(req)
