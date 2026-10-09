@@ -19,7 +19,13 @@ int main() {
     // ---- pure helpers ----
     check(route("get") == "POST /session/:sessionId/url", "route(get)");
     check(errorCode("no such element") == 17, "errorCode==17");
-    check(locator("id", "main").find("*[id=") != std::string::npos, "locator id rewrite");
+    // locator() is header-only over the C client's sel_locator, which since
+    // e4fcede hands the engine the RAW strategy; the engine normalizes inside
+    // execute, where it knows the session (AGENTS.md: "A test asserting
+    // By.id(...) yields CSS is testing the wrong layer"). e4fcede fixed the C
+    // test's twin of this assertion but missed this one.
+    check(locator("id", "main") == "{\"using\":\"id\",\"value\":\"main\"}",
+          "locator passes the strategy through raw");
 
     // ---- By factory ----
     check(By::css("a").strategy == "css selector", "By::css strategy");
