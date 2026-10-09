@@ -10,7 +10,11 @@ aeb(cap) {
             // other by bare name and driver.ae imports `resolve` — add the subdir
             // as an aetherc module-search path so those resolve at compile time.
             lib("drivermgr")
-            caps("net,os,fs")
+            // extern: aether 0.801 (#2709) refuses an --emit=lib build that
+            // declares externs without the grant. The engine genuinely calls C:
+            // embed.ae's sel_embed_dup/sel_embed_free (the caller-owned-string
+            // bridge in _embed_strdup.c below) — nothing broader.
+            caps("net,os,fs,extern")
             extra_source("_embed_strdup.c")
             output("libselenium_core.so")
         }

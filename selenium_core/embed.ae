@@ -2,7 +2,7 @@
 //
 // Build as a shared library and dlsym/link the exports:
 //
-//     ae build --emit=lib --with=net core/embed.ae \
+//     ae build --emit=lib --with=net,os,fs,extern --lib drivermgr core/embed.ae \
 //         --extra core/_embed_strdup.c -o core/native/libselenium_core.so
 //
 // No protocol logic lives here — the command catalog, route table, path

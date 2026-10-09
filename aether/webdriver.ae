@@ -29,10 +29,11 @@ import std.string
 import std.heap
 import std.file
 import std.map
-
-// C-runtime exit, for find_or_fail's fail-loud path (a locator typo should abort
-// the run, not surface as a confusing downstream symptom).
-extern exit(code: int)
+// std.os.exit, for find_or_fail's fail-loud path (a locator typo should abort
+// the run, not surface as a confusing downstream symptom). Was a bare
+// `extern exit` until aether 0.801 (#2709) refused an --emit=lib build that
+// declares externs without --with=extern; the std wrapper needs only `os`.
+import std.os
 
 // ---- By locator strategies (typed; no stringly-typed "css selector") ----
 By_CSS() -> string { return "css" }
@@ -651,7 +652,7 @@ find_or_fail(sp: ptr, by: string, value: string) -> string {
     el = find(sp, by, value)
     if string.length(el) == 0 {
         println(string.concat("webdriver.find_or_fail: no element for ", string.concat(by, string.concat("=", value))))
-        exit(1)
+        os.exit(1)
     }
     return el
 }
