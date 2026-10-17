@@ -50,7 +50,7 @@ _bridge_shim_js() -> string {
 // bridge_new(session) — a bridge is just a runner controller; the runner OWNS the
 // demux whose runner lane carries replies/events. We keep the pairing explicit so
 // bridge_pump reads naturally.
-bridge_new(session: ptr) -> ptr {
+bridge_new(session: @keep ptr) -> ptr {
     return runner.runner_new(session)
 }
 

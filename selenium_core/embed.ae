@@ -45,8 +45,17 @@ import std.string
 
 // Caller-owned-string helper (core/_embed_strdup.c): malloc/strdup a C string
 // the host owns and later frees via sel_embed_free_string.
-extern sel_embed_dup(s: string) -> string
-extern sel_embed_free(s: string)
+//
+// The copy is a `ptr`, and so is every export that hands one out, never a
+// `string`: since Aether 0.819 an --emit=lib export whose result is a
+// `string` returns an Aether string HANDLE (const void*, read through
+// aether_string_data, given back through aether_embed_string_release), and a
+// malloc'd C string returned as `string` is first copied into a new Aether
+// string, so the host would get the handle, not these bytes, and the copy
+// would leak. A `ptr` result crosses as the pointer itself: the plain,
+// NUL-terminated char* this ABI has always promised its 27 bindings.
+extern sel_embed_dup(s: string) -> ptr
+extern sel_embed_free(s: ptr)
 
 // ---- lifecycle ----
 
@@ -91,7 +100,7 @@ sel_embed_set_trace(h: ptr, on: int) {
 // The accumulated command Events as a JSON array, then RESET (drain). "[]" when
 // none. Each event: {command,timestamp,duration_ms,status,errorCode,passed}.
 // Caller-owned string.
-sel_embed_trace_json(h: ptr) -> string {
+sel_embed_trace_json(h: ptr) -> ptr {
     return sel_embed_dup(selenium_core.trace_json_of(h))
 }
 // Begin / end a named timing span. timer_stop appends {name,duration_ms} to the
@@ -102,7 +111,7 @@ sel_embed_timer_start(h: ptr, name: string) {
 sel_embed_timer_stop(h: ptr, name: string) {
     selenium_core.timer_stop(h, name)
 }
-sel_embed_timers_json(h: ptr) -> string {
+sel_embed_timers_json(h: ptr) -> ptr {
     return sel_embed_dup(selenium_core.timers_json_of(h))
 }
 
@@ -112,7 +121,7 @@ sel_embed_timers_json(h: ptr) -> string {
 // The grammar + dispatch live in shell.ae (engine-side), so every front-end — a
 // terminal REPL, an SUT-adjacent iframe, VS Code, Tauri — is just "send a line,
 // render the result JSON". Caller-owned string.
-sel_embed_shell_eval(h: ptr, line: string) -> string {
+sel_embed_shell_eval(h: ptr, line: string) -> ptr {
     return sel_embed_dup(shell.shell_eval(h, line))
 }
 
@@ -124,7 +133,7 @@ sel_embed_shell_eval(h: ptr, line: string) -> string {
 // session outlives its debug controllers).
 
 // New runner controller over session `h`. Returns an opaque runner handle.
-sel_embed_runner_new(h: ptr) -> ptr {
+sel_embed_runner_new(h: @keep ptr) -> ptr {
     return runner.runner_new(h)
 }
 sel_embed_runner_free(rp: ptr) {
@@ -136,11 +145,11 @@ sel_embed_runner_ingest(rp: ptr, request_json: string) -> int {
     return runner.runner_ingest(rp, request_json)
 }
 // Drain the id-correlated reply for a control request ("" if not ready).
-sel_embed_runner_poll_reply(rp: ptr, id: int) -> string {
+sel_embed_runner_poll_reply(rp: ptr, id: int) -> ptr {
     return sel_embed_dup(bidi_demux.demux_poll_reply_runner(runner.runner_demux(rp), id))
 }
 // Drain the next runner event ("" if none): command-finished / paused / ….
-sel_embed_runner_poll_event(rp: ptr) -> string {
+sel_embed_runner_poll_event(rp: ptr) -> ptr {
     return sel_embed_dup(bidi_demux.demux_poll_event_runner(runner.runner_demux(rp)))
 }
 
@@ -153,7 +162,7 @@ sel_embed_runner_poll_event(rp: ptr) -> string {
 // pushes replies+events back into the page. See iframe_bridge.ae for the shape.
 
 // New bridge over session `h` (a runner controller paired with executeScript I/O).
-sel_embed_bridge_new(h: ptr) -> ptr {
+sel_embed_bridge_new(h: @keep ptr) -> ptr {
     return iframe_bridge.bridge_new(h)
 }
 sel_embed_bridge_free(bp: ptr) {
@@ -179,7 +188,7 @@ sel_embed_bridge_pump(bp: ptr, h: ptr) -> int {
 // Start the control server on `port` over session `h` (SEL_RUNNER_PORT
 // overrides port). BLOCKS in the request loop — a binding runs this on its own
 // thread. Returns non-zero if the port cannot bind.
-sel_embed_runner_server_start(h: ptr, port: int) -> int {
+sel_embed_runner_server_start(h: @keep ptr, port: int) -> int {
     return runner_server.runner_server_start(h, port)
 }
 
@@ -187,7 +196,7 @@ sel_embed_runner_server_start(h: ptr, port: int) -> int {
 // Play a recorded .side project against session `h`. Returns a JSON report
 // {name, tests, passed, failed, results:[{test, ok, steps:[…]}]}. Every step
 // runs through the same shell verbs the interactive console uses. See side_run.ae.
-sel_embed_side_run(h: ptr, side_json: string) -> string {
+sel_embed_side_run(h: ptr, side_json: string) -> ptr {
     return sel_embed_dup(side_run.side_run(h, side_json))
 }
 
@@ -239,7 +248,7 @@ sel_embed_get_attribute(h: ptr, elem_id: string, name: string) -> int {
 }
 
 // Build a one-string JSON array arg ["<s>"] for an atom's extra_json. Caller frees.
-sel_embed_atom_str_arg(s: string) -> string {
+sel_embed_atom_str_arg(s: string) -> ptr {
     return sel_embed_dup(selenium_core.atom_str_arg(s))
 }
 
@@ -255,7 +264,7 @@ sel_embed_find_relative(h: ptr, base_sel: string, filters_json: string) -> int {
 
 // The response `value` as JSON text (the useful payload: a string, number,
 // object or array — the binding parses it in its own language). Caller frees.
-sel_embed_last_value(h: ptr) -> string {
+sel_embed_last_value(h: ptr) -> ptr {
     return sel_embed_dup(selenium_core.last_value_of(h))
 }
 
@@ -272,12 +281,12 @@ sel_embed_last_error_code(h: ptr) -> int {
 
 // Human-readable error / transport-failure message of the last execute.
 // Empty on success. Caller frees.
-sel_embed_last_error(h: ptr) -> string {
+sel_embed_last_error(h: ptr) -> ptr {
     return sel_embed_dup(selenium_core.last_error_of(h))
 }
 
 // The current session id ("" until a newSession has succeeded). Caller frees.
-sel_embed_session_id(h: ptr) -> string {
+sel_embed_session_id(h: ptr) -> ptr {
     return sel_embed_dup(selenium_core.session_id_of(h))
 }
 
@@ -286,7 +295,7 @@ sel_embed_session_id(h: ptr) -> string {
 // The W3C locator JSON {"using":...,"value":...} for a (strategy, value) pair,
 // with id/name/className rewritten to CSS exactly as the JS/Python bindings do.
 // Caller frees. A binding uses this to build findElement params.
-sel_embed_by_locator(strategy: string, value: string) -> string {
+sel_embed_by_locator(strategy: string, value: string) -> ptr {
     return sel_embed_dup(selenium_core.by_locator(strategy, value))
 }
 
@@ -297,7 +306,7 @@ sel_embed_by_locator(strategy: string, value: string) -> string {
 // same strategies must reach the wire intact because there is no CSS engine.
 // This is the one a binding should call — the same caller code then works
 // against chromedriver and WinAppDriver. Caller frees.
-sel_embed_by_locator_for(h: ptr, strategy: string, value: string) -> string {
+sel_embed_by_locator_for(h: ptr, strategy: string, value: string) -> ptr {
     return sel_embed_dup(selenium_core.by_locator_for(h, strategy, value))
 }
 
@@ -315,14 +324,14 @@ sel_embed_is_native(h: ptr) -> int {
 
 // The "METHOD PATH" route for a command name, or "" if unknown. Exposed for
 // bindings that want to inspect the protocol mapping. Caller frees.
-sel_embed_route(name: string) -> string {
+sel_embed_route(name: string) -> ptr {
     return sel_embed_dup(selenium_core.route(name))
 }
 
 // The concrete wire request for a command WITHOUT sending it: returns
 // "METHOD\tPATH\tBODY" (tab-separated) or "ERR\t<message>\t". Lets a binding
 // (or a test) inspect exactly what the engine would send. Caller frees.
-sel_embed_build_request(name: string, session_id: string, params_json: string) -> string {
+sel_embed_build_request(name: string, session_id: string, params_json: string) -> ptr {
     return sel_embed_dup(selenium_core.build_request(name, session_id, params_json))
 }
 
@@ -343,7 +352,7 @@ sel_embed_error_code(w3c_error: string) -> int {
 // Resolve the driver binary for `browser` ("chrome"/"firefox"/"edge"/… or a
 // driver name directly). v1: the conventional driver on PATH. `hint` is a
 // reserved opts/JSON string. Returns an absolute path or "" (caller frees).
-sel_embed_resolve_driver(browser: string, hint: string) -> string {
+sel_embed_resolve_driver(browser: string, hint: string) -> ptr {
     return sel_embed_dup(driver.resolve_driver(browser, hint))
 }
 
@@ -360,7 +369,7 @@ sel_embed_launch_driver(driver_path: string, timeout_ms: int) -> ptr {
 // `hint` is the same opts JSON as resolve_driver (browserVersion / cachePath /
 // proxy / offline are honored). Caller frees. Only chrome/chromium provision
 // today; others return "".
-sel_embed_browser_binary(browser: string, hint: string) -> string {
+sel_embed_browser_binary(browser: string, hint: string) -> ptr {
     return sel_embed_dup(driver.browser_binary(browser, hint))
 }
 
@@ -371,7 +380,7 @@ sel_embed_ensure_driver(browser: string, hint: string, timeout_ms: int) -> ptr {
 }
 
 // The "http://127.0.0.1:<port>" to pass to sel_embed_open(). Caller frees.
-sel_embed_driver_url(dh: ptr) -> string {
+sel_embed_driver_url(dh: ptr) -> ptr {
     return sel_embed_dup(driver.url_of(dh))
 }
 
@@ -430,12 +439,12 @@ sel_embed_bidi_fd(h: ptr) -> int {
 
 // The reply JSON for a command id if it has arrived (and consume it), else "".
 // Returns immediately. Caller frees.
-sel_embed_bidi_poll_reply(h: ptr, id: int) -> string {
+sel_embed_bidi_poll_reply(h: ptr, id: int) -> ptr {
     return sel_embed_dup(selenium_bidi.bidi_poll_reply(h, id))
 }
 
 // The next queued event JSON (and dequeue), or "". Returns immediately. Frees.
-sel_embed_bidi_poll_event(h: ptr) -> string {
+sel_embed_bidi_poll_event(h: ptr) -> ptr {
     return sel_embed_dup(selenium_bidi.bidi_poll_event(h))
 }
 
@@ -461,12 +470,12 @@ sel_embed_bidi_cancel(h: ptr, id: int) {
 
 // session.subscribe to events_csv; waits for the ack. Returns the ack JSON (""
 // on failure). After it returns, matching events land on the queue. Caller frees.
-sel_embed_bidi_subscribe(h: ptr, id: int, events_csv: string, timeout_ms: int) -> string {
+sel_embed_bidi_subscribe(h: ptr, id: int, events_csv: string, timeout_ms: int) -> ptr {
     return sel_embed_dup(selenium_bidi.bidi_subscribe(h, id, events_csv, timeout_ms))
 }
 
 // session.unsubscribe from events_csv; waits for the ack. Caller frees.
-sel_embed_bidi_unsubscribe(h: ptr, id: int, events_csv: string, timeout_ms: int) -> string {
+sel_embed_bidi_unsubscribe(h: ptr, id: int, events_csv: string, timeout_ms: int) -> ptr {
     return sel_embed_dup(selenium_bidi.bidi_unsubscribe(h, id, events_csv, timeout_ms))
 }
 
@@ -474,25 +483,25 @@ sel_embed_bidi_unsubscribe(h: ptr, id: int, events_csv: string, timeout_ms: int)
 // Returns the event JSON, or "" on timeout/close. Non-matching events dequeued
 // while waiting are dropped by this helper — a binding that needs every event
 // drives bidi_pump + bidi_poll_event itself. Caller frees.
-sel_embed_bidi_wait_event(h: ptr, method: string, timeout_ms: int) -> string {
+sel_embed_bidi_wait_event(h: ptr, method: string, timeout_ms: int) -> ptr {
     return sel_embed_dup(selenium_bidi.bidi_wait_event(h, method, timeout_ms))
 }
 
 // ---- typed BiDi convenience commands (thin wrappers over bidi_command) ----
 
 // browsingContext.getTree — result.contexts[] with each context's id. Caller frees.
-sel_embed_bidi_get_tree(h: ptr, id: int, timeout_ms: int) -> string {
+sel_embed_bidi_get_tree(h: ptr, id: int, timeout_ms: int) -> ptr {
     return sel_embed_dup(selenium_bidi.bidi_get_tree(h, id, timeout_ms))
 }
 
 // script.evaluate an expression in context_id's realm (awaiting a promise). The
 // reply's result.result is the BiDi-serialized value. Caller frees.
-sel_embed_bidi_script_evaluate(h: ptr, id: int, expression: string, context_id: string, timeout_ms: int) -> string {
+sel_embed_bidi_script_evaluate(h: ptr, id: int, expression: string, context_id: string, timeout_ms: int) -> ptr {
     return sel_embed_dup(selenium_bidi.bidi_script_evaluate(h, id, expression, context_id, timeout_ms))
 }
 
 // browsingContext.navigate context_id to url (wait:complete). Caller frees.
-sel_embed_bidi_navigate(h: ptr, id: int, context_id: string, url: string, timeout_ms: int) -> string {
+sel_embed_bidi_navigate(h: ptr, id: int, context_id: string, url: string, timeout_ms: int) -> ptr {
     return sel_embed_dup(selenium_bidi.bidi_navigate(h, id, context_id, url, timeout_ms))
 }
 
@@ -503,44 +512,44 @@ sel_embed_bidi_navigate(h: ptr, id: int, context_id: string, url: string, timeou
 
 // network.addIntercept for a URL pattern (substring; "" = all) at phases_csv
 // (e.g. "beforeRequestSent"). Reply's result.intercept is the intercept id.
-sel_embed_bidi_network_add_intercept(h: ptr, id: int, phases_csv: string, url_pattern: string, timeout_ms: int) -> string {
+sel_embed_bidi_network_add_intercept(h: ptr, id: int, phases_csv: string, url_pattern: string, timeout_ms: int) -> ptr {
     return sel_embed_dup(selenium_bidi.bidi_network_add_intercept(h, id, phases_csv, url_pattern, timeout_ms))
 }
 
-sel_embed_bidi_network_remove_intercept(h: ptr, id: int, intercept_id: string, timeout_ms: int) -> string {
+sel_embed_bidi_network_remove_intercept(h: ptr, id: int, intercept_id: string, timeout_ms: int) -> ptr {
     return sel_embed_dup(selenium_bidi.bidi_network_remove_intercept(h, id, intercept_id, timeout_ms))
 }
 
 // Let a paused (intercepted) request proceed unchanged.
-sel_embed_bidi_network_continue_request(h: ptr, id: int, request_id: string, timeout_ms: int) -> string {
+sel_embed_bidi_network_continue_request(h: ptr, id: int, request_id: string, timeout_ms: int) -> ptr {
     return sel_embed_dup(selenium_bidi.bidi_network_continue_request(h, id, request_id, timeout_ms))
 }
 
 // Block a paused request (ad/tracker blocking).
-sel_embed_bidi_network_fail_request(h: ptr, id: int, request_id: string, timeout_ms: int) -> string {
+sel_embed_bidi_network_fail_request(h: ptr, id: int, request_id: string, timeout_ms: int) -> ptr {
     return sel_embed_dup(selenium_bidi.bidi_network_fail_request(h, id, request_id, timeout_ms))
 }
 
 // Fulfill a paused request with a MOCK response (network.provideResponse) — the
 // request-mocking capability. status is the HTTP status; content_type sets
 // Content-Type ("" to omit); body is the raw response body ("" for none).
-sel_embed_bidi_network_provide_response(h: ptr, id: int, request_id: string, status: int, content_type: string, body: string, timeout_ms: int) -> string {
+sel_embed_bidi_network_provide_response(h: ptr, id: int, request_id: string, status: int, content_type: string, body: string, timeout_ms: int) -> ptr {
     return sel_embed_dup(selenium_bidi.bidi_network_provide_response(h, id, request_id, status, content_type, body, timeout_ms))
 }
 
 // Answer an HTTP auth challenge (a paused authRequired request) with credentials.
-sel_embed_bidi_network_continue_with_auth(h: ptr, id: int, request_id: string, username: string, password: string, timeout_ms: int) -> string {
+sel_embed_bidi_network_continue_with_auth(h: ptr, id: int, request_id: string, username: string, password: string, timeout_ms: int) -> ptr {
     return sel_embed_dup(selenium_bidi.bidi_network_continue_with_auth(h, id, request_id, username, password, timeout_ms))
 }
 
 // Set the session HTTP cache behavior ("bypass" to disable, "default" to restore).
-sel_embed_bidi_network_set_cache_behavior(h: ptr, id: int, behavior: string, timeout_ms: int) -> string {
+sel_embed_bidi_network_set_cache_behavior(h: ptr, id: int, behavior: string, timeout_ms: int) -> ptr {
     return sel_embed_dup(selenium_bidi.bidi_network_set_cache_behavior(h, id, behavior, timeout_ms))
 }
 
 // ---- string ownership ----
 
 // Free any char* returned by a sel_embed_* function above.
-sel_embed_free_string(s: string) {
+sel_embed_free_string(s: ptr) {
     sel_embed_free(s)
 }

@@ -25,7 +25,7 @@ import registry
 _await_all() { _w = worker.wait() }
 
 // _stress_distinct(cell, n) — fire n concurrent registrations of DISTINCT ids.
-_stress_distinct(cell: ptr, n: int) {
+_stress_distinct(cell: @keep ptr, n: int) {
     i = 0
     while i < n {
         id = string.concat("node-", string.from_int(i))
@@ -40,7 +40,7 @@ _stress_distinct(cell: ptr, n: int) {
 }
 
 // _stress_same(cell, n, id) — fire n concurrent registrations of the SAME id.
-_stress_same(cell: ptr, n: int, id: string) {
+_stress_same(cell: @keep ptr, n: int, id: string) {
     j = 0
     while j < n {
         _ok = worker.run(
@@ -65,7 +65,7 @@ _stress_same(cell: ptr, n: int, id: string) {
 // read returns a well-formed, non-negative count. The barrier (_await_all) proves
 // all jobs completed without crashing.
 _reads_per_job() -> int { return 400 }
-_stress_readers_during_writers(cell: ptr, w: int, r: int) -> int {
+_stress_readers_during_writers(cell: @keep ptr, w: int, r: int) -> int {
     bad = 0
     // readers: hammer the read path (each load enters/leaves the reader epoch).
     ri = 0

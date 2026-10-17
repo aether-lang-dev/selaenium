@@ -51,7 +51,7 @@ struct ServerState {
 // can't bind. SEL_RUNNER_PORT overrides `port` when set. The ServerState +
 // runner are owned for the process lifetime (the server never returns until the
 // process ends), so no explicit free path is needed.
-runner_server_start(session: ptr, port: int) -> int {
+runner_server_start(session: @keep ptr, port: int) -> int {
     p = port
     envp = os.getenv("SEL_RUNNER_PORT")
     if string.length(envp) > 0 {

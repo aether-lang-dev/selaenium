@@ -244,11 +244,11 @@ remote(url: string) -> ptr {
 //   dh = driver.ensure("chrome", "", 20000)
 //   d  = webdriver.remote_owning(driver.url_of(dh), dh)   // headed, no leak
 //   ... ; webdriver.quit(d)                               // reaps the driver
-remote_owning(url: string, driver_handle: ptr) -> ptr {
+remote_owning(url: string, driver_handle: @keep ptr) -> ptr {
     return _remote(url, driver_handle)
 }
 
-_remote(url: string, drv: ptr) -> ptr {
+_remote(url: string, drv: @keep ptr) -> ptr {
     eng = selenium_core.session_new(url)
     sess = _mk(eng, drv)
     caps = "{\"capabilities\":{\"alwaysMatch\":{\"browserName\":\"chrome\",\"webSocketUrl\":true}}}"
@@ -997,7 +997,7 @@ BidiEvent_MESSAGE() -> string { return "script.message" }
 
 // ---- internals ----
 
-_mk(eng: ptr, drv: ptr) -> ptr {
+_mk(eng: @keep ptr, drv: @keep ptr) -> ptr {
     s = heap.new(WdSession)
     s.engine = eng
     s.drv = drv

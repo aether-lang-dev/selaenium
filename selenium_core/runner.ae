@@ -58,7 +58,7 @@ struct Runner {
 // runner_new(session) — a controller over an existing W3C session. Owns its own
 // demux (the runner lane); the bidi lane of that demux is unused here (a runner
 // front-end's transport is separate from any browser BiDi socket).
-runner_new(session: ptr) -> ptr {
+runner_new(session: @keep ptr) -> ptr {
     r = heap.new(Runner)
     r.session = session
     r.demux = bidi_demux.demux_new()
