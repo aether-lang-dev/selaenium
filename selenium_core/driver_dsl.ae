@@ -100,7 +100,7 @@ _launch_for(browser: string, cfg: ptr) -> ptr {
             if string.length(perr) == 0 { tmo = pv }
         }
         if map.has(cfg, "driver_path") == 1 {
-            explicit, _ = map.get(cfg, "driver_path")
+            explicit, _ = map.get_string(cfg, "driver_path")
         }
         hint = _hint_of(cfg)
     }

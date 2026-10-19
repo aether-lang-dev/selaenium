@@ -167,7 +167,7 @@ with_headless(_ctx: ptr, on: int) {
 with_arg(_ctx: ptr, arg: string) {
     if _ctx != null {
         prev = ""
-        if map_has(_ctx, "extra_args") == 1 { prev = map_get_raw(_ctx, "extra_args") }
+        if map_has(_ctx, "extra_args") == 1 { prev, _ = map.get_string(_ctx, "extra_args") }
         if string.length(prev) > 0 { prev = string.concat(prev, ",") }
         map_put_raw(_ctx, "extra_args", string.concat(prev, _qjson(arg)))
     }
@@ -193,7 +193,7 @@ _chrome_args(_ctx: ptr) -> string {
             hv, _e = string.to_int(map_get_raw(_ctx, "headless"))
             if hv == 0 { headed = 1 }
         }
-        if map_has(_ctx, "extra_args") == 1 { extra = map_get_raw(_ctx, "extra_args") }
+        if map_has(_ctx, "extra_args") == 1 { extra, _ = map.get_string(_ctx, "extra_args") }
     }
     parts = "\"--no-sandbox\",\"--disable-dev-shm-usage\""
     if headed == 0 { parts = string.concat("\"--headless=new\",", parts) }
@@ -213,7 +213,7 @@ _firefox_args(_ctx: ptr) -> string {
             hv, _e = string.to_int(map_get_raw(_ctx, "headless"))
             if hv == 0 { headed = 1 }
         }
-        if map_has(_ctx, "extra_args") == 1 { extra = map_get_raw(_ctx, "extra_args") }
+        if map_has(_ctx, "extra_args") == 1 { extra, _ = map.get_string(_ctx, "extra_args") }
     }
     parts = ""
     if headed == 0 { parts = "\"-headless\"" }
