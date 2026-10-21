@@ -3,7 +3,7 @@
 The engine (`libselenium_core`) is pure Aether, so it **cross-compiles for the
 whole platform matrix from one Linux host** — no per-OS runner for the build.
 Pushing a release tag triggers GitHub Actions to build and publish nine engine
-libraries and their checksums. The next v0.11.0 release adds Linux musl
+libraries and their checksums. v0.11.0 adds Linux musl
 (x86_64/arm64) and FreeBSD x86_64 to the original six Linux/macOS/Windows
 libraries; published v0.10.0 assets stay unchanged. On-target
 *testing* is done out of band and recorded as an attestation keyed by SHA256.

@@ -291,10 +291,10 @@ engine from the release instead of building it, via aeb's `--overrideDep` — se
 The prebuilt engine's `.so`/`.dylib`/`.dll` release tag is pinned in
 [`SELENIUM_CORE_VERSION`](SELENIUM_CORE_VERSION), with copies in bindings that
 ship independently. This is the Selaenium engine version, separate from the
-Aether and aeb versions above. Current bindings require engine **v0.10.0**,
+Aether and aeb versions above. Current bindings require engine **v0.11.0**,
 including the native/locator ABI exports absent from v0.9.0. The
-[v0.10.0 release](https://github.com/aether-lang-dev/selaenium/releases/tag/v0.10.0)
-provides the prebuilt libraries. Every new engine
+[v0.11.0 release](https://github.com/aether-lang-dev/selaenium/releases/tag/v0.11.0)
+provides the prebuilt libraries once its release workflow completes. Every new engine
 release must also [advance the download pins](release/README.md#advance-the-engine-downloads-with-every-release)
 to the tag just released.
 
@@ -302,7 +302,7 @@ To release an engine, prepare its version with
 `python3 release/version.py --set <tag>`, commit, and push that `vX.Y.Z` tag.
 [GitHub Actions](.github/workflows/release.yml)
 cross-builds and publishes the engine binaries and their checksums. Starting with
-the next v0.11.0 release, the range adds Linux musl (x86_64/arm64) and FreeBSD
+v0.11.0, the range adds Linux musl (x86_64/arm64) and FreeBSD
 x86_64 to the existing six Linux/macOS/Windows libraries. Published v0.10.0
 assets stay unchanged. See the [release instructions](release/README.md#cut-a-github-release).
 
