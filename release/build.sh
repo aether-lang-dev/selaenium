@@ -82,11 +82,18 @@ for t in $MATRIX; do
        && ae build --emit=lib --with=net,os,fs,extern --lib drivermgr --size --target="$t" \
             embed.ae --extra "$ROOT/selenium_core/_embed_strdup.c" -o "$out" ) >"$log" 2>&1; then
     ( cd "$DIST" && sha256sum "$name" > "$name.sha256" )
-    # Windows emits an import library (<dll>.lib) beside the DLL — needed by a
+    # The pinned compiler emits <stem>.lib beside the Windows DLL. Normalize
+    # it to the established release asset name <dll>.lib — needed by a
     # consumer that LINKS against the DLL at build time (our FFI bindings dlopen
     # at runtime and don't need it, but ship it so Windows is first-class).
     # Checksum it too.
-    if [ "$os" = "windows" ] && [ -f "$out.lib" ]; then
+    if [ "$os" = "windows" ]; then
+      if [ ! -s "${out%.dll}.lib" ]; then
+        printf 'FAILED (Windows import library missing)\n'
+        failed=$((failed+1))
+        continue
+      fi
+      mv "${out%.dll}.lib" "$out.lib" || die "could not stage Windows import library for $t"
       ( cd "$DIST" && sha256sum "$name.lib" > "$name.lib.sha256" )
     fi
     printf 'ok  (%s)\n' "$(file -b "$out" 2>/dev/null | cut -c1-42)"

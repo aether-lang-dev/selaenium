@@ -2,8 +2,9 @@
 
 The engine (`libselenium_core`) is pure Aether, so it **cross-compiles for the
 whole platform matrix from one Linux host** — no per-OS runner for the build.
-This directory builds those artifacts and checksums them; on-target *testing* is
-done out of band and recorded as an attestation keyed by SHA256.
+Pushing a release tag triggers GitHub Actions to build and publish the six
+Linux/macOS/Windows libraries (x86_64 and arm64) and their checksums. On-target
+*testing* is done out of band and recorded as an attestation keyed by SHA256.
 
 ## Build
 
@@ -31,7 +32,40 @@ checksummed and shipped so Windows is first-class. So a full run with extras
 produces 4 core + 2 Windows (× 2 files each) artifacts. FreeBSD still needs
 `AETHER_SYSROOT` and skips loudly without it.
 
-## Cut a GitHub release (manual, no repo settings needed)
+## Cut a GitHub release
+
+Prepare the engine version, commit the changes, then push a tag at that commit:
+
+```sh
+python3 release/version.py --set v0.10.0
+python3 release/version.py --check v0.10.0
+# Stage the version changes shown by git diff, then:
+git commit -m '[release] prepare engine v0.10.0'
+git push origin main
+git tag v0.10.0
+git push origin v0.10.0
+```
+
+Choose a new unused version for each release. Pushing to `main` alone does not
+release anything. The [release workflow](../.github/workflows/release.yml) also
+supports a manual run with an existing tag. It checks out that exact tag,
+verifies the version pins, installs the pinned Aether and Zig toolchains, and
+runs `release/build.sh` on one Ubuntu runner. All six engine builds must succeed;
+a failing platform prevents publication. The workflow loads the Linux x86_64
+library and checks every declared C ABI export, then creates the GitHub release
+and downloads the assets again to verify their checksums and ABI.
+
+This workflow publishes engine binaries only. It does not run a browser or
+desktop CI test matrix, build Java jars, or publish to language registries.
+Required ABI exports remain mandatory in bindings; there are no compatibility
+fallbacks for an older engine. The workflow does not replace an existing release;
+use a new tag for changed binaries.
+
+### Manual alternative
+
+The existing local build/upload script remains available for manual cuts
+(including optional Java jars). Disable the automatic release workflow before
+using this route, so the two publishers do not race on the same tag:
 
 ```sh
 release/publish.sh v1.2.3            # build the matrix + create the release, assets attached
@@ -40,10 +74,46 @@ release/publish.sh v1.2.3 --no-build # attach whatever is already in release/dis
 ```
 
 `publish.sh` builds (unless `--no-build`), then `gh release create <tag>` with
-every artifact, its `.sha256`, and `SHA256SUMS`. It uses your existing `gh` auth
+every artifact, its `.sha256`, and `SHA256SUMS.txt`. It uses your existing `gh` auth
 — **nothing in GitHub Settings, no Actions, no secrets.** (Registry publishing —
 PyPI/npm/Maven/… — is deliberately out of scope here; that would need per-registry
 secrets.)
+
+### Advance the engine downloads with every release
+
+The Selaenium engine release tag versions the `.so`, `.dylib`, and `.dll`.
+It is separate from the Aether and aeb toolchain versions in `ci/versions.env`.
+
+`release/version.py --set <tag>` updates `SELENIUM_CORE_VERSION`, the Aether
+package version, all binding copies of the engine pin, and their version
+assertions together. Commit those changes **before tagging**, so the tagged
+bindings download the engine from their own release. The workflow rejects any
+drift between the tag and these pins. Do not distribute packages from that
+preparation commit until the engine assets are published successfully.
+
+After publication:
+
+1. Verify that the actual engine binaries and their checksums are downloadable;
+   a tag or release page alone does not prove the engine is available. The
+   workflow does this automatically for all six platforms, and loads the
+   downloaded Linux library to check every C ABI export.
+2. Check `python3 release/version.py --check <tag>` on the current branch too:
+   all download pins must name **the engine just released**. Update the README's
+   temporary release-preparation notice to the published release requirement.
+   Keep historical release records intact.
+3. Run binding tests and consumer-install proofs using the fetched engine.
+   For Dart, for example:
+
+   ```sh
+   aeb dart/.tests.ae dart/.example.ae \
+       --overrideDep selenium_core/.build.ae=selenium_core/.getFromGitHubReleases.ae
+   ```
+
+Confirm that the loaded/bundled library matches the release artifact's checksum;
+an existing local build must not satisfy this check. Keep required FFI symbols
+mandatory: missing exports mean the binding and engine versions are incompatible.
+Do not finish a release with the download pins still pointing at the previous
+engine.
 
 ## Why build-here / test-elsewhere
 

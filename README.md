@@ -288,6 +288,21 @@ To cut a package (gem/jar/…) WITHOUT the Aether toolchain — fetching the pre
 engine from the release instead of building it, via aeb's `--overrideDep` — see
 [`docs/Prebuilt-Engine-Packaging.md`](docs/Prebuilt-Engine-Packaging.md).
 
+The prebuilt engine's `.so`/`.dylib`/`.dll` release tag is pinned in
+[`SELENIUM_CORE_VERSION`](SELENIUM_CORE_VERSION), with copies in bindings that
+ship independently. This is the Selaenium engine version, separate from the
+Aether and aeb versions above. This checkout prepares engine **v0.10.0**,
+including the native/locator ABI exports absent from v0.9.0. Until v0.10.0's
+release binaries are published, build the engine from this checkout. Every new engine
+release must also [advance the download pins](release/README.md#advance-the-engine-downloads-with-every-release)
+to the tag just released.
+
+To release an engine, prepare its version with
+`python3 release/version.py --set <tag>`, commit, and push that `vX.Y.Z` tag.
+[GitHub Actions](.github/workflows/release.yml)
+cross-builds and publishes all six Linux/macOS/Windows engine binaries and their
+checksums. See the [release instructions](release/README.md#cut-a-github-release).
+
 ## The C ABI (`aether_sel_embed_*`)
 
 Handle-based: N independent sessions per process. `open(base_url)` returns an

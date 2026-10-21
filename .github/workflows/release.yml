@@ -1,0 +1,116 @@
+name: Release engine
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing vX.Y.Z tag to release
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+    permissions:
+      contents: write
+    env:
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.tag || github.ref_name }}
+          fetch-depth: 0
+
+      - name: Check release tag and binding pins
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          test "$(git rev-parse HEAD)" = "$(git rev-parse "refs/tags/$RELEASE_TAG^{commit}")"
+          python3 release/version.py --check "$RELEASE_TAG"
+
+      - name: Install pinned Aether and Zig
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          source ci/versions.env
+          version="${AETHER_REF#v}"
+          asset="aether-$version-linux-x86_64.tar.gz"
+          base="https://github.com/aether-lang-dev/aether/releases/download/$AETHER_REF"
+          tools="$RUNNER_TEMP/selenium-toolchain"
+          mkdir -p "$tools/aether"
+          curl --fail --silent --show-error --location --retry 3 "$base/$asset" -o "$tools/$asset"
+          digest="$(gh api "repos/aether-lang-dev/aether/releases/tags/$AETHER_REF" \
+            --jq ".assets[] | select(.name == \"$asset\") | .digest")"
+          [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+          printf '%s  %s\n' "${digest#sha256:}" "$tools/$asset" | sha256sum --check -
+          tar -xzf "$tools/$asset" -C "$tools/aether"
+          echo "$tools/aether/bin" >> "$GITHUB_PATH"
+          echo "AETHER_HOME=$tools/aether" >> "$GITHUB_ENV"
+          echo "AETHERC=$tools/aether/bin/aetherc" >> "$GITHUB_ENV"
+
+          zig_version=0.16.0
+          zig_sha256=70e49664a74374b48b51e6f3fdfbf437f6395d42509050588bd49abe52ba3d00
+          zig_archive="zig-x86_64-linux-$zig_version.tar.xz"
+          curl --fail --silent --show-error --location --retry 3 \
+            "https://ziglang.org/download/$zig_version/$zig_archive" -o "$tools/$zig_archive"
+          printf '%s  %s\n' "$zig_sha256" "$tools/$zig_archive" | sha256sum --check -
+          tar -xJf "$tools/$zig_archive" -C "$tools"
+          test "$("$tools/zig-x86_64-linux-$zig_version/zig" version)" = "$zig_version"
+          echo "$tools/zig-x86_64-linux-$zig_version" >> "$GITHUB_PATH"
+
+      - name: Build all six engine libraries
+        env:
+          TARGETS: x86_64-linux aarch64-linux x86_64-macos aarch64-macos x86_64-windows aarch64-windows
+          RELEASE_NO_JARS: '1'
+        run: release/build.sh
+
+      - name: Verify engine artifacts and Linux ABI
+        run: python3 release/check-artifacts.py "$RELEASE_TAG"
+
+      - name: Publish engine binaries and checksums
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > "$RUNNER_TEMP/release-notes.md" <<'NOTES'
+          Cross-built Selaenium engine libraries for Linux, macOS, and Windows,
+          each on x86_64 and arm64. Every binary has a SHA256 checksum.
+
+          These are the shared engine libraries used by the language bindings.
+          Language packages and registry publishing are separate.
+
+          All six libraries built successfully. The Linux x86_64 library was
+          loaded and checked for the complete exported C ABI. This release does
+          not claim a browser or desktop test pass on every target platform.
+          NOTES
+          gh release create "$RELEASE_TAG" --verify-tag \
+            --title "$RELEASE_TAG" --notes-file "$RUNNER_TEMP/release-notes.md" \
+            release/dist/*.so release/dist/*.dylib release/dist/*.dll \
+            release/dist/*.dll.lib release/dist/*.sha256 release/dist/SHA256SUMS.txt
+
+      - name: Verify published downloads
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          downloaded="$RUNNER_TEMP/published-engine"
+          gh release download "$RELEASE_TAG" --dir "$downloaded"
+          python3 release/check-artifacts.py "$RELEASE_TAG" --dist "$downloaded"
+          echo "Published and downloaded all six engine libraries for $RELEASE_TAG; checksums and Linux ABI verified." >> "$GITHUB_STEP_SUMMARY"

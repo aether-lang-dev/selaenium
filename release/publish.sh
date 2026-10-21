@@ -11,6 +11,8 @@
 #
 # Steps: ensure artifacts for <tag> exist (build them unless --no-build), then
 # `gh release create <tag>` with every artifact, its .sha256, and SHA256SUMS.txt.
+# Disable the automatic release workflow before a manual cut to avoid racing
+# the tag-triggered publisher (see release/README.md).
 set -uo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -36,6 +38,7 @@ case "$TAG" in v*) ;; *) die "tag should look like vX.Y.Z (got '$TAG')" ;; esac
 
 have gh || die "gh (GitHub CLI) not found — install it, or upload release/dist/* by hand"
 gh auth status >/dev/null 2>&1 || die "gh is not authenticated — run 'gh auth login'"
+python3 "$HERE/version.py" --check "$TAG" || die "prepare the release pins with: python3 release/version.py --set $TAG"
 
 # One release serves BOTH consumers of this repo:
 #   - source consumers (`ae add <repo>@<tag>` = git clone + `git checkout <tag>`)
@@ -177,3 +180,10 @@ else
 fi
 
 printf 'publish: next — attest each artifact on its target hardware by SHA256 (release/README.md).\n'
+if [ "$IS_DRAFT" = "1" ]; then
+  printf 'publish: after publishing the draft, verify its downloads and that the current branch pins still match %s.\n' "$TAG"
+else
+  printf 'publish: next — verify the uploaded engine downloads and required ABI exports, then check\n'
+  printf 'publish:        the current branch pins with: python3 release/version.py --check %s\n' "$TAG"
+fi
+printf 'publish: follow release/README.md: "Advance the engine downloads with every release".\n'

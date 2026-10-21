@@ -48,10 +48,14 @@ is a substitute producer for the engine builder. It shells the shared
 verify + cache under `$XDG_CACHE_HOME/selaenium/<tag>/`, the same cache the
 runtime and link-time bindings use), stages the `.so` with native `std.fs`, and
 `publish_artifact`s the engine edges. The release tag it fetches is the single
-source of truth in the repo-root `SELENIUM_CORE_VERSION` file (currently `v0.9.0`),
-which `scripts/fetch-engine.sh` and every binding read (overridable via `TAG=`) —
-edit that one file, keeping it in step with the `AETHER_REF` engine cut, when
-re-gluing to a newer engine.
+source of truth in the repo-root `SELENIUM_CORE_VERSION` file, also read by
+`scripts/fetch-engine.sh` (overridable via `TAG=`). Some bindings carry a literal
+copy so their published packages work outside this repository. Prepare that file
+and all binding copies together with `python3 release/version.py --set <tag>`
+before tagging a release. After GitHub publishes the binaries, verify the pins
+name the tag just released and check packaging against the downloaded binary. The engine tag
+is independent of `AETHER_REF`, which versions the compiler. Follow the
+[release checklist](../release/README.md#advance-the-engine-downloads-with-every-release).
 
 ## Which dep to override, per binding
 
