@@ -301,8 +301,10 @@ to the tag just released.
 To release an engine, prepare its version with
 `python3 release/version.py --set <tag>`, commit, and push that `vX.Y.Z` tag.
 [GitHub Actions](.github/workflows/release.yml)
-cross-builds and publishes all six Linux/macOS/Windows engine binaries and their
-checksums. See the [release instructions](release/README.md#cut-a-github-release).
+cross-builds and publishes the engine binaries and their checksums. Starting with
+the next v0.11.0 release, the range adds Linux musl (x86_64/arm64) and FreeBSD
+x86_64 to the existing six Linux/macOS/Windows libraries. Published v0.10.0
+assets stay unchanged. See the [release instructions](release/README.md#cut-a-github-release).
 
 ## The C ABI (`aether_sel_embed_*`)
 

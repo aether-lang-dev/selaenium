@@ -22,7 +22,7 @@ ROOT="$(cd "$HERE/.." && pwd)"
 . "$HERE/targets.env"
 cd "$ROOT"
 
-export PATH="${PREFIX:-$HOME/.local}/bin:$HOME/.aether/bin:$PATH"
+export PATH="${AETHER_HOME:+$AETHER_HOME/bin:}${PREFIX:-$HOME/.local}/bin:$HOME/.aether/bin:$PATH"
 
 say()  { printf 'release: %s\n' "$*"; }
 die()  { printf 'release: %s\n' "$*" >&2; exit 1; }
@@ -57,10 +57,16 @@ echo
 built=0; failed=0
 for t in $MATRIX; do
   os=$(os_of "$t"); arch=$(arch_of "$t"); ext=$(ext_of "$t")
-  name="libselenium_core-${TAG}-${os}-${arch}.${ext}"
+  variant=""
+  case "$t" in *-linux-musl) variant="-musl" ;; esac
+  name="libselenium_core-${TAG}-${os}-${arch}${variant}.${ext}"
   out="$DIST/$name"
   log="$DIST/.$t.log"
 
+  # Only the FreeBSD target gets its sysroot; other targets must not compile
+  # against FreeBSD headers just because the matrix runner provides them.
+  target_sysroot=""
+  if [ "$os" = "freebsd" ]; then target_sysroot="${AETHER_SYSROOT:-}"; fi
   # FreeBSD needs a base sysroot; skip loudly rather than fail if it's absent.
   if [ "$os" = "freebsd" ] && [ -z "${AETHER_SYSROOT:-}" ]; then
     say "SKIP $t — set AETHER_SYSROOT to a FreeBSD base sysroot (see aether-crossbuild)"
@@ -79,7 +85,7 @@ for t in $MATRIX; do
   # resolves a relative --extra C file from CWD (the native path was forgiving,
   # which is why this worked pre-0.638). An absolute path builds on every target.
   if ( cd "$ROOT/selenium_core" \
-       && ae build --emit=lib --with=net,os,fs,extern --lib drivermgr --size --target="$t" \
+       && AETHER_SYSROOT="$target_sysroot" ae build --emit=lib --with=net,os,fs,extern --lib drivermgr --size --target="$t" \
             embed.ae --extra "$ROOT/selenium_core/_embed_strdup.c" -o "$out" ) >"$log" 2>&1; then
     ( cd "$DIST" && sha256sum "$name" > "$name.sha256" )
     # The pinned compiler emits <stem>.lib beside the Windows DLL. Normalize

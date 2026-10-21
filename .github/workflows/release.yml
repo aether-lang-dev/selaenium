@@ -61,6 +61,17 @@ jobs:
           echo "AETHER_HOME=$tools/aether" >> "$GITHUB_ENV"
           echo "AETHERC=$tools/aether/bin/aetherc" >> "$GITHUB_ENV"
 
+          asset="aether-$version-freebsd-x86_64-sysroot.tar.xz"
+          digest="$(gh api "repos/aether-lang-dev/aether/releases/tags/$AETHER_REF" \
+            --jq ".assets[] | select(.name == \"$asset\") | .digest")"
+          [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+          curl --fail --silent --show-error --location --retry 3 "$base/$asset" -o "$tools/$asset"
+          printf '%s  %s\n' "${digest#sha256:}" "$tools/$asset" | sha256sum --check -
+          mkdir -p "$tools/freebsd"
+          tar -xJf "$tools/$asset" -C "$tools/freebsd" --strip-components=1
+          test -f "$tools/freebsd/usr/include/stdio.h"
+          echo "AETHER_SYSROOT=$tools/freebsd" >> "$GITHUB_ENV"
+
           zig_version=0.16.0
           zig_sha256=70e49664a74374b48b51e6f3fdfbf437f6395d42509050588bd49abe52ba3d00
           zig_archive="zig-x86_64-linux-$zig_version.tar.xz"
@@ -71,9 +82,9 @@ jobs:
           test "$("$tools/zig-x86_64-linux-$zig_version/zig" version)" = "$zig_version"
           echo "$tools/zig-x86_64-linux-$zig_version" >> "$GITHUB_PATH"
 
-      - name: Build all six engine libraries
+      - name: Build all nine engine libraries
         env:
-          TARGETS: x86_64-linux aarch64-linux x86_64-macos aarch64-macos x86_64-windows aarch64-windows
+          TARGETS: x86_64-linux aarch64-linux x86_64-linux-musl aarch64-linux-musl x86_64-macos aarch64-macos x86_64-windows aarch64-windows x86_64-freebsd
           RELEASE_NO_JARS: '1'
         run: release/build.sh
 
@@ -89,12 +100,13 @@ jobs:
           set -euo pipefail
           cat > "$RUNNER_TEMP/release-notes.md" <<'NOTES'
           Cross-built Selaenium engine libraries for Linux, macOS, and Windows,
-          each on x86_64 and arm64. Every binary has a SHA256 checksum.
+          each on x86_64 and arm64, plus Linux musl on both architectures and
+          FreeBSD x86_64. Every binary has a SHA256 checksum.
 
           These are the shared engine libraries used by the language bindings.
           Language packages and registry publishing are separate.
 
-          All six libraries built successfully. The Linux x86_64 library was
+          All nine libraries built successfully. The Linux x86_64 library was
           loaded and checked for the complete exported C ABI. This release does
           not claim a browser or desktop test pass on every target platform.
           NOTES
@@ -113,4 +125,4 @@ jobs:
           downloaded="$RUNNER_TEMP/published-engine"
           gh release download "$RELEASE_TAG" --dir "$downloaded"
           python3 release/check-artifacts.py "$RELEASE_TAG" --dist "$downloaded"
-          echo "Published and downloaded all six engine libraries for $RELEASE_TAG; checksums and Linux ABI verified." >> "$GITHUB_STEP_SUMMARY"
+          echo "Published and downloaded all nine engine libraries for $RELEASE_TAG; checksums and Linux ABI verified." >> "$GITHUB_STEP_SUMMARY"

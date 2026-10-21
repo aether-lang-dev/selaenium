@@ -2,14 +2,16 @@
 
 The engine (`libselenium_core`) is pure Aether, so it **cross-compiles for the
 whole platform matrix from one Linux host** — no per-OS runner for the build.
-Pushing a release tag triggers GitHub Actions to build and publish the six
-Linux/macOS/Windows libraries (x86_64 and arm64) and their checksums. On-target
+Pushing a release tag triggers GitHub Actions to build and publish nine engine
+libraries and their checksums. The next v0.11.0 release adds Linux musl
+(x86_64/arm64) and FreeBSD x86_64 to the original six Linux/macOS/Windows
+libraries; published v0.10.0 assets stay unchanged. On-target
 *testing* is done out of band and recorded as an attestation keyed by SHA256.
 
 ## Build
 
 ```sh
-release/build.sh                     # core matrix: linux + macos, x86_64 + arm64
+release/build.sh                     # linux glibc/musl + macos, x86_64 + arm64
 RELEASE_TAG=v1.2.3 release/build.sh   # stamp a tag into the artifact names
 RELEASE_EXTRA_TARGETS=1 release/build.sh   # + windows (slow) + freebsd (needs AETHER_SYSROOT)
 TARGETS="aarch64-macos" release/build.sh   # just one
@@ -20,7 +22,7 @@ Outputs into `release/dist/` (gitignored):
 
 - `libselenium_core-<tag>-<os>-<arch>.{so,dylib,dll}` — the artifact
 - `<artifact>.sha256` — its checksum (sidecar)
-- `SHA256SUMS` — all artifacts in one manifest
+- `SHA256SUMS.txt` — all artifacts in one manifest
 
 Each is stripped (`--size`). `so`=linux ELF, `dylib`=macOS Mach-O, `dll`=Windows.
 
@@ -29,7 +31,7 @@ PE32+ DLLs (via `RELEASE_EXTRA_TARGETS=1`). Each DLL also gets a `<dll>.lib`
 import library beside it — needed only by a consumer that *links* the DLL at
 build time; our FFI bindings `dlopen` at runtime and don't use it, but it is
 checksummed and shipped so Windows is first-class. So a full run with extras
-produces 4 core + 2 Windows (× 2 files each) artifacts. FreeBSD still needs
+produces 6 core + 2 Windows (× 2 files each) + 1 FreeBSD library. FreeBSD needs
 `AETHER_SYSROOT` and skips loudly without it.
 
 ## Cut a GitHub release
@@ -37,20 +39,20 @@ produces 4 core + 2 Windows (× 2 files each) artifacts. FreeBSD still needs
 Prepare the engine version, commit the changes, then push a tag at that commit:
 
 ```sh
-python3 release/version.py --set v0.10.0
-python3 release/version.py --check v0.10.0
+python3 release/version.py --set v0.11.0
+python3 release/version.py --check v0.11.0
 # Stage the version changes shown by git diff, then:
-git commit -m '[release] prepare engine v0.10.0'
+git commit -m '[release] prepare engine v0.11.0'
 git push origin main
-git tag v0.10.0
-git push origin v0.10.0
+git tag v0.11.0
+git push origin v0.11.0
 ```
 
 Choose a new unused version for each release. Pushing to `main` alone does not
 release anything. The [release workflow](../.github/workflows/release.yml) also
 supports a manual run with an existing tag. It checks out that exact tag,
 verifies the version pins, installs the pinned Aether and Zig toolchains, and
-runs `release/build.sh` on one Ubuntu runner. All six engine builds must succeed;
+runs `release/build.sh` on one Ubuntu runner. All nine engine builds must succeed;
 a failing platform prevents publication. The workflow loads the Linux x86_64
 library and checks every declared C ABI export, then creates the GitHub release
 and downloads the assets again to verify their checksums and ABI.
@@ -95,7 +97,7 @@ After publication:
 
 1. Verify that the actual engine binaries and their checksums are downloadable;
    a tag or release page alone does not prove the engine is available. The
-   workflow does this automatically for all six platforms, and loads the
+   workflow does this automatically for all nine libraries, and loads the
    downloaded Linux library to check every C ABI export.
 2. Check `python3 release/version.py --check <tag>` on the current branch too:
    all download pins must name **the engine just released**. Update the README's
