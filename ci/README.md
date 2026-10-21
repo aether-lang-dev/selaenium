@@ -26,7 +26,7 @@ when coverage is incomplete. **CI should use `--strict`.**
 | File | Role |
 |------|------|
 | `versions.env`  | the pinned `AETHER_REF` (ae to install) + `AETHER_FLOOR` (minimum ae accepted) + `AEB_REF` (aeb) — the one place to bump |
-| `toolchain.sh`  | idempotently install ae + aeb — a prebuilt aeb release `.tar.gz`, **SHA256-verified**, when one exists for this platform+tag (fast, no compile), else the public curl-pipe source build; needs only curl/tar/make/cc. `NO_BINARY=1` forces source. An already-installed ae is KEPT when it is `>= AETHER_FLOOR` (newer is fine); a too-old ae is reinstalled at `AETHER_REF` rather than silently used. |
+| `toolchain.sh`  | installs the pinned ae + aeb releases; keeps an installed ae only at `>= AETHER_FLOOR` and an installed aeb only at `>= AEB_REF`. A prebuilt aeb bundle requires a valid SHA256 sidecar; a missing or mismatched checksum fails. If no bundle exists, it runs the source installer from the pinned tag; `NO_BINARY=1` explicitly selects source. Installer downloads finish before execution, and receive the version and prefix variables directly. |
 | `run.sh`        | the entry point: toolchain → engine → target set → summary |
 | `coverage.sh`   | reads each node's `prereq(...)` and probes that toolchain **by running it**, then prints a tested / NOT-TESTED table. `--strict` exits non-zero when anything could not be tested. This is a check *on top of* aeb — see below for why it has to exist. |
 

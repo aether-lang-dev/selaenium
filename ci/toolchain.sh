@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Ensure the pinned Aether toolchain (ae + aeb) is installed and on PATH.
 #
-# Idempotent: if ae and aeb are already present it does nothing but print what
-# it found — so it is cheap to call at the top of every CI lane. Pins come from
+# Idempotent: keeps ae and aeb only when their versions meet this repo's pins,
+# so it is cheap to call at the top of every CI lane. Pins come from
 # ci/versions.env (override via the AETHER_REF / AEB_REF env vars).
 #
 # Prerequisites: curl, tar, GNU make, a C compiler (Aether compiles to C, so no
@@ -53,6 +53,24 @@ ae_version() {
   ae --version 2>/dev/null | head -1 | sed -n 's/.*[^0-9]\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\).*/\1/p'
 }
 
+# aeb release tags have two components (v0.330); unversioned development
+# builds do not prove that the requested release is installed.
+aeb_version() {
+  have aeb || return 0
+  aeb --version 2>/dev/null | sed -nE \
+    's/^aeb v?([0-9]+\.[0-9]+(\.[0-9]+)?)([[:space:]].*)?$/\1/p'
+}
+
+aeb_meets_ref() {
+  case "$AEB_REF" in
+    v[0-9]*.[0-9]*|[0-9]*.[0-9]*)
+      [ -n "$_aeb_ver" ] && ver_ge "$_aeb_ver" "$AEB_REF" ;;
+    # Branch/SHA development overrides have no comparable release version.
+    # Preserve their presence check; FORCE=1 reinstalls the selected ref.
+    *) have aeb ;;
+  esac
+}
+
 for tool in curl tar make cc; do
   have "$tool" || { say "MISSING prerequisite: $tool (need curl, tar, GNU make, a C compiler)"; exit 1; }
 done
@@ -97,17 +115,23 @@ install_aeb_binary() {
   asset="aeb-${slug}.tar.gz"
   tmp=$(mktemp -d)
   if ! curl -fsSL "${base}/${asset}" -o "$tmp/$asset" 2>/dev/null; then rm -rf "$tmp"; return 1; fi
-  # Verify against the published checksum before trusting the bytes. A missing
-  # .sha256 (older tag) is tolerated with a warning; a MISMATCH always aborts.
+  # Every supported aeb release publishes a checksum. Refuse an unverified
+  # or corrupt download rather than hiding the failure with a source build.
   if curl -fsSL "${base}/${asset}.sha256" -o "$tmp/$asset.sha256" 2>/dev/null; then
     if command -v sha256sum >/dev/null 2>&1; then
       if ! ( cd "$tmp" && sha256sum -c "$asset.sha256" >/dev/null 2>&1 ); then
-        say "aeb ${asset}: SHA256 MISMATCH — refusing the binary, using source build"
-        rm -rf "$tmp"; return 1
+        say "aeb ${asset}: SHA256 MISMATCH — refusing the download"
+        rm -rf "$tmp"; exit 1
       fi
+    elif command -v shasum >/dev/null 2>&1; then
+      ( cd "$tmp" && shasum -a 256 -c "$asset.sha256" ) || { rm -rf "$tmp"; exit 1; }
+    else
+      say "a SHA256 tool is required to verify aeb"
+      rm -rf "$tmp"; exit 1
     fi
   else
-    say "aeb ${asset}: no published .sha256 — download unverified"
+    say "aeb ${asset}: no published .sha256 — refusing the download"
+    rm -rf "$tmp"; exit 1
   fi
   if ! tar -xzf "$tmp/$asset" -C "$tmp" 2>/dev/null; then rm -rf "$tmp"; return 1; fi
   tree=$(find "$tmp" -maxdepth 1 -type d -name "aeb-${slug}" | head -1)
@@ -128,6 +152,13 @@ install_aeb_binary() {
   return 1
 }
 
+install_aether_source() {
+  installer=$(mktemp)
+  curl -fsSL "https://raw.githubusercontent.com/aether-lang-dev/aether/$AETHER_REF/get.sh" -o "$installer"
+  AETHER_REF="$AETHER_REF" PREFIX="$PREFIX" sh "$installer"
+  rm -f "$installer"
+}
+
 # ---- ae (the Aether compiler) --------------------------------------------
 # Floor policy: install AETHER_REF when ae is missing, when FORCE=1, or when the
 # present ae is OLDER than AETHER_FLOOR; otherwise keep whatever is installed
@@ -136,29 +167,35 @@ AETHER_FLOOR="${AETHER_FLOOR:-0.0.0}"
 _ae_ver="$(ae_version)"
 if [ "${FORCE:-0}" = "1" ] || [ -z "$_ae_ver" ]; then
   say "installing Aether ${AETHER_REF} …"
-  AETHER_REF="$AETHER_REF" PREFIX="$PREFIX" \
-    curl -sSL "https://raw.githubusercontent.com/aether-lang-dev/aether/main/get.sh" | sh
+  install_aether_source
 elif ver_ge "$_ae_ver" "$AETHER_FLOOR"; then
   say "ae present: ${_ae_ver} (>= floor ${AETHER_FLOOR}; keeping. FORCE=1 to reinstall ${AETHER_REF})"
 else
   say "ae present: ${_ae_ver} is BELOW the floor ${AETHER_FLOOR} — installing ${AETHER_REF} …"
-  AETHER_REF="$AETHER_REF" PREFIX="$PREFIX" \
-    curl -sSL "https://raw.githubusercontent.com/aether-lang-dev/aether/main/get.sh" | sh
+  install_aether_source
 fi
 
 # ---- aeb (the build runner; written in Aether, so needs ae first) --------
-if [ "${FORCE:-0}" = "1" ] || ! have aeb; then
+_aeb_ver="$(aeb_version)"
+if [ "${FORCE:-0}" = "1" ] || ! aeb_meets_ref; then
   # Prefer a release binary (fast, no compile); fall back to the source build.
   if install_aeb_binary; then
     :
   else
     say "installing aeb ${AEB_REF} from source …"
-    AEB_REF="$AEB_REF" PREFIX="$PREFIX" AETHER="$(command -v ae)" \
-      curl -sSL "https://raw.githubusercontent.com/aether-lang-dev/aeb/main/install.sh" | sh
+    installer=$(mktemp)
+    curl -fsSL "https://raw.githubusercontent.com/aether-lang-dev/aeb/$AEB_REF/install.sh" -o "$installer"
+    AEB_REF="$AEB_REF" PREFIX="$PREFIX" AETHER="$(command -v ae)" sh "$installer"
+    rm -f "$installer"
   fi
 else
-  say "aeb present: $(aeb --version 2>&1 | head -1) (skipping; FORCE=1 to reinstall)"
+  say "aeb present: ${_aeb_ver:-unversioned} (keeping; meets ${AEB_REF}. FORCE=1 to reinstall)"
 fi
+
+_ae_ver="$(ae_version)"
+_aeb_ver="$(aeb_version)"
+ver_ge "$_ae_ver" "$AETHER_FLOOR" || { say "installed ae is below ${AETHER_FLOOR}"; exit 1; }
+aeb_meets_ref || { say "installed aeb does not meet ${AEB_REF}"; exit 1; }
 
 say "ae  -> $(command -v ae)   $(ae  --version 2>&1 | head -1)"
 say "aeb -> $(command -v aeb)  $(aeb --version 2>&1 | head -1)"

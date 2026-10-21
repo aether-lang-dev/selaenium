@@ -316,6 +316,6 @@ _csv_to_json_array(csv: string) -> string {
 }
 
 _qjson(str_val: string) -> string {
-    j, _e = json.stringify(json.str(str_val))
+    j, _e = json.encode(json.str(str_val))
     return j
 }

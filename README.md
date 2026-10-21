@@ -24,16 +24,16 @@ One line installs a pinned `ae` (>= `AE_PIN`) THEN a pinned `aeb`, into
 bindings resolve their Maven deps on a fresh binary install:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/aether-lang-dev/aeb/main/get.sh \
-  | AE_PIN=0.830.0 AEB_REF=v0.328 sh
+curl -fsSL https://raw.githubusercontent.com/aether-lang-dev/aeb/v0.330/get.sh \
+  | AE_PIN=0.838.0 AEB_REF=v0.330 sh
 ```
 
 `get.sh` is also a sourceable library — a CI step can source it (set
 `AEBGET_SOURCE_ONLY=1` so sourcing only *defines* the functions) then drive it:
 
 ```bash
-AEBGET_SOURCE_ONLY=1 . <(curl -fsSL https://raw.githubusercontent.com/aether-lang-dev/aeb/main/get.sh)
-AE_PIN=0.830.0 AEB_REF=v0.328 aeb_bootstrap
+AEBGET_SOURCE_ONLY=1 . <(curl -fsSL https://raw.githubusercontent.com/aether-lang-dev/aeb/v0.330/get.sh)
+AE_PIN=0.838.0 AEB_REF=v0.330 aeb_bootstrap
 ```
 
 Then build the engine (the one thing every binding needs) and, for a given
@@ -329,11 +329,9 @@ SELENIUM_CORE_LIB="$PWD/selenium_core/native/libselenium_core.so" python3 python
 
 ## Status — end-to-end green ✅
 
-Needs **Aether ≥ 0.638** — the floor recorded in [`ci/versions.env`](ci/versions.env),
-which pins `ae` 0.668.0 and `aeb` v0.310. 0.638 is where `std.http.ws_connect`
-(the BiDi WebSocket client) and the single-file-module fix that this repo's
-`aether.toml` depends on both land. Building with an older `aeb` than the pin
-fails early with `unresolved import 'cache'`.
+Needs **Aether ≥ 0.838.0** and **aeb v0.330 or newer**, as recorded in
+[`ci/versions.env`](ci/versions.env). The pinned pair includes libc-aware
+GNU/musl package selection and the SDK fixes needed to compile with 0.838.0.
 
 - **Engine** (`selenium_core/selenium_core.ae`): full W3C command map, path templating,
   By normalization, W3C error decode, HTTP round-trip. ✅ builds, ✅ 31/31 probes.

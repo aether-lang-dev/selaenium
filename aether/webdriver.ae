@@ -1162,7 +1162,7 @@ _json1(key: string, v: string) -> string {
 
 // A JSON string literal for `s` (delegates to the engine's json for escaping).
 _qjson(s: string) -> string {
-    j, _e = json.stringify(json.str(s))
+    j, _e = json.encode(json.str(s))
     return j
 }
 

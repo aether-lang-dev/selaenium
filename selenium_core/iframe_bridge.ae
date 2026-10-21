@@ -161,7 +161,7 @@ _append_item(acc: string, item: string) -> string {
 _as_request_json(el: ptr) -> string {
     s, serr = json.get_string(el)
     if string.length(serr) == 0 { return s }   // el was a JSON string: its content
-    obj, _oe = json.stringify(el)               // el was an object: re-serialize
+    obj, _oe = json.encode(el)               // el was an object: re-serialize
     return obj
 }
 

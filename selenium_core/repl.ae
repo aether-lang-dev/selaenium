@@ -169,12 +169,12 @@ _render(rep: string) -> string {
     // result may itself carry {ok,value|info|error}
     vv, _v = json.object_get(resv, "value")
     if vv != null { sv, svok = json.get_string(vv); if string.length(svok) == 0 { return sv }
-                    ser, _se = json.stringify(vv); return ser }
+                    ser, _se = json.encode(vv); return ser }
     iv, _i = json.object_get(resv, "info")
     if iv != null { si, _si = json.get_string(iv); return si }
     ev, _ev = json.object_get(resv, "error")
     if ev != null { se2, _se2 = json.get_string(ev); return string.concat("error: ", se2) }
-    out, _o = json.stringify(resv)
+    out, _o = json.encode(resv)
     return out
 }
 
@@ -187,7 +187,7 @@ _event_line(ev: string) -> string {
     if mv != null { method, _ms = json.get_string(mv) }
     pv, _p = json.object_get(root, "params")
     if pv == null { return method }
-    ps, _ps = json.stringify(pv)
+    ps, _ps = json.encode(pv)
     return string.concat(method, string.concat(" ", ps))
 }
 

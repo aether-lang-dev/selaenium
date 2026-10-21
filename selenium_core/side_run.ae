@@ -203,7 +203,7 @@ _res_value_str(res_json: string) -> string {
     if vv == null { return "" }
     s, serr = json.get_string(vv)
     if string.length(serr) == 0 { return s }
-    enc, _e = json.stringify(vv)
+    enc, _e = json.encode(vv)
     return enc
 }
 _res_detail(res_json: string) -> string {

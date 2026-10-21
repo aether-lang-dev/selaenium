@@ -98,7 +98,7 @@ _ws_handler(req: ptr, ws: ptr, ud: ptr) {
         if kind == -1 { loop = 0 }              // client closed
         else {
             if kind == 1 {                       // a text request frame
-                request = http.ws_message_data(ws)
+                request = http.ws_message(ws)
                 _drain_after(ws, st, request)
             } else {
                 // idle (0 = timeout) or a binary frame we ignore: still flush any

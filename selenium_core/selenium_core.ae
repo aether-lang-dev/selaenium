@@ -654,7 +654,7 @@ execute_relative(sp: ptr, base_sel: string, filters_json: string) -> int {
 // atom_str_arg(s) — a JSON array holding one string: `["<s>"]`, s JSON-escaped.
 // A binding uses this to pass e.g. getAttribute's name as the atom's extra arg.
 atom_str_arg(s: string) -> string {
-    j, _e = json.stringify(json.str(s))
+    j, _e = json.encode(json.str(s))
     return string.concat("[", string.concat(j, "]"))
 }
 
@@ -677,7 +677,7 @@ body_without_path_params(params: ptr, path_tmpl: string) -> string {
         if keep == 1 {
             // Deep-copy the value into the new object by re-parsing its
             // stringified form (values are owned by `params`).
-            vs, _e = json.stringify(val)
+            vs, _e = json.encode(val)
             vcopy, _pe = json.parse(vs)
             _s = json.set(out, key, vcopy)
         }
@@ -941,7 +941,7 @@ decode_response(sp: ptr, name: string, resp_body: string) -> int {
         _detect_native(s, value)
     }
     // Stash the value payload as JSON text.
-    vtext, _vt = json.stringify(value)
+    vtext, _vt = json.encode(value)
     s.last_value = vtext
     json.free(parsed)
     return 0
