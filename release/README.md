@@ -99,7 +99,7 @@ After publication:
    downloaded Linux library to check every C ABI export.
 2. Check `python3 release/version.py --check <tag>` on the current branch too:
    all download pins must name **the engine just released**. Update the README's
-   temporary release-preparation notice to the published release requirement.
+   engine requirement and link to the published release.
    Keep historical release records intact.
 3. Run binding tests and consumer-install proofs using the fetched engine.
    For Dart, for example:

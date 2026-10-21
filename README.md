@@ -291,9 +291,10 @@ engine from the release instead of building it, via aeb's `--overrideDep` — se
 The prebuilt engine's `.so`/`.dylib`/`.dll` release tag is pinned in
 [`SELENIUM_CORE_VERSION`](SELENIUM_CORE_VERSION), with copies in bindings that
 ship independently. This is the Selaenium engine version, separate from the
-Aether and aeb versions above. This checkout prepares engine **v0.10.0**,
-including the native/locator ABI exports absent from v0.9.0. Until v0.10.0's
-release binaries are published, build the engine from this checkout. Every new engine
+Aether and aeb versions above. Current bindings require engine **v0.10.0**,
+including the native/locator ABI exports absent from v0.9.0. The
+[v0.10.0 release](https://github.com/aether-lang-dev/selaenium/releases/tag/v0.10.0)
+provides the prebuilt libraries. Every new engine
 release must also [advance the download pins](release/README.md#advance-the-engine-downloads-with-every-release)
 to the tag just released.
 
