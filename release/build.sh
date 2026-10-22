@@ -142,6 +142,10 @@ if [ "${RELEASE_NO_JARS:-0}" != "1" ] && have aeb; then
     done
     rm -f "$DIST/.jars.log"
   else
+    if [ "${RELEASE_BINDING_PACKAGES:-0}" = "1" ]; then
+      tail -80 "$DIST/.jars.log" >&2
+      die "Java jar build failed"
+    fi
     say "SKIP jars — aeb build failed (engine libs still ship); see $DIST/.jars.log"
   fi
 elif [ "${RELEASE_NO_JARS:-0}" != "1" ]; then
