@@ -5,13 +5,13 @@
 // generated from these declarations + the xunit dep; it ProjectReferences the
 // binding library (dep on SeleniumCore/.build.ae, which builds the hand-written
 // SeleniumCore.csproj). SKIPPED cleanly by preflight when dotnet is absent
-// (prereq dotnet:8).
+// (prereq dotnet:10).
 import bldr
 import dotnet
 
 aeb(cap) {
     bldr.build() {
-        prereq("dotnet:8")
+        prereq("dotnet:10")
         dep("selenium_core/.build.ae")
         dep("dotnet/SeleniumCore/.build.ae")
         dep("libs/dotnet/xunit/.xunit.nupkg.ae")

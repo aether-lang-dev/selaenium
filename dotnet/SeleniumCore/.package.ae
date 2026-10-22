@@ -13,7 +13,7 @@ import dotnet
 
 aeb(cap) {
     bldr.build() {
-        prereq("dotnet:8")
+        prereq("dotnet:10")
         dep("dotnet/SeleniumCore/.build.ae")
         dotnet.pack()
     }

@@ -87,11 +87,6 @@ jobs:
       - name: Install pinned aeb
         run: ci/toolchain.sh
 
-      - name: Install .NET 8 SDK
-        uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5.4.0
-        with:
-          dotnet-version: 8.0.x
-
       - name: Verify release image toolchains
         shell: bash
         run: |
@@ -106,7 +101,7 @@ jobs:
           ruby --version
           python3 --version
           node --version
-          dotnet --list-sdks | awk '$1 ~ /^8\./ { found=1 } END { exit !found }'
+          dotnet --list-sdks | awk '$1 ~ /^10\./ { found=1 } END { exit !found }'
 
       - name: Build engine libraries and official binding packages
         env:

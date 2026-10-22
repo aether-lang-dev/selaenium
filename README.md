@@ -184,7 +184,7 @@ dotnet/
                                     WebDriver, WebElement, By, WebDriverError
   SeleniumCore/SeleniumCore.csproj  class lib; packs the .so as a runtime asset
   SeleniumCore.Tests/Program.cs     console harness (no xunit): ffi + live+surface
-  .tests.ae / .package.ae / .example.ae   aeb nodes (dotnet build/pack; net8.0)
+  .tests.ae / .package.ae / .example.ae   aeb nodes (SDK 10; package targets net8.0)
   example/                          NuGet consumer app (Program.cs + Consumer.csproj)
 rust/
   src/lib.rs                        extern "C" binding + WebDriver/WebElement/By

@@ -59,9 +59,9 @@ and downloads the assets again to verify their checksums and ABI.
 
 The workflow runs inside the pinned
 `mcr.microsoft.com/devcontainers/universal:6.1.10-noble` image. This Ubuntu x86-64
-image supplies the C toolchain and the Java, Ruby, Python, and Node SDKs used to
-produce the native-bearing packages; the workflow installs .NET 8 explicitly
-because the image's preinstalled SDK set may move forward. It builds three Java
+image supplies the C toolchain and the Java, Ruby, Python, Node, and .NET 10 SDKs
+used to produce the native-bearing packages. The NuGet library continues to
+target .NET 8 while the .NET 10 SDK builds and packs it. It builds three Java
 jars, a Ruby gem, a Python wheel, an npm tarball, and a .NET NuGet package alongside source
 archives for Crystal and Julia and the nine native engine libraries. Native-
 bearing packages bundle the Linux x86_64 engine; Java's standalone jar contains

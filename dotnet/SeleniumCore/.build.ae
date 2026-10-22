@@ -9,7 +9,7 @@ import dotnet
 
 aeb(cap) {
     bldr.build() {
-        prereq("dotnet:8")
+        prereq("dotnet:10")
         dep("selenium_core/.build.ae")
         native_lib = dep_artifact("selenium_core/.build.ae", "shared_lib")
         dotnet.build_project_existing() {
