@@ -128,7 +128,7 @@ if [ "${RELEASE_NO_JARS:-0}" != "1" ] && have aeb; then
   say "building the Java jars (crossbuild + package) …"
   # aeb resolves node labels repo-root-relative, so run it from ROOT with relative paths.
   if [ "${RELEASE_BINDING_PACKAGES:-0}" = "1" ]; then
-    java_build=(selenium_core/.releaseJarMatrix.ae java/.package.ae --overrideDep selenium_core/.crossbuild.ae=selenium_core/.releaseJarMatrix.ae)
+    java_build=(java/.package.ae --overrideDep selenium_core/.crossbuild.ae=selenium_core/.releaseJarMatrix.ae)
   else
     java_build=(selenium_core/.crossbuild.ae java/.package.ae)
   fi
@@ -158,7 +158,6 @@ if [ "${RELEASE_BINDING_PACKAGES:-0}" = "1" ]; then
   have aeb || die "RELEASE_BINDING_PACKAGES=1 requires aeb"
   say "building official binding packages from the verified release engine …"
   if ! ( cd "$ROOT" && aeb \
-      selenium_core/.releaseLinux.ae \
       ruby/.package.ae python/.package.ae javascript/.package.ae \
       dotnet/SeleniumCore/.package.ae crystal/.package.ae julia/.package.ae \
       --overrideDep selenium_core/.build.ae=selenium_core/.releaseLinux.ae \
