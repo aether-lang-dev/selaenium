@@ -18,10 +18,10 @@ engine at build time**, so the engine `.so` must be present when you build — i
 is not fetched at run time. The `@[Link]` in `src/selenium.cr` also bakes an
 rpath so the built binary finds it later with no `LD_LIBRARY_PATH`.
 
-> **Name note.** This binding's shard is named `selenium`. There is no published
-> shard (it is **not on [shards.info](https://shards.info)**), so consume it from
-> your shop's own source — a `git`/`path` dependency in your `shard.yml`. Your
-> platform team makes the engine available (below).
+> **Distribution note.** This shard is not published to the Shards registry.
+> Each Selaenium GitHub release includes a source-only Crystal shard archive;
+> the application can vendor that archive as a path dependency. The archive
+> contains no native engine, so fetch the matching engine for your OS/CPU below.
 
 ## Using it (Crystal app developer)
 
@@ -37,6 +37,22 @@ puts driver.find_element(Selenium::By.id("main")).text
 driver.quit
 ```
 
+For the source archive attached to a GitHub release, extract it into your
+application and add it as a path dependency in the app's `shard.yml`:
+
+```yaml
+dependencies:
+  selenium:
+    path: ./vendor/selenium-crystal
+```
+
+Then fetch the matching native engine and build with the included wrapper:
+
+```sh
+vendor/selenium-crystal/scripts/fetch-engine.sh
+vendor/selenium-crystal/bin/crystal-build build src/main.cr
+```
+
 `Selenium::WebDriver.headless_chrome(command_executor)` starts a headless-Chrome
 session against a running chromedriver (or Grid) at that URL; `chrome`, `firefox`,
 `edge`, `safari` and their `headless_*` variants are there too, plus
@@ -48,9 +64,9 @@ PATH, no Grid). Finds take a one-arg `By` locator (`Selenium::By.id`, `.css_sele
 
 Crystal's `@[Link(ldflags:)]` must be a **string literal** — it rejects a `{{…}}`
 macro expression and `#{env(...)}` interpolation — so `src/selenium.cr` can only
-bake in dirs it computes from `#{__DIR__}`: the binding's own bundled `native/`
-(a published shard would ship the `.so` there) and the monorepo
-`../selenium_core/native`. The other two search locations from the link-time
+bake in dirs it computes from `#{__DIR__}`: the binding's own `native/` (for a
+locally staged library) and the monorepo `../selenium_core/native`. The source
+archive does not include a native library. The other two search locations from the link-time
 reference (`rust/build.rs`) — an explicit `SELENIUM_CORE_LIB` and the shared
 fetch cache — depend on runtime env a literal cannot express, so they reach the
 linker through `CRYSTAL_LIBRARY_PATH` and an rpath link flag.

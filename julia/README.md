@@ -25,9 +25,18 @@ println(text(find_element(d, By.id("main"))))
 quit(d)
 ```
 
-The API is function-style (`find_element(d, By.id(...))`, `text(el)`), and the
-engine is a single shared library reached by `ccall` — nothing to install,
-compile, or configure at consume time.
+The GitHub release also carries a source-only Julia package archive. Extract it
+and add that directory to the active environment:
+
+```sh
+tar -xzf selenium-julia-vX.Y.Z.tar.gz
+julia --project -e 'using Pkg; Pkg.develop(path="Selenium")'
+julia --project -e 'using Selenium; Selenium.fetch_engine!()'
+```
+
+The API is function-style (`find_element(d, By.id(...))`, `text(el)`). Julia
+loads the shared engine through `ccall`; `fetch_engine!()` downloads the one
+matching the consumer's OS/CPU before first use.
 
 ## Getting the engine
 

@@ -1,0 +1,36 @@
+// Source-only Julia package. Selenium.fetch_engine!() downloads the engine for
+// the consumer's OS/CPU, so the package archive carries no native library.
+import bldr
+import copy
+import std.string
+
+aeb(cap) {
+    bldr.build() {
+        target = bldr.target_dir(builder_context())
+        package = string.concat(target, "/Selenium")
+        bldr._reset_dir(package)
+
+        copy.tree() {
+            from("src")
+            to(string.concat(package, "/src"))
+        }
+        copy.tree() {
+            from("test")
+            to(string.concat(package, "/test"))
+        }
+        copy.file() {
+            from("Project.toml")
+            to(string.concat(package, "/Project.toml"))
+        }
+        copy.file() {
+            from("README.md")
+            to(string.concat(package, "/README.md"))
+        }
+        copy.file() {
+            from("../LICENSE")
+            to(string.concat(package, "/LICENSE"))
+        }
+
+        publish_artifact("package_dir", package)
+    }
+}

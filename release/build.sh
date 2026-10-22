@@ -160,7 +160,7 @@ if [ "${RELEASE_BINDING_PACKAGES:-0}" = "1" ]; then
   if ! ( cd "$ROOT" && aeb \
       selenium_core/.releaseLinux.ae \
       ruby/.package.ae python/.package.ae javascript/.package.ae \
-      dotnet/SeleniumCore/.package.ae \
+      dotnet/SeleniumCore/.package.ae crystal/.package.ae julia/.package.ae \
       --overrideDep selenium_core/.build.ae=selenium_core/.releaseLinux.ae \
       ) >"$DIST/.binding-packages.log" 2>&1; then
     sed 's/^/release:     /' "$DIST/.binding-packages.log" | tail -80
@@ -186,17 +186,29 @@ if [ "${RELEASE_BINDING_PACKAGES:-0}" = "1" ]; then
   stage_matches "$ROOT/target/package/python/dist" '*.whl'
   stage_matches "$ROOT/target/package/javascript/pkgout" '*.tgz'
   stage_matches "$ROOT/target/package/dotnet/SeleniumCore/nupkg" '*.nupkg'
+
+  stage_source_archive() {
+    package_dir="$1"; archive_name="$2"
+    [ -d "$package_dir" ] || die "source package directory missing: $package_dir"
+    topdir=$(basename "$package_dir")
+    tar -czf "$DIST/$archive_name" -C "$(dirname "$package_dir")" "$topdir" \
+      || die "could not archive source package: $package_dir"
+    ( cd "$DIST" && sha256sum "$archive_name" > "$archive_name.sha256" )
+    say "  source package: $archive_name staged + .sha256"
+  }
+  stage_source_archive "$ROOT/target/package/crystal/selenium-crystal" "selenium-crystal-$TAG.tar.gz"
+  stage_source_archive "$ROOT/target/package/julia/Selenium" "selenium-julia-$TAG.tar.gz"
 fi
 
 # A combined checksum manifest over every artifact (not the .sha256 sidecars).
 # Named SHA256SUMS.txt so a browser renders it inline (no forced download).
-( cd "$DIST" && sha256sum ./*.so ./*.dylib ./*.dll ./*.dll.lib ./*.jar ./*.gem ./*.whl ./*.tgz ./*.nupkg 2>/dev/null > SHA256SUMS.txt || true )
+( cd "$DIST" && sha256sum ./*.so ./*.dylib ./*.dll ./*.dll.lib ./*.jar ./*.gem ./*.whl ./*.tgz ./*.nupkg ./*.tar.gz 2>/dev/null > SHA256SUMS.txt || true )
 
 echo
 say "built $built engine artifact(s) into release/dist/ ($failed failed)"
 if [ "$built" -gt 0 ]; then
   echo
-  ( cd "$DIST" && for f in *.so *.dylib *.dll *.jar *.gem *.whl *.tgz *.nupkg; do [ -f "$f" ] && printf '  %s  %s\n' "$(cut -c1-16 "$f.sha256")…" "$f"; done ) 2>/dev/null
+  ( cd "$DIST" && for f in *.so *.dylib *.dll *.jar *.gem *.whl *.tgz *.nupkg *.tar.gz; do [ -f "$f" ] && printf '  %s  %s\n' "$(cut -c1-16 "$f.sha256")…" "$f"; done ) 2>/dev/null
   echo
   say "each artifact has a .sha256; SHA256SUMS.txt lists them all."
   say "next: attest on real hardware — run the binding suite against a given"

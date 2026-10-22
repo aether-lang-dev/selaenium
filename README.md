@@ -25,7 +25,7 @@ bindings resolve their Maven deps on a fresh binary install:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/aether-lang-dev/aeb/v0.330/get.sh \
-  | AE_PIN=0.838.0 AEB_REF=v0.330 sh
+  | AE_PIN=0.839.0 AEB_REF=v0.330 sh
 ```
 
 `get.sh` is also a sourceable library — a CI step can source it (set
@@ -33,7 +33,7 @@ curl -fsSL https://raw.githubusercontent.com/aether-lang-dev/aeb/v0.330/get.sh \
 
 ```bash
 AEBGET_SOURCE_ONLY=1 . <(curl -fsSL https://raw.githubusercontent.com/aether-lang-dev/aeb/v0.330/get.sh)
-AE_PIN=0.838.0 AEB_REF=v0.330 aeb_bootstrap
+AE_PIN=0.839.0 AEB_REF=v0.330 aeb_bootstrap
 ```
 
 Then build the engine (the one thing every binding needs) and, for a given
@@ -271,12 +271,12 @@ grid/run-grid-test.sh --hub <cmd>   # our hub, no container
 
 - **`.tests.ae`** (per binding): the binding works against the source tree with
   the engine `.so` handed in via `SELENIUM_CORE_LIB`. Proves the *binding*.
-- **`.package.ae` + `.example.ae`** (per binding): the distributable — a wheel /
-  gem / npm package / jar / crate / module — with the engine `.so` **bundled
-  inside**, installed into a clean environment (no source tree on the path,
-  `SELENIUM_CORE_LIB` unset), then run. Proves a naive `pip install` / `go get`
-  actually works. All drive real headless Chrome from the *installed* artifact.
-  Eleven bindings have one, and they are part of `aeb .presubmit.ae`.
+- **`.package.ae` + `.example.ae`** (where supported): the distributable — a
+  wheel / gem / npm package / jar / crate / module. Most package formats bundle
+  the engine; Crystal and Julia release source archives fetch a matching engine
+  for the consumer's OS/CPU. Consumer examples install and run the artifact in
+  a clean environment. Eleven bindings have an `.example.ae`; they are part of
+  `aeb .presubmit.ae`.
 
   This layer is not optional: a `.tests.ae` runs against the SOURCE tree, so it
   cannot see a packaging break. When these were first run (2026-09-13) four were
@@ -291,10 +291,10 @@ engine from the release instead of building it, via aeb's `--overrideDep` — se
 The prebuilt engine's `.so`/`.dylib`/`.dll` release tag is pinned in
 [`SELENIUM_CORE_VERSION`](SELENIUM_CORE_VERSION), with copies in bindings that
 ship independently. This is the Selaenium engine version, separate from the
-Aether and aeb versions above. Current bindings require engine **v0.11.0**,
+Aether and aeb versions above. Current bindings require engine **v0.12.0**,
 including the native/locator ABI exports absent from v0.9.0. The
-[v0.11.0 release](https://github.com/aether-lang-dev/selaenium/releases/tag/v0.11.0)
-provides the prebuilt libraries once its release workflow completes. Every new engine
+[v0.12.0 release](https://github.com/aether-lang-dev/selaenium/releases/tag/v0.12.0)
+provides the prebuilt libraries. Every new engine
 release must also [advance the download pins](release/README.md#advance-the-engine-downloads-with-every-release)
 to the tag just released.
 

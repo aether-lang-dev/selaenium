@@ -60,10 +60,12 @@ and downloads the assets again to verify their checksums and ABI.
 The workflow runs inside the pinned
 `mcr.microsoft.com/devcontainers/universal:6.1.10-noble` image. This Ubuntu x86-64
 image supplies the C toolchain and the Java, Ruby, Python, Node, and .NET SDKs
-used to produce the packages. It builds three Java jars, a Ruby gem, a Python
-wheel, an npm tarball, and a .NET NuGet package alongside the nine native engine
-libraries. Package files bundle the Linux x86_64 engine; Java's standalone jar
-contains its six-platform matrix. Every release file is checksummed and
+used to produce the native-bearing packages. It builds three Java jars, a Ruby
+gem, a Python wheel, an npm tarball, and a .NET NuGet package alongside source
+archives for Crystal and Julia and the nine native engine libraries. Native-
+bearing packages bundle the Linux x86_64 engine; Java's standalone jar contains
+its six-platform matrix. Crystal and Julia archives contain source only and
+fetch the consumer's OS/CPU engine at build/runtime. Every release file is checksummed and
 download-verified. Registry publishing remains separate because it requires
 registry credentials. The workflow does not run a browser or desktop CI test
 matrix. Required ABI exports remain mandatory in bindings; there are no
@@ -172,7 +174,7 @@ A verifier re-hashes the artifact they hold, matches `sha256`, and trusts the
 ## Not here yet
 
 - **Additional binding packages**: the release currently includes Java, Ruby,
-  Python, JavaScript, and .NET package formats. Other `.package.ae` nodes can be
-  added as their distributable format and release naming are settled.
+  Python, JavaScript, .NET, Crystal, and Julia artifacts. Other `.package.ae`
+  nodes can be added as their distributable format and release naming are settled.
 - **Registry publish** (PyPI/Maven/npm/…): a separate credentialed step; not
   part of the cross-build story.

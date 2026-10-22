@@ -1,0 +1,60 @@
+// Source-only Crystal shard package. The engine is deliberately fetched by the
+// consumer for its OS/CPU; the archive contains the Crystal source, Shards
+// manifest, linker wrapper, and shared engine fetch helper, but no native file.
+import bldr
+import copy
+import crystal
+import std.fs
+import std.string
+
+aeb(cap) {
+    bldr.build() {
+        source_dir = bldr.source_dir(builder_context())
+        tag_text, read_err = fs.read(string.concat(source_dir, "/../SELENIUM_CORE_VERSION"))
+        if string.length(read_err) > 0 {
+            bldr.fail(builder_context(), "cannot read SELENIUM_CORE_VERSION")
+        }
+        shard_version = string.trim(tag_text)
+        if string.starts_with(shard_version, "v") == 1 {
+            shard_version = string.substring(shard_version, 1, string.length(shard_version))
+        }
+        crystal.generate_manifest() {
+            manifest_name("selenium")
+            manifest_version(shard_version)
+        }
+        target = bldr.target_dir(builder_context())
+        package = string.concat(target, "/selenium-crystal")
+        bldr._reset_dir(package)
+
+        copy.tree() {
+            from("src")
+            to(string.concat(package, "/src"))
+        }
+        copy.file() {
+            from("shard.yml")
+            to(string.concat(package, "/shard.yml"))
+        }
+        copy.file() {
+            from("README.md")
+            to(string.concat(package, "/README.md"))
+        }
+        copy.file() {
+            from("../LICENSE")
+            to(string.concat(package, "/LICENSE"))
+        }
+        copy.file() {
+            from("bin/crystal-build")
+            to(string.concat(package, "/bin/crystal-build"))
+        }
+        copy.file() {
+            from("../scripts/fetch-engine.sh")
+            to(string.concat(package, "/scripts/fetch-engine.sh"))
+        }
+        copy.file() {
+            from("../SELENIUM_CORE_VERSION")
+            to(string.concat(package, "/SELENIUM_CORE_VERSION"))
+        }
+
+        publish_artifact("package_dir", package)
+    }
+}

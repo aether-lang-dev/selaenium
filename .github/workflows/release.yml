@@ -120,6 +120,8 @@ jobs:
           compgen -G 'release/dist/*.whl' >/dev/null
           compgen -G 'release/dist/*.tgz' >/dev/null
           compgen -G 'release/dist/*.nupkg' >/dev/null
+          test -s "release/dist/selenium-crystal-$RELEASE_TAG.tar.gz"
+          test -s "release/dist/selenium-julia-$RELEASE_TAG.tar.gz"
 
       - name: Verify engine artifacts and Linux ABI
         run: python3 release/check-artifacts.py "$RELEASE_TAG"
@@ -135,7 +137,8 @@ jobs:
           Cross-built Selaenium engine libraries for Linux, macOS, and Windows,
           each on x86_64 and arm64, plus Linux musl on both architectures and
           FreeBSD x86_64. Official Java jars, Ruby gem, Python wheel, npm tarball,
-          and .NET NuGet package are built in the pinned Universal Linux image.
+          .NET NuGet package, Crystal shard source, and Julia package source are
+          built in the pinned Universal Linux image.
           Every artifact has a SHA256 checksum.
 
           Registry publishing remains separate; these package files are release
@@ -150,6 +153,7 @@ jobs:
             release/dist/*.so release/dist/*.dylib release/dist/*.dll \
             release/dist/*.dll.lib release/dist/*.jar release/dist/*.gem \
             release/dist/*.whl release/dist/*.tgz release/dist/*.nupkg \
+            release/dist/*.tar.gz \
             release/dist/*.sha256 release/dist/SHA256SUMS.txt
 
       - name: Verify published downloads

@@ -7,6 +7,7 @@ import hashlib
 from pathlib import Path
 import re
 import subprocess
+import tarfile
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -50,6 +51,27 @@ def check_artifacts(tag, dist):
         sidecar = (dist / (filename + ".sha256")).read_text().split()
         if sidecar != [digest, filename]:
             raise ValueError(f"checksum sidecar mismatch: {filename}")
+    source_archives = {
+        f"selenium-crystal-{tag}.tar.gz": (
+            "selenium-crystal",
+            ("shard.yml", "src/selenium.cr", "bin/crystal-build",
+             "scripts/fetch-engine.sh", "SELENIUM_CORE_VERSION"),
+        ),
+        f"selenium-julia-{tag}.tar.gz": (
+            "Selenium",
+            ("Project.toml", "src/Selenium.jl", "README.md"),
+        ),
+    }
+    for filename, (topdir, required) in source_archives.items():
+        archive = dist / filename
+        with tarfile.open(archive, "r:gz") as tar:
+            members = {member.name for member in tar.getmembers()}
+        for path in required:
+            if f"{topdir}/{path}" not in members:
+                raise ValueError(f"{filename} is missing {topdir}/{path}")
+        native = (".so", ".dylib", ".dll")
+        if any(name.endswith(native) for name in members):
+            raise ValueError(f"source archive contains a platform native library: {filename}")
     lib = ctypes.CDLL(str((dist / f"libselenium_core-{tag}-linux-x86_64.so").resolve()))
     exports = re.findall(r"^(sel_embed_\w+)\(", (ROOT / "selenium_core/embed.ae").read_text(), re.MULTILINE)
     if not exports:
