@@ -1,11 +1,24 @@
-# Selenium WebDriver — Aether core
+# Fork of Selenium-WebDriver to Aether language core and 28 high-level language bindings
 
-The core of Selenium WebDriver, ported to [Aether](https://github.com/aether-lang-dev)
+The core of Selenium-WebDriver, ported to [Aether](https://github.com/aether-lang-dev) language
 as **one pure-Aether engine + thin per-language bindings**, built with
 [`aeb`](https://github.com/aether-lang-dev/aeb) instead of Bazel. Same shape as
-[`servirtium-vcr`](https://github.com/servirtium/servirtium-vcr) and
-[`html-sanitizer`](https://github.com/…/html-sanitizer): the protocol logic
+[`servirtium-vcr`](https://github.com/servirtium/servirtium-vcr),
+[`html-sanitizer`](https://github.com/paul-hammant/html-sanitizer) and 
+[libphonenumber-ae](https://github.com/aether-lang-dev/libphonenumber-ae): the protocol logic
 lives once, every language re-glues to it over a C ABI.
+
+NOTE: **This is not an official Selenium-team project, though they are informed of 
+progress.**
+
+## Using it
+
+Best case - we have a jar/gem/wheel/etc for your language on the github-releases page, 
+as well as a .so or .dll for your cpu and OS.  Worst case scenario is you build your 
+jar/gem/wheel yourself
+
+Namespaces are as the mainstream Selenium has, so imports/usings/requires should be 
+the same.
 
 ## Building it
 
@@ -44,7 +57,7 @@ aeb selenium_core/.build.ae        # the pure-Aether engine -> libselenium_core.
 aeb selenium_core/.build.ae python/.tests.ae   # + a binding (needs that language's toolchain)
 ```
 
-## The one rule
+## Contributions: The one rule
 
 **Bindings carry no protocol logic.** The command catalog, the W3C
 command→(method, path) route table, path templating, By/capabilities
@@ -79,6 +92,8 @@ essentially free, because a runtime family only has to be bridged once:
 | .NET (C#)         | P/Invoke                             |
 
 ### New languages (23 — not in classic Selenium)
+
+Note: not in classic Selenium's monorepo, but in comminuty repos.
 
 | Language | FFI mechanism                          |
 |----------|----------------------------------------|
@@ -199,7 +214,8 @@ rust/
 ## Selenium 4.x parity
 
 The engine is *ahead* of classic Selenium in protocol coverage and *behind* it in
-binding ergonomics — those are separate axes, so they are measured separately.
+binding ergonomics — those are separate axes, so they are measured separately. At any 
+moment that claim could be even more out of date that it was at the time of writing.
 
 **Protocol (the engine).** The route table in `selenium_core/selenium_core.ae`
 carries the full W3C command set plus the extensions Selenium 4 ships: shadow
@@ -433,7 +449,3 @@ code in the error-envelope check (`== 4` ARRAY instead of `== 3` STRING) that
 silently swallowed every WebDriver error as success — now pinned by the
 `response_error_code` probe cases.
 
-## Upstream siblings
-
-`../aether` (the language), `../aeb` (the build runner), `../servirtium-vcr` and
-`../html-sanitizer` (the one-engine-many-bindings layout this repo copies).
