@@ -206,6 +206,18 @@ demux_cancel(dp: ptr, id: int) {
     map.remove(d.replies, idkey)
 }
 
+// Send/command lifecycle adapters shared by the socket layer and pure tests.
+// A failed write or a command that returns without a reply must discard its
+// pending id so a late response cannot be retained as an orphan.
+demux_send_result(dp: ptr, id: int, send_rc: int) {
+    if send_rc != 0 { demux_cancel(dp, id) }
+}
+
+demux_finish_command(dp: ptr, id: int, reply_json: string) -> string {
+    if string.length(reply_json) == 0 { demux_cancel(dp, id) }
+    return string.concat(reply_json, "")
+}
+
 // pending_count() / event_count() — introspection for tests.
 demux_event_count(dp: ptr) -> int {
     if dp == null { return 0 }

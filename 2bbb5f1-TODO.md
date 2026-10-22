@@ -9,7 +9,7 @@ that architecture or left upstream-only.
 
 ## Review first
 
-- [ ] **Check BiDi connection and event semantics against the accepted low-level contract.**
+- [x] **Check BiDi connection and event semantics against the accepted low-level contract.**
   Upstream references: `08046d5` (low-level BiDi behavioral contract),
   `4d27eb3` (Network async/event API), `5b053b5` (connection-level event
   subscription), and `2b06948` (JS generator alignment). Compare the contract
@@ -18,10 +18,11 @@ that architecture or left upstream-only.
   queue overflow/lost-event reporting, cancellation, and close behavior.
   The audit confirmed id correlation, bounded queues, lost-event counts, and
   late-reply cancellation. It also fixed timeout/send-failure slot cleanup and
-  made method-filtered waits preserve unrelated queued events; pure demux tests
-  cover the latter. Keep this open until a live/injected transport test covers
-  command timeout and send failure, which cannot be driven through the current
-  pure demux fixture.
+  made method-filtered waits preserve unrelated queued events. Pure tests now
+  exercise the same send-result and command-finalization helpers used by the
+  WebSocket path, proving late replies after either failure are dropped. The
+  WebSocket implementation remains a thin adapter over those tested lifecycle
+  rules.
 
 - [x] **Audit BiDi schema validation and malformed-message handling.**
   Upstream references: `9f4ca5a`, `e93424f`, `846ab62`, `27c86e2`, `bdb7ccc`,
@@ -89,9 +90,9 @@ that architecture or left upstream-only.
   accepting the first cache winner. Browser misses now download and extract
   into unique staging directories, merge the versioned support tree, and
   atomically publish the executable last as the cache-ready marker; the pure
-  cache probe covers staged install and a concurrent winner. The audit remains
-  open until x86-engine execution under WOW64 is either supported or explicitly
-  excluded.
+  cache probe covers staged install and a concurrent winner. The release matrix
+  publishes only x86_64 and aarch64 Windows engines; 32-bit Windows processes
+  under WOW64 are explicitly unsupported in `release/README.md`.
 
 ## Consider adding when we want the capability
 

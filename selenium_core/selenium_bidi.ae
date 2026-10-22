@@ -49,7 +49,7 @@ bidi_send(sp: ptr, id: int, method: string, params_json: string) -> int {
     frame = "{\"id\":${string.from_int(id)},\"method\":${_qjson(method)},\"params\":${p}}"
     bidi_demux.demux_register(s.demux, id)
     rc = http.ws_send_text(s.ws, frame)
-    if rc != 0 { bidi_demux.demux_cancel(s.demux, id) }
+    bidi_demux.demux_send_result(s.demux, id, rc)
     return rc
 }
 
@@ -113,6 +113,7 @@ bidi_cancel(sp: ptr, id: int) {
 // interleaves send/pump/poll across many ids itself.
 bidi_command(sp: ptr, id: int, method: string, params_json: string, timeout_ms: int) -> string {
     if bidi_send(sp, id, method, params_json) != 0 { return "" }
+    s = sp as *BidiSession
     waited = 0
     step = 50
     done = 0
@@ -129,8 +130,7 @@ bidi_command(sp: ptr, id: int, method: string, params_json: string, timeout_ms: 
             if waited >= timeout_ms { done = 1 }
         }
     }
-    if string.length(out) == 0 { bidi_cancel(sp, id) }
-    return out
+    return bidi_demux.demux_finish_command(s.demux, id, out)
 }
 
 // ---- events: subscribe + wait (the bidirectional half BiDi exists for) ----

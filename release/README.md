@@ -32,7 +32,9 @@ import library beside it — needed only by a consumer that *links* the DLL at
 build time; our FFI bindings `dlopen` at runtime and don't use it, but it is
 checksummed and shipped so Windows is first-class. So a full run with extras
 produces 6 core + 2 Windows (× 2 files each) + 1 FreeBSD library. FreeBSD needs
-`AETHER_SYSROOT` and skips loudly without it.
+`AETHER_SYSROOT` and skips loudly without it. There is no 32-bit Windows engine
+target: 32-bit Selaenium processes under WOW64 are unsupported, and Selenium
+Manager does not attempt to resolve 32-bit browser/driver assets for them.
 
 ## Cut a GitHub release
 

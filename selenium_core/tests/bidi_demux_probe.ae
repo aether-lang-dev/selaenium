@@ -49,6 +49,21 @@ main() {
             spec.assert_eq(bidi_demux.demux_ingest(d, "{\"id\":20,\"result\":{}}"), 0, "cancelled id -> 0")
             spec.assert_str_eq(bidi_demux.demux_poll_reply(d, 20), "", "poll(20) empty after cancel")
         }
+        spec.it("failed send and empty command result discard pending ids") callback {
+            lifecycle = bidi_demux.demux_new()
+            bidi_demux.demux_register(lifecycle, 21)
+            bidi_demux.demux_send_result(lifecycle, 21, -1)
+            spec.assert_eq(bidi_demux.demux_ingest(lifecycle, "{\"id\":21,\"result\":{}}"), 0,
+                "late reply after send failure is dropped")
+            spec.assert_str_eq(bidi_demux.demux_poll_reply(lifecycle, 21), "", "no pending failed-send reply")
+
+            bidi_demux.demux_register(lifecycle, 22)
+            spec.assert_str_eq(bidi_demux.demux_finish_command(lifecycle, 22, ""), "", "timeout returns empty")
+            spec.assert_eq(bidi_demux.demux_ingest(lifecycle, "{\"id\":22,\"result\":{}}"), 0,
+                "late reply after command timeout is dropped")
+            spec.assert_str_eq(bidi_demux.demux_poll_reply(lifecycle, 22), "", "no pending timed-out reply")
+            bidi_demux.demux_free(lifecycle)
+        }
     }
 
     spec.describe(fw, "event queue") {
