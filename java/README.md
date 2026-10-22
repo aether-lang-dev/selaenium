@@ -21,6 +21,11 @@ READMEs).
 > **not published to Maven Central**; your platform team builds and publishes them
 > to your internal Maven repo (below).
 
+If your organization vendors source instead of building the jar here, the
+generic [`scripts/vendor.py`](../docs/Vendoring.md) helper can copy this Java
+source set and selected native libraries from the same Selaenium tag. Your
+organization supplies its own `pom.xml` and Maven publication rules.
+
 ## Using it (JVM app developer)
 
 Depend on the jar from your internal Maven repo, then:

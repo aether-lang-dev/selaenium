@@ -298,6 +298,10 @@ provides the prebuilt libraries once its release workflow completes. Every new e
 release must also [advance the download pins](release/README.md#advance-the-engine-downloads-with-every-release)
 to the tag just released.
 
+For a corporate vendoring snapshot, [`scripts/vendor.py`](docs/Vendoring.md)
+copies selected source sets and chosen native libraries from one release tag
+into separate paths, with a manifest that can be checked against that tag.
+
 To release an engine, prepare its version with
 `python3 release/version.py --set <tag>`, commit, and push that `vX.Y.Z` tag.
 [GitHub Actions](.github/workflows/release.yml)
