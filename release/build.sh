@@ -115,7 +115,7 @@ done
 # The official release build must validate its raw artifacts before any binding
 # package is allowed to embed one. This also proves the Linux C ABI exports.
 if [ "${RELEASE_BINDING_PACKAGES:-0}" = "1" ]; then
-  python3 "$HERE/check-artifacts.py" "$TAG" || die "engine artifact verification failed"
+  python3 "$HERE/check-artifacts.py" "$TAG" --engine-only || die "engine artifact verification failed"
 fi
 
 # ---- the multi-platform Java jars ----
