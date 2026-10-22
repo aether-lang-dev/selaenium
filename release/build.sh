@@ -132,7 +132,7 @@ if [ "${RELEASE_NO_JARS:-0}" != "1" ] && have aeb; then
   else
     java_build=(selenium_core/.crossbuild.ae java/.package.ae)
   fi
-  if ( cd "$ROOT" && aeb "${java_build[@]}" ) >"$DIST/.jars.log" 2>&1; then
+  if ( cd "$ROOT" && AEB_PER_NODE=0 aeb "${java_build[@]}" ) >"$DIST/.jars.log" 2>&1; then
     jdir="$ROOT/target/package/java"
     for j in "$jdir"/selenium-client.jar "$jdir"/selenium-client-standalone.jar "$jdir"/selenium-client-"$(uname -s | tr 'A-Z' 'a-z' | sed 's/darwin/macos/;s/.*linux.*/linux/')-$(uname -m | sed 's/aarch64/arm64/')".jar; do
       [ -f "$j" ] || continue
@@ -157,7 +157,7 @@ fi
 if [ "${RELEASE_BINDING_PACKAGES:-0}" = "1" ]; then
   have aeb || die "RELEASE_BINDING_PACKAGES=1 requires aeb"
   say "building official binding packages from the verified release engine …"
-  if ! ( cd "$ROOT" && aeb \
+  if ! ( cd "$ROOT" && AEB_PER_NODE=0 aeb \
       ruby/.package.ae python/.package.ae javascript/.package.ae \
       dotnet/SeleniumCore/.package.ae crystal/.package.ae julia/.package.ae \
       --overrideDep selenium_core/.build.ae=selenium_core/.releaseLinux.ae \
