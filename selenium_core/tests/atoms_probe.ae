@@ -88,6 +88,20 @@ main() {
             spec.assert_true(has(rp, "below"), "carries the filter")
             spec.assert_true(has(rp, "#anchor"), "carries the anchor sel")
         }
+        spec.it("relative atom accepts a rehydrated WebElement anchor") callback {
+            key = atoms.ELEMENT_KEY()
+            filter_json = string.concat("[{\"kind\":\"below\",\"anchor\":{\"", string.concat(key, "\":\"anchor-7\"}}]"))
+            rp = atoms.relative_params("button", filter_json)
+            spec.assert_true(has(rp, "\"anchor\":{"), "passes an element reference in filters")
+            spec.assert_true(has(atoms.atom_body("findElementsRelative"), "if(f.anchor)return [f.anchor]"), "atom uses the hydrated anchor element")
+        }
+        spec.it("relative_params_scoped passes the search context as a W3C reference") callback {
+            key = atoms.ELEMENT_KEY()
+            scope = string.concat("{\"", string.concat(key, "\":\"scope-2\"}"))
+            rp = atoms.relative_params_scoped("button", "[]", scope)
+            spec.assert_true(has(rp, "\"args\":[\"button\",[],{\"element-6066-11e4-a52e-4f735466cecf\":\"scope-2\"}]"), "passes context as third atom arg")
+            spec.assert_true(has(atoms.atom_body("findElementsRelative"), "scope.querySelectorAll(baseSel)"), "searches candidates within the context")
+        }
         spec.it("empty filters default to []") callback {
             rp0 = atoms.relative_params("a", "")
             spec.assert_true(has(rp0, "\"args\":[\"a\",[]]"), "empty filters -> []")

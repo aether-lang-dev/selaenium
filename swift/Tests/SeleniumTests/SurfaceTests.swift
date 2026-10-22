@@ -231,6 +231,17 @@ final class SurfaceTests: XCTestCase {
         XCTAssertThrowsError(try sr.findElements(By.css("p")))
     }
 
+    func testRelativeFindsAreAvailableFromElementAndShadowContexts() {
+        let d = WebDriver(commandExecutor: "http://127.0.0.1:1")
+        let element = WebElement(driver: d, id: "ELEMENTID")
+        let shadow = ShadowRoot(driver: d, id: "SHADOWID")
+        let filters: [[String: Any]] = [["kind": "below", "sel": "#anchor"]]
+        // These reach the new scoped ABI entry point; the dead endpoint should
+        // yield a typed transport error rather than failing symbol lookup.
+        XCTAssertThrowsError(try element.findRelative("button", filters))
+        XCTAssertThrowsError(try shadow.findRelative("button", filters))
+    }
+
     func testShadowRootKeyIsDistinctFromElementKey() {
         // The shadow key must differ from the element key (do not conflate).
         XCTAssertEqual(ShadowRoot.w3cShadowKey, "shadow-6066-11e4-a52e-4f735466cecf")

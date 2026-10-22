@@ -354,6 +354,20 @@ public class RemoteWebDriver
                 .toList();
     }
 
+    @SuppressWarnings("unchecked")
+    List<WebElement> findRelativeIn(Map<String, String> scopeRef, String baseCss,
+                                    List<Map<String, Object>> filters) {
+        int rc = Native.findRelativeIn(handle, Json.encode(scopeRef), baseCss,
+                Json.encode(filters == null ? List.of() : filters));
+        Object result = atomResult(rc);
+        if (!(result instanceof List<?> refs)) {
+            return List.of();
+        }
+        return refs.stream()
+                .map(e -> (WebElement) new RemoteWebElement(this, (String) ((Map<String, Object>) e).get(W3C_ELEMENT_KEY)))
+                .toList();
+    }
+
     static WebDriverException classify(int code, String message) {
         return switch (code) {
             case 3 -> new ElementClickInterceptedException(message, code);
@@ -1028,6 +1042,12 @@ public class RemoteWebDriver
 
     public static String locator(String by, String value) {
         return Native.byLocator(by, value);
+    }
+
+    /** Return the engine-normalized locator value (including CSS escaping). */
+    @SuppressWarnings("unchecked")
+    public static String locatorValue(String by, String value) {
+        return (String) ((Map<String, Object>) Json.decode(Native.byLocator(by, value))).get("value");
     }
 
     /**

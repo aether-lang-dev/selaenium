@@ -61,13 +61,14 @@ _ATOM_GET_TEXT() -> string {
 
 // findElementsRelative: the relative-locators atom. Args: (baseSel, filters)
 // where baseSel is a CSS selector for candidate elements and filters is an array
-// of {kind, sel} — kind in above/below/left/right/near, sel a CSS selector for
-// the anchor. Returns the candidate elements that satisfy ALL filters, sorted by
+// of {kind, sel} or {kind, anchor} — kind in above/below/left/right/near, sel a
+// CSS selector or anchor a W3C element reference rehydrated by executeScript.
+// Returns the candidate elements that satisfy ALL filters, sorted by
 // distance to the first anchor (nearest first). `near` uses a 50px threshold, per
 // the W3C relative-locator default. The remote end serializes the returned
 // element array into element references.
 _ATOM_FIND_RELATIVE() -> string {
-    return "function(baseSel,filters){function box(e){return e.getBoundingClientRect();}function ctr(b){return{x:b.left+b.width/2,y:b.top+b.height/2};}var cands=Array.prototype.slice.call(document.querySelectorAll(baseSel));function anchorsOf(f){return Array.prototype.slice.call(document.querySelectorAll(f.sel));}function keep(el){for(var i=0;i<filters.length;i++){var f=filters[i];var ans=anchorsOf(f);var ok=false;for(var j=0;j<ans.length;j++){if(ans[j]===el)continue;var a=box(ans[j]);var e=box(el);if(f.kind==='above'){if(e.bottom<=a.top+1)ok=true;}else if(f.kind==='below'){if(e.top>=a.bottom-1)ok=true;}else if(f.kind==='left'){if(e.right<=a.left+1)ok=true;}else if(f.kind==='right'){if(e.left>=a.right-1)ok=true;}else if(f.kind==='near'){var d=Math.hypot(ctr(e).x-ctr(a).x,ctr(e).y-ctr(a).y);if(d<=(f.dist||50))ok=true;}}if(!ok)return false;}return true;}var out=cands.filter(keep);if(filters.length){var f0=filters[0];var a0=anchorsOf(f0)[0];if(a0){var c0=ctr(box(a0));out.sort(function(p,q){var cp=ctr(box(p)),cq=ctr(box(q));return Math.hypot(cp.x-c0.x,cp.y-c0.y)-Math.hypot(cq.x-c0.x,cq.y-c0.y);});}}return out;}"
+    return "function(baseSel,filters,root){var doc=document,scope=root||doc;function box(e){return e.getBoundingClientRect();}function ctr(b){return{x:b.left+b.width/2,y:b.top+b.height/2};}var cands=Array.prototype.slice.call(scope.querySelectorAll(baseSel));function anchorsOf(f){if(f.anchor)return [f.anchor];var found=Array.prototype.slice.call(scope.querySelectorAll(f.sel));if(!found.length&&scope!==doc)found=Array.prototype.slice.call(doc.querySelectorAll(f.sel));return found;}function keep(el){for(var i=0;i<filters.length;i++){var f=filters[i];var ans=anchorsOf(f);var ok=false;for(var j=0;j<ans.length;j++){if(ans[j]===el)continue;var a=box(ans[j]);var e=box(el);if(f.kind==='above'){if(e.bottom<=a.top+1)ok=true;}else if(f.kind==='below'){if(e.top>=a.bottom-1)ok=true;}else if(f.kind==='left'){if(e.right<=a.left+1)ok=true;}else if(f.kind==='right'){if(e.left>=a.right-1)ok=true;}else if(f.kind==='near'){var d=Math.hypot(ctr(e).x-ctr(a).x,ctr(e).y-ctr(a).y);if(d<=(f.dist||50))ok=true;}}if(!ok)return false;}return true;}var out=cands.filter(keep);if(filters.length){var f0=filters[0];var a0=anchorsOf(f0)[0];if(a0){var c0=ctr(box(a0));out.sort(function(p,q){var cp=ctr(box(p)),cq=ctr(box(q));return Math.hypot(cp.x-c0.x,cp.y-c0.y)-Math.hypot(cq.x-c0.x,cq.y-c0.y);});}}return out;}"
 }
 
 // atom_body(name) — the raw JS function source for an atom name, or "".
@@ -84,12 +85,22 @@ atom_body(name: string) -> string {
 // selector; filters_json is a JSON array of {kind, sel[, dist]}. "" if the atom
 // is somehow unknown (it isn't).
 relative_params(base_sel: string, filters_json: string) -> string {
+    return relative_params_scoped(base_sel, filters_json, "")
+}
+
+// relative_params_scoped adds an optional W3C element/shadow-root reference as
+// the atom's third argument. Empty scope keeps the historic document search.
+relative_params_scoped(base_sel: string, filters_json: string, scope_ref_json: string) -> string {
     scr = atom_script("findElementsRelative")
     if string.length(scr) == 0 { return "" }
     scr_json = _qjson(scr)
     filters = filters_json
     if string.length(filters) == 0 { filters = "[]" }
-    args = string.concat("[", string.concat(_qjson(base_sel), string.concat(",", string.concat(filters, "]"))))
+    args = string.concat("[", string.concat(_qjson(base_sel), string.concat(",", filters)))
+    if string.length(scope_ref_json) > 0 {
+        args = string.concat(args, string.concat(",", scope_ref_json))
+    }
+    args = string.concat(args, "]")
     return string.concat("{\"script\":", string.concat(scr_json, string.concat(",\"args\":", string.concat(args, "}"))))
 }
 

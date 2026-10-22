@@ -59,6 +59,19 @@ function decodeBy(locator, handle) {
   return JSON.parse(native.takeString(native.byLocator(locator.using, locator.value)))
 }
 
+// RelativeBy stores locator roots and anchors in mainstream's {strategy:value}
+// shape. Ask the shared engine to normalize those to CSS for the spatial atom.
+function relativeCss(locator, handle) {
+  const by = locator instanceof By ? locator.toObject() : locator
+  if (by && typeof by.using === 'string' && typeof by.value === 'string') {
+    return decodeBy(by, handle).value
+  }
+  if (!by || typeof by !== 'object') throw new TypeError('Invalid relative locator')
+  const using = Object.keys(by)[0]
+  if (!using) throw new TypeError('Invalid relative locator')
+  return JSON.parse(native.takeString(native.byLocatorFor(handle, using, String(by[using])))).value
+}
+
 //////////////////////////////////////////////////////////////////////////////
 //  Wait conditions (upstream Condition / WebElementCondition)
 //////////////////////////////////////////////////////////////////////////////
@@ -206,6 +219,9 @@ class WebElement {
         if (typeof loc === 'function') {
           return this._driver._resolveElementFn(loc, this)
         }
+        if (loc instanceof RelativeBy) {
+          return this._driver._findRelativeBy(loc, false, { [W3C_ELEMENT_KEY]: this._id })
+        }
         const decoded = decodeBy(loc, this._driver._handle)
         const result = this._driver._execute('findChildElement', {
           id: this._id,
@@ -219,6 +235,9 @@ class WebElement {
 
   async findElements(locator) {
     const loc = checkedLocator(locator)
+    if (loc instanceof RelativeBy) {
+      return this._driver._findRelativeBy(loc, true, { [W3C_ELEMENT_KEY]: this._id })
+    }
     if (typeof loc === 'function') {
       return this._driver._resolveElementsFn(loc, this)
     }
@@ -268,7 +287,11 @@ class ShadowRoot {
     return newWebElementPromise(
       this._driver,
       (async () => {
-        const decoded = decodeBy(checkedLocator(locator), this._driver._handle)
+        const loc = checkedLocator(locator)
+        if (loc instanceof RelativeBy) {
+          return this._driver._findRelativeBy(loc, false, { [W3C_SHADOW_KEY]: this._id })
+        }
+        const decoded = decodeBy(loc, this._driver._handle)
         const result = this._driver._execute('findElementFromShadowRoot', {
           id: this._id,
           using: decoded.using,
@@ -280,7 +303,11 @@ class ShadowRoot {
   }
 
   async findElements(locator) {
-    const decoded = decodeBy(checkedLocator(locator), this._driver._handle)
+    const loc = checkedLocator(locator)
+    if (loc instanceof RelativeBy) {
+      return this._driver._findRelativeBy(loc, true, { [W3C_SHADOW_KEY]: this._id })
+    }
+    const decoded = decodeBy(loc, this._driver._handle)
     const result = this._driver._execute('findElementsFromShadowRoot', {
       id: this._id,
       using: decoded.using,
@@ -662,8 +689,8 @@ class WebDriver {
 
   // Relative locators: elements matching baseCss filtered by spatial relation to
   // anchors, nearest first. Each filter is an object
-  // { kind: 'above'|'below'|'left'|'right'|'near', sel: '<css>' } ('near' also
-  // accepts 'dist'). Returns an array of WebElement. (This binding's own
+  // { kind, sel: '<css>' } or { kind, anchor: <WebElement reference> } ('near'
+  // also accepts 'dist'). Returns an array of WebElement. (This binding's own
   // relative-locator entry point; mainstream's locateWith(...)/RelativeBy is
   // also accepted by findElement/findElements.)
   findRelative(baseCss, ...filters) {
@@ -672,18 +699,22 @@ class WebDriver {
     return refs.map((r) => new WebElement(this, r[W3C_ELEMENT_KEY]))
   }
 
-  // Resolve a RelativeBy through the engine's find-relative atom. The base is a
-  // CSS selector; each filter carries a { kind, args:[locator] } — the anchor
-  // locator's CSS value is passed as `sel`.
-  _findRelativeBy(relativeBy, wantAll) {
-    const root = relativeBy.root
-    const baseCss = root['css selector'] || root.css || Object.values(root)[0]
+  // Resolve a RelativeBy through the engine's find-relative atom. Locator
+  // anchors become CSS selectors; WebElement anchors become W3C references.
+  _findRelativeBy(relativeBy, wantAll, scopeRef = null) {
+    const baseCss = relativeCss(relativeBy.root, this._handle)
     const filters = relativeBy.filters.map((f) => {
       const anchor = f.args[0] || {}
-      const sel = anchor['css selector'] || anchor.css || Object.values(anchor)[0]
+      if (anchor instanceof WebElement) {
+        return { kind: f.kind, anchor: { [W3C_ELEMENT_KEY]: anchor.id } }
+      }
+      const sel = relativeCss(anchor, this._handle)
       return { kind: f.kind, sel }
     })
-    const rc = native.findRelative(this._handle, baseCss, JSON.stringify(filters))
+    const filtersJson = JSON.stringify(filters)
+    const rc = scopeRef
+      ? native.findRelativeIn(this._handle, JSON.stringify(scopeRef), baseCss, filtersJson)
+      : native.findRelative(this._handle, baseCss, filtersJson)
     const refs = this._atomResult(rc) || []
     const els = refs.map((r) => new WebElement(this, r[W3C_ELEMENT_KEY]))
     if (wantAll) return els

@@ -260,6 +260,13 @@ sel_embed_find_relative(h: ptr, base_sel: string, filters_json: string) -> int {
     return selenium_core.execute_relative(h, base_sel, filters_json)
 }
 
+// Relative search scoped to an element or shadow root. scope_ref_json is the
+// corresponding W3C reference object; filters_json keeps the existing filter
+// shape and may contain either CSS anchors or hydrated element references.
+sel_embed_find_relative_in(h: ptr, scope_ref_json: string, base_sel: string, filters_json: string) -> int {
+    return selenium_core.execute_relative_in(h, scope_ref_json, base_sel, filters_json)
+}
+
 // ---- result accessors (drain after execute) ----
 
 // The response `value` as JSON text (the useful payload: a string, number,

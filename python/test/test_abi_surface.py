@@ -884,15 +884,27 @@ def test_relative_locator_api_shape():
 
     base_css, filters = rb._engine_query()
     assert base_css == "td"
-    assert {"kind": "below", "sel": "#hdr"} in filters
+    assert {"kind": "below", "sel": '*[id="hdr"]'} in filters
     assert {"kind": "right", "sel": ".x"} in filters
     assert {"kind": "above", "sel": "h1"} in filters
     assert {"kind": "near", "sel": ".y"} in filters
+
+    escaped_root, _ = locate_with(By.ID, "my\nid")._engine_query()
+    assert escaped_root == '*[id="my\\a id"]'
 
     # mainstream to_dict shape
     d = locate_with(By.CSS_SELECTOR, "p").above({By.ID: "footer"}).to_dict()
     assert d["relative"]["root"] == {"css selector": "p"}
     assert d["relative"]["filters"][0]["kind"] == "above"
+
+    driver = _make_driver_without_session()
+    from selenium._webdriver import WebElement, _W3C_ELEMENT_KEY
+
+    element_anchor = WebElement(driver, "anchor-1")
+    _, element_filters = with_tag_name("td").below(element_anchor)._engine_query()
+    assert element_filters == [
+        {"kind": "below", "anchor": {_W3C_ELEMENT_KEY: "anchor-1"}}
+    ]
 
 
 def test_find_element_routes_relative_by_through_find_relative():
@@ -914,7 +926,27 @@ def test_find_element_routes_relative_by_through_find_relative():
     els = d.find_elements(rb)
     assert [e.id for e in els] == ["rel-1", "rel-2"]
     assert seen["base"] == "li"
-    assert seen["filters"] == ({"kind": "below", "sel": "#top"},)
+    assert seen["filters"] == ({"kind": "below", "sel": '*[id="top"]'},)
 
     one = d.find_element(rb)
     assert one.id == "rel-1"
+
+
+def test_relative_locator_search_uses_element_and_shadow_root_contexts():
+    from selenium._webdriver import WebElement, ShadowRoot, _W3C_ELEMENT_KEY, _W3C_SHADOW_KEY
+    from selenium.webdriver.support.relative_locator import with_tag_name
+    from selenium.webdriver.common.by import By
+
+    d = _make_driver_without_session()
+    seen = []
+    d._find_relative_in = lambda scope, base, filters: (
+        seen.append((scope, base, filters)) or [WebElement(d, "match")]
+    )
+    rb = with_tag_name("td").below({By.ID: "header"})
+
+    assert WebElement(d, "element-1").find_element(rb).id == "match"
+    assert ShadowRoot(d, "shadow-1").find_elements(rb)[0].id == "match"
+    assert seen == [
+        ({_W3C_ELEMENT_KEY: "element-1"}, "td", [{"kind": "below", "sel": '*[id="header"]'}]),
+        ({_W3C_SHADOW_KEY: "shadow-1"}, "td", [{"kind": "below", "sel": '*[id="header"]'}]),
+    ]

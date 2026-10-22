@@ -64,6 +64,15 @@ main() {
             spec.assert_str_eq(bidi_demux.demux_poll_event(d), "{\"type\":\"event\",\"method\":\"e1\"}", "FIFO 1st")
             spec.assert_str_eq(bidi_demux.demux_poll_event(d), "{\"type\":\"event\",\"method\":\"e2\"}", "FIFO 2nd")
         }
+        spec.it("waiting for one event method preserves the others") callback {
+            _a = bidi_demux.demux_ingest(d, "{\"type\":\"event\",\"method\":\"event.a\"}")
+            _b = bidi_demux.demux_ingest(d, "{\"type\":\"event\",\"method\":\"event.b\"}")
+            spec.assert_str_eq(bidi_demux.demux_poll_event_method(d, "event.b"),
+                "{\"type\":\"event\",\"method\":\"event.b\"}", "matching event is consumed")
+            spec.assert_eq(bidi_demux.demux_event_count(d), 1, "unrelated event remains queued")
+            spec.assert_str_eq(bidi_demux.demux_poll_event(d),
+                "{\"type\":\"event\",\"method\":\"event.a\"}", "unrelated event remains readable")
+        }
         spec.it("an unparseable frame routes nothing (-1)") callback {
             spec.assert_eq(bidi_demux.demux_ingest(d, "{not json"), -1, "garbage -> -1")
         }

@@ -367,6 +367,15 @@ public final class WebDriver {
     // kind in above/below/left/right/near. Returns matching elements, nearest first.
     public func findRelative(_ baseSel: String, _ filters: [[String: Any]]) throws -> [WebElement] {
         let rc = aether_sel_embed_find_relative(handle, baseSel, encodeJSON(filters))
+        return try decodeRelativeResults(rc)
+    }
+
+    func findRelativeIn(_ scopeRef: [String: String], _ baseSel: String, _ filters: [[String: Any]]) throws -> [WebElement] {
+        let rc = aether_sel_embed_find_relative_in(handle, encodeJSON(scopeRef), baseSel, encodeJSON(filters))
+        return try decodeRelativeResults(rc)
+    }
+
+    private func decodeRelativeResults(_ rc: Int32) throws -> [WebElement] {
         let v = try drainAtom(rc) as? [[String: Any]] ?? []
         return v.compactMap { ref in
             (ref[WebElement.w3cElementKey] as? String).map { WebElement(driver: self, id: $0) }
@@ -741,6 +750,11 @@ public final class WebElement {
         }
     }
 
+    /// Find relative-locator matches among this element's descendants.
+    public func findRelative(_ baseSel: String, _ filters: [[String: Any]]) throws -> [WebElement] {
+        try driver.findRelativeIn([Self.w3cElementKey: id], baseSel, filters)
+    }
+
     /// This element's shadow root as a search context (`getShadowRoot`), or throws
     /// `WebDriverError` (noSuchShadowRoot, code 19) if the element hosts none.
     /// Reads the shadow-6066 key (distinct from the element key).
@@ -802,6 +816,11 @@ public final class ShadowRoot {
         return value.compactMap { ref in
             (ref[WebElement.w3cElementKey] as? String).map { WebElement(driver: driver, id: $0) }
         }
+    }
+
+    /// Find relative-locator matches among this shadow root's descendants.
+    public func findRelative(_ baseSel: String, _ filters: [[String: Any]]) throws -> [WebElement] {
+        try driver.findRelativeIn([Self.w3cShadowKey: id], baseSel, filters)
     }
 
     private func decodeBy(_ by: By) -> [String: Any] {

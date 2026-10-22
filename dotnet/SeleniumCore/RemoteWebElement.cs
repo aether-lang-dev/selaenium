@@ -144,6 +144,15 @@ public class RemoteWebElement : IWebElement
     /// <c>findChildElement</c>, scoped to this element via the <c>:id</c> path param).</summary>
     public IWebElement FindElement(By by)
     {
+        if (by is RelativeBy relative)
+        {
+            var found = _driver.FindRelativeIn(
+                new Dictionary<string, string> { [RemoteWebDriver.W3CElementKey] = Id },
+                relative.BaseCss,
+                System.Linq.Enumerable.ToArray(relative.EngineFilters));
+            if (found.Count == 0) throw new NoSuchElementException("no relative element found", 17);
+            return found[0];
+        }
         JsonElement result = Exec("findChildElement", RemoteWebDriver.DecodeBy(_driver.Handle, by.Strategy, by.Value))!.Value;
         return new RemoteWebElement(_driver, result.GetProperty(RemoteWebDriver.W3CElementKey).GetString()!);
     }
@@ -152,6 +161,15 @@ public class RemoteWebElement : IWebElement
     /// <c>findChildElements</c>, scoped to this element).</summary>
     public ReadOnlyCollection<IWebElement> FindElements(By by)
     {
+        if (by is RelativeBy relative)
+        {
+            return new ReadOnlyCollection<IWebElement>(
+                _driver.FindRelativeIn(
+                    new Dictionary<string, string> { [RemoteWebDriver.W3CElementKey] = Id },
+                    relative.BaseCss,
+                    System.Linq.Enumerable.ToArray(relative.EngineFilters))
+                    .Select(e => (IWebElement)e).ToList());
+        }
         JsonElement result = Exec("findChildElements", RemoteWebDriver.DecodeBy(_driver.Handle, by.Strategy, by.Value))!.Value;
         return new ReadOnlyCollection<IWebElement>(result.EnumerateArray()
             .Select(e => (IWebElement)new RemoteWebElement(_driver, e.GetProperty(RemoteWebDriver.W3CElementKey).GetString()!))
@@ -197,12 +215,30 @@ public sealed class ShadowRoot : ISearchContext
 
     public IWebElement FindElement(By by)
     {
+        if (by is RelativeBy relative)
+        {
+            var found = _driver.FindRelativeIn(
+                new Dictionary<string, string> { [ShadowRootKey] = Id },
+                relative.BaseCss,
+                System.Linq.Enumerable.ToArray(relative.EngineFilters));
+            if (found.Count == 0) throw new NoSuchElementException("no relative element found", 17);
+            return found[0];
+        }
         JsonElement result = Exec("findElementFromShadowRoot", RemoteWebDriver.DecodeBy(_driver.Handle, by.Strategy, by.Value))!.Value;
         return new RemoteWebElement(_driver, result.GetProperty(RemoteWebDriver.W3CElementKey).GetString()!);
     }
 
     public ReadOnlyCollection<IWebElement> FindElements(By by)
     {
+        if (by is RelativeBy relative)
+        {
+            return new ReadOnlyCollection<IWebElement>(
+                _driver.FindRelativeIn(
+                    new Dictionary<string, string> { [ShadowRootKey] = Id },
+                    relative.BaseCss,
+                    System.Linq.Enumerable.ToArray(relative.EngineFilters))
+                    .Select(e => (IWebElement)e).ToList());
+        }
         JsonElement result = Exec("findElementsFromShadowRoot", RemoteWebDriver.DecodeBy(_driver.Handle, by.Strategy, by.Value))!.Value;
         return new ReadOnlyCollection<IWebElement>(result.EnumerateArray()
             .Select(e => (IWebElement)new RemoteWebElement(_driver, e.GetProperty(RemoteWebDriver.W3CElementKey).GetString()!))

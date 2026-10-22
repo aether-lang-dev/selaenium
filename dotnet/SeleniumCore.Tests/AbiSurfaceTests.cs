@@ -407,7 +407,7 @@ namespace SeleniumCore.Tests
             var filters = rb.EngineFilters;
             filters.Count.ShouldBe(4);
             filters[0]["kind"].ShouldBe("below");
-            filters[0]["sel"].ShouldBe("#hdr");
+            filters[0]["sel"].ShouldBe("*[id=\"hdr\"]");
             filters[1]["kind"].ShouldBe("right");
             filters[1]["sel"].ShouldBe(".x");
             filters[2]["sel"].ShouldBe("h1");
@@ -416,13 +416,21 @@ namespace SeleniumCore.Tests
         }
 
         [Fact]
-        public void RejectsWebElementAnchor()
+        public void PassesWebElementAnchorAsW3CReference()
         {
             var d = new RecordingDriver();
             d.SetResponse("findElement", "{\"element-6066-11e4-a52e-4f735466cecf\":\"E-1\"}");
             IWebElement anchor = d.FindElement(By.Id("a"));
-            Should.Throw<System.ArgumentException>(
-                () => RelativeBy.WithLocator(By.TagName("td")).Below(anchor));
+            var relative = RelativeBy.WithLocator(By.TagName("td")).Below(anchor);
+            relative.EngineFilters[0]["kind"].ShouldBe("below");
+            var reference = (IDictionary<string, string>)relative.EngineFilters[0]["anchor"]!;
+            reference["element-6066-11e4-a52e-4f735466cecf"].ShouldBe("E-1");
+        }
+
+        [Fact]
+        public void UsesEngineEscapingForNewlineIds()
+        {
+            RelativeBy.WithLocator(By.Id("my\nid")).BaseCss.ShouldBe("*[id=\"my\\a id\"]");
         }
 
         [Fact]

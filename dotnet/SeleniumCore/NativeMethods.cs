@@ -83,6 +83,9 @@ internal static class NativeMethods
     [DllImport(Lib, EntryPoint = "aether_sel_embed_find_relative", CharSet = CharSet.Ansi)]
     internal static extern int FindRelative(IntPtr handle, string baseCss, string filtersJson);
 
+    [DllImport(Lib, EntryPoint = "aether_sel_embed_find_relative_in", CharSet = CharSet.Ansi)]
+    internal static extern int FindRelativeIn(IntPtr handle, string scopeRefJson, string baseCss, string filtersJson);
+
     // JSON-quote a string as an atom argument (pure helper; caller frees).
     [DllImport(Lib, EntryPoint = "aether_sel_embed_atom_str_arg", CharSet = CharSet.Ansi)]
     internal static extern IntPtr AtomStrArg(string s);

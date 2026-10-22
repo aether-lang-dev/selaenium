@@ -77,14 +77,15 @@ self-skips when no driver resolves), and **add a `.example.ae`** (below).
 
 ## The C ABI (`aether_sel_embed_*`)
 
-49 exports. Handle-based, N sessions per process. `open(base_url)` → handle;
+50 exports. Handle-based, N sessions per process. `open(base_url)` → handle;
 `execute(h, name, params_json)` → 0 / a W3C error code / -1 for transport
 failure; drain via `last_value` / `last_error_code` / `last_error` /
 `last_status` / `session_id`. Pure helpers `by_locator`, `route`, `error_code`,
 `build_request` are exported so bindings share the one normalization path.
 Beyond the command seam: driver orchestration (`resolve_driver`,
 `ensure_driver`, `launch_driver`, `stop_driver`, `driver_url`, `driver_pid`),
-the atoms (`is_displayed`, `get_attribute`, `execute_atom`, `find_relative`),
+the atoms (`is_displayed`, `get_attribute`, `execute_atom`, `find_relative`,
+`find_relative_in`),
 and the whole BiDi surface (`bidi_*`, including network interception).
 
 Returned `char*` are **caller-owned** — free with `free_string`. `rust/` and

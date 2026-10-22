@@ -651,6 +651,14 @@ execute_relative(sp: ptr, base_sel: string, filters_json: string) -> int {
     return execute(sp, "executeScript", params)
 }
 
+// execute_relative_in runs the same atom with an element or shadow-root
+// reference as its search context. scope_ref_json is a W3C reference object.
+execute_relative_in(sp: ptr, scope_ref_json: string, base_sel: string, filters_json: string) -> int {
+    if sp == null { return -1 }
+    params = atoms.relative_params_scoped(base_sel, filters_json, scope_ref_json)
+    return execute(sp, "executeScript", params)
+}
+
 // atom_str_arg(s) — a JSON array holding one string: `["<s>"]`, s JSON-escaped.
 // A binding uses this to pass e.g. getAttribute's name as the atom's extra arg.
 atom_str_arg(s: string) -> string {
@@ -1226,11 +1234,11 @@ by_locator(strategy: string, value: string) -> string {
     match (strategy) {
         "id" -> {
             using = "css selector"
-            v = string.concat(string.concat("*[id=\"", css_escape(value)), "\"]")
+            v = string.concat(string.concat("*[id=\"", css_string_escape(value)), "\"]")
         }
         "name" -> {
             using = "css selector"
-            v = string.concat(string.concat("*[name=\"", css_escape(value)), "\"]")
+            v = string.concat(string.concat("*[name=\"", css_string_escape(value)), "\"]")
         }
         "className" -> {
             using = "css selector"
@@ -1339,6 +1347,18 @@ css_escape(s: string) -> string {
     // Escape backslash and double-quote which would break the selector string.
     out = string.replace(s, "\\", "\\\\")
     out = string.replace(out, "\"", "\\\"")
+    return out
+}
+
+// Escape a value for a quoted CSS string (attribute selector). CSS.escape is
+// for identifiers and does not preserve newlines inside a quoted string.
+css_string_escape(s: string) -> string {
+    out = string.replace(s, "\\", "\\\\")
+    out = string.replace(out, "\"", "\\\"")
+    out = string.replace(out, "\n", "\\a ")
+    out = string.replace(out, "\r", "\\d ")
+    out = string.replace(out, "\u000c", "\\c ")
+    out = string.replace(out, "\u0000", "\\fffd ")
     return out
 }
 

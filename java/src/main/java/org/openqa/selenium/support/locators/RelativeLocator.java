@@ -5,6 +5,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import org.openqa.selenium.By;
+import org.openqa.selenium.RemoteWebDriver;
 import org.openqa.selenium.WebElement;
 
 /**
@@ -19,12 +20,12 @@ import org.openqa.selenium.WebElement;
  *   WebElement cell = driver.findElement(with(By.tagName("td")).below(header));
  * }</pre>
  *
- * <p>The shared engine's relative-locators atom anchors by CSS selector, so
- * anchors given as a {@link By} (tag name / css / id / class name / name) resolve
- * to CSS. Anchoring by an already-found {@link WebElement} is not supported by
- * this engine path and throws {@link IllegalArgumentException}.
+ * <p>Locator anchors are converted to CSS selectors for the shared engine.
+ * Existing {@link WebElement} anchors are passed as W3C element references.
  */
 public final class RelativeLocator {
+
+    private static final String W3C_ELEMENT_KEY = "element-6066-11e4-a52e-4f735466cecf";
 
     private RelativeLocator() {}
 
@@ -107,14 +108,13 @@ public final class RelativeLocator {
             if (anchor == null) {
                 throw new IllegalArgumentException("Cannot use a null anchor for a relative locator");
             }
-            if (anchor instanceof WebElement) {
-                throw new IllegalArgumentException(
-                        "This binding's relative locators anchor by CSS selector, not by a found "
-                                + "WebElement; pass a By anchor (e.g. By.id(\"x\"))");
-            }
             Map<String, Object> filter = new LinkedHashMap<>();
             filter.put("kind", kind);
-            filter.put("sel", byToCss((By) anchor));
+            if (anchor instanceof WebElement element) {
+                filter.put("anchor", Map.of(W3C_ELEMENT_KEY, element.id()));
+            } else {
+                filter.put("sel", byToCss((By) anchor));
+            }
             List<Map<String, Object>> next = new ArrayList<>(filters);
             next.add(filter);
             return new RelativeBy(root, next);
@@ -136,14 +136,13 @@ public final class RelativeLocator {
         int sep = s.indexOf(": ");
         String strategy = s.substring(3, sep);
         String value = s.substring(sep + 2);
-        return switch (strategy) {
-            case "css selector", "tag name" -> value;
-            case "id" -> "#" + value;
-            case "class name" -> "." + value;
-            case "name" -> "[name=\"" + value + "\"]";
-            default -> throw new IllegalArgumentException(
+        if (!strategy.equals("css selector") && !strategy.equals("tag name")
+                && !strategy.equals("id") && !strategy.equals("class name")
+                && !strategy.equals("name")) {
+            throw new IllegalArgumentException(
                     "Relative locators do not support the " + strategy
                             + " strategy for anchors; use cssSelector, tagName, id, className or name");
-        };
+        }
+        return RemoteWebDriver.locatorValue(strategy, value);
     }
 }

@@ -156,10 +156,16 @@ class AbiSurfaceTest {
         assertEquals("td", rb.baseCss());
         List<Map<String, Object>> filters = rb.engineFilters();
         assertEquals(4, filters.size());
-        assertEquals(Map.of("kind", "below", "sel", "#hdr"), filters.get(0));
+        assertEquals(Map.of("kind", "below", "sel", "*[id=\"hdr\"]"), filters.get(0));
         assertEquals(Map.of("kind", "right", "sel", ".x"), filters.get(1));
         assertEquals(Map.of("kind", "above", "sel", "h1"), filters.get(2));
         assertEquals(Map.of("kind", "near", "sel", ".y"), filters.get(3));
+    }
+
+    @Test
+    void relativeLocatorUsesEngineEscapingForNewlineIds() {
+        var relative = org.openqa.selenium.support.locators.RelativeLocator.with(By.id("my\nid"));
+        assertEquals("*[id=\"my\\a id\"]", relative.baseCss());
     }
 
     @Test
@@ -179,18 +185,40 @@ class AbiSurfaceTest {
         List<WebElement> els = d.findElements(rb);
         assertEquals(2, els.size());
         assertEquals("li", seenBase.get(0));
-        assertEquals(List.of(Map.of("kind", "below", "sel", "#top")), seenFilters.get(0));
+        assertEquals(List.of(Map.of("kind", "below", "sel", "*[id=\"top\"]")), seenFilters.get(0));
 
         WebElement one = d.findElement(rb);
         assertEquals("rel-1", ((RemoteWebElement) one).id());
     }
 
     @Test
-    void relativeLocatorRejectsWebElementAnchor() {
+    void relativeLocatorPassesWebElementAnchorAsW3cReference() {
         RemoteWebDriver d = new RecordingDriver();
         WebElement anchor = new RemoteWebElement(d, "anchor-1");
-        assertThrows(IllegalArgumentException.class,
-            () -> org.openqa.selenium.support.locators.RelativeLocator.withTagName("td").below(anchor));
+        var relative = org.openqa.selenium.support.locators.RelativeLocator.withTagName("td").below(anchor);
+        assertEquals(List.of(Map.of("kind", "below", "anchor",
+            Map.of("element-6066-11e4-a52e-4f735466cecf", "anchor-1"))), relative.engineFilters());
+    }
+
+    @Test
+    void relativeLocatorSearchIsScopedToElementAndShadowRoot() {
+        List<Map<String, String>> scopes = new ArrayList<>();
+        RemoteWebDriver d = new RemoteWebDriver() {
+            @Override
+            List<WebElement> findRelativeIn(Map<String, String> scope, String baseCss,
+                                            List<Map<String, Object>> filters) {
+                scopes.add(scope);
+                return List.of(new RemoteWebElement(this, "match"));
+            }
+        };
+        By relative = org.openqa.selenium.support.locators.RelativeLocator.withTagName("td")
+                .below(By.id("header"));
+
+        assertEquals("match", ((RemoteWebElement) new RemoteWebElement(d, "root").findElement(relative)).id());
+        assertEquals("match", ((RemoteWebElement) new ShadowRoot(d, "shadow").findElement(relative)).id());
+        assertEquals(List.of(
+                Map.of("element-6066-11e4-a52e-4f735466cecf", "root"),
+                Map.of("shadow-6066-11e4-a52e-4f735466cecf", "shadow")), scopes);
     }
 
     // The per-browser static session factories exist with the same shape as

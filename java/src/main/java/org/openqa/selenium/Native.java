@@ -264,6 +264,8 @@ final class Native {
                 FunctionDescriptor.of(C_STR, C_PTR));
         static final MethodHandle FIND_RELATIVE = down("aether_sel_embed_find_relative",
                 FunctionDescriptor.of(C_INT, C_PTR, C_PTR, C_PTR));
+        static final MethodHandle FIND_RELATIVE_IN = down("aether_sel_embed_find_relative_in",
+                FunctionDescriptor.of(C_INT, C_PTR, C_PTR, C_PTR, C_PTR));
 
         // ---- WebDriver-BiDi (over the session's webSocketUrl) ----
         // An opaque BiDi channel handle, independent of the W3C session handle.
@@ -557,6 +559,15 @@ final class Native {
                     handle, a.allocateFrom(baseCss), a.allocateFrom(filtersJson));
         } catch (Throwable t) {
             throw wrap(t, "find_relative");
+        }
+    }
+
+    static int findRelativeIn(MemorySegment handle, String scopeRefJson, String baseCss, String filtersJson) {
+        try (Arena a = Arena.ofConfined()) {
+            return (int) MH.FIND_RELATIVE_IN.invokeExact(
+                    handle, a.allocateFrom(scopeRefJson), a.allocateFrom(baseCss), a.allocateFrom(filtersJson));
+        } catch (Throwable t) {
+            throw wrap(t, "find_relative_in");
         }
     }
 

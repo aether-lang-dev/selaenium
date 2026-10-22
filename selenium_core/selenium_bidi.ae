@@ -48,7 +48,9 @@ bidi_send(sp: ptr, id: int, method: string, params_json: string) -> int {
     if string.length(p) == 0 { p = "{}" }
     frame = "{\"id\":${string.from_int(id)},\"method\":${_qjson(method)},\"params\":${p}}"
     bidi_demux.demux_register(s.demux, id)
-    return http.ws_send_text(s.ws, frame)
+    rc = http.ws_send_text(s.ws, frame)
+    if rc != 0 { bidi_demux.demux_cancel(s.demux, id) }
+    return rc
 }
 
 // bidi_pump(session, timeout_ms) — advance the demux ONE step: read up to one
@@ -127,6 +129,7 @@ bidi_command(sp: ptr, id: int, method: string, params_json: string, timeout_ms: 
             if waited >= timeout_ms { done = 1 }
         }
     }
+    if string.length(out) == 0 { bidi_cancel(sp, id) }
     return out
 }
 
@@ -269,10 +272,11 @@ bidi_wait_event(sp: ptr, method: string, timeout_ms: int) -> string {
     waited = 0
     step = 50
     while waited < timeout_ms {
-        ev = bidi_poll_event(sp)
+        if sp == null { return "" }
+        s = sp as *BidiSession
+        ev = bidi_demux.demux_poll_event_method(s.demux, method)
         if string.length(ev) > 0 {
-            if _event_method_is(ev, method) == 1 { return ev }
-            // a non-matching event — keep draining without advancing the clock.
+            return ev
         } else {
             pr = bidi_pump(sp, step)
             if pr < 0 { return "" }
@@ -280,17 +284,6 @@ bidi_wait_event(sp: ptr, method: string, timeout_ms: int) -> string {
         }
     }
     return ""
-}
-
-// _event_method_is(event_json, method) — 1 if the event's "method" equals method.
-_event_method_is(event_json: string, method: string) -> int {
-    root, perr = json.parse(event_json)
-    if string.length(perr) > 0 { return 0 }
-    mv, _m = json.object_get(root, "method")
-    if mv == null { return 0 }
-    mname, _mn = json.get_string(mv)
-    if string.equals(mname, method) == 1 { return 1 }
-    return 0
 }
 
 // _csv_to_json_array("a,b") -> "\"a\",\"b\"" — quote each comma-separated token

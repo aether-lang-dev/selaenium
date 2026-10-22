@@ -33,6 +33,14 @@ public final class ShadowRoot implements SearchContext {
     @Override
     @SuppressWarnings("unchecked")
     public WebElement findElement(By by) {
+        if (by instanceof org.openqa.selenium.support.locators.RelativeLocator.RelativeBy relative) {
+            List<WebElement> found = driver.findRelativeIn(
+                    Map.of(W3C_SHADOW_KEY, id), relative.baseCss(), relative.engineFilters());
+            if (found.isEmpty()) {
+                throw new NoSuchElementException("no relative element found", 17);
+            }
+            return found.get(0);
+        }
         Map<String, Object> params = new HashMap<>(driver.decodeBy(by.strategy(), by.value()));
         params.put("id", id);
         Map<String, Object> result =
@@ -43,6 +51,10 @@ public final class ShadowRoot implements SearchContext {
     @Override
     @SuppressWarnings("unchecked")
     public List<WebElement> findElements(By by) {
+        if (by instanceof org.openqa.selenium.support.locators.RelativeLocator.RelativeBy relative) {
+            return driver.findRelativeIn(
+                    Map.of(W3C_SHADOW_KEY, id), relative.baseCss(), relative.engineFilters());
+        }
         Map<String, Object> params = new HashMap<>(driver.decodeBy(by.strategy(), by.value()));
         params.put("id", id);
         List<Object> result = (List<Object>) driver.execute("findElementsFromShadowRoot", params);

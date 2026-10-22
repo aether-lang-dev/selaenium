@@ -237,6 +237,22 @@ public class RemoteWebDriver : IWebDriver, ITakesScreenshot
     {
         string filtersJson = JsonSerializer.Serialize(filters);
         JsonElement? result = AtomResult(NativeMethods.FindRelative(_handle, baseCss, filtersJson));
+        return DecodeRelativeResult(result);
+    }
+
+    internal IReadOnlyList<RemoteWebElement> FindRelativeIn(
+        IDictionary<string, string> scopeRef,
+        string baseCss,
+        params IDictionary<string, object?>[] filters)
+    {
+        string filtersJson = JsonSerializer.Serialize(filters);
+        string scopeRefJson = JsonSerializer.Serialize(scopeRef);
+        JsonElement? result = AtomResult(NativeMethods.FindRelativeIn(_handle, scopeRefJson, baseCss, filtersJson));
+        return DecodeRelativeResult(result);
+    }
+
+    private IReadOnlyList<RemoteWebElement> DecodeRelativeResult(JsonElement? result)
+    {
         var els = new List<RemoteWebElement>();
         if (result is { ValueKind: JsonValueKind.Array } arr)
         {
@@ -636,6 +652,11 @@ public class RemoteWebDriver : IWebDriver, ITakesScreenshot
     public static string Route(string command) => NativeMethods.TakeString(NativeMethods.Route(command));
     public static int ErrorCode(string w3cError) => NativeMethods.ErrorCode(w3cError);
     public static string Locator(string by, string value) => NativeMethods.TakeString(NativeMethods.ByLocator(by, value));
+    public static string LocatorValue(string by, string value)
+    {
+        using JsonDocument locator = JsonDocument.Parse(Locator(by, value));
+        return locator.RootElement.GetProperty("value").GetString()!;
+    }
 }
 
 /// <summary>A driver process launched by the engine. Owns the opaque driver

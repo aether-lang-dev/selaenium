@@ -40,6 +40,7 @@ char *aether_sel_embed_atom_str_arg(const char *s);
 
 /* ---- relative locators (findElementsRelative atom) ---- */
 int   aether_sel_embed_find_relative(void *h, const char *base_sel, const char *filters_json);
+int   aether_sel_embed_find_relative_in(void *h, const char *scope_ref_json, const char *base_sel, const char *filters_json);
 
 /* ---- driver-process orchestration ---- */
 char *aether_sel_embed_resolve_driver(const char *browser, const char *hint);

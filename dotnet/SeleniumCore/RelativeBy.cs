@@ -12,13 +12,13 @@ namespace OpenQA.Selenium;
 /// <code>
 ///   var cell = driver.FindElement(RelativeBy.WithLocator(By.TagName("td")).Below(header));
 /// </code>
-/// <para>The shared engine's relative-locators atom anchors by CSS selector, so
-/// anchors given as a <see cref="By"/> (TagName / CssSelector / Id / ClassName /
-/// Name) resolve to CSS. Anchoring by an already-found <see cref="IWebElement"/>
-/// is not supported by this engine path and throws.</para>
+/// <para>Anchors given as a <see cref="By"/> (TagName / CssSelector / Id /
+/// ClassName / Name) resolve to CSS. Existing <see cref="IWebElement"/> anchors
+/// are passed to the engine as W3C element references.</para>
 /// </summary>
 public sealed class RelativeBy : By
 {
+    private const string W3CElementKey = "element-6066-11e4-a52e-4f735466cecf";
     private readonly By _root;
     private readonly List<Dictionary<string, object?>> _filters;
 
@@ -67,15 +67,18 @@ public sealed class RelativeBy : By
         {
             throw new ArgumentNullException(nameof(anchor));
         }
-        if (anchor is IWebElement)
+        var filter = new Dictionary<string, object?> { ["kind"] = kind };
+        if (anchor is IWebElement element)
         {
-            throw new ArgumentException(
-                "This binding's relative locators anchor by CSS selector, not by a found "
-                + "IWebElement; pass a By anchor (e.g. By.Id(\"x\")).", nameof(anchor));
+            filter["anchor"] = new Dictionary<string, string> { [W3CElementKey] = element.Id };
+        }
+        else
+        {
+            filter["sel"] = ByToCss((By)anchor);
         }
         var next = new List<Dictionary<string, object?>>(_filters)
         {
-            new() { ["kind"] = kind, ["sel"] = ByToCss((By)anchor) },
+            filter,
         };
         return new RelativeBy(_root, next);
     }
@@ -86,14 +89,15 @@ public sealed class RelativeBy : By
     /// <summary>The engine relative filters ({ kind, sel[, dist] } dictionaries).</summary>
     public IReadOnlyList<IDictionary<string, object?>> EngineFilters => _filters.AsReadOnly();
 
-    private static string ByToCss(By by) => by.Strategy switch
+    private static string ByToCss(By by)
     {
-        "css selector" or "tag name" => by.Value,
-        "id" => "#" + by.Value,
-        "class name" => "." + by.Value,
-        "name" => "[name=\"" + by.Value + "\"]",
-        _ => throw new ArgumentException(
+        if (by.Strategy is not ("css selector" or "tag name" or "id" or "class name" or "name"))
+        {
+            throw new ArgumentException(
             $"Relative locators do not support the {by.Strategy} strategy for anchors; "
-            + "use CssSelector, TagName, Id, ClassName or Name."),
-    };
+            + "use CssSelector, TagName, Id, ClassName or Name.");
+        }
+
+        return RemoteWebDriver.LocatorValue(by.Strategy, by.Value);
+    }
 }

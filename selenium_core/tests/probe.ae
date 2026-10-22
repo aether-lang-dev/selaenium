@@ -61,6 +61,10 @@ main() {
                 "{\"using\":\"css selector\",\"value\":\".btn\"}", "className -> css")
             spec.assert_str_eq(selenium_core.by_locator("name", "q"),
                 "{\"using\":\"css selector\",\"value\":\"*[name=\\\"q\\\"]\"}", "name -> css")
+            spec.assert_str_eq(selenium_core.by_locator("id", "my\nid"),
+                "{\"using\":\"css selector\",\"value\":\"*[id=\\\"my\\\\a id\\\"]\"}", "id newline escaped in CSS string")
+            spec.assert_str_eq(selenium_core.by_locator("name", "my\nname"),
+                "{\"using\":\"css selector\",\"value\":\"*[name=\\\"my\\\\a name\\\"]\"}", "name newline escaped in CSS string")
             spec.assert_str_eq(selenium_core.by_locator("xpath", "//a"),
                 "{\"using\":\"xpath\",\"value\":\"//a\"}", "xpath passthrough")
         }

@@ -62,7 +62,12 @@ ensure(root: string, driver_name: string, label: string, version: string, url: s
     dest_dir = _dirname(target)
     _md = fs.mkdir_p(dest_dir)
 
-    extracted = string.concat(dest_dir, string.concat("/", driver_name))
+    // Each miss stages privately. Parallel test processes may resolve the same
+    // driver at once; fixed archive names and extraction paths in dest_dir let
+    // one process overwrite or delete another's in-progress download.
+    temp_dir, temp_err = fs.make_temp_dir(dest_dir, "_selenium_driver_")
+    if string.length(temp_err) > 0 { return "" }
+    extracted = string.concat(temp_dir, string.concat("/", driver_name))
 
     // Archive kind from the URL suffix: geckodriver ships .tar.gz on
     // macOS/Linux, everything else (chromedriver, msedgedriver, geckodriver on
@@ -70,36 +75,52 @@ ensure(root: string, driver_name: string, label: string, version: string, url: s
     // may wrap files in a top folder (chromedriver 115+, msedgedriver), so the
     // zip paths flatten. Windows has no /bin/sh or unzip -> PowerShell.
     if _is_targz(url) == 1 {
-        arc_path = string.concat(dest_dir, "/_download.tar.gz")
-        if _download(url, arc_path, proxy) != 0 { return "" }
+        arc_path = string.concat(temp_dir, "/_download.tar.gz")
+        if _download(url, arc_path, proxy) != 0 {
+            _cleanup = fs.remove_tree(temp_dir)
+            return ""
+        }
         argv = list.new()
         list.add(argv, "-c")
-        list.add(argv, "tar -xzf '${arc_path}' -C '${dest_dir}' >/dev/null 2>&1")
+        list.add(argv, "tar -xzf '${arc_path}' -C '${temp_dir}' >/dev/null 2>&1")
         _u, ustat, _ue = os.run_capture("/bin/sh", argv, null)
         list.free(argv)
-        _rmt = _remove(arc_path)
     } else {
-        zip_path = string.concat(dest_dir, "/_download.zip")
-        if _download(url, zip_path, proxy) != 0 { return "" }
+        zip_path = string.concat(temp_dir, "/_download.zip")
+        if _download(url, zip_path, proxy) != 0 {
+            _cleanup = fs.remove_tree(temp_dir)
+            return ""
+        }
         if _is_windows() == 1 {
-            _unzip_windows(zip_path, dest_dir, driver_name)
+            _unzip_windows(zip_path, temp_dir, driver_name)
         } else {
             argv = list.new()
             list.add(argv, "-c")
-            list.add(argv, "unzip -o -j '${zip_path}' -d '${dest_dir}' >/dev/null 2>&1")
+            list.add(argv, "unzip -o -j '${zip_path}' -d '${temp_dir}' >/dev/null 2>&1")
             _u, ustat, _ue = os.run_capture("/bin/sh", argv, null)
             list.free(argv)
         }
-        _rm = _remove(zip_path)
     }
 
     if file_exists(extracted) == 0 {
+        _cleanup = fs.remove_tree(temp_dir)
         return ""
     }
     // chmod 0755 (0o755 == 493) — a no-op semantically on Windows but harmless.
-    // (The downloaded archive was already removed in the unpack branch above.)
+    // The staged archive and extracted tree are removed after publication.
     _c = fs.chmod(extracted, 493)
-    return extracted
+    result = install_staged(extracted, target)
+    _cleanup = fs.remove_tree(temp_dir)
+    return result
+}
+
+// Atomically publish one complete driver binary. If another process won the
+// race, its installed artifact is the cache hit we need.
+install_staged(staged: string, target: string) -> string {
+    if file_exists(target) == 1 { return target }
+    _ren = fs.rename(staged, target)
+    if file_exists(target) == 1 { return target }
+    return ""
 }
 
 // browser_dir_in_cache(root, browser_name, label, version) — the browser cache

@@ -120,6 +120,7 @@ const isDisplayed = lazy('int aether_sel_embed_is_displayed(void* h, const char*
 const getAttribute = lazy('int aether_sel_embed_get_attribute(void* h, const char* elem_id, const char* name)')
 const atomStrArg = lazy('void* aether_sel_embed_atom_str_arg(const char* s)')
 const findRelative = lazy('int aether_sel_embed_find_relative(void* h, const char* base_css, const char* filters_json)')
+const findRelativeIn = lazy('int aether_sel_embed_find_relative_in(void* h, const char* scope_ref_json, const char* base_css, const char* filters_json)')
 
 // ---- TLS config (per session handle; set before newSession) ----
 const setCa = lazy('void aether_sel_embed_set_ca(void* h, const char* ca_path)')
@@ -215,6 +216,7 @@ module.exports = {
   getAttribute,
   atomStrArg,
   findRelative,
+  findRelativeIn,
   byLocator,
   byLocatorFor,
   isNative,

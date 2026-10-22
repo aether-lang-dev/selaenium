@@ -424,12 +424,25 @@ class WebElement:
         raise NoSuchShadowRootException("no such shadow root")
 
     def find_element(self, by: str = By.ID, value: str | None = None) -> "WebElement":
+        if _is_relative_by(by):
+            base_css, filters = by._engine_query(getattr(self._driver, "_handle", None))
+            found = self._driver._find_relative_in(
+                {_W3C_ELEMENT_KEY: self._id}, base_css, filters
+            )
+            if not found:
+                raise NoSuchElementException("no relative element found", code=17)
+            return found[0]
         loc = _decode_by(by, value, self._driver._handle)
         loc["id"] = self._id
         result = self._driver._execute("findChildElement", loc)
         return WebElement(self._driver, result[_W3C_ELEMENT_KEY])
 
     def find_elements(self, by: str = By.ID, value: str | None = None) -> list["WebElement"]:
+        if _is_relative_by(by):
+            base_css, filters = by._engine_query(getattr(self._driver, "_handle", None))
+            return self._driver._find_relative_in(
+                {_W3C_ELEMENT_KEY: self._id}, base_css, filters
+            )
         loc = _decode_by(by, value, self._driver._handle)
         loc["id"] = self._id
         result = self._driver._execute("findChildElements", loc)
@@ -624,12 +637,25 @@ class ShadowRoot:
         return self._id
 
     def find_element(self, by: str = By.ID, value: str | None = None) -> "WebElement":
+        if _is_relative_by(by):
+            base_css, filters = by._engine_query(getattr(self._driver, "_handle", None))
+            found = self._driver._find_relative_in(
+                {_W3C_SHADOW_KEY: self._id}, base_css, filters
+            )
+            if not found:
+                raise NoSuchElementException("no relative element found", code=17)
+            return found[0]
         loc = _decode_by(by, value)
         loc["id"] = self._id
         result = self._driver._execute("findElementFromShadowRoot", loc)
         return WebElement(self._driver, result[_W3C_ELEMENT_KEY])
 
     def find_elements(self, by: str = By.ID, value: str | None = None) -> list["WebElement"]:
+        if _is_relative_by(by):
+            base_css, filters = by._engine_query(getattr(self._driver, "_handle", None))
+            return self._driver._find_relative_in(
+                {_W3C_SHADOW_KEY: self._id}, base_css, filters
+            )
         loc = _decode_by(by, value)
         loc["id"] = self._id
         result = self._driver._execute("findElementsFromShadowRoot", loc)
@@ -789,6 +815,18 @@ class WebDriver:
         refs = result or []
         return [WebElement(self, r[_W3C_ELEMENT_KEY]) for r in refs]
 
+    def _find_relative_in(
+        self, scope_ref: dict, base_css: str, filters: list[dict]
+    ) -> list["WebElement"]:
+        rc = _native.find_relative_in(
+            self._handle,
+            _native.encode(json.dumps(scope_ref)),
+            _native.encode(base_css),
+            _native.encode(json.dumps(filters)),
+        )
+        result = self._atom_result(rc)
+        return [WebElement(self, r[_W3C_ELEMENT_KEY]) for r in (result or [])]
+
     # ---- navigation ----
 
     def get(self, url: str) -> None:
@@ -836,7 +874,7 @@ class WebDriver:
         """Resolve a :class:`RelativeBy` through the engine's relative-locators
         atom (mainstream: ``find_element(s)`` accepts a RelativeBy in place of a
         (by, value) pair)."""
-        base_css, filters = relative_by._engine_query()
+        base_css, filters = relative_by._engine_query(getattr(self, "_handle", None))
         return self.find_relative(base_css, *filters)
 
     # ---- script ----

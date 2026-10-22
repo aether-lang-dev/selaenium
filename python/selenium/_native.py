@@ -225,6 +225,10 @@ def _ensure_loaded() -> None:
     g["find_relative"] = _decl(
         "aether_sel_embed_find_relative", ctypes.c_int, [_HANDLE, ctypes.c_char_p, ctypes.c_char_p]
     )
+    g["find_relative_in"] = _decl(
+        "aether_sel_embed_find_relative_in", ctypes.c_int,
+        [_HANDLE, ctypes.c_char_p, ctypes.c_char_p, ctypes.c_char_p],
+    )
 
     # ---- WebDriver-BiDi (over the session's webSocketUrl) ----
     # An opaque BiDi channel handle, independent of the W3C session handle.

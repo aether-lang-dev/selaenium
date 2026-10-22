@@ -203,6 +203,8 @@ i.e. exactly shape C. Two lessons borrowed:
 - **Cancellation:** a waiter that gives up calls `bidi_cancel(h, id)` to drop its
   pending-reply slot; a late reply for a cancelled/unknown id is discarded by the
   demux (never mis-routed, never leaks).
+- **Filtered event waits:** waiting for one event method leaves other queued
+  methods available to their consumers; only the matching event is consumed.
 
 ## The C ABI extension (`aether_sel_embed_bidi_*`)
 
@@ -234,6 +236,11 @@ aether_sel_embed_bidi_lost_events(h) -> int        // count dropped by the bound
 // cancellation: drop a waiter's pending-reply slot (a late reply is discarded)
 aether_sel_embed_bidi_cancel(h, id)
 ```
+
+The synchronous convenience command cancels its registered id after timeout or
+socket failure. A failed send also removes its pending slot. The convenience
+`bidi_wait_event(h, method, timeout_ms)` consumes the first matching event while
+leaving non-matching queued events available through `poll_event`.
 
 Append-only; the existing W3C exports are unchanged. A typical binding loop:
 `send(id,…)` → wait on `fd`/`pump` → `poll_reply(id)` until non-empty (its own

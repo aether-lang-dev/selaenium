@@ -14,6 +14,8 @@ const path = require('node:path')
 
 // ---- the recording native stub -------------------------------------------
 const calls = [] // [ [commandName, params], ... ]
+const relativeCalls = [] // [ [baseCss, filters], ... ]
+const scopedRelativeCalls = [] // [ [scopeRef, baseCss, filters], ... ]
 let valueQueue = [] // FIFO of values _execute should return
 
 const W3C_KEY = 'element-6066-11e4-a52e-4f735466cecf'
@@ -44,7 +46,14 @@ const fakeNative = {
   // atom-backed calls (isDisplayed / getAttribute / findRelative)
   isDisplayed: () => 0,
   getAttribute: () => 0,
-  findRelative: () => 0,
+  findRelative: (_h, baseCss, filtersJson) => {
+    relativeCalls.push([baseCss, JSON.parse(filtersJson)])
+    return 0
+  },
+  findRelativeIn: (_h, scopeJson, baseCss, filtersJson) => {
+    scopedRelativeCalls.push([JSON.parse(scopeJson), baseCss, JSON.parse(filtersJson)])
+    return 0
+  },
   takeString(p) {
     if (p === '__SESSION__') return 'session-42'
     if (p === '__VALUE__') {
@@ -76,6 +85,8 @@ function queue(...values) {
 }
 function reset() {
   calls.length = 0
+  relativeCalls.length = 0
+  scopedRelativeCalls.length = 0
   valueQueue = []
 }
 function lastCall() {
@@ -479,6 +490,33 @@ test('RelativeBy / locateWith / By.js locator forms', () => {
   assert.ok(rb.marshall().relative)
   const fn = s.By.js('return document.body;')
   assert.strictEqual(typeof fn, 'function')
+})
+
+test('RelativeBy passes WebElement anchors as W3C references', async () => {
+  const d = newDriver()
+  const anchor = new s.WebElement(d, 'anchor-1')
+  queue([{ [W3C_KEY]: 'candidate-1' }])
+  const found = await d.findElements(s.locateWith(s.By.css('td')).below(anchor))
+  assert.strictEqual(found.length, 1)
+  assert.deepStrictEqual(relativeCalls[0], [
+    'td',
+    [{ kind: 'below', anchor: { [W3C_KEY]: 'anchor-1' } }],
+  ])
+})
+
+test('RelativeBy searches are scoped to elements and shadow roots', async () => {
+  const d = newDriver()
+  const rb = s.locateWith(s.By.css('td')).below(s.By.css('#header'))
+  queue([{ [W3C_KEY]: 'match-element' }])
+  const elementMatches = await new s.WebElement(d, 'element-1').findElements(rb)
+  assert.strictEqual(elementMatches[0].id, 'match-element')
+  queue([{ [W3C_KEY]: 'match-shadow' }])
+  const shadowMatch = await new s.ShadowRoot(d, 'shadow-1').findElement(rb)
+  assert.strictEqual(shadowMatch.id, 'match-shadow')
+  assert.deepStrictEqual(scopedRelativeCalls, [
+    [{ [W3C_KEY]: 'element-1' }, 'td', [{ kind: 'below', sel: '#header' }]],
+    [{ 'shadow-6066-11e4-a52e-4f735466cecf': 'shadow-1' }, 'td', [{ kind: 'below', sel: '#header' }]],
+  ])
 })
 
 // Restore the module loader for cleanliness (in case the runner loads more).

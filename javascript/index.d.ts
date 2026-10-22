@@ -32,7 +32,7 @@ export class By {
 }
 
 /** What `findElement`/`findElements` accept. */
-export type Locator = By | Function | { using: string; value: string };
+export type Locator = By | Function | { using: string; value: string } | RelativeBy;
 
 /** A relative locator (above/below/near/toLeftOf/toRightOf). */
 export class RelativeBy {

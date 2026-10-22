@@ -1,0 +1,32 @@
+// drivercache_probe.ae — verifies atomic publication behavior without network
+// downloads or a browser. The second staged result represents another process
+// finishing after a cache winner has already published the artifact.
+import drivercache
+import std.fs
+import std.spec
+import std.string
+
+main() {
+    fw = spec.init()
+    spec.describe(fw, "driver cache staged install") {
+        spec.it("keeps the first complete artifact when another installer races") callback {
+            root, err = fs.make_temp_dir("", "selenium-cache-probe-")
+            spec.assert_eq(string.length(err), 0, "create temp root")
+            cache_dir = string.concat(root, "/cache")
+            _md = fs.mkdir_p(cache_dir)
+            target = string.concat(cache_dir, "/chromedriver")
+            staged1 = string.concat(root, "/stage-one")
+            staged2 = string.concat(root, "/stage-two")
+            _w1 = fs.write(staged1, "first complete driver")
+            _w2 = fs.write(staged2, "second complete driver")
+
+            spec.assert_str_eq(drivercache.install_staged(staged1, target), target, "first installer publishes")
+            spec.assert_str_eq(drivercache.install_staged(staged2, target), target, "later installer uses cache winner")
+            content, read_err = fs.read(target)
+            spec.assert_eq(string.length(read_err), 0, "read installed driver")
+            spec.assert_str_eq(content, "first complete driver", "winner is not overwritten")
+            _rm = fs.remove_tree(root)
+        }
+    }
+    return spec.run_summary(fw)
+}
