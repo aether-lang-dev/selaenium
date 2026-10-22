@@ -29,12 +29,12 @@ aeb(cap) {
             source("appium_probe.ae")
             lib("../drivermgr")
         }
-        // Driver cache publication test — stages each download privately and
-        // verifies that a later installer accepts the already-published winner.
+        // Driver and browser cache publication tests — stage downloads privately
+        // and verify that a later installer accepts the already-published winner.
         aether.program_test() {
             source("drivercache_probe.ae")
             lib("../drivermgr")
-            caps("fs")
+            caps("fs,os")
         }
         // Atom builders unit test — the executeScript params assembly for the
         // atom-backed commands (isDisplayed/getAttribute/getText), pure (no

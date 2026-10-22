@@ -133,12 +133,10 @@ browser_dir_in_cache(root: string, browser_name: string, label: string, version:
 }
 
 // ensure_browser(root, browser_name, label, version, url, bin_subpath) — return
-// an absolute path to a runnable BROWSER binary: cache hit if present, else
-// download the CfT zip + unpack it (KEEPING the directory tree, unlike a driver
-// which flattens to a single binary), then return <dir>/<bin_subpath>. "" on
-// failure. bin_subpath is OS-specific (e.g. "chrome", "chrome.exe", or the
-// mac .app exec path). The CfT chrome zip wraps everything in one top folder
-// (chrome-linux64/ etc.) which is stripped so contents land under <dir>.
+// an absolute path to a runnable BROWSER binary. Each cache miss downloads and
+// expands privately; the versioned tree is merged before the executable is
+// atomically renamed into place. That executable is the cache-ready marker, so
+// another process never observes a partial browser install.
 ensure_browser(root: string, browser_name: string, label: string, version: string, url: string, bin_subpath: string, proxy: string) -> string {
     dir = browser_dir_in_cache(root, browser_name, label, version)
     target = string.concat(dir, string.concat("/", bin_subpath))
@@ -147,31 +145,94 @@ ensure_browser(root: string, browser_name: string, label: string, version: strin
         return target
     }
     if string.length(url) == 0 { return "" }
-    _md = fs.mkdir_p(dir)
+    parent = _dirname(dir)
+    _md = fs.mkdir_p(parent)
+    temp_dir, temp_err = fs.make_temp_dir(parent, "_selenium_browser_")
+    if string.length(temp_err) > 0 { return "" }
 
     // Archive kind from the URL: a CfT Chrome .zip, or a Firefox-Linux tarball
     // (.tar.xz / .tar.bz2). Both wrap files in one top folder (chrome-linux64/,
     // firefox/) that is stripped so <dir>/<bin_subpath> resolves.
     if _is_browser_tarball(url) == 1 {
-        arc = string.concat(dir, "/_browser.tar")
-        if _download(url, arc, proxy) != 0 { return "" }
-        _ub = _expand_browser_tar(arc, dir, url)
+        arc = string.concat(temp_dir, "/_browser.tar")
+        if _download(url, arc, proxy) != 0 {
+            _cleanup = fs.remove_tree(temp_dir)
+            return ""
+        }
+        _ub = _expand_browser_tar(arc, temp_dir, url)
         _rmt = _remove(arc)
     } else {
-        zip_path = string.concat(dir, "/_browser.zip")
-        if _download(url, zip_path, proxy) != 0 { return "" }
-        stage = string.concat(dir, "/_stage")
+        zip_path = string.concat(temp_dir, "/_browser.zip")
+        if _download(url, zip_path, proxy) != 0 {
+            _cleanup = fs.remove_tree(temp_dir)
+            return ""
+        }
+        stage = string.concat(temp_dir, "/_extract")
         if _is_windows() == 1 {
-            _ub = _expand_browser_windows(zip_path, stage, dir)
+            _ub = _expand_browser_windows(zip_path, stage, temp_dir)
         } else {
-            _ub = _expand_browser_posix(zip_path, stage, dir)
+            _ub = _expand_browser_posix(zip_path, stage, temp_dir)
         }
         _rm = _remove(zip_path)
     }
 
-    if file_exists(target) == 0 { return "" }
-    _c = fs.chmod(target, 493)
-    return target
+    staged_binary = string.concat(temp_dir, string.concat("/", bin_subpath))
+    if file_exists(staged_binary) == 0 {
+        _cleanup = fs.remove_tree(temp_dir)
+        return ""
+    }
+    _c = fs.chmod(staged_binary, 493)
+    result = install_browser_staged(temp_dir, dir, bin_subpath)
+    _cleanup = fs.remove_tree(temp_dir)
+    return result
+}
+
+// Publish a complete browser tree from a private staging directory. The tree
+// contents are version-addressed and identical between concurrent installers;
+// the executable itself is moved out, the supporting files are merged, and the
+// executable is atomically renamed last as the readiness marker.
+install_browser_staged(staged_root: string, dir: string, bin_subpath: string) -> string {
+    target = string.concat(dir, string.concat("/", bin_subpath))
+    if file_exists(target) == 1 { return target }
+    staged_binary = string.concat(staged_root, string.concat("/", bin_subpath))
+    if file_exists(staged_binary) == 0 { return "" }
+    md_err = fs.mkdir_p(dir)
+    if string.length(md_err) > 0 { return "" }
+    sentinel = string.concat(staged_root, ".browser-binary")
+    _move = fs.rename(staged_binary, sentinel)
+    if file_exists(sentinel) == 0 {
+        if file_exists(target) == 1 { return target }
+        return ""
+    }
+
+    copy_status = _copy_browser_tree(staged_root, dir)
+    if copy_status != 0 { return "" }
+    _parent = fs.mkdir_p(_dirname(target))
+    _publish = fs.rename(sentinel, target)
+    if file_exists(target) == 1 { return target }
+    return ""
+}
+
+_copy_browser_tree(staged_root: string, dir: string) -> int {
+    if _is_windows() == 1 {
+        ps = "$ErrorActionPreference='Stop';"
+        ps = string.concat(ps, "Copy-Item -Force -Recurse -Path '${staged_root}/*' -Destination '${dir}';")
+        argv = list.new()
+        list.add(argv, "-NoProfile")
+        list.add(argv, "-NonInteractive")
+        list.add(argv, "-Command")
+        list.add(argv, ps)
+        _o, status, _e = os.run_capture("powershell", argv, null)
+        list.free(argv)
+        return status
+    } else {
+        argv = list.new()
+        list.add(argv, "-c")
+        list.add(argv, "cp -a '${staged_root}'/. '${dir}'/")
+        _o, status, _e = os.run_capture("/bin/sh", argv, null)
+        list.free(argv)
+        return status
+    }
 }
 
 // A browser archive that is a gzip/xz/bzip2 tarball (Firefox-Linux) rather than
@@ -183,8 +244,7 @@ _is_browser_tarball(url: string) -> int {
     return 0
 }
 
-// Untar into <dir>, stripping the single top folder (--strip-components=1) so
-// the binary lands at <dir>/<bin_subpath>. tar -a/auto-detects xz|bz2|gz.
+// Untar into a private staging directory, stripping the archive's top folder.
 _expand_browser_tar(arc: string, dir: string, url: string) -> int {
     argv = list.new()
     list.add(argv, "-c")
@@ -194,11 +254,10 @@ _expand_browser_tar(arc: string, dir: string, url: string) -> int {
     return 0
 }
 
-// POSIX: unzip -o (tree preserved) into stage, then move the contents of the
-// single top folder up into dir (cp -R stage/<top>/. dir/). Shelled at the
-// FS-adapter edge, like the driver unzip.
+// POSIX: unzip into private stage, then move the single top folder's contents
+// into the private browser root. Shared cache paths are never extraction paths.
 _expand_browser_posix(zip_path: string, stage: string, dir: string) -> int {
-    sh = "set -e; rm -rf '${stage}'; mkdir -p '${stage}';"
+    sh = "set -e; mkdir -p '${stage}';"
     sh = string.concat(sh, "unzip -o -q '${zip_path}' -d '${stage}' >/dev/null 2>&1;")
     // The zip has one top folder; copy its contents (incl. dotfiles) into dir.
     sh = string.concat(sh, "top=$(ls '${stage}'); ")
@@ -212,8 +271,8 @@ _expand_browser_posix(zip_path: string, stage: string, dir: string) -> int {
     return 0
 }
 
-// Windows: Expand-Archive into stage, then move the single top folder's children
-// into dir (Move-Item stage\<top>\* dir).
+// Windows: Expand-Archive into private stage, then move the single top folder's
+// children into the private browser root.
 _expand_browser_windows(zip_path: string, stage: string, dir: string) -> int {
     ps = "$ErrorActionPreference='Stop';"
     ps = string.concat(ps, "if(Test-Path '${stage}'){Remove-Item -Recurse -Force '${stage}'};")

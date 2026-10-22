@@ -55,7 +55,7 @@ that architecture or left upstream-only.
   .NET SDK is also absent, so those compile/test paths still need toolchain
   runs. The JavaScript declaration now accepts `RelativeBy` as a locator.
 
-- [ ] **Port applicable locator-atom regression cases.**
+- [x] **Port applicable locator-atom regression cases.**
   Upstream references: `65ce702` and the atom tests added by `a347258`. The
   upstream `find-elements` implementation is not the same as Selaenium's
   relative-locator atom, so do not copy its TypeScript implementation. The
@@ -63,9 +63,9 @@ that architecture or left upstream-only.
   engine now escapes those values and Java/Python/.NET relative locators ask
   the engine to normalize their `By` values. The NBSP link-text case is handled
   by the remote end because Selaenium forwards link-text strategies unchanged.
-  The scoped-anchor precedence is implemented (search context first, document
-  fallback), but still needs a live browser regression test before this item can
-  be closed.
+  A live Chrome test now uses duplicate IDs and a positioned outer anchor to
+  prove an element-scoped relative search resolves its local anchor rather than
+  the document's first match (`java/.tests.ae`, `LiveTest.liveChromeAtoms`).
 
 - [x] **Compare visible-text behavior with the upstream non-Latin fix.**
   Upstream reference: `5d90b1d`. Selaenium's `selenium_core/atoms.ae` has a
@@ -86,11 +86,12 @@ that architecture or left upstream-only.
   `std.os.arch()`, matching the supported engine/download target on official
   builds. Driver misses now use unique staging directories and atomically
   publish the completed binary; a regression test covers a second installer
-  accepting the first cache winner. Browser misses still use shared
-  `_browser.zip`/`_browser.tar` and extraction paths, so concurrent browser
-  provisioning can race and needs the same treatment. The audit remains open
-  until browser staging is fixed and x86-engine execution under WOW64 is either
-  supported or explicitly excluded.
+  accepting the first cache winner. Browser misses now download and extract
+  into unique staging directories, merge the versioned support tree, and
+  atomically publish the executable last as the cache-ready marker; the pure
+  cache probe covers staged install and a concurrent winner. The audit remains
+  open until x86-engine execution under WOW64 is either supported or explicitly
+  excluded.
 
 ## Consider adding when we want the capability
 

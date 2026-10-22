@@ -378,6 +378,21 @@ class LiveTest {
                 List<WebElement> below = d.findRelative(
                         "button", List.of(Map.of("kind", "below", "sel", "#hdr")));
                 assertTrue(below.size() >= 1, "findRelative(button below #hdr) found at least one");
+
+                // The outer duplicate anchor is positioned below the candidate.
+                // A scoped relative search must resolve #anchor inside #scope,
+                // rather than selecting the document's first matching anchor.
+                d.get("data:text/html,<!doctype html>"
+                        + "<h2 id='anchor' style='position:absolute;top:500px'>Outside</h2>"
+                        + "<section id='scope'><h2 id='anchor'>Inside</h2>"
+                        + "<button id='scoped-button'>Scoped</button></section>");
+                WebElement scope = d.findElement(By.id("scope"));
+                List<WebElement> scoped = scope.findElements(
+                        org.openqa.selenium.support.locators.RelativeLocator.with(By.tagName("button"))
+                                .below(By.id("anchor")));
+                assertEquals(1, scoped.size(), "scoped relative locator resolves its local anchor");
+                assertEquals("scoped-button", scoped.get(0).getAttribute("id"),
+                        "scoped relative locator finds the local candidate");
             } finally {
                 d.quit();
             }

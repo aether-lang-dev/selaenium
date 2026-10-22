@@ -27,6 +27,34 @@ main() {
             spec.assert_str_eq(content, "first complete driver", "winner is not overwritten")
             _rm = fs.remove_tree(root)
         }
+        spec.it("publishes browser support files before its executable marker") callback {
+            root, err = fs.make_temp_dir("", "selenium-browser-cache-probe-")
+            spec.assert_eq(string.length(err), 0, "create temp root")
+            staged = string.concat(root, "/stage")
+            staged_bin_dir = string.concat(staged, "/chrome-linux64")
+            staged_data_dir = string.concat(staged_bin_dir, "/locales")
+            _md1 = fs.mkdir_p(staged_data_dir)
+            _wb = fs.write(string.concat(staged_bin_dir, "/chrome"), "complete browser binary")
+            _wd = fs.write(string.concat(staged_data_dir, "/en-US.pak"), "browser support data")
+            cache = string.concat(root, "/cache")
+            target_dir = string.concat(cache, "/chrome/stable/123")
+
+            result = drivercache.install_browser_staged(staged_bin_dir, target_dir, "chrome")
+            target = string.concat(target_dir, "/chrome")
+            spec.assert_str_eq(result, target, "browser installer publishes executable path")
+            content, read_err = fs.read(target)
+            spec.assert_eq(string.length(read_err), 0, "read published browser")
+            spec.assert_str_eq(content, "complete browser binary", "published browser is complete")
+            support, support_err = fs.read(string.concat(target_dir, "/locales/en-US.pak"))
+            spec.assert_eq(string.length(support_err), 0, "support files published before executable")
+            spec.assert_str_eq(support, "browser support data", "browser support data is complete")
+
+            later = string.concat(root, "/later")
+            _mdl = fs.mkdir_p(later)
+            _wbl = fs.write(string.concat(later, "/chrome"), "losing browser binary")
+            spec.assert_str_eq(drivercache.install_browser_staged(later, target_dir, "chrome"), target, "later installer accepts cache winner")
+            _rm = fs.remove_tree(root)
+        }
     }
     return spec.run_summary(fw)
 }
