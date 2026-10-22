@@ -1,4 +1,4 @@
-name: Release engine
+name: Release engine and binding packages
 
 on:
   push:
@@ -20,6 +20,8 @@ concurrency:
 jobs:
   release:
     runs-on: ubuntu-22.04
+    container:
+      image: mcr.microsoft.com/devcontainers/universal:6.1.10-noble
     timeout-minutes: 90
     permissions:
       contents: write
@@ -82,11 +84,42 @@ jobs:
           test "$("$tools/zig-x86_64-linux-$zig_version/zig" version)" = "$zig_version"
           echo "$tools/zig-x86_64-linux-$zig_version" >> "$GITHUB_PATH"
 
-      - name: Build all nine engine libraries
+      - name: Install pinned aeb
+        run: ci/toolchain.sh
+
+      - name: Verify release image toolchains
+        shell: bash
+        run: |
+          set -euo pipefail
+          command -v cc
+          command -v gcc
+          command -v make
+          gcc --version | head -1
+          java_major="$(java -XshowSettings:properties -version 2>&1 | sed -n 's/^[[:space:]]*java.specification.version = //p')"
+          [[ "$java_major" =~ ^[0-9]+$ && "$java_major" -ge 22 ]]
+          javac --version
+          ruby --version
+          python3 --version
+          node --version
+          dotnet --list-sdks | awk '$1 ~ /^8\./ { found=1 } END { exit !found }'
+
+      - name: Build engine libraries and official binding packages
         env:
           TARGETS: x86_64-linux aarch64-linux x86_64-linux-musl aarch64-linux-musl x86_64-macos aarch64-macos x86_64-windows aarch64-windows x86_64-freebsd
-          RELEASE_NO_JARS: '1'
+          RELEASE_BINDING_PACKAGES: '1'
         run: release/build.sh
+
+      - name: Require the official package artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in selenium-client.jar selenium-client-standalone.jar selenium-client-linux-x86_64.jar; do
+            test -s "release/dist/$name"
+          done
+          compgen -G 'release/dist/*.gem' >/dev/null
+          compgen -G 'release/dist/*.whl' >/dev/null
+          compgen -G 'release/dist/*.tgz' >/dev/null
+          compgen -G 'release/dist/*.nupkg' >/dev/null
 
       - name: Verify engine artifacts and Linux ABI
         run: python3 release/check-artifacts.py "$RELEASE_TAG"
@@ -101,10 +134,12 @@ jobs:
           cat > "$RUNNER_TEMP/release-notes.md" <<'NOTES'
           Cross-built Selaenium engine libraries for Linux, macOS, and Windows,
           each on x86_64 and arm64, plus Linux musl on both architectures and
-          FreeBSD x86_64. Every binary has a SHA256 checksum.
+          FreeBSD x86_64. Official Java jars, Ruby gem, Python wheel, npm tarball,
+          and .NET NuGet package are built in the pinned Universal Linux image.
+          Every artifact has a SHA256 checksum.
 
-          These are the shared engine libraries used by the language bindings.
-          Language packages and registry publishing are separate.
+          Registry publishing remains separate; these package files are release
+          downloads and do not require registry credentials.
 
           All nine libraries built successfully. The Linux x86_64 library was
           loaded and checked for the complete exported C ABI. This release does
@@ -113,7 +148,9 @@ jobs:
           gh release create "$RELEASE_TAG" --verify-tag \
             --title "$RELEASE_TAG" --notes-file "$RUNNER_TEMP/release-notes.md" \
             release/dist/*.so release/dist/*.dylib release/dist/*.dll \
-            release/dist/*.dll.lib release/dist/*.sha256 release/dist/SHA256SUMS.txt
+            release/dist/*.dll.lib release/dist/*.jar release/dist/*.gem \
+            release/dist/*.whl release/dist/*.tgz release/dist/*.nupkg \
+            release/dist/*.sha256 release/dist/SHA256SUMS.txt
 
       - name: Verify published downloads
         env:

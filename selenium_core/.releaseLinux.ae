@@ -1,0 +1,36 @@
+// Release-only producer for the already-built Linux x86_64 engine library.
+// Binding package nodes normally depend on .build.ae; the tag workflow builds
+// and validates the release matrix first, then redirects those edges here so
+// packages embed the exact Linux engine binary that will be attached to the
+// same GitHub release.
+import bldr
+import std.fs
+import std.string
+
+aeb(cap) {
+    bldr.build() {
+        srcdir = bldr.source_dir(builder_context())
+        root = string.concat(srcdir, "/..")
+        tag_text, read_err = fs.read(string.concat(root, "/SELENIUM_CORE_VERSION"))
+        if string.length(read_err) > 0 {
+            bldr.fail(builder_context(), "cannot read SELENIUM_CORE_VERSION")
+        }
+        tag = string.trim(tag_text)
+        source = string.concat(root, string.concat("/release/dist/libselenium_core-",
+            string.concat(tag, "-linux-x86_64.so")))
+        if fs.exists(source) == 0 {
+            bldr.fail(builder_context(), string.concat("release engine library missing: ", source))
+        }
+
+        target = bldr.target_dir(builder_context())
+        libdir = string.concat(target, "/lib")
+        _mk = fs.mkdir_p(libdir)
+        so_path = string.concat(libdir, "/libselenium_core.so")
+        _cp = fs.copy(source, so_path)
+
+        publish_artifact("shared_lib", so_path)
+        publish_artifact("shared_library", so_path)
+        publish_artifact("ldlibdeps", so_path)
+        publish_artifact("shared_library_deps_including_transitive", so_path)
+    }
+}

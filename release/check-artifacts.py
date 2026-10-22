@@ -42,6 +42,14 @@ def check_artifacts(tag, dist):
             other = "libc.so.6" if arch.endswith("-musl") else "libc.so"
             if expected not in needed or other in needed:
                 raise ValueError(f"wrong Linux libc for {name}: {needed}")
+    for filename, digest in manifest.items():
+        artifact = dist / filename
+        actual = hashlib.sha256(artifact.read_bytes()).hexdigest()
+        if actual != digest or artifact.stat().st_size == 0:
+            raise ValueError(f"checksum mismatch or empty release asset: {filename}")
+        sidecar = (dist / (filename + ".sha256")).read_text().split()
+        if sidecar != [digest, filename]:
+            raise ValueError(f"checksum sidecar mismatch: {filename}")
     lib = ctypes.CDLL(str((dist / f"libselenium_core-{tag}-linux-x86_64.so").resolve()))
     exports = re.findall(r"^(sel_embed_\w+)\(", (ROOT / "selenium_core/embed.ae").read_text(), re.MULTILINE)
     if not exports:

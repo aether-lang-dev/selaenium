@@ -8,8 +8,10 @@ import java.lang.foreign.MemorySegment;
 import java.lang.foreign.SymbolLookup;
 import java.lang.foreign.ValueLayout;
 import java.lang.invoke.MethodHandle;
+import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.security.CodeSource;
 
 /**
  * Raw FFM (java.lang.foreign / Panama) downcall surface over the native Selenium
@@ -40,7 +42,7 @@ final class Native {
     private Native() {
     }
 
-    /** Pin an explicit path to the native library (wins over env/bundled). */
+    /** Pin an explicit path to the native library (wins over discovery). */
     static void configure(String path) {
         if (path != null && !path.isEmpty()) {
             explicitPath = path;
@@ -62,6 +64,11 @@ final class Native {
             }
             throw new WebDriverException("nativeLib() points at a missing file: " + explicitPath, -1);
         }
+        String lib = fileName();
+        Path adjacent = besideCodeSource(lib);
+        if (adjacent != null) {
+            return adjacent;
+        }
         String override = System.getenv("SELENIUM_CORE_LIB");
         if (override != null && !override.isEmpty()) {
             Path p = Path.of(override);
@@ -70,7 +77,6 @@ final class Native {
             }
             throw new WebDriverException("SELENIUM_CORE_LIB points at a missing file: " + override, -1);
         }
-        String lib = fileName();
         // Bundled as a classpath resource inside the jar. A multi-platform jar
         // stages each native under /native/<os>-<arch>/<libname> (matching
         // release/build.sh's os-arch tokens), so one jar serves every OS+arch —
@@ -98,6 +104,33 @@ final class Native {
         }
         // Let the OS loader try the bare name (LD_LIBRARY_PATH / system paths).
         return Path.of(lib);
+    }
+
+    private static Path besideCodeSource(String lib) {
+        try {
+            CodeSource source = Native.class.getProtectionDomain().getCodeSource();
+            if (source == null || source.getLocation() == null) {
+                return null;
+            }
+            URI location = source.getLocation().toURI();
+            if (!"file".equalsIgnoreCase(location.getScheme())) {
+                return null;
+            }
+            return adjacentLibrary(Path.of(location), lib);
+        } catch (Exception e) {
+            // Custom classloaders can omit a filesystem code source. Continue
+            // through the configured and bundled-library fallbacks in that case.
+            return null;
+        }
+    }
+
+    static Path adjacentLibrary(Path codeSource, String lib) {
+        Path directory = Files.isDirectory(codeSource) ? codeSource : codeSource.getParent();
+        if (directory == null) {
+            return null;
+        }
+        Path candidate = directory.resolve(lib);
+        return Files.isRegularFile(candidate) ? candidate : null;
     }
 
     private static String suffix(String lib) {

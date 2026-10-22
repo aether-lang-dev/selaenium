@@ -112,6 +112,12 @@ for t in $MATRIX; do
   fi
 done
 
+# The official release build must validate its raw artifacts before any binding
+# package is allowed to embed one. This also proves the Linux C ABI exports.
+if [ "${RELEASE_BINDING_PACKAGES:-0}" = "1" ]; then
+  python3 "$HERE/check-artifacts.py" "$TAG" || die "engine artifact verification failed"
+fi
+
 # ---- the multi-platform Java jars ----
 # The 3 jars (lean / per-platform / standalone) are a distinct deliverable from the
 # raw engine libs: aeb cross-builds the native matrix (with size()) and cross-packages
@@ -121,7 +127,12 @@ done
 if [ "${RELEASE_NO_JARS:-0}" != "1" ] && have aeb; then
   say "building the Java jars (crossbuild + package) …"
   # aeb resolves node labels repo-root-relative, so run it from ROOT with relative paths.
-  if ( cd "$ROOT" && aeb selenium_core/.crossbuild.ae java/.package.ae ) >"$DIST/.jars.log" 2>&1; then
+  if [ "${RELEASE_BINDING_PACKAGES:-0}" = "1" ]; then
+    java_build=(selenium_core/.releaseJarMatrix.ae java/.package.ae --overrideDep selenium_core/.crossbuild.ae=selenium_core/.releaseJarMatrix.ae)
+  else
+    java_build=(selenium_core/.crossbuild.ae java/.package.ae)
+  fi
+  if ( cd "$ROOT" && aeb "${java_build[@]}" ) >"$DIST/.jars.log" 2>&1; then
     jdir="$ROOT/target/package/java"
     for j in "$jdir"/selenium-client.jar "$jdir"/selenium-client-standalone.jar "$jdir"/selenium-client-"$(uname -s | tr 'A-Z' 'a-z' | sed 's/darwin/macos/;s/.*linux.*/linux/')-$(uname -m | sed 's/aarch64/arm64/')".jar; do
       [ -f "$j" ] || continue
@@ -137,15 +148,55 @@ elif [ "${RELEASE_NO_JARS:-0}" != "1" ]; then
   say "SKIP jars — aeb not on PATH (engine libs still ship)"
 fi
 
+# ---- official HLL package artifacts -----------------------------------------
+# The GitHub workflow runs this second after the engine matrix and ABI check.
+# The package nodes consume the verified Linux x86_64 release library through
+# .releaseLinux.ae. Java's standalone jar likewise embeds the six verified
+# release libraries through .releaseJarMatrix.ae. Registry publishing remains
+# separate (no registry credentials here).
+if [ "${RELEASE_BINDING_PACKAGES:-0}" = "1" ]; then
+  have aeb || die "RELEASE_BINDING_PACKAGES=1 requires aeb"
+  say "building official binding packages from the verified release engine …"
+  if ! ( cd "$ROOT" && aeb \
+      selenium_core/.releaseLinux.ae \
+      ruby/.package.ae python/.package.ae javascript/.package.ae \
+      dotnet/SeleniumCore/.package.ae \
+      --overrideDep selenium_core/.build.ae=selenium_core/.releaseLinux.ae \
+      ) >"$DIST/.binding-packages.log" 2>&1; then
+    sed 's/^/release:     /' "$DIST/.binding-packages.log" | tail -80
+    die "binding package build failed"
+  fi
+  rm -f "$DIST/.binding-packages.log"
+
+  stage_matches() {
+    srcdir="$1"; pattern="$2"
+    [ -d "$srcdir" ] || die "package output directory missing: $srcdir"
+    found=0
+    while IFS= read -r -d '' artifact; do
+      cp "$artifact" "$DIST/"
+      name=$(basename "$artifact")
+      ( cd "$DIST" && sha256sum "$name" > "$name.sha256" )
+      say "  package: $name staged + .sha256"
+      found=$((found+1))
+    done < <(find "$srcdir" -maxdepth 1 -type f -name "$pattern" -print0)
+    [ "$found" -gt 0 ] || die "no $pattern artifacts in $srcdir"
+  }
+
+  stage_matches "$ROOT/target/package/ruby/dist" '*.gem'
+  stage_matches "$ROOT/target/package/python/dist" '*.whl'
+  stage_matches "$ROOT/target/package/javascript/pkgout" '*.tgz'
+  stage_matches "$ROOT/target/package/dotnet/SeleniumCore/nupkg" '*.nupkg'
+fi
+
 # A combined checksum manifest over every artifact (not the .sha256 sidecars).
 # Named SHA256SUMS.txt so a browser renders it inline (no forced download).
-( cd "$DIST" && sha256sum ./*.so ./*.dylib ./*.dll ./*.dll.lib ./*.jar 2>/dev/null > SHA256SUMS.txt || true )
+( cd "$DIST" && sha256sum ./*.so ./*.dylib ./*.dll ./*.dll.lib ./*.jar ./*.gem ./*.whl ./*.tgz ./*.nupkg 2>/dev/null > SHA256SUMS.txt || true )
 
 echo
 say "built $built engine artifact(s) into release/dist/ ($failed failed)"
 if [ "$built" -gt 0 ]; then
   echo
-  ( cd "$DIST" && for f in *.so *.dylib *.dll *.jar; do [ -f "$f" ] && printf '  %s  %s\n' "$(cut -c1-16 "$f.sha256")…" "$f"; done ) 2>/dev/null
+  ( cd "$DIST" && for f in *.so *.dylib *.dll *.jar *.gem *.whl *.tgz *.nupkg; do [ -f "$f" ] && printf '  %s  %s\n' "$(cut -c1-16 "$f.sha256")…" "$f"; done ) 2>/dev/null
   echo
   say "each artifact has a .sha256; SHA256SUMS.txt lists them all."
   say "next: attest on real hardware — run the binding suite against a given"

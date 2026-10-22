@@ -8,11 +8,15 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import org.openqa.selenium.chrome.ChromeOptions;
 import org.openqa.selenium.interactions.Actions;
 import org.openqa.selenium.support.ui.ExpectedConditions;
@@ -32,6 +36,23 @@ import org.openqa.selenium.support.ui.WebDriverWait;
  * reach the package-private element seam.
  */
 class AbiSurfaceTest {
+
+    @Test
+    void nativeLibraryCanSitBesideJar(@TempDir Path dir) throws IOException {
+        Path jar = Files.createFile(dir.resolve("selenium-client.jar"));
+        Path nativeLibrary = Files.createFile(dir.resolve("libselenium_core.so"));
+
+        assertEquals(nativeLibrary, Native.adjacentLibrary(jar, "libselenium_core.so"));
+        assertNull(Native.adjacentLibrary(jar, "selenium_core.dll"));
+    }
+
+    @Test
+    void nativeLibraryCanSitBesideExplodedClasses(@TempDir Path dir) throws IOException {
+        Path classes = Files.createDirectory(dir.resolve("classes"));
+        Path nativeLibrary = Files.createFile(classes.resolve("libselenium_core.so"));
+
+        assertEquals(nativeLibrary, Native.adjacentLibrary(classes, "libselenium_core.so"));
+    }
 
     /** Records every execute() call; returns canned values keyed by command. */
     static final class RecordingDriver extends RemoteWebDriver {

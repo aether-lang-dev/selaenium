@@ -1,0 +1,52 @@
+// Producer for Java's six bundled platform resources, copied from this tag's
+// release/dist so the standalone JAR embeds exactly the native files attached
+// to the GitHub release. Used only by the official tag workflow.
+import bldr
+import std.fs
+import std.string
+
+aeb(cap) {
+    bldr.build() {
+        srcdir = bldr.source_dir(builder_context())
+        root = string.concat(srcdir, "/..")
+        tag_text, read_err = fs.read(string.concat(root, "/SELENIUM_CORE_VERSION"))
+        if string.length(read_err) > 0 {
+            bldr.fail(builder_context(), "cannot read SELENIUM_CORE_VERSION")
+        }
+        tag = string.trim(tag_text)
+        target = bldr.target_dir(builder_context())
+        libdir = string.concat(target, "/lib")
+        _mk = fs.mkdir_p(libdir)
+
+        p1 = string.concat(root, string.concat("/release/dist/libselenium_core-", string.concat(tag, "-linux-x86_64.so")))
+        p2 = string.concat(root, string.concat("/release/dist/libselenium_core-", string.concat(tag, "-linux-arm64.so")))
+        p3 = string.concat(root, string.concat("/release/dist/libselenium_core-", string.concat(tag, "-macos-x86_64.dylib")))
+        p4 = string.concat(root, string.concat("/release/dist/libselenium_core-", string.concat(tag, "-macos-arm64.dylib")))
+        p5 = string.concat(root, string.concat("/release/dist/libselenium_core-", string.concat(tag, "-windows-x86_64.dll")))
+        p6 = string.concat(root, string.concat("/release/dist/libselenium_core-", string.concat(tag, "-windows-arm64.dll")))
+        if fs.exists(p1) == 0 { bldr.fail(builder_context(), string.concat("release jar library missing: ", p1)) }
+        if fs.exists(p2) == 0 { bldr.fail(builder_context(), string.concat("release jar library missing: ", p2)) }
+        if fs.exists(p3) == 0 { bldr.fail(builder_context(), string.concat("release jar library missing: ", p3)) }
+        if fs.exists(p4) == 0 { bldr.fail(builder_context(), string.concat("release jar library missing: ", p4)) }
+        if fs.exists(p5) == 0 { bldr.fail(builder_context(), string.concat("release jar library missing: ", p5)) }
+        if fs.exists(p6) == 0 { bldr.fail(builder_context(), string.concat("release jar library missing: ", p6)) }
+
+        o1 = string.concat(libdir, "/libselenium_core-linux-x86_64.so")
+        o2 = string.concat(libdir, "/libselenium_core-linux-arm64.so")
+        o3 = string.concat(libdir, "/libselenium_core-macos-x86_64.dylib")
+        o4 = string.concat(libdir, "/libselenium_core-macos-arm64.dylib")
+        o5 = string.concat(libdir, "/libselenium_core-windows-x86_64.dll")
+        o6 = string.concat(libdir, "/libselenium_core-windows-arm64.dll")
+        _c1 = fs.copy(p1, o1)
+        _c2 = fs.copy(p2, o2)
+        _c3 = fs.copy(p3, o3)
+        _c4 = fs.copy(p4, o4)
+        _c5 = fs.copy(p5, o5)
+        _c6 = fs.copy(p6, o6)
+
+        publish_artifact("shared_lib", o1)
+        publish_artifact("shared_library", o1)
+        publish_artifact("ldlibdeps", o1)
+        publish_artifact("shared_library_deps_including_transitive", o1)
+    }
+}

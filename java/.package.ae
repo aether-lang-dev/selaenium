@@ -2,10 +2,11 @@
 //
 //   selenium-client.jar             LEAN: classes only. The consumer supplies the
 //                                   engine native out-of-band — Native.locate()
-//                                   resolves it via SELENIUM_CORE_LIB or the OS
-//                                   loader path, pointing at one of the raw release
-//                                   .so/.dll/.dylib assets. The Maven-idiomatic
-//                                   "bring your own native" artifact.
+//                                   resolves a same-directory sidecar first, then
+//                                   SELENIUM_CORE_LIB or the OS loader path pointing
+//                                   at one of the raw release .so/.dll/.dylib
+//                                   assets. The Maven-idiomatic "bring your own
+//                                   native" artifact.
 //
 //   selenium-client-<os>-<arch>.jar SINGLE-PLATFORM: classes + JUST the build
 //                                   host's native (this box's os-arch, e.g.

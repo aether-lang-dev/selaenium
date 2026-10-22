@@ -42,8 +42,13 @@ d.quit();
 ```
 
 The engine ships **inside** the platform jar (see the three jars below) and the
-FFM binding loads it — nothing to install, compile, or configure. To point at a
-specific engine, set `SELENIUM_CORE_LIB=/abs/path/libselenium_core.so`.
+FFM binding loads it — nothing to install, compile, or configure. For a lean
+classes-only jar, place `libselenium_core.so` (or the platform's `.dylib` or
+`.dll`) in the same filesystem directory as the jar. The loader also finds a
+sidecar beside the classes directory when running from an exploded build. Set
+`SELENIUM_CORE_LIB=/abs/path/libselenium_core.so` as a fallback when the sidecar
+is elsewhere; `configureNativeLib(path)` explicitly selects a library ahead of
+automatic discovery.
 
 ## The three jars (platform / DevOps)
 
@@ -52,13 +57,15 @@ travels:
 
 | Jar | Contents | Use |
 |-----|----------|-----|
-| `selenium-client.jar` | classes only (LEAN) | bring-your-own-native: supply the engine via `SELENIUM_CORE_LIB` |
+| `selenium-client.jar` | classes only (LEAN) | bring-your-own-native: place the engine beside the jar or supply `SELENIUM_CORE_LIB` |
 | `selenium-client-<os>-<arch>.jar` | classes + the engine for ONE platform (in `/native/`) | a self-contained dev jar for your box |
 | `selenium-client-standalone.jar` | classes + engines for ALL platforms (in `/native/<os>-<arch>/`) | one jar that runs anywhere |
 
-At load, `Native.locate()` resolves the engine: `SELENIUM_CORE_LIB` →
-`/native/<os>-<arch>/<lib>` (standalone) → `/native/<lib>` (single-platform). So
-the standalone and platform jars are self-contained; the lean jar is BYO-native.
+At load, `Native.locate()` resolves the engine: `configureNativeLib(path)` →
+sidecar beside the jar/classes → `SELENIUM_CORE_LIB` →
+`/native/<os>-<arch>/<lib>` (standalone) → `/native/<lib>` (single-platform) →
+the development-tree or OS loader path. So the standalone and platform jars
+remain self-contained; the lean jar can use a sidecar or BYO-native path.
 
 Build the jars from source (the platform/standalone jars cross-build the engine
 for every target):

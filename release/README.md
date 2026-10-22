@@ -3,7 +3,7 @@
 The engine (`libselenium_core`) is pure Aether, so it **cross-compiles for the
 whole platform matrix from one Linux host** — no per-OS runner for the build.
 Pushing a release tag triggers GitHub Actions to build and publish nine engine
-libraries and their checksums. v0.11.0 adds Linux musl
+libraries, official binding package files, and checksums. v0.11.0 adds Linux musl
 (x86_64/arm64) and FreeBSD x86_64 to the original six Linux/macOS/Windows
 libraries; published v0.10.0 assets stay unchanged. On-target
 *testing* is done out of band and recorded as an attestation keyed by SHA256.
@@ -51,17 +51,24 @@ git push origin v0.11.0
 Choose a new unused version for each release. Pushing to `main` alone does not
 release anything. The [release workflow](../.github/workflows/release.yml) also
 supports a manual run with an existing tag. It checks out that exact tag,
-verifies the version pins, installs the pinned Aether and Zig toolchains, and
-runs `release/build.sh` on one Ubuntu runner. All nine engine builds must succeed;
+verifies the version pins, installs the pinned Aether, aeb, and Zig toolchains,
+and runs `release/build.sh` on one Ubuntu runner. All nine engine builds must succeed;
 a failing platform prevents publication. The workflow loads the Linux x86_64
 library and checks every declared C ABI export, then creates the GitHub release
 and downloads the assets again to verify their checksums and ABI.
 
-This workflow publishes engine binaries only. It does not run a browser or
-desktop CI test matrix, build Java jars, or publish to language registries.
-Required ABI exports remain mandatory in bindings; there are no compatibility
-fallbacks for an older engine. The workflow does not replace an existing release;
-use a new tag for changed binaries.
+The workflow runs inside the pinned
+`mcr.microsoft.com/devcontainers/universal:6.1.10-noble` image. This Ubuntu x86-64
+image supplies the C toolchain and the Java, Ruby, Python, Node, and .NET SDKs
+used to produce the packages. It builds three Java jars, a Ruby gem, a Python
+wheel, an npm tarball, and a .NET NuGet package alongside the nine native engine
+libraries. Package files bundle the Linux x86_64 engine; Java's standalone jar
+contains its six-platform matrix. Every release file is checksummed and
+download-verified. Registry publishing remains separate because it requires
+registry credentials. The workflow does not run a browser or desktop CI test
+matrix. Required ABI exports remain mandatory in bindings; there are no
+compatibility fallbacks for an older engine. The workflow does not replace an
+existing release; use a new tag for changed binaries.
 
 ### Manual alternative
 
@@ -164,9 +171,8 @@ A verifier re-hashes the artifact they hold, matches `sha256`, and trusts the
 
 ## Not here yet
 
-- **Binding packages** (wheel/gem/jar/nupkg/…): the `.package.ae` nodes build
-  these with the `.so` bundled; a follow-up can stage them as release assets
-  too. This script ships the engine artifact — the one thing that's hard for a
-  user to produce — first.
+- **Additional binding packages**: the release currently includes Java, Ruby,
+  Python, JavaScript, and .NET package formats. Other `.package.ae` nodes can be
+  added as their distributable format and release naming are settled.
 - **Registry publish** (PyPI/Maven/npm/…): a separate credentialed step; not
   part of the cross-build story.
