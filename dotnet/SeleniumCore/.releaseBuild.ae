@@ -2,11 +2,52 @@
 // FreeBSD is excluded because NuGet has no standard FreeBSD RID.
 import bldr
 import dotnet
+import std.fs
+import std.string
+
+// Copy one verified release engine into the project tree under the canonical
+// filename NuGet consumers and NativeLoader expect. Package paths stay relative
+// to SeleniumCore.csproj, while the source remains the checksummed release file.
+_stage_release_native(root: string, source_name: string, rid: string, native_name: string) -> string {
+    source = string.concat(root, string.concat("/release/dist/", source_name))
+    destination_dir = string.concat(root, string.concat("/dotnet/SeleniumCore/native/", rid))
+    destination = string.concat(destination_dir, string.concat("/", native_name))
+    if fs.exists(source) == 0 {
+        bldr.fail(builder_context(), string.concat("release NuGet library missing: ", source))
+    } else {
+        mkdir_err = fs.mkdir_p(destination_dir)
+        if string.length(mkdir_err) > 0 {
+            bldr.fail(builder_context(), string.concat("cannot stage NuGet library: ", destination_dir))
+        } else {
+            copied, _copy_kind, copy_err = fs.copy(source, destination)
+            if copied == 0 {
+                bldr.fail(builder_context(), string.concat("cannot stage NuGet library: ", copy_err))
+            }
+        }
+    }
+    return string.concat("native/", string.concat(rid, string.concat("/", native_name)))
+}
 
 aeb(cap) {
     bldr.build() {
         prereq("dotnet:10")
-        dep("selenium_core/.releaseNugetMatrix.ae")
+        srcdir = bldr.source_dir(builder_context())
+        root = string.concat(srcdir, "/../..")
+        tag_text, read_err = fs.read(string.concat(root, "/SELENIUM_CORE_VERSION"))
+        if string.length(read_err) > 0 {
+            bldr.fail(builder_context(), "cannot read SELENIUM_CORE_VERSION")
+        }
+        tag = string.trim(tag_text)
+
+        linux_x64 = _stage_release_native(root, string.concat("libselenium_core-", string.concat(tag, "-linux-x86_64.so")), "linux-x64", "libselenium_core.so")
+        linux_arm64 = _stage_release_native(root, string.concat("libselenium_core-", string.concat(tag, "-linux-arm64.so")), "linux-arm64", "libselenium_core.so")
+        linux_musl_x64 = _stage_release_native(root, string.concat("libselenium_core-", string.concat(tag, "-linux-x86_64-musl.so")), "linux-musl-x64", "libselenium_core.so")
+        linux_musl_arm64 = _stage_release_native(root, string.concat("libselenium_core-", string.concat(tag, "-linux-arm64-musl.so")), "linux-musl-arm64", "libselenium_core.so")
+        osx_x64 = _stage_release_native(root, string.concat("libselenium_core-", string.concat(tag, "-macos-x86_64.dylib")), "osx-x64", "libselenium_core.dylib")
+        osx_arm64 = _stage_release_native(root, string.concat("libselenium_core-", string.concat(tag, "-macos-arm64.dylib")), "osx-arm64", "libselenium_core.dylib")
+        win_x64 = _stage_release_native(root, string.concat("libselenium_core-", string.concat(tag, "-windows-x86_64.dll")), "win-x64", "selenium_core.dll")
+        win_arm64 = _stage_release_native(root, string.concat("libselenium_core-", string.concat(tag, "-windows-arm64.dll")), "win-arm64", "selenium_core.dll")
+
         // Generate the release project so the native_runtime() declarations
         // become NuGet package items. build_project_existing() deliberately
         // leaves an existing .csproj untouched and therefore drops these
@@ -18,14 +59,14 @@ aeb(cap) {
             nullable()
             package_id("Selenium.WebDriver")
             package_version("0.1.0")
-            native_runtime("linux-x64", dep_artifact("selenium_core/.releaseNugetMatrix.ae", "linux_x64"))
-            native_runtime("linux-arm64", dep_artifact("selenium_core/.releaseNugetMatrix.ae", "linux_arm64"))
-            native_runtime("linux-musl-x64", dep_artifact("selenium_core/.releaseNugetMatrix.ae", "linux_musl_x64"))
-            native_runtime("linux-musl-arm64", dep_artifact("selenium_core/.releaseNugetMatrix.ae", "linux_musl_arm64"))
-            native_runtime("osx-x64", dep_artifact("selenium_core/.releaseNugetMatrix.ae", "osx_x64"))
-            native_runtime("osx-arm64", dep_artifact("selenium_core/.releaseNugetMatrix.ae", "osx_arm64"))
-            native_runtime("win-x64", dep_artifact("selenium_core/.releaseNugetMatrix.ae", "win_x64"))
-            native_runtime("win-arm64", dep_artifact("selenium_core/.releaseNugetMatrix.ae", "win_arm64"))
+            native_runtime("linux-x64", linux_x64)
+            native_runtime("linux-arm64", linux_arm64)
+            native_runtime("linux-musl-x64", linux_musl_x64)
+            native_runtime("linux-musl-arm64", linux_musl_arm64)
+            native_runtime("osx-x64", osx_x64)
+            native_runtime("osx-arm64", osx_arm64)
+            native_runtime("win-x64", win_x64)
+            native_runtime("win-arm64", win_arm64)
         }
     }
 }
