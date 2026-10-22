@@ -77,7 +77,7 @@ that architecture or left upstream-only.
   `getVisibleText` algorithm. The upstream fix is remote-driver work, not a
   client-engine port.
 
-- [ ] **Audit Selenium Manager behavior without porting its Rust implementation.**
+- [x] **Audit Selenium Manager behavior without porting its Rust implementation.**
   Relevant upstream references include `7a54c93` (TLS validation), `f67fed5`
   (cache locking), and `ed2dda5` (Windows architecture detection under WOW64),
   alongside the manager metadata/update commits in this range. Compare the
@@ -120,7 +120,7 @@ that architecture or left upstream-only.
 
 ## Conditional / not currently a port
 
-- [ ] **Grid downloadable-file handling.** Upstream reference: `989e662` fixes
+- [x] **Grid downloadable-file handling (not currently applicable).** Upstream reference: `989e662` fixes
   filenames with spaces in Grid downloads. The current Selaenium Grid hub has
   no matching file-download implementation, so there is no equivalent bug to
   transplant. Revisit this when adding Grid file downloads and include names
