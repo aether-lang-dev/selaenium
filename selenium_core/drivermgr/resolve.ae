@@ -422,28 +422,19 @@ _which_driver() -> string {
     return string.trim(p)
 }
 
-// Host OS as a CfT platform token input: "windows" | "macos" | "linux".
-// Windows sets the OS env var to "Windows_NT" (the stdlib itself keys off this,
-// cf. std/path); elsewhere `uname -s` gives Darwin (macOS) or Linux.
+// Normalize the compiled target OS into the token vocabulary used by driver
+// metadata: Aether reports Darwin as "darwin", while these resolvers expect
+// "macos". Keep other targets explicit so unsupported platforms are not
+// accidentally treated as Linux.
 _os() -> string {
-    if string.equals(os.getenv("OS"), "Windows_NT") == 1 { return "windows" }
-    sysname, _err = os.exec("uname -s")
-    sn = string.trim(sysname)
-    if string.contains(sn, "Darwin") == 1 { return "macos" }
-    return "linux"
+    target_os = os.platform()
+    if string.equals(target_os, "darwin") == 1 { return "macos" }
+    return target_os
 }
 
-// Host arch: "arm64" | "x86_64". Windows exposes PROCESSOR_ARCHITECTURE
-// (AMD64 / ARM64); elsewhere `uname -m` gives x86_64 / arm64 / aarch64.
+// The engine's compiled target architecture, normalized by std.os to tokens
+// such as "arm64" and "x86_64". This is the architecture the engine and its
+// provisioned driver must run on, including when the engine was cross-built.
 _arch() -> string {
-    if string.equals(os.getenv("OS"), "Windows_NT") == 1 {
-        pa = os.getenv("PROCESSOR_ARCHITECTURE")
-        if string.contains(pa, "ARM64") == 1 { return "arm64" }
-        return "x86_64"
-    }
-    machine, _err = os.exec("uname -m")
-    m = string.trim(machine)
-    if string.contains(m, "arm64") == 1 { return "arm64" }
-    if string.contains(m, "aarch64") == 1 { return "arm64" }
-    return "x86_64"
+    return os.arch()
 }
