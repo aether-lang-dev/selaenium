@@ -76,7 +76,7 @@ assets=( "${bins[@]}" "${jars[@]}" "${sums[@]}" "${manifest[@]}" )
 nbin=0; for f in "${bins[@]}"; do case "$f" in *.dll.lib) ;; *) nbin=$((nbin+1)) ;; esac; done
 
 njar=${#jars[@]}
-# The os-arch combinations the standalone jar bundles — derived from the actual
+# The os-arch combinations the multiplatform jar bundles — derived from the actual
 # engine libs in dist (their names carry -<os>-<arch>.<ext>), so this stays true
 # as the matrix grows/shrinks rather than hardcoding a count. Deduped, comma-listed.
 plats="$(
@@ -91,7 +91,7 @@ notes="Cross-built \`libselenium_core\` engine, ${nbin} platform artifact(s), pl
 
 - \`selenium-client.jar\` — lean, classes only; bring your own native (\`SELENIUM_CORE_LIB\` / OS loader path).
 - \`selenium-client-<os>-<arch>.jar\` — one bundled native for a single platform.
-- \`selenium-client-standalone.jar\` — all-in-one, bundles the native for every platform (${plats}); loads zero-config on any of them.
+- \`selenium-client-multiplatform.jar\` — all-in-one, bundles the native for every platform (${plats}); loads zero-config on any of them.
 
 Built from a single Linux host via \`ae build --target\` — see \`release/README.md\` for the build-here / attest-on-hardware model and the per-artifact coverage caveats (local \`http://\` works everywhere; BiDi \`ws://\`/\`wss://\` is covered; remote HTTPS-Grid needs the Tier-2 TLS helper)."
 

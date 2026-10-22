@@ -28,13 +28,15 @@ typedef _ExecuteC = ffi.Int Function(
 typedef _Execute = int Function(
     ffi.Pointer<ffi.Void>, ffi.Pointer<pkgffi.Utf8>, ffi.Pointer<pkgffi.Utf8>);
 
-typedef _HandleToStrC = ffi.Pointer<pkgffi.Utf8> Function(ffi.Pointer<ffi.Void>);
+typedef _HandleToStrC = ffi.Pointer<pkgffi.Utf8> Function(
+    ffi.Pointer<ffi.Void>);
 typedef _HandleToStr = ffi.Pointer<pkgffi.Utf8> Function(ffi.Pointer<ffi.Void>);
 
 typedef _HandleToIntC = ffi.Int Function(ffi.Pointer<ffi.Void>);
 typedef _HandleToInt = int Function(ffi.Pointer<ffi.Void>);
 
-typedef _StrToStrC = ffi.Pointer<pkgffi.Utf8> Function(ffi.Pointer<pkgffi.Utf8>);
+typedef _StrToStrC = ffi.Pointer<pkgffi.Utf8> Function(
+    ffi.Pointer<pkgffi.Utf8>);
 typedef _StrToStr = ffi.Pointer<pkgffi.Utf8> Function(ffi.Pointer<pkgffi.Utf8>);
 
 typedef _Str2ToStrC = ffi.Pointer<pkgffi.Utf8> Function(
@@ -48,9 +50,11 @@ typedef _Str2ToStr = ffi.Pointer<pkgffi.Utf8> Function(
     ffi.Pointer<pkgffi.Utf8>, ffi.Pointer<pkgffi.Utf8>);
 
 typedef _Str3ToStrC = ffi.Pointer<pkgffi.Utf8> Function(
-    ffi.Pointer<pkgffi.Utf8>, ffi.Pointer<pkgffi.Utf8>, ffi.Pointer<pkgffi.Utf8>);
-typedef _Str3ToStr = ffi.Pointer<pkgffi.Utf8> Function(
-    ffi.Pointer<pkgffi.Utf8>, ffi.Pointer<pkgffi.Utf8>, ffi.Pointer<pkgffi.Utf8>);
+    ffi.Pointer<pkgffi.Utf8>,
+    ffi.Pointer<pkgffi.Utf8>,
+    ffi.Pointer<pkgffi.Utf8>);
+typedef _Str3ToStr = ffi.Pointer<pkgffi.Utf8> Function(ffi.Pointer<pkgffi.Utf8>,
+    ffi.Pointer<pkgffi.Utf8>, ffi.Pointer<pkgffi.Utf8>);
 
 typedef _StrToIntC = ffi.Int Function(ffi.Pointer<pkgffi.Utf8>);
 typedef _StrToInt = int Function(ffi.Pointer<pkgffi.Utf8>);
@@ -70,10 +74,16 @@ typedef _HandleStr2ToIntC = ffi.Int Function(
 typedef _HandleStr2ToInt = int Function(
     ffi.Pointer<ffi.Void>, ffi.Pointer<pkgffi.Utf8>, ffi.Pointer<pkgffi.Utf8>);
 
-typedef _HandleStr3ToIntC = ffi.Int Function(ffi.Pointer<ffi.Void>,
-    ffi.Pointer<pkgffi.Utf8>, ffi.Pointer<pkgffi.Utf8>, ffi.Pointer<pkgffi.Utf8>);
-typedef _HandleStr3ToInt = int Function(ffi.Pointer<ffi.Void>,
-    ffi.Pointer<pkgffi.Utf8>, ffi.Pointer<pkgffi.Utf8>, ffi.Pointer<pkgffi.Utf8>);
+typedef _HandleStr3ToIntC = ffi.Int Function(
+    ffi.Pointer<ffi.Void>,
+    ffi.Pointer<pkgffi.Utf8>,
+    ffi.Pointer<pkgffi.Utf8>,
+    ffi.Pointer<pkgffi.Utf8>);
+typedef _HandleStr3ToInt = int Function(
+    ffi.Pointer<ffi.Void>,
+    ffi.Pointer<pkgffi.Utf8>,
+    ffi.Pointer<pkgffi.Utf8>,
+    ffi.Pointer<pkgffi.Utf8>);
 
 // ---- TLS config (per session handle; set before newSession) ----
 // set_ca(void* handle, char* ca_path) / set_insecure(void* handle, int on).
@@ -106,8 +116,8 @@ typedef _BidiPump = int Function(ffi.Pointer<ffi.Void>, int);
 
 typedef _BidiSendC = ffi.Int Function(ffi.Pointer<ffi.Void>, ffi.Int32,
     ffi.Pointer<pkgffi.Utf8>, ffi.Pointer<pkgffi.Utf8>);
-typedef _BidiSend = int Function(
-    ffi.Pointer<ffi.Void>, int, ffi.Pointer<pkgffi.Utf8>, ffi.Pointer<pkgffi.Utf8>);
+typedef _BidiSend = int Function(ffi.Pointer<ffi.Void>, int,
+    ffi.Pointer<pkgffi.Utf8>, ffi.Pointer<pkgffi.Utf8>);
 
 typedef _BidiPollReplyC = ffi.Pointer<pkgffi.Utf8> Function(
     ffi.Pointer<ffi.Void>, ffi.Int32);
@@ -134,13 +144,21 @@ typedef _BidiGetTreeC = ffi.Pointer<pkgffi.Utf8> Function(
 typedef _BidiGetTree = ffi.Pointer<pkgffi.Utf8> Function(
     ffi.Pointer<ffi.Void>, int, int);
 
-typedef _BidiEvaluateC = ffi.Pointer<pkgffi.Utf8> Function(ffi.Pointer<ffi.Void>,
-    ffi.Int32, ffi.Pointer<pkgffi.Utf8>, ffi.Pointer<pkgffi.Utf8>, ffi.Int32);
+typedef _BidiEvaluateC = ffi.Pointer<pkgffi.Utf8> Function(
+    ffi.Pointer<ffi.Void>,
+    ffi.Int32,
+    ffi.Pointer<pkgffi.Utf8>,
+    ffi.Pointer<pkgffi.Utf8>,
+    ffi.Int32);
 typedef _BidiEvaluate = ffi.Pointer<pkgffi.Utf8> Function(ffi.Pointer<ffi.Void>,
     int, ffi.Pointer<pkgffi.Utf8>, ffi.Pointer<pkgffi.Utf8>, int);
 
-typedef _BidiNavigateC = ffi.Pointer<pkgffi.Utf8> Function(ffi.Pointer<ffi.Void>,
-    ffi.Int32, ffi.Pointer<pkgffi.Utf8>, ffi.Pointer<pkgffi.Utf8>, ffi.Int32);
+typedef _BidiNavigateC = ffi.Pointer<pkgffi.Utf8> Function(
+    ffi.Pointer<ffi.Void>,
+    ffi.Int32,
+    ffi.Pointer<pkgffi.Utf8>,
+    ffi.Pointer<pkgffi.Utf8>,
+    ffi.Int32);
 typedef _BidiNavigate = ffi.Pointer<pkgffi.Utf8> Function(ffi.Pointer<ffi.Void>,
     int, ffi.Pointer<pkgffi.Utf8>, ffi.Pointer<pkgffi.Utf8>, int);
 
@@ -153,7 +171,11 @@ typedef _BidiNetAddInterceptC = ffi.Pointer<pkgffi.Utf8> Function(
     ffi.Pointer<pkgffi.Utf8>,
     ffi.Int32);
 typedef _BidiNetAddIntercept = ffi.Pointer<pkgffi.Utf8> Function(
-    ffi.Pointer<ffi.Void>, int, ffi.Pointer<pkgffi.Utf8>, ffi.Pointer<pkgffi.Utf8>, int);
+    ffi.Pointer<ffi.Void>,
+    int,
+    ffi.Pointer<pkgffi.Utf8>,
+    ffi.Pointer<pkgffi.Utf8>,
+    int);
 
 // remove_intercept / continue_request / fail_request:
 // (void* handle, int id, char* str_arg, int timeout_ms) -> char* reply JSON.
@@ -202,6 +224,60 @@ typedef _BidiNetContinueWithAuth = ffi.Pointer<pkgffi.Utf8> Function(
 
 /// A loaded engine: the [ffi.DynamicLibrary] plus every symbol bound once.
 class Native {
+  static const List<String> _requiredSymbols = <String>[
+    'aether_sel_embed_atom_str_arg',
+    'aether_sel_embed_bidi_cancel',
+    'aether_sel_embed_bidi_close',
+    'aether_sel_embed_bidi_fd',
+    'aether_sel_embed_bidi_get_tree',
+    'aether_sel_embed_bidi_lost_events',
+    'aether_sel_embed_bidi_navigate',
+    'aether_sel_embed_bidi_network_add_intercept',
+    'aether_sel_embed_bidi_network_continue_request',
+    'aether_sel_embed_bidi_network_continue_with_auth',
+    'aether_sel_embed_bidi_network_fail_request',
+    'aether_sel_embed_bidi_network_provide_response',
+    'aether_sel_embed_bidi_network_remove_intercept',
+    'aether_sel_embed_bidi_network_set_cache_behavior',
+    'aether_sel_embed_bidi_open',
+    'aether_sel_embed_bidi_poll_event',
+    'aether_sel_embed_bidi_poll_reply',
+    'aether_sel_embed_bidi_pump',
+    'aether_sel_embed_bidi_script_evaluate',
+    'aether_sel_embed_bidi_send',
+    'aether_sel_embed_bidi_subscribe',
+    'aether_sel_embed_bidi_unsubscribe',
+    'aether_sel_embed_bidi_wait_event',
+    'aether_sel_embed_build_request',
+    'aether_sel_embed_by_locator',
+    'aether_sel_embed_by_locator_for',
+    'aether_sel_embed_close',
+    'aether_sel_embed_driver_pid',
+    'aether_sel_embed_driver_url',
+    'aether_sel_embed_ensure_driver',
+    'aether_sel_embed_error_code',
+    'aether_sel_embed_execute',
+    'aether_sel_embed_execute_atom',
+    'aether_sel_embed_find_relative',
+    'aether_sel_embed_free_string',
+    'aether_sel_embed_get_attribute',
+    'aether_sel_embed_is_displayed',
+    'aether_sel_embed_is_native',
+    'aether_sel_embed_last_error',
+    'aether_sel_embed_last_error_code',
+    'aether_sel_embed_last_status',
+    'aether_sel_embed_last_value',
+    'aether_sel_embed_launch_driver',
+    'aether_sel_embed_open',
+    'aether_sel_embed_resolve_driver',
+    'aether_sel_embed_route',
+    'aether_sel_embed_session_id',
+    'aether_sel_embed_set_ca',
+    'aether_sel_embed_set_insecure',
+    'aether_sel_embed_set_native',
+    'aether_sel_embed_stop_driver',
+  ];
+
   final _Open open;
   final _Close close;
   final _Execute execute;
@@ -211,6 +287,7 @@ class Native {
   final _HandleToStr lastError;
   final _HandleToStr sessionId;
   final _Str2ToStr byLocator;
+
   /// Browser rules against a browser, Appium's native strategies against a
   /// desktop driver. The engine decides from the session; we pass the handle.
   final _HandleStr2ToStr byLocatorFor;
@@ -264,7 +341,21 @@ class Native {
   final _BidiNetContinueWithAuth bidiNetworkContinueWithAuth;
   final _BidiNetStrArg bidiNetworkSetCacheBehavior;
 
-  Native._(ffi.DynamicLibrary lib)
+  factory Native._(ffi.DynamicLibrary lib) = Native._bind;
+
+  static List<String> _missingSymbols(ffi.DynamicLibrary lib) =>
+      _requiredSymbols.where((symbol) => !lib.providesSymbol(symbol)).toList();
+
+  static StateError _incompatibleEngine(String path, List<String> missing) =>
+      StateError(
+        'The native Selaenium library at "$path" is incompatible with this '
+        'Dart client (engine ${EngineFetcher.engineVersion}): it is missing '
+        'required ABI symbols ${missing.join(', ')}. Please consider deleting '
+        'or replacing "$path" with the engine library from '
+        '${EngineFetcher.engineVersion}.',
+      );
+
+  Native._bind(ffi.DynamicLibrary lib)
       : open = lib.lookupFunction<_OpenC, _Open>('aether_sel_embed_open'),
         close = lib.lookupFunction<_CloseC, _Close>('aether_sel_embed_close'),
         execute =
@@ -320,8 +411,8 @@ class Native {
             'aether_sel_embed_driver_url'),
         driverPid = lib.lookupFunction<_HandleToIntC, _HandleToInt>(
             'aether_sel_embed_driver_pid'),
-        stopDriver = lib.lookupFunction<_CloseC, _Close>(
-            'aether_sel_embed_stop_driver'),
+        stopDriver =
+            lib.lookupFunction<_CloseC, _Close>('aether_sel_embed_stop_driver'),
         bidiOpen =
             lib.lookupFunction<_OpenC, _Open>('aether_sel_embed_bidi_open'),
         bidiClose =
@@ -364,11 +455,11 @@ class Native {
         bidiNetworkFailRequest =
             lib.lookupFunction<_BidiNetStrArgC, _BidiNetStrArg>(
                 'aether_sel_embed_bidi_network_fail_request'),
-        bidiNetworkProvideResponse = lib.lookupFunction<
-            _BidiNetProvideResponseC, _BidiNetProvideResponse>(
-            'aether_sel_embed_bidi_network_provide_response'),
+        bidiNetworkProvideResponse = lib
+            .lookupFunction<_BidiNetProvideResponseC, _BidiNetProvideResponse>(
+                'aether_sel_embed_bidi_network_provide_response'),
         bidiNetworkContinueWithAuth = lib.lookupFunction<
-            _BidiNetContinueWithAuthC, _BidiNetContinueWithAuth>(
+                _BidiNetContinueWithAuthC, _BidiNetContinueWithAuth>(
             'aether_sel_embed_bidi_network_continue_with_auth'),
         bidiNetworkSetCacheBehavior =
             lib.lookupFunction<_BidiNetStrArgC, _BidiNetStrArg>(
@@ -395,15 +486,27 @@ class Native {
   static ffi.DynamicLibrary _load() {
     Object? lastError;
     for (final candidate in _candidates()) {
+      late ffi.DynamicLibrary lib;
       try {
-        return ffi.DynamicLibrary.open(candidate);
+        lib = ffi.DynamicLibrary.open(candidate);
       } catch (e) {
         lastError = e;
+        continue;
       }
+      final missing = _missingSymbols(lib);
+      if (missing.isEmpty) return lib;
+      // Once a candidate opens, it is the library the loader selected. Do not
+      // hide an ABI mismatch by silently falling through to another copy.
+      throw _incompatibleEngine(candidate, missing);
     }
     // Bare name (OS loader).
     try {
-      return ffi.DynamicLibrary.open(_fileName());
+      final lib = ffi.DynamicLibrary.open(_fileName());
+      final missing = _missingSymbols(lib);
+      if (missing.isEmpty) return lib;
+      throw _incompatibleEngine(_fileName(), missing);
+    } on StateError {
+      rethrow;
     } catch (e) {
       lastError = e;
     }
@@ -424,15 +527,18 @@ class Native {
   static List<String> candidatesForTest() => _candidates().toList();
 
   static Iterable<String> _candidates() sync* {
-    if (_explicitPath != null && _explicitPath!.isNotEmpty) yield _explicitPath!;
+    if (_explicitPath != null && _explicitPath!.isNotEmpty)
+      yield _explicitPath!;
     final env = Platform.environment['SELENIUM_CORE_LIB'];
     if (env != null && env.isNotEmpty) yield env;
-    // Bundled next to the package: <pkg>/native/<lib>. Resolve relative to the
-    // script's package when possible; else a plain relative path.
-    yield 'native/${_fileName()}';
     // The per-user cache a `dart run selenium:fetch_engine` download lands in
-    // (EngineFetcher.cachedPath). Lets a fetched engine load with no config.
+    // (EngineFetcher.cachedPath). It is keyed by the engine version pinned by
+    // this package, so prefer it over a package-local file that may be stale.
     yield EngineFetcher.cachedPath();
+    // Bundled next to the package: <pkg>/native/<lib>. Resolve relative to the
+    // script's package when possible; else a plain relative path. If it opens
+    // but has an incompatible ABI, report that selected path and stop.
+    yield 'native/${_fileName()}';
   }
 
   /// Copy a caller-owned native char* into a Dart String, then free it.

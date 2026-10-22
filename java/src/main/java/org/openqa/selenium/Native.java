@@ -27,10 +27,13 @@ import java.security.CodeSource;
  */
 final class Native {
 
+    private static final String ENGINE_VERSION = "v0.13.0";
+
     private static final Linker LINKER = Linker.nativeLinker();
     private static final Arena GLOBAL = Arena.global();
     private static volatile String explicitPath;
     private static SymbolLookup lookup;
+    private static Path loadedLibraryPath;
 
     private static final ValueLayout.OfInt C_INT = ValueLayout.JAVA_INT;
     private static final java.lang.foreign.AddressLayout C_PTR = ValueLayout.ADDRESS;
@@ -51,7 +54,8 @@ final class Native {
 
     private static synchronized SymbolLookup lookup() {
         if (lookup == null) {
-            lookup = SymbolLookup.libraryLookup(locate(), GLOBAL);
+            loadedLibraryPath = locate();
+            lookup = SymbolLookup.libraryLookup(loadedLibraryPath, GLOBAL);
         }
         return lookup;
     }
@@ -183,7 +187,12 @@ final class Native {
 
     private static MethodHandle down(String symbol, FunctionDescriptor descriptor) {
         MemorySegment addr = lookup().find(symbol)
-                .orElseThrow(() -> new WebDriverException("native symbol not found: " + symbol, -1));
+                .orElseThrow(() -> new WebDriverException(
+                        "The native Selaenium library at '" + loadedLibraryPath
+                                + "' is incompatible with this Java client (engine " + ENGINE_VERSION
+                                + "): required ABI symbol " + symbol + " is missing. Please consider "
+                                + "deleting or replacing '" + loadedLibraryPath
+                                + "' with the engine library from " + ENGINE_VERSION + ".", -1));
         return LINKER.downcallHandle(addr, descriptor);
     }
 

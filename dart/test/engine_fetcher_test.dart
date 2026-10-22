@@ -15,7 +15,7 @@ void main() {
   test('engineVersion is a release tag, re-exported at the top level', () {
     expect(EngineFetcher.engineVersion, matches(RegExp(r'^v\d+\.\d+\.\d+$')),
         reason: 'engineVersion is a vX.Y.Z gh-release tag');
-    expect(EngineFetcher.engineVersion, 'v0.12.0');
+    expect(EngineFetcher.engineVersion, 'v0.13.0');
   });
 
   test('assetName matches the release artifact scheme', () {
@@ -51,9 +51,13 @@ void main() {
   });
 
   test('loader candidate list includes the fetch cache path', () {
-    // Native's candidate list must include exactly where the fetcher caches, so
-    // a fetched engine loads with no further config.
-    expect(Native.candidatesForTest(), contains(EngineFetcher.cachedPath()));
+    // A version-pinned cached engine must win over a stale package-local copy.
+    final candidates = Native.candidatesForTest();
+    expect(candidates, contains(EngineFetcher.cachedPath()));
+    expect(
+        candidates.indexOf(EngineFetcher.cachedPath()),
+        lessThan(
+            candidates.indexOf('native/${EngineFetcher.libraryFilename()}')));
   });
 
   test('sha256 matches known vectors', () {
@@ -73,8 +77,7 @@ void main() {
       markTestSkipped('set SELENIUM_FETCH_LIVE=1 to hit the network');
       return;
     }
-    final dir =
-        Directory.systemTemp.createTempSync('selaenium_fetch_test_');
+    final dir = Directory.systemTemp.createTempSync('selaenium_fetch_test_');
     try {
       // The fetcher reads XDG_CACHE_HOME from Platform.environment; run a child
       // process with it pointed at the tmp dir so the real cache is untouched.

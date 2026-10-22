@@ -16,6 +16,8 @@
 # no second copy of the protocol here.
 module Selenium
 
+using Libdl
+
 export By, Locator, WebDriver, WebElement, ShadowRoot, Keys, Select, Actions, Wait,
     BiDi, BidiEvent, TlsConfig, WebDriverError,
     # engine fetch (get the prebuilt engine, no Aether toolchain)
@@ -92,7 +94,7 @@ using SHA: sha256
 # shared engine (NOT the binding's own Project.toml version) — the tag whose
 # assets this fetcher downloads. Bump it when the binding is re-glued to a newer
 # engine.
-const ENGINE_VERSION = "v0.12.0"
+const ENGINE_VERSION = "v0.13.0"
 
 const REPO = "aether-lang-dev/selaenium"
 
@@ -261,8 +263,53 @@ function _resolve_lib()
     return "libselenium_core"
 end
 
+# Validate a library as soon as it can be opened. ccall otherwise reports a
+# late, context-free missing-symbol error on the first affected operation.
+function _validate_abi(path)
+    handle = try
+        Libdl.dlopen_e(path)
+    catch
+        C_NULL
+    end
+    handle == C_NULL && return
+    required = (
+        :aether_sel_embed_open, :aether_sel_embed_close, :aether_sel_embed_execute,
+        :aether_sel_embed_last_value, :aether_sel_embed_last_status,
+        :aether_sel_embed_last_error_code, :aether_sel_embed_last_error,
+        :aether_sel_embed_session_id, :aether_sel_embed_route,
+        :aether_sel_embed_error_code, :aether_sel_embed_free_string,
+        :aether_sel_embed_find_relative, :aether_sel_embed_is_displayed,
+        :aether_sel_embed_get_attribute, :aether_sel_embed_set_ca,
+        :aether_sel_embed_set_insecure, :aether_sel_embed_resolve_driver,
+        :aether_sel_embed_launch_driver, :aether_sel_embed_ensure_driver,
+        :aether_sel_embed_driver_url, :aether_sel_embed_driver_pid,
+        :aether_sel_embed_stop_driver, :aether_sel_embed_bidi_open,
+        :aether_sel_embed_bidi_close, :aether_sel_embed_bidi_send,
+        :aether_sel_embed_bidi_pump, :aether_sel_embed_bidi_poll_reply,
+        :aether_sel_embed_bidi_poll_event, :aether_sel_embed_bidi_lost_events,
+        :aether_sel_embed_bidi_cancel, :aether_sel_embed_bidi_subscribe,
+        :aether_sel_embed_bidi_unsubscribe, :aether_sel_embed_bidi_wait_event,
+        :aether_sel_embed_bidi_get_tree, :aether_sel_embed_bidi_script_evaluate,
+        :aether_sel_embed_bidi_navigate, :aether_sel_embed_bidi_network_add_intercept,
+        :aether_sel_embed_bidi_network_remove_intercept,
+        :aether_sel_embed_bidi_network_continue_request,
+        :aether_sel_embed_bidi_network_fail_request,
+        :aether_sel_embed_bidi_network_provide_response,
+        :aether_sel_embed_bidi_network_continue_with_auth,
+        :aether_sel_embed_bidi_network_set_cache_behavior,
+    )
+    missing = filter(symbol -> Libdl.dlsym_e(handle, symbol) == C_NULL, required)
+    Libdl.dlclose(handle)
+    isempty(missing) && return
+    version = join(string.(missing), ", ")
+    error("The native Selaenium library at '$path' is incompatible with this Julia client " *
+          "(engine $ENGINE_VERSION): required ABI symbols $version are missing. Please " *
+          "consider deleting or replacing '$path' with the engine library from $ENGINE_VERSION.")
+end
+
 # The engine .so path used by every ccall below.
 const LIB = _resolve_lib()
+_validate_abi(LIB)
 
 # By: a factory returning a `Locator`, mirroring Java's `By.id("x")`. The
 # strategy-name constants remain (By.ID etc.) for the legacy two-arg locator

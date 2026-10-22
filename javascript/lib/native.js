@@ -18,6 +18,7 @@ const path = require('path')
 const koffi = require('koffi')
 
 const LIB_BASE = 'selenium_core'
+const ENGINE_VERSION = 'v0.13.0'
 
 function fileName() {
   switch (process.platform) {
@@ -32,6 +33,7 @@ function fileName() {
 
 let explicitPath = null
 let loadedLib = null
+let loadedPath = null
 
 /**
  * Pin an explicit path to the native library, used at first load. Wins over the
@@ -52,7 +54,10 @@ function resolveLibraryPath() {
 }
 
 function lib() {
-  if (!loadedLib) loadedLib = koffi.load(resolveLibraryPath())
+  if (!loadedLib) {
+    loadedPath = resolveLibraryPath()
+    loadedLib = koffi.load(loadedPath)
+  }
   return loadedLib
 }
 
@@ -60,7 +65,20 @@ function lib() {
 function lazy(signature) {
   let f = null
   return (...args) => {
-    if (!f) f = lib().func(signature)
+    if (!f) {
+      try {
+        f = lib().func(signature)
+      } catch (error) {
+        const symbol = signature.match(/aether_sel_embed_[A-Za-z0-9_]+/)?.[0] ?? signature
+        throw new Error(
+          `The native Selaenium library at '${loadedPath}' is incompatible with this JavaScript client ` +
+          `(engine ${ENGINE_VERSION}): required ABI symbol ${symbol} could not be resolved. Please consider ` +
+          `deleting or replacing '${loadedPath}' with the engine library from ${ENGINE_VERSION}. ` +
+          `Loader detail: ${error.message}`,
+          { cause: error },
+        )
+      }
+    }
     return f(...args)
   }
 }

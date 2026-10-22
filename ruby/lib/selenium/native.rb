@@ -60,9 +60,13 @@ module Selenium
     def open_library
       last_error = nil
       library_candidates.each do |path|
-        return Fiddle.dlopen(path)
-      rescue Fiddle::DLError => e
-        last_error = e
+        begin
+          handle = Fiddle.dlopen(path)
+          @loaded_path = path
+          return handle
+        rescue Fiddle::DLError => e
+          last_error = e
+        end
       end
       raise LoadError,
             "could not load the native Selenium engine (libselenium_core). " \
@@ -149,7 +153,16 @@ module Selenium
 
     def functions
       @functions ||= BINDINGS.each_with_object({}) do |(name, sym, ret, args), acc|
-        acc[name] = Fiddle::Function.new(lib[sym], args, ret)
+        begin
+          acc[name] = Fiddle::Function.new(lib[sym], args, ret)
+        rescue Fiddle::DLError => e
+          version = EngineFetcher::ENGINE_VERSION
+          raise LoadError,
+                "The native Selaenium library at '#{@loaded_path}' is incompatible " \
+                "with this Ruby client (engine #{version}): required ABI symbol " \
+                "#{sym} is missing. Please consider deleting or replacing " \
+                "'#{@loaded_path}' with the engine library from #{version}. (#{e.message})"
+        end
       end
     end
 

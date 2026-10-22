@@ -119,7 +119,7 @@ if [ "${RELEASE_BINDING_PACKAGES:-0}" = "1" ]; then
 fi
 
 # ---- the multi-platform Java jars ----
-# The 3 jars (lean / per-platform / standalone) are a distinct deliverable from the
+# The 3 jars (lean / per-platform / multiplatform) are a distinct deliverable from the
 # raw engine libs: aeb cross-builds the native matrix (with size()) and cross-packages
 # them here. Build via aeb, then stage each jar into DIST with its own .sha256 so it
 # rides the same release + manifest. Skipped (with a note) if no JDK/aeb — the engine
@@ -134,7 +134,7 @@ if [ "${RELEASE_NO_JARS:-0}" != "1" ] && have aeb; then
   fi
   if ( cd "$ROOT" && AEB_PER_NODE=0 aeb "${java_build[@]}" ) >"$DIST/.jars.log" 2>&1; then
     jdir="$ROOT/target/package/java"
-    for j in "$jdir"/selenium-client.jar "$jdir"/selenium-client-standalone.jar "$jdir"/selenium-client-"$(uname -s | tr 'A-Z' 'a-z' | sed 's/darwin/macos/;s/.*linux.*/linux/')-$(uname -m | sed 's/aarch64/arm64/')".jar; do
+    for j in "$jdir"/selenium-client.jar "$jdir"/selenium-client-multiplatform.jar "$jdir"/selenium-client-"$(uname -s | tr 'A-Z' 'a-z' | sed 's/darwin/macos/;s/.*linux.*/linux/')-$(uname -m | sed 's/aarch64/arm64/')".jar; do
       [ -f "$j" ] || continue
       cp "$j" "$DIST/"
       ( cd "$DIST" && sha256sum "$(basename "$j")" > "$(basename "$j").sha256" )
@@ -155,7 +155,7 @@ fi
 # ---- official HLL package artifacts -----------------------------------------
 # The GitHub workflow runs this second after the engine matrix and ABI check.
 # The package nodes consume the verified Linux x86_64 release library through
-# .releaseLinux.ae. Java's standalone jar likewise embeds the six verified
+# .releaseLinux.ae. Java's multiplatform jar likewise embeds the six verified
 # release libraries through .releaseJarMatrix.ae. Registry publishing remains
 # separate (no registry credentials here).
 if [ "${RELEASE_BINDING_PACKAGES:-0}" = "1" ]; then
@@ -165,6 +165,7 @@ if [ "${RELEASE_BINDING_PACKAGES:-0}" = "1" ]; then
       ruby/.package.ae python/.package.ae javascript/.package.ae \
       dotnet/SeleniumCore/.package.ae crystal/.package.ae julia/.package.ae \
       --overrideDep selenium_core/.build.ae=selenium_core/.releaseLinux.ae \
+      --overrideDep dotnet/SeleniumCore/.build.ae=dotnet/SeleniumCore/.releaseBuild.ae \
       ) >"$DIST/.binding-packages.log" 2>&1; then
     sed 's/^/release:     /' "$DIST/.binding-packages.log" | tail -80
     die "binding package build failed"
@@ -201,6 +202,27 @@ if [ "${RELEASE_BINDING_PACKAGES:-0}" = "1" ]; then
   }
   stage_source_archive "$ROOT/target/package/crystal/selenium-crystal" "selenium-crystal-$TAG.tar.gz"
   stage_source_archive "$ROOT/target/package/julia/Selenium" "selenium-julia-$TAG.tar.gz"
+
+  # These bindings have no registry-style release artifact from the pinned
+  # Universal image. Ship their source trees and shared fetch helper so users
+  # can build against the OS/CPU engine they select. Go modules in a repository
+  # subdirectory are supported; the archive also permits source vendoring
+  # without requiring a Git checkout.
+  for lang in go dart rust php haskell swift nim zig lua d; do
+    archive="selenium-$lang-$TAG.tar.gz"
+    tar -czf "$DIST/$archive" \
+      --exclude='*/native' --exclude='*/target' --exclude='*/obj' \
+      --exclude='*/dist-newstyle' --exclude='*/.stack-work' --exclude='*/.cabal-sandbox' \
+      --exclude='*/.dart_tool' --exclude='*/.phpunit.cache' \
+      --exclude='*/.zig-cache' --exclude='*/.build' --exclude='*/.swiftpm' \
+      --exclude='*.so' --exclude='*.dylib' --exclude='*.dll' \
+      --exclude='*.a' --exclude='*.o' --exclude='*.phar' --exclude='*.exe' \
+      --exclude='lua/lua54' --exclude='nim/tests/tlive' \
+      -C "$ROOT" "$lang" scripts/fetch-engine.sh SELENIUM_CORE_VERSION \
+      || die "could not archive $lang source"
+    ( cd "$DIST" && sha256sum "$archive" > "$archive.sha256" )
+    say "  source package: $archive staged + .sha256"
+  done
 fi
 
 # A combined checksum manifest over every artifact (not the .sha256 sidecars).

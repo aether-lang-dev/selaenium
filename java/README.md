@@ -59,15 +59,15 @@ travels:
 |-----|----------|-----|
 | `selenium-client.jar` | classes only (LEAN) | bring-your-own-native: place the engine beside the jar or supply `SELENIUM_CORE_LIB` |
 | `selenium-client-<os>-<arch>.jar` | classes + the engine for ONE platform (in `/native/`) | a self-contained dev jar for your box |
-| `selenium-client-standalone.jar` | classes + engines for ALL platforms (in `/native/<os>-<arch>/`) | one jar that runs anywhere |
+| `selenium-client-multiplatform.jar` | classes + engines for ALL supported platforms (in `/native/<os>-<arch>/`) | one jar that runs anywhere |
 
 At load, `Native.locate()` resolves the engine: `configureNativeLib(path)` →
 sidecar beside the jar/classes → `SELENIUM_CORE_LIB` →
-`/native/<os>-<arch>/<lib>` (standalone) → `/native/<lib>` (single-platform) →
-the development-tree or OS loader path. So the standalone and platform jars
+`/native/<os>-<arch>/<lib>` (multiplatform) → `/native/<lib>` (single-platform) →
+the development-tree or OS loader path. So the multiplatform and platform jars
 remain self-contained; the lean jar can use a sidecar or BYO-native path.
 
-Build the jars from source (the platform/standalone jars cross-build the engine
+Build the jars from source (the platform/multiplatform jars cross-build the engine
 for every target):
 
 ```sh
@@ -82,7 +82,7 @@ your CI's publish step). See
 > prebuilt engine via `--overrideDep selenium_core/.build.ae=…getFromGitHubReleases.ae`.
 > The multi-platform jars depend on `selenium_core/.crossbuild.ae` (all 6 platform
 > engines), and a *fetch-all-6* crossbuild substitute node does **not exist yet**
-> — so cutting the standalone/platform jars without the Aether toolchain is a
+> — so cutting the multiplatform/platform jars without the Aether toolchain is a
 > tracked follow-up. Today they're built from source. (A lean `selenium-client.jar`
 > needs no engine at all — it's BYO-native.)
 

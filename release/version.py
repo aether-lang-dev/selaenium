@@ -12,10 +12,14 @@ TAG = r"v\d+\.\d+\.\d+"
 PINS = {
     "SELENIUM_CORE_VERSION": rf"^({TAG})\s*$",
     "aether.toml": r'^version = "(\d+\.\d+\.\d+)"$',
+    "crystal/shard.yml": r'^version: (\d+\.\d+\.\d+)$',
     "python/selenium/engine_fetcher.py": rf'ENGINE_VERSION = "({TAG})"',
     "ruby/lib/selenium/engine_fetcher.rb": rf"ENGINE_VERSION = '({TAG})'",
     "dart/lib/src/engine_fetcher.dart": rf"engineVersion = '({TAG})'",
     "dart/test/engine_fetcher_test.dart": rf"expect\(EngineFetcher.engineVersion, '({TAG})'\)",
+    "java/src/main/java/org/openqa/selenium/Native.java": rf'ENGINE_VERSION = "({TAG})"',
+    "javascript/lib/native.js": rf"ENGINE_VERSION = '({TAG})'",
+    "dotnet/SeleniumCore/NativeLoader.cs": rf'EngineVersion = "({TAG})"',
     "go/enginepath.go": rf'SeleniumCoreVersion = "({TAG})"',
     "swift/Package.swift": rf'seleniumCoreVersion = "({TAG})"',
     "swift/Tests/SeleniumTests/VersionTests.swift": rf'expectedSeleniumCoreVersion = "({TAG})"',
@@ -32,7 +36,7 @@ PINS = {
 }
 # Documentation copies of the old pin, including the Swift test's explanation.
 REFERENCES = (
-    "go/README.md", "go/AGENTS.md", "zig/README.md", "haskell/selenium.cabal",
+    "README.md", "go/README.md", "go/AGENTS.md", "zig/README.md", "haskell/selenium.cabal",
     "swift/Tests/SeleniumTests/VersionTests.swift",
 )
 
@@ -47,7 +51,7 @@ def version_files(root, tag):
         expected_count = 2 if name in ("c/.build.ae", "cpp/.tests.ae") else 1
         if len(matches) != expected_count:
             raise ValueError(f"{name}: expected {expected_count} version pin(s), found {len(matches)}")
-        want = tag.removeprefix("v") if name == "aether.toml" else tag
+        want = tag.removeprefix("v") if name in ("aether.toml", "crystal/shard.yml") else tag
         for match in reversed(matches):
             if match[1] != want:
                 mismatches.append(f"{name}: {match[1]} != {want}")

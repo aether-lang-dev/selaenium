@@ -26,6 +26,7 @@ import ctypes
 import ctypes.util
 import os
 import sys
+from .engine_fetcher import ENGINE_VERSION
 
 # Native library base name (no "lib" prefix / extension).
 _LIB = "selenium_core"
@@ -124,7 +125,15 @@ def _load_library() -> ctypes.CDLL:
 
 
 def _decl(name, restype, argtypes):
-    fn = getattr(_lib, name)
+    try:
+        fn = getattr(_lib, name)
+    except AttributeError as exc:
+        raise RuntimeError(
+            f"The native Selaenium library at '{_lib._name}' is incompatible "
+            f"with this Python client (engine {ENGINE_VERSION}): required ABI "
+            f"symbol {name} is missing. Please consider deleting or replacing "
+            f"'{_lib._name}' with the engine library from {ENGINE_VERSION}."
+        ) from exc
     fn.restype = restype
     fn.argtypes = argtypes
     return fn

@@ -1,0 +1,74 @@
+// Release-only producer for the eight portable NuGet RIDs. FreeBSD is omitted:
+// it has no standard NuGet RID. Each artifact is copied under the canonical
+// library filename consumed by NativeLoader and attached to this release tag.
+import bldr
+import std.fs
+import std.string
+
+aeb(cap) {
+    bldr.build() {
+        srcdir = bldr.source_dir(builder_context())
+        root = string.concat(srcdir, "/..")
+        tag_text, read_err = fs.read(string.concat(root, "/SELENIUM_CORE_VERSION"))
+        if string.length(read_err) > 0 {
+            bldr.fail(builder_context(), "cannot read SELENIUM_CORE_VERSION")
+        }
+        tag = string.trim(tag_text)
+        target = bldr.target_dir(builder_context())
+        libdir = string.concat(target, "/lib")
+        _mk = fs.mkdir_p(libdir)
+        _d1 = fs.mkdir_p(string.concat(libdir, "/linux-x64"))
+        _d2 = fs.mkdir_p(string.concat(libdir, "/linux-arm64"))
+        _d3 = fs.mkdir_p(string.concat(libdir, "/linux-musl-x64"))
+        _d4 = fs.mkdir_p(string.concat(libdir, "/linux-musl-arm64"))
+        _d5 = fs.mkdir_p(string.concat(libdir, "/osx-x64"))
+        _d6 = fs.mkdir_p(string.concat(libdir, "/osx-arm64"))
+        _d7 = fs.mkdir_p(string.concat(libdir, "/win-x64"))
+        _d8 = fs.mkdir_p(string.concat(libdir, "/win-arm64"))
+
+        // Source release names and package RIDs/canonical filenames.
+        p1 = string.concat(root, string.concat("/release/dist/libselenium_core-", string.concat(tag, "-linux-x86_64.so")))
+        p2 = string.concat(root, string.concat("/release/dist/libselenium_core-", string.concat(tag, "-linux-arm64.so")))
+        p3 = string.concat(root, string.concat("/release/dist/libselenium_core-", string.concat(tag, "-linux-x86_64-musl.so")))
+        p4 = string.concat(root, string.concat("/release/dist/libselenium_core-", string.concat(tag, "-linux-arm64-musl.so")))
+        p5 = string.concat(root, string.concat("/release/dist/libselenium_core-", string.concat(tag, "-macos-x86_64.dylib")))
+        p6 = string.concat(root, string.concat("/release/dist/libselenium_core-", string.concat(tag, "-macos-arm64.dylib")))
+        p7 = string.concat(root, string.concat("/release/dist/libselenium_core-", string.concat(tag, "-windows-x86_64.dll")))
+        p8 = string.concat(root, string.concat("/release/dist/libselenium_core-", string.concat(tag, "-windows-arm64.dll")))
+        if fs.exists(p1) == 0 { bldr.fail(builder_context(), string.concat("release NuGet library missing: ", p1)) }
+        if fs.exists(p2) == 0 { bldr.fail(builder_context(), string.concat("release NuGet library missing: ", p2)) }
+        if fs.exists(p3) == 0 { bldr.fail(builder_context(), string.concat("release NuGet library missing: ", p3)) }
+        if fs.exists(p4) == 0 { bldr.fail(builder_context(), string.concat("release NuGet library missing: ", p4)) }
+        if fs.exists(p5) == 0 { bldr.fail(builder_context(), string.concat("release NuGet library missing: ", p5)) }
+        if fs.exists(p6) == 0 { bldr.fail(builder_context(), string.concat("release NuGet library missing: ", p6)) }
+        if fs.exists(p7) == 0 { bldr.fail(builder_context(), string.concat("release NuGet library missing: ", p7)) }
+        if fs.exists(p8) == 0 { bldr.fail(builder_context(), string.concat("release NuGet library missing: ", p8)) }
+
+        o1 = string.concat(libdir, "/linux-x64/libselenium_core.so")
+        o2 = string.concat(libdir, "/linux-arm64/libselenium_core.so")
+        o3 = string.concat(libdir, "/linux-musl-x64/libselenium_core.so")
+        o4 = string.concat(libdir, "/linux-musl-arm64/libselenium_core.so")
+        o5 = string.concat(libdir, "/osx-x64/libselenium_core.dylib")
+        o6 = string.concat(libdir, "/osx-arm64/libselenium_core.dylib")
+        o7 = string.concat(libdir, "/win-x64/selenium_core.dll")
+        o8 = string.concat(libdir, "/win-arm64/selenium_core.dll")
+        _c1 = fs.copy(p1, o1)
+        _c2 = fs.copy(p2, o2)
+        _c3 = fs.copy(p3, o3)
+        _c4 = fs.copy(p4, o4)
+        _c5 = fs.copy(p5, o5)
+        _c6 = fs.copy(p6, o6)
+        _c7 = fs.copy(p7, o7)
+        _c8 = fs.copy(p8, o8)
+
+        publish_artifact("linux_x64", o1)
+        publish_artifact("linux_arm64", o2)
+        publish_artifact("linux_musl_x64", o3)
+        publish_artifact("linux_musl_arm64", o4)
+        publish_artifact("osx_x64", o5)
+        publish_artifact("osx_arm64", o6)
+        publish_artifact("win_x64", o7)
+        publish_artifact("win_arm64", o8)
+        publish_artifact("shared_lib", o1)
+    }
+}

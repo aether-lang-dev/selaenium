@@ -82,6 +82,19 @@ final class Native
                 self::$ffi = FFI::cdef(self::CDEF, $candidate);
                 return self::$ffi;
             } catch (\Throwable $e) {
+                if (\is_file($candidate)) {
+                    $version = self::engineVersion();
+                    throw new RuntimeException(
+                        'The native Selaenium library at "' . $candidate . '" is '
+                        . 'incompatible with this PHP client (engine ' . $version
+                        . '): required ABI symbols could not be resolved. Please '
+                        . 'consider deleting or replacing "' . $candidate
+                        . '" with the engine library from ' . $version . '. '
+                        . 'Loader detail: ' . $e->getMessage(),
+                        0,
+                        $e
+                    );
+                }
                 $last = $e;
             }
         }
@@ -138,6 +151,19 @@ final class Native
         } catch (\Throwable) {
             return null;
         }
+    }
+
+    private static function engineVersion(): string
+    {
+        if (!\class_exists(EngineFetcher::class, false)) {
+            $f = __DIR__ . '/EngineFetcher.php';
+            if (\is_file($f)) {
+                require_once $f;
+            }
+        }
+        return \defined(EngineFetcher::class . '::ENGINE_VERSION')
+            ? EngineFetcher::ENGINE_VERSION
+            : 'unknown';
     }
 
     /**

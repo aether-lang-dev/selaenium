@@ -1,0 +1,22 @@
+// Release build: package the verified native matrix attached to this release.
+// FreeBSD is excluded because NuGet has no standard FreeBSD RID.
+import bldr
+import dotnet
+
+aeb(cap) {
+    bldr.build() {
+        prereq("dotnet:10")
+        dep("selenium_core/.releaseNugetMatrix.ae")
+        dotnet.build_project_existing() {
+            csproj_path("SeleniumCore.csproj")
+            native_runtime("linux-x64", dep_artifact("selenium_core/.releaseNugetMatrix.ae", "linux_x64"))
+            native_runtime("linux-arm64", dep_artifact("selenium_core/.releaseNugetMatrix.ae", "linux_arm64"))
+            native_runtime("linux-musl-x64", dep_artifact("selenium_core/.releaseNugetMatrix.ae", "linux_musl_x64"))
+            native_runtime("linux-musl-arm64", dep_artifact("selenium_core/.releaseNugetMatrix.ae", "linux_musl_arm64"))
+            native_runtime("osx-x64", dep_artifact("selenium_core/.releaseNugetMatrix.ae", "osx_x64"))
+            native_runtime("osx-arm64", dep_artifact("selenium_core/.releaseNugetMatrix.ae", "osx_arm64"))
+            native_runtime("win-x64", dep_artifact("selenium_core/.releaseNugetMatrix.ae", "win_x64"))
+            native_runtime("win-arm64", dep_artifact("selenium_core/.releaseNugetMatrix.ae", "win_arm64"))
+        }
+    }
+}

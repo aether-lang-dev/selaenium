@@ -44,9 +44,10 @@ point at a specific engine, ahead of any discovery:
 
 ## Building & publishing the package (platform / DevOps)
 
-The `SeleniumCore.csproj` bundles the engine as a runtime-specific native asset,
-so the produced `.nupkg` carries it. The `NativeLoader` resolves the engine at
-load: `SELENIUM_CORE_LIB` → `native/<lib>` → `runtimes/<rid>/native/<lib>`.
+The release `.nupkg` bundles the engine for Windows x64/arm64, macOS x64/arm64,
+and Linux x64/arm64 with both glibc and musl. NuGet selects the matching RID
+asset during restore/publish. The `NativeLoader` checks `SELENIUM_CORE_LIB`, a
+sidecar, and the runtime-specific native asset before asking the OS loader.
 
 Build + pack, then push to your internal feed:
 

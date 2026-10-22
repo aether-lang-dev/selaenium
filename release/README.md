@@ -62,12 +62,15 @@ The workflow runs inside the pinned
 image supplies the C toolchain and the Java, Ruby, Python, Node, and .NET 10 SDKs
 used to produce the native-bearing packages. The NuGet library continues to
 target .NET 8 while the .NET 10 SDK builds and packs it. It builds three Java
-jars, a Ruby gem, a Python wheel, an npm tarball, and a .NET NuGet package alongside source
-archives for Crystal and Julia and the nine native engine libraries. Native-
-bearing packages bundle the Linux x86_64 engine; Java's standalone jar contains
-its six-platform matrix. Crystal and Julia archives contain source only and
-fetch the consumer's OS/CPU engine at build/runtime. Every release file is checksummed and
-download-verified. Registry publishing remains separate because it requires
+jars, a Ruby gem, a Python wheel, an npm tarball, and a multi-RID .NET NuGet
+package alongside source archives for Crystal, Julia, Go, Dart, Rust, PHP,
+Haskell, Swift, Nim, Zig, Lua, and D, plus the nine native engine libraries.
+Native-bearing single-platform packages bundle the Linux x86_64 engine; Java's
+multiplatform jar contains its six-platform matrix and NuGet includes eight
+standard Windows, macOS, glibc Linux, and musl Linux RIDs. Source archives
+contain binding source and fetch the consumer's OS/CPU engine when needed;
+Crystal and Julia also have curated package archives. Every release file is
+checksummed and download-verified. Registry publishing remains separate because it requires
 registry credentials. The workflow does not run a browser or desktop CI test
 matrix. Required ABI exports remain mandatory in bindings; there are no
 compatibility fallbacks for an older engine. The workflow does not replace an

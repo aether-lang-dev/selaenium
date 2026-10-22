@@ -113,7 +113,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          for name in selenium-client.jar selenium-client-standalone.jar selenium-client-linux-x86_64.jar; do
+          for name in selenium-client.jar selenium-client-multiplatform.jar selenium-client-linux-x86_64.jar; do
             test -s "release/dist/$name"
           done
           compgen -G 'release/dist/*.gem' >/dev/null
@@ -122,6 +122,9 @@ jobs:
           compgen -G 'release/dist/*.nupkg' >/dev/null
           test -s "release/dist/selenium-crystal-$RELEASE_TAG.tar.gz"
           test -s "release/dist/selenium-julia-$RELEASE_TAG.tar.gz"
+          for lang in go dart rust php haskell swift nim zig lua d; do
+            test -s "release/dist/selenium-$lang-$RELEASE_TAG.tar.gz"
+          done
 
       - name: Verify engine artifacts and Linux ABI
         run: python3 release/check-artifacts.py "$RELEASE_TAG"
@@ -137,8 +140,9 @@ jobs:
           Cross-built Selaenium engine libraries for Linux, macOS, and Windows,
           each on x86_64 and arm64, plus Linux musl on both architectures and
           FreeBSD x86_64. Official Java jars, Ruby gem, Python wheel, npm tarball,
-          .NET NuGet package, Crystal shard source, and Julia package source are
-          built in the pinned Universal Linux image.
+          multi-RID .NET NuGet package, and source archives for Crystal, Julia,
+          Go, Dart, Rust, PHP, Haskell, Swift, Nim, Zig, Lua, and D are built or
+          assembled in the pinned Universal Linux image.
           Every artifact has a SHA256 checksum.
 
           Registry publishing remains separate; these package files are release

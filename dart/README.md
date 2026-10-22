@@ -77,8 +77,10 @@ platform from THIS project's GitHub releases — the SAME release + asset + `.sh
 the `.getFromGitHubReleases.ae` build node fetches, cached under
 `$XDG_CACHE_HOME/selaenium/<tag>/`. `--tag` pins a release, `--force` re-fetches,
 `--path` prints the cache location. Loader search order: explicit path (set via
-`Native.configure`, internal) → `SELENIUM_CORE_LIB` → the package's `native/` →
-the fetch cache → bare name.
+`Native.configure`, internal) → `SELENIUM_CORE_LIB` → the version-keyed fetch
+cache → the package's `native/` → bare name. If an opened library is missing a
+required ABI symbol, the loader stops and names that path, the missing symbols,
+and the engine version this client expects; it does not switch libraries.
 
 ## Layout
 

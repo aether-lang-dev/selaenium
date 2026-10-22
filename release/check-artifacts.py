@@ -8,6 +8,7 @@ from pathlib import Path
 import re
 import subprocess
 import tarfile
+import zipfile
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -67,6 +68,21 @@ def check_artifacts(tag, dist, engine_only=False):
                 ("Project.toml", "src/Selenium.jl", "README.md"),
             ),
         }
+        for language, required in {
+            "go": ("go.mod", "selenium.go", "README.md"),
+            "dart": ("pubspec.yaml", "lib/selenium.dart", "README.md"),
+            "rust": ("Cargo.toml", "src/lib.rs", "README.md"),
+            "php": ("composer.json", "src/Native.php", "README.md"),
+            "haskell": ("selenium.cabal", "src/Selenium.hs", "README.md"),
+            "swift": ("Package.swift", "Sources/Selenium/Selenium.swift", "README.md"),
+            "nim": ("selenium.nimble", "src/selenium.nim", "README.md"),
+            "zig": ("build.zig", "src/root.zig", "README.md"),
+            "lua": ("src/selenium.lua", "src/engine_fetcher.lua", "README.md"),
+            "d": ("src/selenium/package.d", "README.md"),
+        }.items():
+            source_archives[f"selenium-{language}-{tag}.tar.gz"] = (
+                language, required + ("scripts/fetch-engine.sh", "SELENIUM_CORE_VERSION")
+            )
         for filename, (topdir, required) in source_archives.items():
             archive = dist / filename
             with tarfile.open(archive, "r:gz") as tar:
@@ -74,9 +90,44 @@ def check_artifacts(tag, dist, engine_only=False):
             for path in required:
                 if f"{topdir}/{path}" not in members:
                     raise ValueError(f"{filename} is missing {topdir}/{path}")
-            native = (".so", ".dylib", ".dll")
-            if any(name.endswith(native) for name in members):
-                raise ValueError(f"source archive contains a platform native library: {filename}")
+            native = (".so", ".dylib", ".dll", ".a", ".o", ".phar", ".exe")
+            generated = ("/native/", "/target/", "/obj/", "/dist-newstyle/",
+                         "/.stack-work/", "/.dart_tool/", "/.zig-cache/", "/.build/")
+            if any(name.endswith(native) or any(part in f"/{name}" for part in generated)
+                   for name in members):
+                raise ValueError(f"source archive contains a native binary or generated build output: {filename}")
+        for package in dist.glob("*.nupkg"):
+            with zipfile.ZipFile(package) as archive:
+                members = set(archive.namelist())
+            expected = {
+                f"runtimes/{rid}/native/{native}"
+                for rid, native in (
+                    ("linux-x64", "libselenium_core.so"),
+                    ("linux-arm64", "libselenium_core.so"),
+                    ("linux-musl-x64", "libselenium_core.so"),
+                    ("linux-musl-arm64", "libselenium_core.so"),
+                    ("osx-x64", "libselenium_core.dylib"),
+                    ("osx-arm64", "libselenium_core.dylib"),
+                    ("win-x64", "selenium_core.dll"),
+                    ("win-arm64", "selenium_core.dll"),
+                )
+            }
+            missing = expected - members
+            if missing:
+                raise ValueError(f"{package.name} is missing NuGet runtime assets: {sorted(missing)}")
+        jar = dist / "selenium-client-multiplatform.jar"
+        with zipfile.ZipFile(jar) as archive:
+            members = set(archive.namelist())
+        expected_natives = {
+            "native/linux-x86_64/libselenium_core.so",
+            "native/linux-arm64/libselenium_core.so",
+            "native/macos-x86_64/libselenium_core.dylib",
+            "native/macos-arm64/libselenium_core.dylib",
+            "native/windows-x86_64/selenium_core.dll",
+            "native/windows-arm64/selenium_core.dll",
+        }
+        if missing := expected_natives - members:
+            raise ValueError(f"multiplatform Java jar is missing native resources: {sorted(missing)}")
     lib = ctypes.CDLL(str((dist / f"libselenium_core-{tag}-linux-x86_64.so").resolve()))
     exports = re.findall(r"^(sel_embed_\w+)\(", (ROOT / "selenium_core/embed.ae").read_text(), re.MULTILINE)
     if not exports:

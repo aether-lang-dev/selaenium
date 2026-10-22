@@ -29,7 +29,7 @@
 
 /* The engine gh-release tag the fetch cache is keyed by. MUST match
    engine_fetcher.lua's F.ENGINE_VERSION so engine_load() finds a fetched engine. */
-#define ENGINE_VERSION "v0.12.0"
+#define ENGINE_VERSION "v0.13.0"
 
 /* ---- the ABI, dlsym'd once ---- */
 typedef void* (*fn_open)(const char*);
@@ -138,8 +138,12 @@ static int load_symbols(lua_State* L, void* lib, const char* path) {
         if (!ENGINE.field) {                                                 \
             dlclose(lib);                                                    \
             memset(&ENGINE, 0, sizeof(ENGINE));                              \
-            return luaL_error(L, "selenium_core: engine at '%s' is missing " \
-                                 "symbol %s", path, name);                   \
+            return luaL_error(L, "The native Selaenium library at '%s' is " \
+                                 "incompatible with this Lua client (engine " \
+                                 ENGINE_VERSION "): required ABI symbol %s is " \
+                                 "missing. Please consider deleting or replacing " \
+                                 "'%s' with the engine library from " ENGINE_VERSION ".", \
+                                 path, name, path);                            \
         }                                                                    \
     } while (0)
 

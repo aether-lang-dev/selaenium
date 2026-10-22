@@ -18,6 +18,7 @@ namespace OpenQA.Selenium;
 /// </summary>
 internal static class NativeLoader
 {
+    private const string EngineVersion = "v0.13.0";
     private static int _registered;
     private static volatile string? _explicitPath;
 
@@ -56,10 +57,35 @@ internal static class NativeLoader
             if (!string.IsNullOrEmpty(candidate) && File.Exists(candidate) &&
                 NativeLibrary.TryLoad(candidate, out IntPtr handle))
             {
+                ValidateAbi(handle, candidate);
                 return handle;
             }
         }
-        return NativeLibrary.TryLoad(FileName, out IntPtr os) ? os : IntPtr.Zero;
+        if (!NativeLibrary.TryLoad(FileName, out IntPtr os))
+        {
+            return IntPtr.Zero;
+        }
+        ValidateAbi(os, FileName);
+        return os;
+    }
+
+    private static void ValidateAbi(IntPtr handle, string path)
+    {
+        foreach (MethodInfo method in typeof(NativeMethods).GetMethods(
+                     BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic))
+        {
+            DllImportAttribute? import = method.GetCustomAttribute<DllImportAttribute>();
+            string? symbol = import?.EntryPoint;
+            if (string.IsNullOrEmpty(symbol) || NativeLibrary.TryGetExport(handle, symbol, out _))
+            {
+                continue;
+            }
+            NativeLibrary.Free(handle);
+            throw new EntryPointNotFoundException(
+                $"The native Selaenium library at '{path}' is incompatible with this .NET client " +
+                $"(engine {EngineVersion}): required ABI symbol {symbol} is missing. Please consider " +
+                $"deleting or replacing '{path}' with the engine library from {EngineVersion}.");
+        }
     }
 
     private static IEnumerable<string> CandidatePaths()
@@ -76,7 +102,10 @@ internal static class NativeLoader
         string baseDir = AppContext.BaseDirectory;
         yield return Path.Combine(baseDir, FileName);
         yield return Path.Combine(baseDir, "native", FileName);
-        yield return Path.Combine(baseDir, "runtimes", Rid, "native", FileName);
+        foreach (string rid in Rids)
+        {
+            yield return Path.Combine(baseDir, "runtimes", rid, "native", FileName);
+        }
     }
 
     private static string FileName =>
@@ -84,7 +113,7 @@ internal static class NativeLoader
         : RuntimeInformation.IsOSPlatform(OSPlatform.OSX) ? $"lib{NativeMethods.Lib}.dylib"
         : $"lib{NativeMethods.Lib}.so";
 
-    private static string Rid
+    private static IEnumerable<string> Rids
     {
         get
         {
@@ -98,7 +127,11 @@ internal static class NativeLoader
                 Architecture.X64 => "x64",
                 _ => RuntimeInformation.ProcessArchitecture.ToString().ToLowerInvariant(),
             };
-            return $"{os}-{arch}";
+            if (os == "linux" && RuntimeInformation.RuntimeIdentifier.Contains("-musl", StringComparison.Ordinal))
+            {
+                yield return $"linux-musl-{arch}";
+            }
+            yield return $"{os}-{arch}";
         }
     }
 }
