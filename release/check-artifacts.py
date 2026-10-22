@@ -68,6 +68,7 @@ def check_artifacts(tag, dist, engine_only=False):
                 ("Project.toml", "src/Selenium.jl", "README.md"),
             ),
         }
+        binding_source_archives = set()
         for language, required in {
             "go": ("go.mod", "selenium.go", "README.md"),
             "dart": ("pubspec.yaml", "lib/selenium.dart", "README.md"),
@@ -80,9 +81,12 @@ def check_artifacts(tag, dist, engine_only=False):
             "lua": ("src/selenium.lua", "src/engine_fetcher.lua", "README.md"),
             "d": ("src/selenium/package.d", "README.md"),
         }.items():
-            source_archives[f"selenium-{language}-{tag}.tar.gz"] = (
-                language, required + ("scripts/fetch-engine.sh", "SELENIUM_CORE_VERSION")
+            filename = f"selenium-{language}-{tag}.tar.gz"
+            source_archives[filename] = (
+                language, required
             )
+            binding_source_archives.add(filename)
+        shared_source_files = ("scripts/fetch-engine.sh", "SELENIUM_CORE_VERSION")
         for filename, (topdir, required) in source_archives.items():
             archive = dist / filename
             with tarfile.open(archive, "r:gz") as tar:
@@ -90,6 +94,10 @@ def check_artifacts(tag, dist, engine_only=False):
             for path in required:
                 if f"{topdir}/{path}" not in members:
                     raise ValueError(f"{filename} is missing {topdir}/{path}")
+            if filename in binding_source_archives:
+                for path in shared_source_files:
+                    if path not in members:
+                        raise ValueError(f"{filename} is missing {path}")
             native = (".so", ".dylib", ".dll", ".a", ".o", ".phar", ".exe")
             generated = ("/native/", "/target/", "/obj/", "/dist-newstyle/",
                          "/.stack-work/", "/.dart_tool/", "/.zig-cache/", "/.build/")
