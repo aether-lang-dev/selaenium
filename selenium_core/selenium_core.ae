@@ -1345,20 +1345,27 @@ by_locator_for(sp: ptr, strategy: string, value: string) -> string {
 // (Selenium's escapeCss is the full CSS.escape; this covers the common set.)
 css_escape(s: string) -> string {
     // Escape backslash and double-quote which would break the selector string.
-    out = string.replace(s, "\\", "\\\\")
-    out = string.replace(out, "\"", "\\\"")
+    // replace_all, NOT replace: string.replace substitutes only the FIRST
+    // occurrence (the same trap atoms.ae records for _qjson).
+    out = string.replace_all(s, "\\", "\\\\")
+    out = string.replace_all(out, "\"", "\\\"")
     return out
 }
 
 // Escape a value for a quoted CSS string (attribute selector). CSS.escape is
 // for identifiers and does not preserve newlines inside a quoted string.
+//
+// Every replacement is replace_all. An earlier cut used string.replace, which
+// escaped only the first quote or newline, so `a"b"c` produced an invalid
+// selector. It also listed "\u000c" and "\u0000", but Aether string literals
+// have no \u escape: those were the plain text `u000c` / `u0000`, so
+// By.id("menu0000") became `*[id="men\fffd "]`. A NUL cannot reach here anyway
+// (strings are NUL-terminated C strings).
 css_string_escape(s: string) -> string {
-    out = string.replace(s, "\\", "\\\\")
-    out = string.replace(out, "\"", "\\\"")
-    out = string.replace(out, "\n", "\\a ")
-    out = string.replace(out, "\r", "\\d ")
-    out = string.replace(out, "\u000c", "\\c ")
-    out = string.replace(out, "\u0000", "\\fffd ")
+    out = string.replace_all(s, "\\", "\\\\")
+    out = string.replace_all(out, "\"", "\\\"")
+    out = string.replace_all(out, "\n", "\\a ")
+    out = string.replace_all(out, "\r", "\\d ")
     return out
 }
 

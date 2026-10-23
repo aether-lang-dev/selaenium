@@ -65,6 +65,18 @@ main() {
                 "{\"using\":\"css selector\",\"value\":\"*[id=\\\"my\\\\a id\\\"]\"}", "id newline escaped in CSS string")
             spec.assert_str_eq(selenium_core.by_locator("name", "my\nname"),
                 "{\"using\":\"css selector\",\"value\":\"*[name=\\\"my\\\\a name\\\"]\"}", "name newline escaped in CSS string")
+            // EVERY occurrence is escaped, not just the first (string.replace
+            // trap), and text that merely looks like an escape is left alone.
+            spec.assert_str_eq(selenium_core.by_locator("id", "a\"b\"c"),
+                "{\"using\":\"css selector\",\"value\":\"*[id=\\\"a\\\\\\\"b\\\\\\\"c\\\"]\"}", "every quote escaped")
+            spec.assert_str_eq(selenium_core.by_locator("id", "x\ny\nz"),
+                "{\"using\":\"css selector\",\"value\":\"*[id=\\\"x\\\\a y\\\\a z\\\"]\"}", "every newline escaped")
+            spec.assert_str_eq(selenium_core.by_locator("id", "menu0000"),
+                "{\"using\":\"css selector\",\"value\":\"*[id=\\\"menu0000\\\"]\"}", "u0000 text untouched")
+            spec.assert_str_eq(selenium_core.by_locator("name", "flu000c"),
+                "{\"using\":\"css selector\",\"value\":\"*[name=\\\"flu000c\\\"]\"}", "u000c text untouched")
+            spec.assert_str_eq(selenium_core.by_locator("className", "a\\b\\c"),
+                "{\"using\":\"css selector\",\"value\":\".a\\\\\\\\b\\\\\\\\c\"}", "every backslash escaped")
             spec.assert_str_eq(selenium_core.by_locator("xpath", "//a"),
                 "{\"using\":\"xpath\",\"value\":\"//a\"}", "xpath passthrough")
         }

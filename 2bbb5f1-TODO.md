@@ -60,8 +60,11 @@ that architecture or left upstream-only.
   Upstream references: `65ce702` and the atom tests added by `a347258`. The
   upstream `find-elements` implementation is not the same as Selaenium's
   relative-locator atom, so do not copy its TypeScript implementation. The
-  newline-in-id/name case exposed incomplete shared CSS string escaping; the
-  engine now escapes those values and Java/Python/.NET relative locators ask
+  newline-in-id/name case exposed incomplete shared CSS string escaping. The
+  engine now escapes every quote, backslash and newline in those values. The
+  first cut escaped only the first of each (`string.replace`), and its `\u`
+  literals were plain text in Aether, so `By.id("menu0000")` was rewritten. The
+  probe now pins repeated characters and that id. Also, Java/Python/.NET relative locators ask
   the engine to normalize their `By` values. The NBSP link-text case is handled
   by the remote end because Selaenium forwards link-text strategies unchanged.
   A live Chrome test now uses duplicate IDs and a positioned outer anchor to
@@ -160,3 +163,35 @@ applicable** (with the architectural reason), or **deferred** (with the
 capability or evidence needed to revisit it). Do not mark an item complete
 because an upstream commit exists or because a binding-level test passes when
 the shared engine behavior has not been exercised.
+
+## Remaining Selaenium product gaps
+
+These are product/API gaps identified during the upstream review, rather than
+unfinished ports required by this checklist. The BiDi commands below remain
+reachable through the generic command path; the missing pieces are convenience
+APIs unless stated otherwise.
+
+- **Remote Grid file upload — recommended.** The engine routes `uploadFile`,
+  but bindings lack the `file_detector` workflow that transfers a local file
+  before sending its remote path. Add and test it in at least Java and Python,
+  then share the behavior across bindings where their APIs support it.
+- **FedCM dialog helpers — recommended.** The engine routes the FedCM commands,
+  but bindings do not provide an ergonomic dialog API. Add thin helpers over
+  those existing routes, with Java and Python as initial targets.
+- **Python BiDi domain accessors — recommended.** Add `driver.network`,
+  `driver.script`, and `driver.browsing_context` conveniences over the working
+  generic BiDi surface; retain generic commands for less common methods.
+- **BiDi emulation and viewport helpers — consider.** Add convenience methods
+  for useful media, text-layout, and viewport controls where browser support
+  and consumer need justify them. Screencast support is lower priority.
+- **Grid downloadable files — consider with upload support.** The standalone
+  hub does not yet implement Grid file download handling. Add it when completing
+  remote file workflows, including filenames containing spaces in tests.
+- **Distributed Grid — defer.** The current server is standalone; it does not
+  include Router, Distributor, SessionQueue, or remote-node coordination. This
+  is a substantial server capability and should wait for a concrete multi-node
+  use case.
+
+Continue to exclude generated CDP trees (BiDi is the supported protocol path),
+deprecated pinned scripts, legacy JSON-Wire `mobile` / `orientation`, and
+Selenium's driver-lifecycle internals (owned by the shared engine).

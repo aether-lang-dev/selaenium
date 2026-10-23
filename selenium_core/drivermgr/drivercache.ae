@@ -187,14 +187,28 @@ ensure_browser(root: string, browser_name: string, label: string, version: strin
     return result
 }
 
-// Publish a complete browser tree from a private staging directory. The tree
-// contents are version-addressed and identical between concurrent installers;
-// the executable itself is moved out, the supporting files are merged, and the
-// executable is atomically renamed last as the readiness marker.
+// Publish a complete browser tree from a private staging directory: one
+// directory rename when the versioned dir is new (the normal case), else a
+// merge with the executable renamed in last as the readiness marker.
 install_browser_staged(staged_root: string, dir: string, bin_subpath: string) -> string {
     target = string.concat(dir, string.concat("/", bin_subpath))
     if file_exists(target) == 1 { return target }
     staged_binary = string.concat(staged_root, string.concat("/", bin_subpath))
+    if file_exists(staged_binary) == 0 { return "" }
+
+    // Normal case: the versioned dir does not exist yet, so publish the whole
+    // staged tree with ONE directory rename. Atomic, no copying, and a racing
+    // installer's rename fails (the dir now exists and is not empty) so it
+    // takes the cache hit below. Never copying into the shared dir matters: a
+    // copy overwrites files in place, and the winner may already be running
+    // the browser out of that dir.
+    _pd = fs.mkdir_p(_dirname(dir))
+    _whole = fs.rename(staged_root, dir)
+    if file_exists(target) == 1 { return target }
+
+    // Fallback: dir already exists without its executable (a partial install
+    // from an older, non-atomic engine). Merge the support files, then rename
+    // the executable in last as the readiness marker.
     if file_exists(staged_binary) == 0 { return "" }
     md_err = fs.mkdir_p(dir)
     if string.length(md_err) > 0 { return "" }
@@ -206,10 +220,16 @@ install_browser_staged(staged_root: string, dir: string, bin_subpath: string) ->
     }
 
     copy_status = _copy_browser_tree(staged_root, dir)
-    if copy_status != 0 { return "" }
+    if copy_status != 0 {
+        // The sentinel sits beside the staging dir, outside the tree the
+        // caller removes, so drop it here or a whole browser binary leaks.
+        _rs = fs.remove_tree(sentinel)
+        return ""
+    }
     _parent = fs.mkdir_p(_dirname(target))
     _publish = fs.rename(sentinel, target)
     if file_exists(target) == 1 { return target }
+    _rs2 = fs.remove_tree(sentinel)
     return ""
 }
 

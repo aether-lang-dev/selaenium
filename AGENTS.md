@@ -77,7 +77,7 @@ self-skips when no driver resolves), and **add a `.example.ae`** (below).
 
 ## The C ABI (`aether_sel_embed_*`)
 
-50 exports. Handle-based, N sessions per process. `open(base_url)` → handle;
+70 exports (count them: `nm -D libselenium_core.so | grep -c " T aether_sel_embed_"`; a number written here goes stale). Handle-based, N sessions per process. `open(base_url)` → handle;
 `execute(h, name, params_json)` → 0 / a W3C error code / -1 for transport
 failure; drain via `last_value` / `last_error_code` / `last_error` /
 `last_status` / `session_id`. Pure helpers `by_locator`, `route`, `error_code`,

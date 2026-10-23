@@ -356,7 +356,7 @@ GNU/musl package selection and the SDK fixes needed to compile with 0.838.0.
 - **Engine** (`selenium_core/selenium_core.ae`): full W3C command map, path templating,
   By normalization, W3C error decode, HTTP round-trip. ✅ builds, ✅ 31/31 probes.
 - **ABI** (`selenium_core/embed.ae`) + C bridge: ✅ builds to `libselenium_core.so`,
-  50 exports — the command seam plus driver orchestration (`resolve_driver` /
+  70 exports — the command seam plus driver orchestration (`resolve_driver` /
   `ensure_driver` / `stop_driver`), the atoms (`is_displayed`, `get_attribute`,
   `find_relative` / scoped `find_relative_in`) and the full BiDi surface
   (`bidi_*`, including network interception).
