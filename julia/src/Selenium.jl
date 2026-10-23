@@ -94,7 +94,7 @@ using SHA: sha256
 # shared engine (NOT the binding's own Project.toml version) — the tag whose
 # assets this fetcher downloads. Bump it when the binding is re-glued to a newer
 # engine.
-const ENGINE_VERSION = "v0.14.1"
+const ENGINE_VERSION = "v0.14.2"
 
 const REPO = "aether-lang-dev/selaenium"
 

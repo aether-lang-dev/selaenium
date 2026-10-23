@@ -27,7 +27,7 @@ import java.security.CodeSource;
  */
 final class Native {
 
-    private static final String ENGINE_VERSION = "v0.14.1";
+    private static final String ENGINE_VERSION = "v0.14.2";
 
     private static final Linker LINKER = Linker.nativeLinker();
     private static final Arena GLOBAL = Arena.global();

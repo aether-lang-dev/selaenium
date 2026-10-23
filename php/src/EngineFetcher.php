@@ -30,7 +30,7 @@ final class EngineFetcher
      * assets this fetcher downloads. Bump it when the binding is re-glued to a
      * newer engine.
      */
-    public const ENGINE_VERSION = 'v0.14.1';
+    public const ENGINE_VERSION = 'v0.14.2';
 
     public const REPO = 'aether-lang-dev/selaenium';
 

@@ -18,7 +18,7 @@ const path = require('path')
 const koffi = require('koffi')
 
 const LIB_BASE = 'selenium_core'
-const ENGINE_VERSION = 'v0.14.1'
+const ENGINE_VERSION = 'v0.14.2'
 
 function fileName() {
   switch (process.platform) {
