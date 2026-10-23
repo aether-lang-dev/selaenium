@@ -179,6 +179,7 @@ def test_live_firefox():
     factory drives the same pipeline as Chrome. The engine resolves + spawns
     geckodriver in-binding (ensure_driver("firefox")); skips loudly when no
     geckodriver is resolvable here (offline + empty cache, or no Firefox)."""
+    from selenium._webdriver import SessionNotCreatedException
     from selenium.webdriver import By, ensure_driver, headless_firefox, resolve_driver
 
     path = resolve_driver("firefox")
@@ -189,7 +190,14 @@ def test_live_firefox():
     if proc is None:
         pytest.skip("could not launch geckodriver")
     try:
-        driver = headless_firefox(proc.url)
+        try:
+            driver = headless_firefox(proc.url)
+        except SessionNotCreatedException as exc:
+            # geckodriver is resolvable (the cache fetches it) but this box has
+            # no Firefox: nothing to drive, so skip as the docstring promises.
+            if "unable to find binary" in str(exc):
+                pytest.skip("geckodriver resolved but no Firefox binary is installed")
+            raise
         try:
             assert driver.session_id, "no session id after newSession"
             assert driver.name == "firefox", f"browserName={driver.name!r}"

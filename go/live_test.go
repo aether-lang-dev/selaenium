@@ -534,6 +534,9 @@ func TestLiveFirefox(t *testing.T) {
 
 	drv, err := NewHeadlessFirefox(proc.URL())
 	if err != nil {
+		if strings.Contains(err.Error(), "unable to find binary") {
+			t.Skip("geckodriver resolved but no Firefox binary is installed")
+		}
 		t.Fatalf("NewHeadlessFirefox: %v", err)
 	}
 	defer drv.Quit()

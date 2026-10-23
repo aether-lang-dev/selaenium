@@ -148,7 +148,16 @@ test('live firefox', async (t) => {
   assert.ok(proc instanceof s.DriverProcess, 'ensureDriver(firefox) did not return a DriverProcess')
   try {
     assert.ok(proc.url.startsWith('http'), `geckodriver url=${proc.url}`)
-    const d = s.WebDriver.headlessFirefox(proc.url)
+    let d
+    try {
+      d = s.WebDriver.headlessFirefox(proc.url)
+    } catch (e) {
+      if (/unable to find binary/.test(String(e.message))) {
+        t.skip('geckodriver resolved but no Firefox binary is installed')
+        return
+      }
+      throw e
+    }
     try {
       assert.ok(d.sessionId, 'no session id from headlessFirefox')
       const html = '<!doctype html><title>Aether Firefox</title><h1 id="hdr">Hello FF</h1>'
