@@ -18,7 +18,7 @@ namespace OpenQA.Selenium;
 /// </summary>
 internal static class NativeLoader
 {
-    private const string EngineVersion = "v0.14.0";
+    private const string EngineVersion = "v0.14.1";
     private static int _registered;
     private static volatile string? _explicitPath;
 
