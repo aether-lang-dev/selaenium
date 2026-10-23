@@ -37,16 +37,16 @@ One line installs a pinned `ae` (>= `AE_PIN`) THEN a pinned `aeb`, into
 bindings resolve their Maven deps on a fresh binary install:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/aether-lang-dev/aeb/v0.330/get.sh \
-  | AE_PIN=0.839.0 AEB_REF=v0.330 sh
+curl -fsSL https://raw.githubusercontent.com/aether-lang-dev/aeb/v0.334/get.sh \
+  | AE_PIN=0.841.0 AEB_REF=v0.334 sh
 ```
 
 `get.sh` is also a sourceable library — a CI step can source it (set
 `AEBGET_SOURCE_ONLY=1` so sourcing only *defines* the functions) then drive it:
 
 ```bash
-AEBGET_SOURCE_ONLY=1 . <(curl -fsSL https://raw.githubusercontent.com/aether-lang-dev/aeb/v0.330/get.sh)
-AE_PIN=0.839.0 AEB_REF=v0.330 aeb_bootstrap
+AEBGET_SOURCE_ONLY=1 . <(curl -fsSL https://raw.githubusercontent.com/aether-lang-dev/aeb/v0.334/get.sh)
+AE_PIN=0.841.0 AEB_REF=v0.334 aeb_bootstrap
 ```
 
 Then build the engine (the one thing every binding needs) and, for a given
