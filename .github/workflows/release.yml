@@ -87,9 +87,14 @@ jobs:
         run: ci/toolchain.sh
 
       # Needs aeb, so it runs after the toolchain install rather than first.
+      # ci/toolchain.sh installs aeb into ~/.local/bin, which is not on this
+      # image's PATH between steps (release/build.sh adds it the same way).
       - name: Check binding pins
         shell: bash
-        run: SEL_RELEASE_TAG="$RELEASE_TAG" aeb release/.version.ae
+        run: |
+          set -euo pipefail
+          export PATH="${PREFIX:-$HOME/.local}/bin:$PATH"
+          SEL_RELEASE_TAG="$RELEASE_TAG" aeb release/.version.ae
 
       - name: Verify release image toolchains
         shell: bash
