@@ -15,7 +15,7 @@ void main() {
   test('engineVersion is a release tag, re-exported at the top level', () {
     expect(EngineFetcher.engineVersion, matches(RegExp(r'^v\d+\.\d+\.\d+$')),
         reason: 'engineVersion is a vX.Y.Z gh-release tag');
-    expect(EngineFetcher.engineVersion, 'v0.13.0');
+    expect(EngineFetcher.engineVersion, 'v0.14.0');
   });
 
   test('assetName matches the release artifact scheme', () {
