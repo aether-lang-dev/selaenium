@@ -51,7 +51,7 @@ runtime and link-time bindings use), stages the `.so` with native `std.fs`, and
 source of truth in the repo-root `SELENIUM_CORE_VERSION` file, also read by
 `scripts/fetch-engine.sh` (overridable via `TAG=`). Some bindings carry a literal
 copy so their published packages work outside this repository. Prepare that file
-and all binding copies together with `python3 release/version.py --set <tag>`
+and all binding copies together with `SEL_RELEASE_SET=<tag> aeb release/.version.ae`
 before tagging a release. After GitHub publishes the binaries, verify the pins
 name the tag just released and check packaging against the downloaded binary. The engine tag
 is independent of `AETHER_REF`, which versions the compiler. Follow the

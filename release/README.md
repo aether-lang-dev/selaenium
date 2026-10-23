@@ -41,8 +41,8 @@ Manager does not attempt to resolve 32-bit browser/driver assets for them.
 Prepare the engine version, commit the changes, then push a tag at that commit:
 
 ```sh
-python3 release/version.py --set v0.11.0
-python3 release/version.py --check v0.11.0
+SEL_RELEASE_SET=v0.11.0 aeb release/.version.ae
+SEL_RELEASE_TAG=v0.11.0 aeb release/.version.ae
 # Stage the version changes shown by git diff, then:
 git commit -m '[release] prepare engine v0.11.0'
 git push origin main
@@ -101,7 +101,7 @@ secrets.)
 The Selaenium engine release tag versions the `.so`, `.dylib`, and `.dll`.
 It is separate from the Aether and aeb toolchain versions in `ci/versions.env`.
 
-`release/version.py --set <tag>` updates `SELENIUM_CORE_VERSION`, the Aether
+`SEL_RELEASE_SET=<tag> aeb release/.version.ae` updates `SELENIUM_CORE_VERSION`, the Aether
 package version, all binding copies of the engine pin, and their version
 assertions together. Commit those changes **before tagging**, so the tagged
 bindings download the engine from their own release. The workflow rejects any
@@ -114,7 +114,7 @@ After publication:
    a tag or release page alone does not prove the engine is available. The
    workflow does this automatically for all nine libraries, and loads the
    downloaded Linux library to check every C ABI export.
-2. Check `python3 release/version.py --check <tag>` on the current branch too:
+2. Check `SEL_RELEASE_TAG=<tag> aeb release/.version.ae` on the current branch too:
    all download pins must name **the engine just released**. Update the README's
    engine requirement and link to the published release.
    Keep historical release records intact.

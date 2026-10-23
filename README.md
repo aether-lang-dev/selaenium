@@ -320,7 +320,7 @@ copies selected source sets and chosen native libraries from one release tag
 into separate paths, with a manifest that can be checked against that tag.
 
 To release an engine, prepare its version with
-`python3 release/version.py --set <tag>`, commit, and push that `vX.Y.Z` tag.
+`SEL_RELEASE_SET=<tag> aeb release/.version.ae`, commit, and push that `vX.Y.Z` tag.
 [GitHub Actions](.github/workflows/release.yml)
 cross-builds and publishes the engine binaries and their checksums. Starting with
 v0.11.0, the range adds Linux musl (x86_64/arm64) and FreeBSD

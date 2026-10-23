@@ -22,6 +22,10 @@ import bldr
 
 aeb(cap) {
     bldr.build() {
+        // every binding's engine pin names SELENIUM_CORE_VERSION. (Check mode
+        // only: SEL_RELEASE_SET in the environment would rewrite the pins.)
+        dep("release/.version.ae")
+
         // engine + its no-browser probe
         dep("selenium_core/.build.ae")
         dep("selenium_core/tests/.tests.ae")

@@ -33,13 +33,12 @@ jobs:
           ref: ${{ inputs.tag || github.ref_name }}
           fetch-depth: 0
 
-      - name: Check release tag and binding pins
+      - name: Check release tag
         shell: bash
         run: |
           set -euo pipefail
           [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
           test "$(git rev-parse HEAD)" = "$(git rev-parse "refs/tags/$RELEASE_TAG^{commit}")"
-          python3 release/version.py --check "$RELEASE_TAG"
 
       - name: Install pinned Aether and Zig
         shell: bash
@@ -86,6 +85,11 @@ jobs:
 
       - name: Install pinned aeb
         run: ci/toolchain.sh
+
+      # Needs aeb, so it runs after the toolchain install rather than first.
+      - name: Check binding pins
+        shell: bash
+        run: SEL_RELEASE_TAG="$RELEASE_TAG" aeb release/.version.ae
 
       - name: Verify release image toolchains
         shell: bash
