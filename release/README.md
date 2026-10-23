@@ -102,8 +102,10 @@ The Selaenium engine release tag versions the `.so`, `.dylib`, and `.dll`.
 It is separate from the Aether and aeb toolchain versions in `ci/versions.env`.
 
 `SEL_RELEASE_SET=<tag> aeb release/.version.ae` updates `SELENIUM_CORE_VERSION`, the Aether
-package version, all binding copies of the engine pin, and their version
-assertions together. Commit those changes **before tagging**, so the tagged
+package version, all binding copies of the engine pin, their version
+assertions, and the doc lines that quote the pin, together. Each is anchored to
+its surrounding text, so a stale doc fails the check and historical mentions
+("added in v0.14.0") are never rewritten. Commit those changes **before tagging**, so the tagged
 bindings download the engine from their own release. The workflow rejects any
 drift between the tag and these pins. Do not distribute packages from that
 preparation commit until the engine assets are published successfully.

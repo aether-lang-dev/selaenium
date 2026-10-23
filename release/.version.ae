@@ -1,5 +1,5 @@
 // The engine release pin, checked or set across every independently shipped
-// binding. Replaces release/version.py.
+// binding and the docs that quote it. Replaces release/version.py.
 //
 //   aeb release/.version.ae                              check every pin against SELENIUM_CORE_VERSION
 //   SEL_RELEASE_TAG=v0.15.0 aeb release/.version.ae      check every pin against v0.15.0
@@ -9,198 +9,185 @@
 // prints to target/.aeb/logs/version_release.log; a failure's reason is also in
 // aeb's console summary.
 //
-// Each pattern matches exactly the version: `\K` drops what precedes it from
-// the match and a lookahead checks what follows, so a find_all span is the
-// version alone, like Python's match.span(1). `${` would be Aether string
-// interpolation, so the shell-default pins spell it `[$][{]`.
-//
 // Setting is all-or-nothing: every pin is found and counted before any file is
 // written. Never add this node to a target set in set mode: it rewrites tracked
 // source files.
 import bldr
 import std.fs
-import std.list
+import std.map
 import std.os
 import std.regex
 import std.string
 
-const PIN_COUNT = 23
+// One row per pin: the file, then the text around the version as a regex, with
+// @V@ where the version stands (@B@ for one written without its leading "v").
+// The same text twice in one file is listed twice. Docs are pinned the same
+// way, so a stale doc fails the check and history ("added in v0.14.0") is never
+// rewritten. `${` would be Aether string interpolation, so the shell-default
+// pins spell it `[$][{]`.
+const PINS[] = [
+    "SELENIUM_CORE_VERSION", "^@V@\\s*$",
+    "aether.toml", "^version = \"@B@\"$",
+    "crystal/shard.yml", "^version: @B@$",
+    "python/selenium/engine_fetcher.py", "ENGINE_VERSION = \"@V@\"",
+    "ruby/lib/selenium/engine_fetcher.rb", "ENGINE_VERSION = '@V@'",
+    "dart/lib/src/engine_fetcher.dart", "engineVersion = '@V@'",
+    "dart/test/engine_fetcher_test.dart", "expect\\(EngineFetcher.engineVersion, '@V@'\\)",
+    "java/src/main/java/org/openqa/selenium/Native.java", "ENGINE_VERSION = \"@V@\"",
+    "javascript/lib/native.js", "ENGINE_VERSION = '@V@'",
+    "dotnet/SeleniumCore/NativeLoader.cs", "EngineVersion = \"@V@\"",
+    "go/enginepath.go", "SeleniumCoreVersion = \"@V@\"",
+    "swift/Package.swift", "seleniumCoreVersion = \"@V@\"",
+    "swift/Tests/SeleniumTests/VersionTests.swift", "expectedSeleniumCoreVersion = \"@V@\"",
+    "swift/Tests/SeleniumTests/VersionTests.swift", "written for \\(\"@V@\"\\)",
+    "zig/build.zig", "SELENIUM_CORE_VERSION = \"@V@\"",
+    "lua/src/selenium_core.c", "#define ENGINE_VERSION \"@V@\"",
+    "lua/src/engine_fetcher.lua", "F.ENGINE_VERSION = \"@V@\"",
+    "php/src/EngineFetcher.php", "ENGINE_VERSION = '@V@'",
+    "julia/src/Selenium.jl", "ENGINE_VERSION = \"@V@\"",
+    "crystal/src/selenium.cr", "SELENIUM_CORE_VERSION = \"@V@\"",
+    "crystal/bin/crystal-build", "ENGINE_VERSION=\"[$][{]ENGINE_VERSION:-@V@[}]",
+    "haskell/bin/cabal-build", "ENGINE_VERSION=\"[$][{]ENGINE_VERSION:-@V@[}]",
+    "haskell/selenium.cabal", "ENGINE_VERSION pin: @V@",
+    "c/.build.ae", "return \"@V@\"",
+    "c/.build.ae", "return \"@V@\"",
+    "cpp/.tests.ae", "return \"@V@\"",
+    "cpp/.tests.ae", "return \"@V@\"",
+    "README.md", "require engine \\*\\*@V@\\*\\*",
+    "README.md", "\\[@V@ release\\]",
+    "README.md", "releases/tag/@V@\\)",
+    "go/README.md", "SeleniumCoreVersion = \"@V@\"",
+    "go/AGENTS.md", "SeleniumCoreVersion = \"@V@\"",
+    "zig/README.md", "SELENIUM_CORE_VERSION = \"@V@\""
+]
 
-// (file, pattern) for pin i. A file with two pins is listed in two_pins().
-pin(i: int) -> (string, string) {
-    if i == 0 { return "SELENIUM_CORE_VERSION", "^\\Kv\\d+\\.\\d+\\.\\d+(?=\\s*$)" }
-    if i == 1 { return "aether.toml", "^version = \"\\K\\d+\\.\\d+\\.\\d+(?=\"$)" }
-    if i == 2 { return "crystal/shard.yml", "^version: \\K\\d+\\.\\d+\\.\\d+(?=$)" }
-    if i == 3 { return "python/selenium/engine_fetcher.py", "ENGINE_VERSION = \"\\Kv\\d+\\.\\d+\\.\\d+(?=\")" }
-    if i == 4 { return "ruby/lib/selenium/engine_fetcher.rb", "ENGINE_VERSION = '\\Kv\\d+\\.\\d+\\.\\d+(?=')" }
-    if i == 5 { return "dart/lib/src/engine_fetcher.dart", "engineVersion = '\\Kv\\d+\\.\\d+\\.\\d+(?=')" }
-    if i == 6 { return "dart/test/engine_fetcher_test.dart", "expect\\(EngineFetcher.engineVersion, '\\Kv\\d+\\.\\d+\\.\\d+(?='\\))" }
-    if i == 7 { return "java/src/main/java/org/openqa/selenium/Native.java", "ENGINE_VERSION = \"\\Kv\\d+\\.\\d+\\.\\d+(?=\")" }
-    if i == 8 { return "javascript/lib/native.js", "ENGINE_VERSION = '\\Kv\\d+\\.\\d+\\.\\d+(?=')" }
-    if i == 9 { return "dotnet/SeleniumCore/NativeLoader.cs", "EngineVersion = \"\\Kv\\d+\\.\\d+\\.\\d+(?=\")" }
-    if i == 10 { return "go/enginepath.go", "SeleniumCoreVersion = \"\\Kv\\d+\\.\\d+\\.\\d+(?=\")" }
-    if i == 11 { return "swift/Package.swift", "seleniumCoreVersion = \"\\Kv\\d+\\.\\d+\\.\\d+(?=\")" }
-    if i == 12 { return "swift/Tests/SeleniumTests/VersionTests.swift", "expectedSeleniumCoreVersion = \"\\Kv\\d+\\.\\d+\\.\\d+(?=\")" }
-    if i == 13 { return "zig/build.zig", "SELENIUM_CORE_VERSION = \"\\Kv\\d+\\.\\d+\\.\\d+(?=\")" }
-    if i == 14 { return "lua/src/selenium_core.c", "#define ENGINE_VERSION \"\\Kv\\d+\\.\\d+\\.\\d+(?=\")" }
-    if i == 15 { return "lua/src/engine_fetcher.lua", "F.ENGINE_VERSION = \"\\Kv\\d+\\.\\d+\\.\\d+(?=\")" }
-    if i == 16 { return "php/src/EngineFetcher.php", "ENGINE_VERSION = '\\Kv\\d+\\.\\d+\\.\\d+(?=')" }
-    if i == 17 { return "julia/src/Selenium.jl", "ENGINE_VERSION = \"\\Kv\\d+\\.\\d+\\.\\d+(?=\")" }
-    if i == 18 { return "crystal/src/selenium.cr", "SELENIUM_CORE_VERSION = \"\\Kv\\d+\\.\\d+\\.\\d+(?=\")" }
-    if i == 19 { return "crystal/bin/crystal-build", "ENGINE_VERSION=\"[$][{]ENGINE_VERSION:-\\Kv\\d+\\.\\d+\\.\\d+(?=[}])" }
-    if i == 20 { return "haskell/bin/cabal-build", "ENGINE_VERSION=\"[$][{]ENGINE_VERSION:-\\Kv\\d+\\.\\d+\\.\\d+(?=[}])" }
-    if i == 21 { return "c/.build.ae", "return \"\\Kv\\d+\\.\\d+\\.\\d+(?=\")" }
-    return "cpp/.tests.ae", "return \"\\Kv\\d+\\.\\d+\\.\\d+(?=\")"
+const SEMVER = "\\d+\\.\\d+\\.\\d+"
+
+// A row's template as a regex whose whole match is the version: `\K` drops
+// what precedes it and a lookahead checks what follows, so a find_all span is
+// the version alone, like Python's match.span(1).
+pattern(template: string) -> string {
+    bare = string.contains(template, "@B@") == 1
+    mark = if bare { "@B@" } else { "@V@" }
+    at = string.index_of(template, mark)
+    before = string.substring(template, 0, at)
+    after = string.substring(template, at + 3, string.length(template))
+    v = if bare { "" } else { "v" }
+    return "${before}\\K${v}${SEMVER}(?=${after})"
 }
 
-two_pins(name: string) -> int {
-    if string.equals(name, "c/.build.ae") == 1 { return 1 }
-    if string.equals(name, "cpp/.tests.ae") == 1 { return 1 }
-    return 0
+// How many rows are identical to `row`, and whether `row` is the first of them.
+copies(row: int) -> (int, bool) {
+    n = 0
+    first = true
+    for i in 0..PINS.len / 2 {
+        if PINS[2 * i] == PINS[2 * row] && PINS[2 * i + 1] == PINS[2 * row + 1] {
+            n += 1
+            if i < row { first = false }
+        }
+    }
+    return n, first
 }
 
-// These two files carry the version without its leading "v".
-bare(name: string) -> int {
-    if string.equals(name, "aether.toml") == 1 { return 1 }
-    if string.equals(name, "crystal/shard.yml") == 1 { return 1 }
-    return 0
+// One row's pins in `content`, set to `tag`: the new text, the mismatches found
+// on the way ("" when it already agreed) and how many, or an error.
+retag(content: string, row: int, tag: string) -> (string, string, int, string) {
+    file = PINS[2 * row]
+    template = PINS[2 * row + 1]
+    want = tag
+    if string.contains(template, "@B@") == 1 { want = string.substring(tag, 1, string.length(tag)) }
+    re, re_err = regex.compile_flags(pattern(template), regex.FLAG_MULTILINE)
+    if re_err != "" { return "", "", 0, "${file}: bad pattern: ${re_err}" }
+    defer regex.free(re)
+    fa, _fe = regex.find_all(re, content)
+    found = if fa == null { 0 } else { regex.find_all_count(fa) }
+    expected, _first = copies(row)
+    if found != expected {
+        if fa != null { regex.find_all_free(fa) }
+        return "", "", 0, "${file}: expected ${expected} version pin(s) like '${template}', found ${found}"
+    }
+    // Splice from the last match back, so earlier offsets stay valid.
+    out = content
+    detail = ""
+    wrong = 0
+    for k in 0..found {
+        j = found - 1 - k
+        ms = regex.find_all_start(fa, j)
+        me = regex.find_all_end(fa, j)
+        have = string.substring(content, ms, me)
+        if have != want {
+            detail = "${detail}\n  ${file}: ${have} != ${want}"
+            wrong += 1
+        }
+        out = "${string.substring(out, 0, ms)}${want}${string.substring(out, me, string.length(out))}"
+    }
+    if fa != null { regex.find_all_free(fa) }
+    return out, detail, wrong, ""
 }
 
-// Documentation copies of the old pin, rewritten old -> new in set mode.
-// VersionTests.swift is also a pin; its explanation quotes the version too.
-const REF_COUNT = 6
-
-reference(i: int) -> string {
-    if i == 0 { return "README.md" }
-    if i == 1 { return "go/README.md" }
-    if i == 2 { return "go/AGENTS.md" }
-    if i == 3 { return "zig/README.md" }
-    if i == 4 { return "haskell/selenium.cabal" }
-    return "swift/Tests/SeleniumTests/VersionTests.swift"
+// The release run: every pin read and retagged in memory, then either written
+// (set mode) or compared. "" when it passes, else why not.
+release(root: string, tag: string, setting: bool) -> string {
+    if regex.matches_lit("^v${SEMVER}$", tag)! == 0 {
+        return "expected a release tag vX.Y.Z, got '${tag}'"
+    }
+    bodies = map.map_new()
+    defer map.map_free(bodies)
+    detail = ""
+    wrong = 0
+    for row in 0..PINS.len / 2 {
+        _n, first = copies(row)
+        if !first { continue }   // its first copy already handled every match
+        file = PINS[2 * row]
+        content, err = map.get_string(bodies, file)
+        if map.map_has(bodies, file) == 0 {
+            content, err = fs.read("${root}/${file}")
+            if err != "" { return "${file}: cannot read" }
+        }
+        out, d, w, rerr = retag(content, row, tag)
+        if rerr != "" { return rerr }
+        map.map_put(bodies, file, out)
+        detail = "${detail}${d}"
+        wrong += w
+    }
+    if !setting {
+        if wrong > 0 { return "${wrong} engine version pin(s) disagree with ${tag}:${detail}" }
+        println("All engine version pins match ${tag}.")
+        return ""
+    }
+    keys, _k = map.keys(bodies)
+    defer map.map_keys_free(keys)
+    for i in 0..map.keys_size(keys) {
+        file = map.keys_get(keys, i)
+        body, _g = map.get_string(bodies, file)
+        werr = fs.write("${root}/${file}", body)
+        if werr != "" { return "${file}: ${werr}" }
+    }
+    println("Prepared engine pins for ${tag}; commit before tagging, then verify the published downloads.")
+    return ""
 }
 
-is_tag(s: string) -> int {
-    m, _e = regex.matches_lit("^v\\d+\\.\\d+\\.\\d+$", s)
-    return m
+// An environment variable, "" when unset: os.getenv gives null then, which
+// `!= ""` reads as set.
+env(name: string) -> string {
+    v = os.getenv(name)
+    if string.length(v) == 0 { return "" }
+    return v
 }
 
 aeb(cap) {
     bldr.build() {
-        root = string.concat(bldr.source_dir(builder_context()), "/..")
-        set_tag = os.getenv("SEL_RELEASE_SET")
-        check_tag = os.getenv("SEL_RELEASE_TAG")
-        old_text, old_err = fs.read(string.concat(root, "/SELENIUM_CORE_VERSION"))
-        old = string.trim(old_text)
-
-        tag = old
-        if string.length(check_tag) > 0 { tag = check_tag }
-        if string.length(set_tag) > 0 { tag = set_tag }
+        root = "${bldr.source_dir(builder_context())}/.."
+        set_tag = env("SEL_RELEASE_SET")
+        check_tag = env("SEL_RELEASE_TAG")
+        old, old_err = fs.read("${root}/SELENIUM_CORE_VERSION")
+        tag = string.trim(old)
+        if check_tag != "" { tag = check_tag }
+        if set_tag != "" { tag = set_tag }
         bad = ""
-        if string.length(old_err) > 0 { bad = "cannot read SELENIUM_CORE_VERSION" }
-        if string.length(set_tag) > 0 && string.length(check_tag) > 0 {
-            bad = "set SEL_RELEASE_SET or SEL_RELEASE_TAG, not both"
-        }
-        if string.length(bad) == 0 && is_tag(tag) == 0 {
-            bad = string.concat("expected a release tag vX.Y.Z, got '", string.concat(tag, "'"))
-        }
-
-        // Read and rewrite every pin in memory; nothing is written yet.
-        names = list.new()
-        bodies = list.new()
-        mismatches = 0
-        detail = ""
-        i = 0
-        while string.length(bad) == 0 && i < PIN_COUNT {
-            name, pattern = pin(i)
-            want = tag
-            if bare(name) == 1 { want = string.substring(tag, 1, string.length(tag)) }
-            content, read_err = fs.read(string.concat(root, string.concat("/", name)))
-            re, re_err = regex.compile_flags(pattern, regex.FLAG_MULTILINE)
-            if string.length(read_err) > 0 {
-                bad = string.concat(name, ": cannot read")
-            } else if re == null {
-                bad = string.concat(name, string.concat(": bad pattern: ", re_err))
-            } else {
-                fa, _fe = regex.find_all(re, content)
-                found = 0
-                if fa != null { found = regex.find_all_count(fa) }
-                expected = 1
-                if two_pins(name) == 1 { expected = 2 }
-                if found != expected {
-                    bad = string.concat(name, string.concat(": expected ", string.concat(string.from_int(expected),
-                        string.concat(" version pin(s), found ", string.from_int(found)))))
-                } else {
-                    // Splice from the last match back, so earlier offsets stay valid.
-                    out = content
-                    k = found - 1
-                    while k >= 0 {
-                        ms = regex.find_all_start(fa, k)
-                        me = regex.find_all_end(fa, k)
-                        have = string.substring(content, ms, me)
-                        if string.equals(have, want) == 0 {
-                            detail = string.concat(detail, "\n  ${name}: ${have} != ${want}")
-                            mismatches = mismatches + 1
-                        }
-                        out = string.concat(string.substring(out, 0, ms),
-                            string.concat(want, string.substring(out, me, string.length(out))))
-                        k = k - 1
-                    }
-                    list.add(names, name)
-                    list.add(bodies, out)
-                }
-                if fa != null { regex.find_all_free(fa) }
-                regex.free(re)
-            }
-            i = i + 1
-        }
-
-        if string.length(bad) > 0 {
-            bldr.fail(builder_context(), bad)
-        } else if string.length(set_tag) > 0 {
-            j = 0
-            while j < REF_COUNT {
-                ref = reference(j)
-                idx = -1
-                n = 0
-                while n < list.size(names) {
-                    nm, _g = list.get(names, n)
-                    if string.equals(nm, ref) == 1 { idx = n }
-                    n = n + 1
-                }
-                if idx >= 0 {
-                    body, _b = list.get(bodies, idx)
-                    list.set(bodies, idx, string.replace_all(body, old, tag))
-                } else {
-                    text, ref_err = fs.read(string.concat(root, string.concat("/", ref)))
-                    if string.length(ref_err) > 0 {
-                        bad = string.concat(ref, ": cannot read")
-                    } else {
-                        list.add(names, ref)
-                        list.add(bodies, string.replace_all(text, old, tag))
-                    }
-                }
-                j = j + 1
-            }
-            w = 0
-            while string.length(bad) == 0 && w < list.size(names) {
-                nm, _n = list.get(names, w)
-                body, _b = list.get(bodies, w)
-                werr = fs.write(string.concat(root, string.concat("/", nm)), body)
-                if string.length(werr) > 0 { bad = string.concat(nm, string.concat(": ", werr)) }
-                w = w + 1
-            }
-            if string.length(bad) > 0 {
-                bldr.fail(builder_context(), bad)
-            } else {
-                println("Prepared engine pins for ${tag}; commit before tagging, then verify the published downloads.")
-            }
-        } else if mismatches > 0 {
-            bldr.fail(builder_context(), string.concat(string.from_int(mismatches),
-                string.concat(" engine version pin(s) disagree with ", string.concat(tag, string.concat(":", detail)))))
-        } else {
-            println("All engine version pins match ${tag}.")
-        }
-        list.free(names)
-        list.free(bodies)
+        if old_err != "" { bad = "cannot read SELENIUM_CORE_VERSION" }
+        else if set_tag != "" && check_tag != "" { bad = "set SEL_RELEASE_SET or SEL_RELEASE_TAG, not both" }
+        else { bad = release(root, tag, set_tag != "") }
+        if bad != "" { bldr.fail(builder_context(), bad) }
     }
 }
