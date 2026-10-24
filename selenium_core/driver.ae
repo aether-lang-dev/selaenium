@@ -14,6 +14,7 @@
 // download -> Chrome-for-Testing) per docs/Selenium-Manager-Port.md. The launch
 // verbs (launch/url/pid/stop) stay stable while it does.
 import std.os
+import std.fs
 import std.net
 import std.list
 import std.mem
@@ -168,6 +169,28 @@ which(exe: string) -> string {
 
 // ---- launch layer (stable) ----
 
+// Where a spawned driver writes its stdout and stderr (its banner, its errors):
+// a file under the temp dir named for its port, removed by stop(). A driver is
+// given its own streams on purpose, not the caller's. A plain spawn hands the
+// child the parent's stdin/stdout/stderr, and Node marks those close-on-exec,
+// so a chromedriver started from the JS binding had none, and Chrome could not
+// be launched from it ("session not created: Failed to create Chrome
+// process"). Aether fixed the spawn itself (os.spawn_proc keeps the parent's
+// streams open across exec: aether PR "A spawned child keeps its parent's
+// standard streams"); this stays because a library should not write a driver's
+// banner into its host application's terminal either.
+_driver_log(port: int) -> string {
+    t = os.getenv("TMPDIR")
+    if t == null { t = os.getenv("TEMP") }
+    if t == null { t = os.getenv("TMP") }
+    if t == null { t = "/tmp" }
+    if string.length(t) == 0 { t = "/tmp" }
+    while string.length(t) > 1 && string.ends_with(t, "/") == 1 {
+        t = string.substring(t, 0, string.length(t) - 1)
+    }
+    return "${t}/selaenium-driver-${port}.log"
+}
+
 // Spawn an EXPLICIT driver binary on a free port and wait until it accepts
 // connections (bounded by timeout_ms). Returns an opaque Driver handle (as ptr),
 // or null if the path is empty, the spawn failed, or it never came up.
@@ -179,12 +202,13 @@ launch(driver_path: string, timeout_ms: int) -> ptr {
 
     argv = list.new()
     list.add(argv, string.concat("--port=", string.from_int(port)))
-    token, err = os.spawn_proc(driver_path, argv, null)
+    token, err = os.spawn_proc_to(driver_path, argv, null, _driver_log(port))
     list.free(argv)
     if string.length(err) > 0 { return null }
 
     if wait_ready(port, timeout_ms) == 0 {
-        // Never came up — kill + reap so we don't leak the process.
+        // Never came up — kill + reap so we don't leak the process. Its log
+        // stays: it is what says why.
         _kill_and_reap(token)
         return null
     }
@@ -236,7 +260,7 @@ ensure_appium(name: string, hint: string, timeout_ms: int) -> ptr {
     list.add(argv, string.from_int(port))
     list.add(argv, "--log-level")
     list.add(argv, "error")
-    token, err = os.spawn_proc(node, argv, null)
+    token, err = os.spawn_proc_to(node, argv, null, _driver_log(port))
     list.free(argv)
     if string.length(err) > 0 { return null }
     wait = timeout_ms
@@ -316,6 +340,7 @@ stop(dp: ptr) {
     if dp == null { return }
     d = dp as *Driver
     _kill_and_reap(d.token)
+    _rm = fs.delete(_driver_log(d.port))
     heap.free(dp)
 }
 
