@@ -307,7 +307,7 @@ fn takeString(allocator: std.mem.Allocator, ptr: [*c]u8) Error![]u8 {
 /// NUL-terminate a slice into a caller buffer for a C `const char*`. Falls back
 /// to a heap allocation for long strings (JSON params).
 fn cstr(allocator: std.mem.Allocator, s: []const u8) Error![:0]u8 {
-    return allocator.dupeZ(u8, s) catch Error.OutOfMemory;
+    return allocator.dupeSentinel(u8, s, 0) catch Error.OutOfMemory;
 }
 
 /// Append `s` to `buf` as a JSON string literal (with surrounding quotes),

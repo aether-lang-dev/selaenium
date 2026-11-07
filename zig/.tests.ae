@@ -1,4 +1,4 @@
-// Zig binding tests (@extern + link-time, Zig 0.16). The engine .so is LINKED at
+// Zig binding tests (@extern + link-time, Zig 0.17). The engine .so is LINKED at
 // build time via build.zig, which searches ../selenium_core/native/ (+ rpath) —
 // exactly where the engine node's copy.file() stages the .so — so no per-binding
 // staging is needed, just a dep on the engine. zig.test runs `zig build test`

@@ -3,6 +3,8 @@
 Selenium WebDriver for Zig — a thin `extern "c"` binding over the shared
 pure-Aether WebDriver engine (`libselenium_core`).
 
+Toolchain: **Zig 0.17.1** (`minimum_zig_version` is 0.17.0; 0.16 no longer builds it).
+
 The **engine** is one pure, reentrant shared library — a single
 `.so`/`.dylib`/`.dll` (N independent sessions per process). It is **not** an
 installation, a service, or a framework: no installer, no daemon, no config, no

@@ -402,7 +402,7 @@ GNU/musl package selection and the SDK fixes needed to compile with 0.838.0.
   - **Gleam** (`@external` to the NIF): authored; ✅ verify on a box with Gleam.
 - **Nim binding** (importc + link-time): ✅ FFI + **live headless Chrome +
   surface**. std/json; `{.passL.}` links the engine with rpath.
-- **Zig binding** (`@extern` + link-time, Zig 0.16): ✅ FFI + **live headless
+- **Zig binding** (`@extern` + link-time, Zig 0.17): ✅ FFI + **live headless
   Chrome + surface**. std.json; build.zig links + rpaths the engine.
 - **D binding** (`extern(C)` + link-time, dmd): ✅ FFI + **live headless Chrome +
   surface**. std.json; the `d` aeb SDK module (`dmd -run`) links + rpaths the engine.

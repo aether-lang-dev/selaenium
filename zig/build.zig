@@ -94,7 +94,7 @@ pub fn build(b: *std.Build) void {
     b.installArtifact(example);
     const run_example = b.addRunArtifact(example);
     run_example.step.dependOn(b.getInstallStep());
-    if (b.args) |args| run_example.addArgs(args);
+    run_example.addPassthruArgs();
     const example_step = b.step("example", "Build and run the consumer example");
     example_step.dependOn(&run_example.step);
 }
@@ -108,9 +108,10 @@ pub fn build(b: *std.Build) void {
 // Do NOT "fix" a mismatch by editing the file to match — update SELENIUM_CORE_VERSION.
 fn assertEngineVersionPinned(b: *std.Build) void {
     const io = b.graph.io;
-    const raw = b.build_root.handle.readFileAlloc(
+    const version_path = b.root.joinString(b.allocator, "../SELENIUM_CORE_VERSION") catch @panic("OOM");
+    const raw = std.Io.Dir.cwd().readFileAlloc(
         io,
-        "../SELENIUM_CORE_VERSION",
+        version_path,
         b.allocator,
         .limited(64),
     ) catch |err| {
@@ -143,11 +144,18 @@ fn engineSearchPath(b: *std.Build, engine_opt: ?[]const u8) []const []const u8 {
     if (b.graph.environ_map.get("SELENIUM_CORE_LIB")) |e| {
         if (e.len > 0) dirs.append(gpa, asDir(e)) catch @panic("OOM");
     }
-    dirs.append(gpa, b.pathFromRoot("native")) catch @panic("OOM");
+    dirs.append(gpa, rootPath(b, "native")) catch @panic("OOM");
     if (fetchCacheDir(b)) |cache| dirs.append(gpa, cache) catch @panic("OOM");
-    dirs.append(gpa, b.pathFromRoot("../selenium_core/native")) catch @panic("OOM");
+    dirs.append(gpa, rootPath(b, "../selenium_core/native")) catch @panic("OOM");
 
-    return dirs.toOwnedSlice(gpa) catch @panic("OOM");
+    // Zig 0.17 turns a missing -L directory into a hard error for executables,
+    // so keep only the search directories that exist.
+    var kept: std.ArrayList([]const u8) = .empty;
+    for (dirs.items) |d| {
+        std.Io.Dir.cwd().access(b.graph.io, d, .{}) catch continue;
+        kept.append(gpa, d) catch @panic("OOM");
+    }
+    return kept.toOwnedSlice(gpa) catch @panic("OOM");
 }
 
 // The shared fetch cache dir: $XDG_CACHE_HOME/selaenium/<tag>/ (or the OS
@@ -177,4 +185,9 @@ fn asDir(path: []const u8) []const u8 {
         return std.fs.path.dirname(path) orelse ".";
     }
     return path;
+}
+
+// Zig 0.17 removed Build.pathFromRoot; Build.root is a Cache.Path.
+fn rootPath(b: *std.Build, sub_path: []const u8) []const u8 {
+    return b.root.joinString(b.allocator, sub_path) catch @panic("OOM");
 }
