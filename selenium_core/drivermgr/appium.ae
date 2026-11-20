@@ -20,6 +20,7 @@ import std.string
 import std.os
 import std.list
 import std.fs
+import proc
 
 // The npm package that provides an Appium driver, by the name a binding passes
 // to ensure_driver(). "" means "not an Appium-hosted driver". PURE.
@@ -100,7 +101,7 @@ _node_run(node: string, script: string, args: ptr) -> (string, int) {
         list.add(argv, a)
         i = i + 1
     }
-    out, status, _err = os.run_capture(node, argv, null)
+    out, status = proc.capture_lenient(node, argv)
     list.free(argv)
     return string.trim(out), status
 }

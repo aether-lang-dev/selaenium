@@ -44,6 +44,10 @@ defmodule SeleniumTest do
   end
 
   test "full public surface is exported (ABI parity with the Rust bar)" do
+    # function_exported?/3 is false for a module that is not loaded yet, and ExUnit
+    # runs tests in a random order: when this test came first the whole list read
+    # as "missing". Load the module first.
+    assert Code.ensure_loaded?(Selenium)
     # Driver (session) surface added in the full-feature pass.
     for {f, a} <- [
           {:chrome_tls, 3},

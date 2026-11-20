@@ -8,6 +8,7 @@ import std.os
 import std.list
 import std.string
 import std.file
+import proc
 
 // chrome_path() — the installed Chrome/Chromium binary, or "". Scans the known
 // dirs × names (name-major, per first_existing_path), then falls back to PATH.
@@ -85,9 +86,8 @@ chrome_version(browser_path: string) -> string {
     if string.length(browser_path) == 0 { return "" }
     argv = list.new()
     list.add(argv, "--version")
-    out, status, err = os.run_capture(browser_path, argv, null)
+    out = proc.capture_stdout(browser_path, argv)
     list.free(argv)
-    if string.length(err) > 0 { return "" }
     // "Wrong browser/driver version" guard: an "error" in output → no version.
     if string.contains(string.to_lower(out), "error") == 1 { return "" }
     return version.version_extract(out)
@@ -154,9 +154,8 @@ firefox_version(browser_path: string) -> string {
     if string.length(browser_path) == 0 { return "" }
     argv = list.new()
     list.add(argv, "-v")
-    out, status, err = os.run_capture(browser_path, argv, null)
+    out = proc.capture_stdout(browser_path, argv)
     list.free(argv)
-    if string.length(err) > 0 { return "" }
     if string.contains(string.to_lower(out), "error") == 1 { return "" }
     return version.version_extract_short(out)
 }
@@ -218,9 +217,8 @@ edge_version(browser_path: string) -> string {
     if string.length(browser_path) == 0 { return "" }
     argv = list.new()
     list.add(argv, "--version")
-    out, status, err = os.run_capture(browser_path, argv, null)
+    out = proc.capture_stdout(browser_path, argv)
     list.free(argv)
-    if string.length(err) > 0 { return "" }
     if string.contains(string.to_lower(out), "error") == 1 { return "" }
     return version.version_extract(out)
 }

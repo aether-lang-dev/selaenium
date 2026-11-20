@@ -16,6 +16,7 @@ import metadata
 import std.string
 import std.http.client
 import std.os
+import std.io
 // Links the pure-Aether TLS 1.3 client so std.http.client can do https in a
 // cross-built engine (no OpenSSL is linked into an `ae build --target=` lib).
 // Without this import the CfT metadata/download fetch fails on every
@@ -38,17 +39,17 @@ resolve_chrome(hint: string) -> string {
     dpath = config.driver_path(cfg)
     if string.length(dpath) > 0 { return dpath }
 
-    // 1. determine the Chrome version to match the driver to. A pinned
-    //    browserVersion (hint/SE_*) wins; else detect system Chrome; else (no
-    //    system Chrome) self-provision a CfT Chrome and use its version.
-    bver = config.browser_version(cfg)
-    if config.is_channel(bver) == 1 { bver = "" }   // channel -> latest-stable path
+    // 1. determine the Chrome version to match the driver to (detect_chrome_
+    //    version: a pinned browserVersion, else the installed browser, else a
+    //    self-provisioned CfT Chrome). A browser that is installed but whose
+    //    version cannot be read must NOT fall through to "latest stable": that
+    //    picks a driver for a newer major than the browser, which then refuses
+    //    to start a session. Say so and use a driver on PATH instead.
+    bver, found = detect_chrome_version(cfg, label)
     if string.length(bver) == 0 {
-        bpath = browser.chrome_path()
-        if string.length(bpath) > 0 {
-            bver = browser.chrome_version(bpath)
-        } else {
-            bver = _ensure_chrome_browser_version(cfg, label)
+        if found == 1 {
+            _w = io.stderr_write("selenium driver manager: found a browser but could not read its version; not guessing a driver, using chromedriver on PATH\n")
+            return _which_driver()
         }
     }
 
@@ -87,6 +88,15 @@ resolve_chrome(hint: string) -> string {
     dver = cft.resolved_version(resolved)
     durl = cft.resolved_url(resolved)
 
+    // Never take a driver for a different major than the browser we found.
+    if version.driver_matches_browser(bver, dver) == 0 {
+        _w2 = io.stderr_write("selenium driver manager: the driver ${dver} does not match browser ${bver}; refusing it, using chromedriver on PATH\n")
+        return _which_driver()
+    }
+    if string.length(bver) == 0 {
+        _w3 = io.stderr_write("selenium driver manager: no browser found; using the latest stable chromedriver ${dver}\n")
+    }
+
     // Record the (major -> driver version) mapping for the TTL window so a
     // repeat resolve within it can skip the CfT fetch (no-op for a stable/empty
     // major or ttl<=0, per should_cache_driver_version).
@@ -99,6 +109,27 @@ resolve_chrome(hint: string) -> string {
     got = drivercache.ensure(root, _driver_name(), label, dver, durl, config.proxy(cfg))
     if string.length(got) > 0 { return got }
     return _which_driver()
+}
+
+// detect_chrome_version(cfg, label) -> (version, found). `version` is the Chrome
+// version to match a driver to, "" when none could be determined. `found` is 1
+// when a browser binary was located (pinned version, browserPath, or an install),
+// so "" with found == 1 means "a browser is there but its version is unreadable",
+// which callers must treat differently from "no browser at all".
+// Order: pinned browserVersion, explicit browserPath, installed browser, then a
+// self-provisioned Chrome for Testing (needs the network; found = 0 if that fails).
+detect_chrome_version(cfg: ptr, label: string) -> (string, int) {
+    bver = config.browser_version(cfg)
+    if config.is_channel(bver) == 1 { bver = "" }
+    if string.length(bver) > 0 { return bver, 1 }
+    bpath = config.browser_path(cfg)
+    if string.length(bpath) == 0 { bpath = browser.chrome_path() }
+    if string.length(bpath) > 0 {
+        return browser.chrome_version(bpath), 1
+    }
+    pv = _ensure_chrome_browser_version(cfg, label)
+    if string.length(pv) > 0 { return pv, 1 }
+    return "", 0
 }
 
 // The cache root: an explicit cachePath (hint/SE_CACHE_PATH via config) or the

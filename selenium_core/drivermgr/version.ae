@@ -95,3 +95,18 @@ _first_match(output: string, pattern: string) -> string {
     if en <= st { return "" }
     return string.substring(output, st, en)
 }
+
+// driver_matches_browser(browser_version, driver_version) — 1 when a driver may
+// be used with the browser: the browser version is unknown (nothing to compare
+// against), or both majors are known and equal. A driver for a newer (or older)
+// major than the installed browser is refused: chromedriver rejects it at
+// session creation ("only supports Chrome version N"). Real Selenium Manager
+// matches on the browser's major, and so do we.
+driver_matches_browser(browser_version: string, driver_version: string) -> int {
+    bm = major(browser_version)
+    if bm < 0 { return 1 }
+    dm = major(driver_version)
+    if dm < 0 { return 0 }
+    if dm == bm { return 1 }
+    return 0
+}

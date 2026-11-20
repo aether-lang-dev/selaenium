@@ -1,0 +1,105 @@
+// drivermgr_probe.ae — the driver manager's browser detection and driver/browser
+// matching, with no network and no real browser: the browser is a fake script
+// that prints a version line, and the Chrome-for-Testing answer is not consulted.
+//
+// The regression this pins: under a host that has SIGCHLD ignored (the BEAM VM)
+// os.run_capture reports "waitpid failed" even though the child ran and its
+// stdout was read. Detection used to read that as "no version", and the resolver
+// then chose the latest stable chromedriver (158) for an installed Chromium 156.
+// The "ignored SIGCHLD" case re-runs this same binary as a child through
+// `sh -c 'trap "" CHLD; exec ...'`, which hands it SIGCHLD ignored exactly as the
+// BEAM does.
+import browser
+import resolve
+import version
+import config
+import std.fs
+import std.os
+import std.list
+import std.spec
+import std.string
+
+// Child mode: print what detection makes of the browser at argv[2].
+child_detect(path: string) {
+    print("DETECTED[${browser.chrome_version(path)}]\n")
+}
+
+_fake_browser(dir: string, name: string, line: string) -> string {
+    path = string.concat(dir, string.concat("/", name))
+    _w = fs.write(path, "#!/bin/sh\necho '${line}'\n")
+    _c = fs.chmod(path, 493)
+    return path
+}
+
+main() {
+    if os.args_count() >= 3 {
+        if string.equals(os.args_get(1), "--detect") == 1 {
+            child_detect(os.args_get(2))
+            return 0
+        }
+    }
+    fw = spec.init()
+    spec.describe(fw, "driver manager browser detection") {
+        spec.it("reads the version line of a Chromium binary") callback {
+            dir, err = fs.make_temp_dir("", "selenium-dm-probe-")
+            spec.assert_eq(string.length(err), 0, "temp dir")
+            fake = _fake_browser(dir, "chromium", "Chromium 156.0.8078.79 Arch Linux")
+            spec.assert_str_eq(browser.chrome_version(fake), "156.0.8078.79", "version")
+            _rm = fs.remove_tree(dir)
+        }
+        spec.it("still reads it when the host ignores SIGCHLD (BEAM)") callback {
+            dir, err = fs.make_temp_dir("", "selenium-dm-probe-")
+            spec.assert_eq(string.length(err), 0, "temp dir")
+            fake = _fake_browser(dir, "chromium", "Chromium 156.0.8078.79 Arch Linux")
+            argv = list.new()
+            list.add(argv, "-c")
+            list.add(argv, "trap '' CHLD; exec '${os.argv0()}' --detect '${fake}'")
+            out, _st, _e = os.run_capture("/bin/sh", argv, null)
+            list.free(argv)
+            spec.assert_eq(string.contains(out, "DETECTED[156.0.8078.79]"), 1, "child saw the version: ${out}")
+            _rm = fs.remove_tree(dir)
+        }
+        spec.it("reports a located browser with no readable version as found, version empty") callback {
+            dir, err = fs.make_temp_dir("", "selenium-dm-probe-")
+            spec.assert_eq(string.length(err), 0, "temp dir")
+            fake = _fake_browser(dir, "chromium", "no version here")
+            hint = "{\"browserPath\":\"${fake}\",\"offline\":true}"
+            cfg = config.parse(hint, "chrome")
+            v, found = resolve.detect_chrome_version(cfg, "linux64")
+            spec.assert_str_eq(v, "", "no version")
+            spec.assert_eq(found, 1, "browser was found")
+            _rm = fs.remove_tree(dir)
+        }
+        spec.it("takes the version from an explicit browserPath") callback {
+            dir, err = fs.make_temp_dir("", "selenium-dm-probe-")
+            spec.assert_eq(string.length(err), 0, "temp dir")
+            fake = _fake_browser(dir, "chromium", "Chromium 156.0.8078.79 Arch Linux")
+            cfg = config.parse("{\"browserPath\":\"${fake}\"}", "chrome")
+            v, found = resolve.detect_chrome_version(cfg, "linux64")
+            spec.assert_str_eq(v, "156.0.8078.79", "version")
+            spec.assert_eq(found, 1, "found")
+            _rm = fs.remove_tree(dir)
+        }
+        spec.it("a pinned browserVersion wins over detection") callback {
+            cfg = config.parse("{\"browserVersion\":\"150\"}", "chrome")
+            v, found = resolve.detect_chrome_version(cfg, "linux64")
+            spec.assert_str_eq(v, "150", "pinned")
+            spec.assert_eq(found, 1, "found")
+        }
+    }
+    spec.describe(fw, "driver and browser must share a major") {
+        spec.it("refuses a driver for a newer major than the browser") callback {
+            spec.assert_eq(version.driver_matches_browser("156.0.8078.79", "158.0.8127.36"), 0, "158 vs 156")
+        }
+        spec.it("refuses a driver for an older major") callback {
+            spec.assert_eq(version.driver_matches_browser("156.0.8078.79", "155.0.1.1"), 0, "155 vs 156")
+        }
+        spec.it("accepts the same major") callback {
+            spec.assert_eq(version.driver_matches_browser("156.0.8078.79", "156.0.8078.80"), 1, "156 vs 156")
+        }
+        spec.it("accepts any driver when the browser version is unknown") callback {
+            spec.assert_eq(version.driver_matches_browser("", "158.0.8127.36"), 1, "unknown browser")
+        }
+    }
+    return spec.run_summary(fw)
+}

@@ -36,6 +36,15 @@ aeb(cap) {
             lib("../drivermgr")
             caps("fs,os")
         }
+        // Driver-manager browser detection + driver/browser major matching, no
+        // network and no real browser (a fake script prints the version line).
+        // Includes the ignored-SIGCHLD case that broke the BEAM bindings: they
+        // resolved chromedriver 158 for a Chromium 156 host.
+        aether.program_test() {
+            source("drivermgr_probe.ae")
+            lib("../drivermgr")
+            caps("fs,os")
+        }
         // Atom builders unit test — the executeScript params assembly for the
         // atom-backed commands (isDisplayed/getAttribute/getText), pure (no
         // browser/FFI). lib("..") resolves atoms.
