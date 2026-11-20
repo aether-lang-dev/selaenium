@@ -14,7 +14,6 @@ import std.string
 import std.file
 import std.fs
 import std.http.client
-import proc
 
 // default_cache_root() — <home>/.cache/selenium (SE_CACHE_PATH overrides).
 // On Windows prefer USERPROFILE (a native C:\... path) over HOME: under
@@ -243,18 +242,16 @@ _copy_browser_tree(staged_root: string, dir: string) -> int {
         list.add(argv, "-NonInteractive")
         list.add(argv, "-Command")
         list.add(argv, ps)
-        ok = proc.exit_ok("powershell", argv)
+        _o, status, _e = os.run_capture("powershell", argv, null)
         list.free(argv)
-        if ok == 1 { return 0 }
-        return 1
+        return status
     } else {
         argv = list.new()
         list.add(argv, "-c")
         list.add(argv, "cp -a '${staged_root}'/. '${dir}'/")
-        ok = proc.exit_ok("/bin/sh", argv)
+        _o, status, _e = os.run_capture("/bin/sh", argv, null)
         list.free(argv)
-        if ok == 1 { return 0 }
-        return 1
+        return status
     }
 }
 
