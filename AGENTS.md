@@ -147,13 +147,14 @@ against Chrome for the WebAuthn and log-type commands.
 ## Gotchas / hard-won
 
 - **The engine runs inside hosts with odd process state; do not assume the
-  shell's.** The BEAM VM starts with SIGCHLD ignored, which makes
+  shell's.** The BEAM VM starts with SIGCHLD ignored. Before Aether 0.931 that made
   `os.run_capture` return "waitpid failed" after a child ran and its output was
-  read. Driver detection read that as "no browser version" and chose chromedriver
+  read; driver detection read that as "no browser version" and chose chromedriver
   158 for a Chromium 156 host (found 2026-11-20 as Erlang, Elixir and LFE live
-  failures). Use `drivermgr/proc.ae`, not bare `os.run_capture`, for anything the
-  resolver depends on; `selenium_core/tests/drivermgr_probe.ae` reproduces the
-  ignored-SIGCHLD case. A driver for a different major than the browser is
+  failures). Aether 0.931 fixed it in the stdlib (PR #3781) and the workaround
+  module is gone, so call `os.run_capture` directly;
+  `selenium_core/tests/drivermgr_probe.ae` re-runs itself under `trap '' CHLD` to
+  keep it fixed. A driver for a different major than the browser is
   refused, and a browser with an unreadable version is not guessed at (see
   docs/Selenium-Manager-Port.md).
 - **Bindings that marshal strings through the process locale break on key codes.**
@@ -388,8 +389,10 @@ Keep this list honest — delete an entry when it is fixed, not before.
   with 0.926.0 and then 0.912.0 in the same `target/` failed the `aether` node at
   link time (the regenerated C included a header 0.912.0 lacks). Remove
   `target/tests/aether` or use a separate checkout per toolchain.
-- **`os.run_capture` reports "waitpid failed" when the host ignores SIGCHLD**
-  (stdlib; worked around in `drivermgr/proc.ae`). Worth an aether issue.
+- **`aeb` v0.347 cannot compile `php/.tests.ae`.** The leaf pins the phpunit
+  phar with `phpunit_phar_sha256`, which exists only on aeb main (commit
+  1ba9a88, after v0.347); with the tag, the whole presubmit stops at that leaf
+  ("Undefined function"). Needs an aeb tag cut from main, then move `AEB_REF`.
 
 Fixed since this file was written, kept as a record of what the symptoms looked
 like: `aeb aether/.tests.ae` failing at the LINK step on the five non-static

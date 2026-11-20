@@ -184,14 +184,22 @@ download without touching the shared cache.
 ### Hosts that ignore SIGCHLD (the BEAM bindings)
 
 The Erlang VM, and so the Erlang, Elixir, Gleam and LFE bindings, starts with
-SIGCHLD ignored, and the engine inherits that. With SIGCHLD ignored the kernel
-reaps children itself, so `os.run_capture` finishes with the error
-"waitpid failed" and status -1 even though the child ran and its whole stdout was
-read. Detection used to treat any error as "no version", fell through to the
-latest-stable path, and picked chromedriver 158 for a Chromium 156 host.
-`drivermgr/proc.ae` now wraps process calls: captured stdout counts as success,
-and a lost exit status is "unknown", not "failed". This is a workaround for the
-stdlib behaviour (a `waitpid` that fails with ECHILD after the output was read
-should report the child as exited with unknown status, not as an error).
-`selenium_core/tests/drivermgr_probe.ae` pins it, by re-running itself under
-`trap '' CHLD`.
+SIGCHLD ignored, and the engine inherits that. On Aether 0.926 and older that
+broke `os.run_capture`: the kernel reaped the child itself, the final `waitpid`
+failed, and the call returned the error "waitpid failed" and status -1 although
+the child ran and its whole stdout was read. Detection treated any error as "no
+version", fell through to the latest-stable path, and picked chromedriver 158 for
+a Chromium 156 host.
+
+Aether 0.931 fixed this in the stdlib (aether PR #3781): while a `std.os` child
+is outstanding, SIGCHLD is at its default, and the host's own disposition is
+put back when the last child is reaped. A child's exit status and error are now
+the same whether or not the host ignores SIGCHLD, so the driver manager calls
+`os.run_capture` directly and treats a non-empty error as a failure. The
+temporary wrapper `drivermgr/proc.ae` is gone, and `AETHER_FLOOR` is 0.931.0 so
+that no older compiler is accepted.
+
+`selenium_core/tests/drivermgr_probe.ae` pins it by re-running itself under
+`trap '' CHLD`. It fails on 0.926 with the plain call and passes on 0.931. Under
+a real BEAM host, the Erlang, Elixir and LFE live legs resolve the chromedriver
+that matches the installed Chromium.
