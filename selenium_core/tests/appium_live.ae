@@ -116,7 +116,7 @@ _write_app(path: string) -> int {
     h = file.file_open_raw(path, "w")
     if h == 0 { return 0 }
     _w = file.file_write_raw(h, xml, string.length(xml))
-    _c = file.file_close(h)
+    _c = file.file_close_raw(h)
     return 1
 }
 

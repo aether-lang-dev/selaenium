@@ -8,6 +8,7 @@
 // (prereq dotnet:10).
 import bldr
 import dotnet
+import bldr (env)
 
 aeb(cap) {
     bldr.build() {
@@ -27,7 +28,8 @@ aeb(cap) {
         }
 
         // The DllImport resolver reads SELENIUM_CORE_LIB to find the engine .so.
-        env("SELENIUM_CORE_LIB", native_lib)
-        dotnet.test()
+        dotnet.test() {
+            env("SELENIUM_CORE_LIB", native_lib)
+        }
     }
 }

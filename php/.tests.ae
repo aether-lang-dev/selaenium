@@ -17,7 +17,8 @@ aeb(cap) {
         lib = dep_artifact("selenium_core/.build.ae", "shared_lib")
         php.test() {
             env("SELENIUM_CORE_LIB", lib)
-            phpunit_phar_url("https://phar.phpunit.de/phpunit-12.phar")
+            phpunit_phar_url("https://phar.phpunit.de/phpunit-12.5.45.phar")
+            phpunit_phar_sha256("2223380a477aef6b2ad4dc87d587710bbb608d53f027f2b0210e35cf246c6e72")
             ini("extension", "ffi")
             ini("ffi.enable", "1")
             config("phpunit.xml")
