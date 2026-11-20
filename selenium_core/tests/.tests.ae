@@ -124,6 +124,18 @@ aeb(cap) {
             lib("..")
             caps("net")
         }
+        // Driver and browser lifetime: stop() takes down the whole tree (a
+        // driver that ignores SIGTERM, a descendant that left the group), and
+        // a client that is SIGKILLed, exits without stop, or released its
+        // handle cannot strand a driver or browser. Asserts by pid on the tree
+        // it created, never by process name. Real chromedriver + Chromium;
+        // self-skips when no chromedriver resolves, and off Linux.
+        aether.program_test() {
+            source("driver_lifetime_live.ae")
+            lib("..")
+            lib("../drivermgr")
+            caps("net,os,fs")
+        }
         // BiDi live slice — drives real Chrome through the shape-C demux:
         // commands, concurrency, AND the event round-trip (session.subscribe →
         // navigate → async browsingContext.load via the event queue). Self-skips

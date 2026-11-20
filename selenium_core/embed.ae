@@ -396,7 +396,9 @@ sel_embed_driver_pid(dh: ptr) -> int {
     return driver.pid_of(dh)
 }
 
-// Kill + reap the driver process and free the handle. NULL-safe.
+// Stop the driver and everything it started (the browser and its helpers),
+// wait until they are gone, and free the handle. NULL-safe. A driver also ends
+// with the process that launched it (docs/Selenium-Manager-Port.md).
 sel_embed_stop_driver(dh: ptr) {
     driver.stop(dh)
 }

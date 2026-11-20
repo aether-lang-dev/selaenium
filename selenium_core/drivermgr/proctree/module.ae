@@ -1,0 +1,54 @@
+// proctree: run a driver process whose whole tree ends when it is stopped AND
+// when the program that started it dies. driver.ae is the only caller.
+//
+// std.os.spawn_proc_to already gives the driver a process group of its own
+// (a Job Object on Windows) and os.kill signals that group, so stop() reached
+// the browser. What the stdlib cannot give is the second half: nothing ends the
+// driver when the CLIENT dies without calling stop (a test killed by a timeout,
+// a crash, a program that just exits), and a group kill misses descendants
+// that left the group. proctree.c adds a small supervisor process (POSIX) or a
+// kill-on-close Job Object (Windows); see its header and
+// docs/Selenium-Manager-Port.md, "Driver and browser lifetime".
+//
+// The primitive this wants from Aether's std.os is written up in
+// asks/aether-spawn-tree-dies-with-parent.md. When std.os has it, this module
+// goes away.
+@source("proctree.c")
+
+exports(start, pid, alive, stop, forget, reap, guarantee)
+
+extern sel_proctree_spawn(prog: string, args_nl: string, log_path: string, grace_ms: int) -> ptr
+extern sel_proctree_pid(h: ptr) -> int
+extern sel_proctree_alive(h: ptr) -> int
+extern sel_proctree_stop(h: ptr, grace_ms: int)
+extern sel_proctree_forget(h: ptr)
+extern sel_proctree_reap(pid: int, grace_ms: int)
+extern sel_proctree_guarantee() -> string
+
+// Start `prog` with its arguments (newline-separated, so no list crosses the
+// C boundary), stdin /dev/null, stdout and stderr to `log_path`. Returns an
+// opaque tree handle, or null if it could not start.
+start(prog: string, args_nl: string, log_path: string, grace_ms: int) -> ptr {
+    return sel_proctree_spawn(prog, args_nl, log_path, grace_ms)
+}
+
+// The driver's own pid (on POSIX also its process-group id).
+pid(h: ptr) -> int { return sel_proctree_pid(h) }
+
+// 1 while anything in the driver's process group is alive.
+alive(h: ptr) -> int { return sel_proctree_alive(h) }
+
+// SIGTERM the tree, wait up to grace_ms, SIGKILL what is left (descendants
+// that left the group included where the platform allows), wait until it is
+// gone, free the handle.
+stop(h: ptr, grace_ms: int) { sel_proctree_stop(h, grace_ms) }
+
+// Free the handle and leave the tree running. It still ends when this process
+// ends, or on reap(pid).
+forget(h: ptr) { sel_proctree_forget(h) }
+
+// End a tree by its driver pid, for a caller that used forget().
+reap(pid: int, grace_ms: int) { sel_proctree_reap(pid, grace_ms) }
+
+// One line naming the mechanism and its limit on this platform.
+guarantee() -> string { return sel_proctree_guarantee() }

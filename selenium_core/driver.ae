@@ -4,10 +4,17 @@
 // (docs/Driver-Orchestration-ABI.md): resolve a driver binary, spawn it on a
 // free port, wait for readiness, and tear it down — so no binding re-implements
 // ProcessBuilder / proc_open / subprocess / run-live.sh. It composes Aether
-// primitives already in the stdlib:
-//   * os.run_capture / os.spawn_proc / os.kill / os.wait  — process
+// primitives already in the stdlib plus one small module of our own:
+//   * proctree (drivermgr/proctree)                       — run/stop the driver tree
+//   * os.run_capture                                      — PATH lookup
 //   * net.http_server bind-0 + http_server_port           — free port
 //   * net.tcp_connect_raw + builtin sleep(ms)             — readiness poll
+//
+// Lifetime guarantee (docs/Selenium-Manager-Port.md, "Driver and browser
+// lifetime"): a driver started here, and the browser it starts, end when
+// stop() is called AND when the program that started them dies, however it
+// dies. proctree runs each driver under a supervisor (POSIX) or in a
+// kill-on-close Job Object (Windows) to give the second half.
 //
 // resolve_driver() is v1 = PATH lookup; it GROWS (no ABI change) into the full
 // Selenium-Manager pipeline (detect browser -> version -> match -> cache ->
@@ -17,18 +24,32 @@ import std.os
 import std.fs
 import std.net
 import std.list
-import std.mem
 import std.string
 import std.heap
 import std.json
 import resolve
 import appium
+import proctree
 
-// One live driver process: the spawn token (for kill/wait) and the port it was
-// launched on (for the base URL a session binds to).
+// How long a driver gets to exit on SIGTERM before its tree is SIGKILLed.
+const STOP_GRACE_MS = 5000
+
+// One live driver: its process tree (proctree handle), the driver's own pid,
+// and the port it was launched on (for the base URL a session binds to).
 struct Driver {
-    token: int
+    tree: ptr
+    pid: int
     port: int
+}
+
+// The driver handle for a freshly spawned tree, or null.
+_handle(tree: @keep ptr, port: int) -> ptr {
+    if tree == null { return null }
+    d = heap.new(Driver)
+    d.tree = tree
+    d.pid = proctree.pid(tree)
+    d.port = port
+    return d as ptr
 }
 
 // ---- resolution layer (full driver management for chrome/firefox/edge) ----
@@ -200,23 +221,16 @@ launch(driver_path: string, timeout_ms: int) -> ptr {
     port = free_port()
     if port <= 0 { return null }
 
-    argv = list.new()
-    list.add(argv, string.concat("--port=", string.from_int(port)))
-    token, err = os.spawn_proc_to(driver_path, argv, null, _driver_log(port))
-    list.free(argv)
-    if string.length(err) > 0 { return null }
+    tree = proctree.start(driver_path, "--port=${port}", _driver_log(port), STOP_GRACE_MS)
+    if tree == null { return null }
 
     if wait_ready(port, timeout_ms) == 0 {
-        // Never came up — kill + reap so we don't leak the process. Its log
-        // stays: it is what says why.
-        _kill_and_reap(token)
+        // Never came up: end its tree so nothing leaks. Its log stays: it is
+        // what says why.
+        proctree.stop(tree, STOP_GRACE_MS)
         return null
     }
-
-    d = heap.new(Driver)
-    d.token = token
-    d.port = port
-    return d as ptr
+    return _handle(tree, port)
 }
 
 // resolve_driver(browser,hint) -> launch(path,timeout). The convenience most
@@ -252,27 +266,17 @@ ensure_appium(name: string, hint: string, timeout_ms: int) -> ptr {
     if string.length(node) == 0 { return null }
     port = free_port()
     if port <= 0 { return null }
-    argv = list.new()
-    list.add(argv, entry)
-    list.add(argv, "--address")
-    list.add(argv, "127.0.0.1")
-    list.add(argv, "--port")
-    list.add(argv, string.from_int(port))
-    list.add(argv, "--log-level")
-    list.add(argv, "error")
-    token, err = os.spawn_proc_to(node, argv, null, _driver_log(port))
-    list.free(argv)
-    if string.length(err) > 0 { return null }
+    // proctree takes the arguments newline-separated.
+    args = "${entry}\n--address\n127.0.0.1\n--port\n${port}\n--log-level\nerror"
+    tree = proctree.start(node, args, _driver_log(port), STOP_GRACE_MS)
+    if tree == null { return null }
     wait = timeout_ms
     if wait < 60000 { wait = 60000 }
     if wait_ready(port, wait) == 0 {
-        _kill_and_reap(token)
+        proctree.stop(tree, STOP_GRACE_MS)
         return null
     }
-    d = heap.new(Driver)
-    d.token = token
-    d.port = port
-    return d as ptr
+    return _handle(tree, port)
 }
 
 // The "http://127.0.0.1:<port>" a session binds to (sel_embed_open). Owned by
@@ -283,10 +287,11 @@ url_of(dp: ptr) -> string {
     return string.concat("http://127.0.0.1:", string.from_int(d.port))
 }
 
+// The driver process's own pid (chromedriver's, not the supervisor's).
 pid_of(dp: ptr) -> int {
     if dp == null { return -1 }
     d = dp as *Driver
-    return d.token
+    return d.pid
 }
 
 // The port the driver was launched on. A caller that outlives the handle (the
@@ -297,51 +302,44 @@ port_of(dp: ptr) -> int {
     return d.port
 }
 
-// Free the handle WITHOUT touching the process. For a caller that has recorded
-// the pid/port elsewhere and wants the driver to outlive this handle — the
-// opposite of stop(), which kills. NULL-safe.
+// Free the handle WITHOUT stopping the driver. For a caller that has recorded
+// the pid/port elsewhere and wants the driver to outlive this handle (the Grid
+// hub and node: DELETE /session reaps it by pid) — the opposite of stop().
+// The driver and its browser still end when THIS PROCESS ends: release()
+// decouples the driver from the handle, not from the program that started it.
+// NULL-safe.
 release(dp: ptr) {
     if dp == null { return }
+    d = dp as *Driver
+    proctree.forget(d.tree)
     heap.free(dp)
 }
 
-// Kill + reap a driver process by pid, for a caller holding no handle (one that
-// used release() earlier). No-op for a non-positive pid.
+// End a released driver's whole tree by its pid (pid_of), for a caller holding
+// no handle. SIGTERM, then SIGKILL after the grace period. No-op for a
+// non-positive pid.
 reap(pid: int) {
     if pid <= 0 { return }
-    _kill_and_reap(pid)
+    proctree.reap(pid, STOP_GRACE_MS)
 }
 
-// Kill + reap one spawned token without ever blocking forever.
-//
-// A child forked from inside a managed runtime inherits that runtime's BLOCKED
-// signal mask. Julia blocks SIGTERM in its threads, so a chromedriver spawned
-// from the Julia binding never receives the SIGTERM below and an unbounded
-// os.wait() on it hangs the caller for good (observed: SigBlk 0x4206 on the
-// child, bit 14 = SIGTERM, vs 0x0 for the same binary spawned from a shell).
-// The real fix is for the spawn to reset the child's mask — filed as an ask
-// against the Aether stdlib (asks/aether-spawn-child-inherits-blocked-signal-mask.md).
-// A process supervisor must escalate regardless: a wedged driver may decline
-// SIGTERM for its own reasons, and SIGKILL can be neither blocked nor ignored.
-_kill_and_reap(token: int) {
-    _k = os.kill(token, 15)
-    toks = list.new()
-    list.add(toks, mem.long_to_ptr(token))
-    _t, _e, timed_out, _err = os.wait_any_timeout(toks, 5)
-    list.free(toks)
-    if timed_out == 1 {
-        _k2 = os.kill(token, 9)
-        _e2, _we2 = os.wait(token)
-    }
-}
-
-// Kill + reap the driver process and free the handle. NULL-safe; safe once.
+// Stop the driver and everything it started (the browser and its helpers),
+// then free the handle. SIGTERM first; a driver that declines it (some do; a
+// driver spawned from a runtime that blocks SIGTERM did, before Aether reset
+// the child's signal mask) gets SIGKILL after STOP_GRACE_MS. Returns once the
+// tree is gone. NULL-safe; safe once.
 stop(dp: ptr) {
     if dp == null { return }
     d = dp as *Driver
-    _kill_and_reap(d.token)
+    proctree.stop(d.tree, STOP_GRACE_MS)
     _rm = fs.delete(_driver_log(d.port))
     heap.free(dp)
+}
+
+// One line naming how this platform enforces the lifetime guarantee, and its
+// limit if it has one (docs/Selenium-Manager-Port.md).
+lifetime_guarantee() -> string {
+    return proctree.guarantee()
 }
 
 // ---- internals ----

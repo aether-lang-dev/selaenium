@@ -1,0 +1,366 @@
+// Driver and browser lifetime: when a driver is stopped, or when the program
+// that started it goes away, NOTHING it started may survive: not the driver,
+// not the browser, not the browser's helpers.
+//
+// Every assertion is by pid. The test records the exact tree it created (the
+// driver pid and every descendant at the moment the session is up) and checks
+// each of those pids afterwards. It never matches processes by name: the lab
+// hosts run other people's browsers. Anything of ours that survives is killed
+// by pid at the end of its case, so a failing run leaves nothing behind.
+//
+// Cases (each was seen failing before driver.ae ran drivers under proctree):
+//   stop_ignoring_sigterm   driver.stop() on a driver that ignores SIGTERM, so
+//                           stop has to escalate to SIGKILL
+//   client_sigkilled        the client is SIGKILLed mid-session
+//   client_exits            the client exits normally without quit or stop
+//   released_client_exits   release() keeps the driver alive while the client
+//                           lives; it still ends when the client exits
+//   stop_escaped_descendant stop() on a driver with a descendant that left its
+//                           process group and session (setsid), as Chromium's
+//                           crash handler does on some builds: a group kill
+//                           alone misses it
+//   stop_plain              control: plain stop() on a well-behaved driver
+//
+// Runs real chromedriver + Chromium. Self-skips (green) when no chromedriver
+// resolves. Linux only for the browser cases (it reads the tree with ps).
+import driver
+import std.os
+import std.fs
+import std.list
+import std.string
+import std.http.client
+
+extern exit(code: int)
+
+toi(s: string) -> int {
+    v, _e = string.to_int(s)
+    return v
+}
+
+// ---- the process table, read with ps ----
+
+// "pid ppid" lines for every process on the host.
+_ps_table() -> string {
+    argv = list.new()
+    list.add(argv, "-eo")
+    list.add(argv, "pid=,ppid=,stat=")
+    out, _st, _e = os.run_capture("ps", argv, null)
+    list.free(argv)
+    return out
+}
+
+// The descendants of `root` (root included), as " pid pid pid " so a
+// membership test is one index_of(" <pid> ").
+tree_of(root: int) -> string {
+    table = _ps_table()
+    lines = string.split(table, "\n")
+    n = string.array_size(lines)
+    acc = " ${root} "
+    grew = 1
+    while grew == 1 {
+        grew = 0
+        i = 0
+        while i < n {
+            ln = string.trim(string.array_get(lines, i))
+            if string.length(ln) > 0 {
+                cols = string.split(ln, " ")
+                pid = ""
+                ppid = ""
+                k = 0
+                c = string.array_size(cols)
+                j = 0
+                while j < c {
+                    f = string.array_get(cols, j)
+                    if string.length(f) > 0 {
+                        if k == 0 { pid = f }
+                        if k == 1 { ppid = f }
+                        k = k + 1
+                    }
+                    j = j + 1
+                }
+                string.array_free(cols)
+                if string.index_of(acc, " ${ppid} ") >= 0 && string.index_of(acc, " ${pid} ") < 0 {
+                    acc = string.concat(acc, "${pid} ")
+                    grew = 1
+                }
+            }
+            i = i + 1
+        }
+    }
+    string.array_free(lines)
+    return acc
+}
+
+// Is `pid` a live (non-zombie) process?
+alive(pid: int) -> int {
+    argv = list.new()
+    list.add(argv, "-o")
+    list.add(argv, "stat=")
+    list.add(argv, "-p")
+    list.add(argv, string.from_int(pid))
+    out, _st, _e = os.run_capture("ps", argv, null)
+    list.free(argv)
+    s = string.trim(out)
+    if string.length(s) == 0 { return 0 }
+    if string.starts_with(s, "Z") == 1 { return 0 }
+    return 1
+}
+
+// The pids in a tree string that are still alive, as " a b c ".
+survivors(tree: string) -> string {
+    parts = string.split(string.trim(tree), " ")
+    n = string.array_size(parts)
+    out = " "
+    i = 0
+    while i < n {
+        p = string.array_get(parts, i)
+        if string.length(p) > 0 {
+            pid = toi(p)
+            if pid > 0 && alive(pid) == 1 { out = string.concat(out, "${p} ") }
+        }
+        i = i + 1
+    }
+    string.array_free(parts)
+    return out
+}
+
+count_of(pids: string) -> int {
+    parts = string.split(string.trim(pids), " ")
+    n = string.array_size(parts)
+    c = 0
+    i = 0
+    while i < n {
+        if string.length(string.array_get(parts, i)) > 0 { c = c + 1 }
+        i = i + 1
+    }
+    string.array_free(parts)
+    return c
+}
+
+// Wait up to ms for every pid in `tree` to be gone; returns the survivors.
+settle(tree: string, ms: int) -> string {
+    waited = 0
+    left = survivors(tree)
+    while count_of(left) > 0 && waited < ms {
+        sleep(200)
+        waited = waited + 200
+        left = survivors(tree)
+    }
+    return left
+}
+
+// SIGKILL every pid listed: they are pids this test created and recorded.
+kill_all(pids: string) {
+    parts = string.split(string.trim(pids), " ")
+    n = string.array_size(parts)
+    i = 0
+    while i < n {
+        p = string.array_get(parts, i)
+        if string.length(p) > 0 { _k = os.kill(toi(p), 9) }
+        i = i + 1
+    }
+    string.array_free(parts)
+}
+
+// ---- a session ----
+
+new_session(base: string) -> int {
+    caps = "{\"capabilities\":{\"alwaysMatch\":{\"browserName\":\"chrome\",\"goog:chromeOptions\":{\"args\":[\"--headless=new\",\"--no-sandbox\",\"--disable-gpu\",\"--disable-dev-shm-usage\"]}}}}"
+    req = client.request("POST", "${base}/session")
+    _h = client.set_header(req, "Content-Type", "application/json")
+    _b = client.set_body(req, string.bytes(caps), "application/json")
+    _t = client.set_timeout(req, 60000000000ns)
+    resp, err = client.send_request(req)
+    client.request_free(req)
+    if err != "" { return 0 }
+    st = client.response_status(resp)
+    client.response_free(resp)
+    if st != 200 { return 0 }
+    return 1
+}
+
+// The browser is up when the driver has descendants.
+wait_browser(dpid: int) -> string {
+    t = tree_of(dpid)
+    waited = 0
+    while count_of(t) < 2 && waited < 10000 {
+        sleep(200)
+        waited = waited + 200
+        t = tree_of(dpid)
+    }
+    return t
+}
+
+// ---- client mode: the process whose death is under test ----
+
+// --client <exit|hang|release-hang|release-exit> <chromedriver> <pidfile>
+client_main(mode: string, drv: string, pidfile: string) {
+    dh = driver.launch(drv, 20000)
+    if dh == null { println("client: driver did not start"); exit(3) }
+    if new_session(driver.url_of(dh)) == 0 { println("client: no session"); exit(4) }
+    dpid = driver.pid_of(dh)
+    tree = wait_browser(dpid)
+    if string.starts_with(mode, "release") == 1 { driver.release(dh) }
+    _w = fs.write(pidfile, string.trim(tree))
+    if string.ends_with(mode, "exit") == 1 { exit(0) }
+    while 1 == 1 { sleep(1000) }
+}
+
+// ---- cases ----
+
+
+check(name: string, tree: string, left: string) -> int {
+    n = count_of(tree)
+    s = count_of(left)
+    if s == 0 {
+        println("  PASS ${name}: all ${n} processes of the tree are gone")
+        return 0
+    }
+    println("  FAIL ${name}: ${s} of ${n} processes survived:${left}")
+    kill_all(left)
+    _l = settle(left, 5000)
+    return 1
+}
+
+// Spawn this program as a client, wait for its pid file.
+spawn_client(mode: string, drv: string, pidfile: string) -> int {
+    _d = fs.delete(pidfile)
+    argv = list.new()
+    list.add(argv, "--client")
+    list.add(argv, mode)
+    list.add(argv, drv)
+    list.add(argv, pidfile)
+    token, err = os.spawn_proc(os.argv0(), argv, null)
+    list.free(argv)
+    if string.length(err) > 0 { return -1 }
+    waited = 0
+    while fs.exists(pidfile) == 0 && waited < 60000 {
+        sleep(200)
+        waited = waited + 200
+    }
+    sleep(300)
+    return token
+}
+
+read_tree(pidfile: string) -> string {
+    s, _e = fs.read(pidfile)
+    return " ${string.trim(s)} "
+}
+
+case_stop_plain(drv: string) -> int {
+    dh = driver.launch(drv, 20000)
+    if dh == null { println("  FAIL stop_plain: driver did not start"); return 1 }
+    if new_session(driver.url_of(dh)) == 0 { driver.stop(dh); println("  FAIL stop_plain: no session"); return 1 }
+    tree = wait_browser(driver.pid_of(dh))
+    driver.stop(dh)
+    return check("stop_plain", tree, settle(tree, 3000))
+}
+
+case_stop_ignoring_sigterm(drv: string, tmp: string) -> int {
+    // A driver that ignores SIGTERM: an ignored disposition survives exec, so
+    // chromedriver itself declines the polite signal and stop must escalate.
+    wrapper = "${tmp}/ignore-term-driver.sh"
+    _w = fs.write(wrapper, "#!/bin/sh\ntrap '' TERM\nexec '${drv}' \"$@\"\n")
+    argv = list.new()
+    list.add(argv, "+x")
+    list.add(argv, wrapper)
+    _o, _s, _e = os.run_capture("chmod", argv, null)
+    list.free(argv)
+    dh = driver.launch(wrapper, 20000)
+    if dh == null { println("  FAIL stop_ignoring_sigterm: driver did not start"); return 1 }
+    if new_session(driver.url_of(dh)) == 0 { driver.stop(dh); println("  FAIL stop_ignoring_sigterm: no session"); return 1 }
+    tree = wait_browser(driver.pid_of(dh))
+    driver.stop(dh)
+    return check("stop_ignoring_sigterm", tree, settle(tree, 3000))
+}
+
+// A driver wrapper that leaves a setsid'd descendant behind it, then execs the
+// real driver (so the descendant's parent is the driver itself).
+_wrapper(tmp: string, name: string, body: string) -> string {
+    path = "${tmp}/${name}"
+    _w = fs.write(path, body)
+    argv = list.new()
+    list.add(argv, "+x")
+    list.add(argv, path)
+    _o, _s, _e = os.run_capture("chmod", argv, null)
+    list.free(argv)
+    return path
+}
+
+case_stop_escaped_descendant(drv: string, tmp: string) -> int {
+    w = _wrapper(tmp, "escaping-driver.sh", "#!/bin/sh\nsetsid sleep 600 </dev/null >/dev/null 2>&1 &\nexec '${drv}' \"$@\"\n")
+    dh = driver.launch(w, 20000)
+    if dh == null { println("  FAIL stop_escaped_descendant: driver did not start"); return 1 }
+    if new_session(driver.url_of(dh)) == 0 { driver.stop(dh); println("  FAIL stop_escaped_descendant: no session"); return 1 }
+    tree = wait_browser(driver.pid_of(dh))
+    driver.stop(dh)
+    return check("stop_escaped_descendant", tree, settle(tree, 3000))
+}
+
+case_client_sigkilled(drv: string, tmp: string) -> int {
+    pidfile = "${tmp}/client-sigkilled.pids"
+    token = spawn_client("hang", drv, pidfile)
+    if token <= 0 { println("  FAIL client_sigkilled: client did not start"); return 1 }
+    tree = read_tree(pidfile)
+    _k = os.kill(token, 9)
+    _w, _e = os.wait(token)
+    return check("client_sigkilled", tree, settle(tree, 10000))
+}
+
+case_client_exits(drv: string, tmp: string) -> int {
+    pidfile = "${tmp}/client-exits.pids"
+    token = spawn_client("exit", drv, pidfile)
+    if token <= 0 { println("  FAIL client_exits: client did not start"); return 1 }
+    tree = read_tree(pidfile)
+    _w, _e = os.wait(token)
+    return check("client_exits", tree, settle(tree, 10000))
+}
+
+case_released_client_exits(drv: string, tmp: string) -> int {
+    pidfile = "${tmp}/client-released.pids"
+    token = spawn_client("release-hang", drv, pidfile)
+    if token <= 0 { println("  FAIL released_client_exits: client did not start"); return 1 }
+    tree = read_tree(pidfile)
+    // release() keeps the driver running while its client lives.
+    sleep(1000)
+    up = survivors(tree)
+    if count_of(up) != count_of(tree) {
+        println("  FAIL released_client_exits: release() did not keep the tree alive (${count_of(up)} of ${count_of(tree)})")
+        _k0 = os.kill(token, 9)
+        _w0, _e0 = os.wait(token)
+        kill_all(up)
+        return 1
+    }
+    _k = os.kill(token, 15)
+    _w, _e = os.wait(token)
+    return check("released_client_exits", tree, settle(tree, 10000))
+}
+
+main() {
+    if os.args_count() >= 5 {
+        if string.equals(os.args_get(1), "--client") == 1 {
+            client_main(os.args_get(2), os.args_get(3), os.args_get(4))
+            exit(0)
+        }
+    }
+    if string.equals(os.platform(), "linux") == 0 {
+        println("SKIPPED: driver_lifetime_live reads the process tree with Linux ps; run it on Linux")
+        exit(0)
+    }
+    drv = driver.resolve_driver("chrome", "")
+    if string.length(drv) == 0 { println("SKIPPED: no chromedriver resolvable"); exit(0) }
+    tmp = os.getenv("TMPDIR")
+    if tmp == null { tmp = "/tmp" }
+    if string.length(tmp) == 0 { tmp = "/tmp" }
+    println("driver_lifetime_live: ${drv}")
+    f = 0
+    f = f + case_stop_plain(drv)
+    f = f + case_stop_ignoring_sigterm(drv, tmp)
+    f = f + case_stop_escaped_descendant(drv, tmp)
+    f = f + case_client_sigkilled(drv, tmp)
+    f = f + case_client_exits(drv, tmp)
+    f = f + case_released_client_exits(drv, tmp)
+    if f > 0 { println("FAIL: ${f} lifetime case(s) failed"); exit(1) }
+    println("PASS: driver_lifetime_live, 6 cases")
+    exit(0)
+}
