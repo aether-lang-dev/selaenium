@@ -5,7 +5,9 @@
 // live surface uses the driver manager's TRANSPARENT resolve+launch, so it runs
 // where the FFI bindings skip (no chromedriver on PATH needed) — self-skipping
 // only when no driver is resolvable at all. Needs net/os/fs (http round-trip +
-// driver process + cache).
+// driver process + cache) and extern: the engine's drivermgr/proctree module
+// ships a C file (@source), and the --emit=lib step refuses its externs
+// without the grant.
 import bldr
 import aether
 
@@ -18,7 +20,7 @@ aeb(cap) {
             lib("../selenium_core")
             lib("../selenium_core/drivermgr")
             lib(".")
-            caps("net,os,fs")
+            caps("net,os,fs,extern")
         }
     }
 }
