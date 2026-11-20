@@ -146,6 +146,24 @@ against Chrome for the WebAuthn and log-type commands.
 
 ## Gotchas / hard-won
 
+- **The engine runs inside hosts with odd process state; do not assume the
+  shell's.** The BEAM VM starts with SIGCHLD ignored, which makes
+  `os.run_capture` return "waitpid failed" after a child ran and its output was
+  read. Driver detection read that as "no browser version" and chose chromedriver
+  158 for a Chromium 156 host (found 2026-11-20 as Erlang, Elixir and LFE live
+  failures). Use `drivermgr/proc.ae`, not bare `os.run_capture`, for anything the
+  resolver depends on; `selenium_core/tests/drivermgr_probe.ae` reproduces the
+  ignored-SIGCHLD case. A driver for a different major than the browser is
+  refused, and a browser with an unreadable version is not guessed at (see
+  docs/Selenium-Manager-Port.md).
+- **Bindings that marshal strings through the process locale break on key codes.**
+  Haskell's `newCString` encodes through the locale; under POSIX (a CI shell with
+  no LANG) the private-use code point of a special key (Ctrl is U+E009) was lost
+  and chromedriver rejected the action. Marshal as UTF-8 explicitly. The
+  Haskell surface test round-trips such a string through the engine.
+- **`function_exported?/3` needs a loaded module.** ExUnit's random test order made
+  the Elixir "full public surface" test fail whenever it ran before any test had
+  called into `Selenium`; it now calls `Code.ensure_loaded?/1` first.
 - **A green node may not have run.** aeb before v0.308 reported `tests PASSED`
   for a node whose compiler was absent (`| tee` ate the exit code). Fixed
   upstream, but `ci/coverage.sh` still exists because it answers a different
@@ -355,6 +373,16 @@ Keep this list honest — delete an entry when it is fixed, not before.
   bug was found by hand (a relative `-L` in `Package.swift`). Worth adding.
   Swift on this box also needs `libncurses.so.6` and `libxml2.so.2`, sonames
   Arch does not ship.
+- **The engine does not compile on ae 0.923.0**: three E0202 errors where a `ptr`
+  is passed to a `string` parameter (`embed.ae` `sel_embed_atom_str_arg`,
+  `bidi_demux.ae` `json.parse(e)`, `drivermgr/browser.ae` `_which(nm)` from
+  `list.get`). Found 2026-11-20 on cachyos; the retest used ae 0.912.0 and passed.
+  Needs `string.from_ptr` at those three sites and a toolchain bump.
+- **Elixir's live test has twice timed out at `Selenium.screenshot` on a busy
+  cachyos** (60 s ExUnit timeout, chromedriver session present) and passed in 3 s
+  on a quiet run. Not the driver version; not yet explained.
+- **`os.run_capture` reports "waitpid failed" when the host ignores SIGCHLD**
+  (stdlib; worked around in `drivermgr/proc.ae`). Worth an aether issue.
 
 Fixed since this file was written, kept as a record of what the symptoms looked
 like: `aeb aether/.tests.ae` failing at the LINK step on the five non-static

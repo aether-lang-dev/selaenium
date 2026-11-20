@@ -150,3 +150,48 @@ binding** — the whole point of the Phase-A layering.
 
 Nothing here needs a new Aether primitive — it's composition inside the one
 `.so` all bindings share.
+
+## How Chrome detection and driver choice work today
+
+`resolve_chrome` (selenium_core/drivermgr/resolve.ae) decides which chromedriver
+to use in this order:
+
+1. A driver path given by the caller (`driverPath` in the hint, or
+   `SE_DRIVER_PATH`) is used as is.
+2. The browser version to match: a pinned `browserVersion` (hint or
+   `SE_BROWSER_VERSION`), else the version printed by `<browser> --version` for
+   `browserPath` (hint or `SE_BROWSER_PATH`), else for the first installed Chrome
+   or Chromium found (`chrome`, `google-chrome`, `chromium`, `chromium-browser`
+   in the usual directories and on PATH). With no browser at all, a Chrome for
+   Testing browser is downloaded into the cache and its version is used.
+3. The driver is the newest one for that browser's **major** version. The major
+   to driver mapping is cached in `se-metadata.json` for an hour (`ttl`).
+4. Only when no browser exists and none could be downloaded does it fall back to
+   the latest stable driver, and it says so on stderr.
+
+Two refusals are deliberate, because a wrong driver fails later and far from the
+cause ("This version of ChromeDriver only supports Chrome version 158"):
+
+- A browser was found but its version could not be read: the manager does not
+  guess; it prints a line on stderr and uses a `chromedriver` already on PATH.
+- The driver it resolved is for a different major than the browser: it prints a
+  line on stderr and uses a `chromedriver` on PATH instead.
+
+The cache lives in `~/.cache/selenium` unless `cachePath` (hint) or
+`SE_CACHE_PATH` says otherwise; point it at a private directory to test a clean
+download without touching the shared cache.
+
+### Hosts that ignore SIGCHLD (the BEAM bindings)
+
+The Erlang VM, and so the Erlang, Elixir, Gleam and LFE bindings, starts with
+SIGCHLD ignored, and the engine inherits that. With SIGCHLD ignored the kernel
+reaps children itself, so `os.run_capture` finishes with the error
+"waitpid failed" and status -1 even though the child ran and its whole stdout was
+read. Detection used to treat any error as "no version", fell through to the
+latest-stable path, and picked chromedriver 158 for a Chromium 156 host.
+`drivermgr/proc.ae` now wraps process calls: captured stdout counts as success,
+and a lost exit status is "unknown", not "failed". This is a workaround for the
+stdlib behaviour (a `waitpid` that fails with ECHILD after the output was read
+should report the child as exited with unknown status, not as an error).
+`selenium_core/tests/drivermgr_probe.ae` pins it, by re-running itself under
+`trap '' CHLD`.
