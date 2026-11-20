@@ -402,10 +402,6 @@ Keep this list honest — delete an entry when it is fixed, not before.
   with 0.926.0 and then 0.912.0 in the same `target/` failed the `aether` node at
   link time (the regenerated C included a header 0.912.0 lacks). Remove
   `target/tests/aether` or use a separate checkout per toolchain.
-- **`aeb` v0.347 cannot compile `php/.tests.ae`.** The leaf pins the phpunit
-  phar with `phpunit_phar_sha256`, which exists only on aeb main (commit
-  1ba9a88, after v0.347); with the tag, the whole presubmit stops at that leaf
-  ("Undefined function"). Needs an aeb tag cut from main, then move `AEB_REF`.
 
 Fixed since this file was written, kept as a record of what the symptoms looked
 like: `aeb aether/.tests.ae` failing at the LINK step on the five non-static
