@@ -161,6 +161,17 @@ against Chrome for the WebAuthn and log-type commands.
   no LANG) the private-use code point of a special key (Ctrl is U+E009) was lost
   and chromedriver rejected the action. Marshal as UTF-8 explicitly. The
   Haskell surface test round-trips such a string through the engine.
+- **A BEAM NIF that waits on the network must be a dirty NIF.** The Erlang NIF
+  (`erlang/c_src/selenium_nif.c`) registered `execute` and friends with flags 0,
+  so a call like ClickElement, which waits for a page load, blocked a normal
+  scheduler. The test's own HTTP content server was a process on the same
+  scheduler's queue, so the page the browser was waiting for was served only after
+  the BEAM's balancing eventually moved it (tens of seconds, or never: the Elixir
+  live node hung in 14 of 20 consecutive runs and the Erlang node took 65 s). Every
+  entry point that does I/O is now `ERL_NIF_DIRTY_JOB_IO_BOUND`; Elixir 20 of 20,
+  Erlang 29 s. Keep new I/O NIFs dirty.
+- **A BEAM port does not kill its OS process when closed.** The Erlang and Elixir
+  live tests now kill the chromedriver they start (they leaked one per run).
 - **`function_exported?/3` needs a loaded module.** ExUnit's random test order made
   the Elixir "full public surface" test fail whenever it ran before any test had
   called into `Selenium`; it now calls `Code.ensure_loaded?/1` first.
@@ -373,14 +384,10 @@ Keep this list honest — delete an entry when it is fixed, not before.
   bug was found by hand (a relative `-L` in `Package.swift`). Worth adding.
   Swift on this box also needs `libncurses.so.6` and `libxml2.so.2`, sonames
   Arch does not ship.
-- **The engine does not compile on ae 0.923.0**: three E0202 errors where a `ptr`
-  is passed to a `string` parameter (`embed.ae` `sel_embed_atom_str_arg`,
-  `bidi_demux.ae` `json.parse(e)`, `drivermgr/browser.ae` `_which(nm)` from
-  `list.get`). Found 2026-11-20 on cachyos; the retest used ae 0.912.0 and passed.
-  Needs `string.from_ptr` at those three sites and a toolchain bump.
-- **Elixir's live test has twice timed out at `Selenium.screenshot` on a busy
-  cachyos** (60 s ExUnit timeout, chromedriver session present) and passed in 3 s
-  on a quiet run. Not the driver version; not yet explained.
+- **Switching Aether versions in one checkout leaves stale generated C.** Building
+  with 0.926.0 and then 0.912.0 in the same `target/` failed the `aether` node at
+  link time (the regenerated C included a header 0.912.0 lacks). Remove
+  `target/tests/aether` or use a separate checkout per toolchain.
 - **`os.run_capture` reports "waitpid failed" when the host ignores SIGCHLD**
   (stdlib; worked around in `drivermgr/proc.ae`). Worth an aether issue.
 
