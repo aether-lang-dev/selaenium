@@ -157,20 +157,24 @@ defmodule SeleniumTest do
 
   @tag :live
   test "live chrome + surface" do
-    case System.find_executable("chromedriver") do
-      nil ->
-        # chromedriver absent — skip
+    # The chromedriver comes from the engine (ensure_driver), not from a BEAM
+    # port. A port-spawned chromedriver is in a session of its own, and the old
+    # teardown (close the port, then `kill <ospid>`) ended chromedriver alone:
+    # a Chromium whose session had not been quit stayed behind with ppid 1. The
+    # engine's driver ends with its whole tree on stop_driver, and with this VM
+    # if the VM dies first (an ExUnit timeout included).
+    case Selenium.resolve_driver("chrome") do
+      "" ->
+        # no chromedriver resolvable — skip
         :ok
 
-      driver_bin ->
+      _path ->
         {web_port, web} = start_content_server()
         base = "http://127.0.0.1:#{web_port}"
-        cd_port = free_port()
-        cd = Port.open({:spawn_executable, driver_bin}, [:binary, args: ["--port=#{cd_port}"]])
+        {:ok, dh} = Selenium.ensure_driver("chrome")
 
         try do
-          assert wait_up(cd_port, 10_000)
-          {:ok, d} = Selenium.headless_chrome("http://127.0.0.1:#{cd_port}")
+          {:ok, d} = Selenium.headless_chrome(Selenium.driver_url(dh))
 
           try do
             assert byte_size(Selenium.session_id(d)) > 0
@@ -277,48 +281,13 @@ defmodule SeleniumTest do
             Selenium.quit(d)
           end
         after
-          stop_driver_port(cd)
+          Selenium.stop_driver(dh)
           send(web, :stop)
         end
     end
   end
 
   # ---- helpers ----
-
-  # Port.close/1 only closes the pipes; chromedriver ignores that and keeps
-  # running, one orphan per run. Kill the OS process the port started.
-  defp stop_driver_port(port) do
-    os_pid =
-      case Port.info(port, :os_pid) do
-        {:os_pid, pid} -> pid
-        nil -> nil
-      end
-
-    Port.close(port)
-    if os_pid, do: System.cmd("kill", [Integer.to_string(os_pid)])
-    :ok
-  end
-
-  defp free_port do
-    {:ok, s} = :gen_tcp.listen(0, ip: {127, 0, 0, 1})
-    {:ok, port} = :inet.port(s)
-    :gen_tcp.close(s)
-    port
-  end
-
-  defp wait_up(_port, t) when t <= 0, do: false
-
-  defp wait_up(port, t) do
-    case :gen_tcp.connect({127, 0, 0, 1}, port, [], 500) do
-      {:ok, s} ->
-        :gen_tcp.close(s)
-        true
-
-      _ ->
-        Process.sleep(100)
-        wait_up(port, t - 100)
-    end
-  end
 
   @page_one "<!doctype html><title>Page One</title><h1 id=\"hdr\">One</h1>" <>
               "<a id=\"go\" href=\"/two\">to two</a>" <>

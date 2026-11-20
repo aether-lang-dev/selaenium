@@ -23,11 +23,11 @@ main(_) ->
     %% Firefox session through the new firefox()/headless_firefox() factories.
     %% Self-skips when the engine cannot resolve a geckodriver here.
     firefox_orchestration(),
-    case which("chromedriver") of
-        false ->
-            io:format("SKIPPED: chromedriver not on PATH~n"), halt(0);
-        DriverBin ->
-            run(DriverBin)
+    case selenium:resolve_driver(<<"chrome">>) of
+        <<>> ->
+            io:format("SKIPPED: engine cannot resolve a chromedriver~n"), halt(0);
+        _ ->
+            run()
     end.
 
 %% Driver orchestration: resolve + spawn a chromedriver in-binding (no driver on
@@ -113,19 +113,19 @@ firefox_orchestration() ->
             io:format("  ok: edge/safari factories exported (surface check)~n")
     end.
 
-run(DriverBin) ->
+%% The chromedriver comes from the engine (ensure_driver), not from an Erlang
+%% port. A port-spawned chromedriver is in a session of its own, and the old
+%% teardown here (close the port, then `kill <ospid>`) ended chromedriver alone:
+%% any Chromium whose session had not been quit stayed behind with ppid 1. That
+%% is what stranded 18 headless Chromiums on the lab host on 2026-11-20. The
+%% engine's driver ends with its whole tree on stop_driver, and with this VM if
+%% it dies first.
+run() ->
     {WebPort, WebPid} = start_content_server(),
     Base = lists:flatten(io_lib:format("http://127.0.0.1:~p", [WebPort])),
-    CdPort = free_port(),
-    CdPortS = integer_to_list(CdPort),
-    Cd = open_port({spawn_executable, DriverBin},
-                   [{args, ["--port=" ++ CdPortS]}, {line, 256}, stderr_to_stdout, exit_status]),
+    {ok, Dh} = selenium:ensure_driver(<<"chrome">>),
     try
-        case wait_up(CdPort, 10000) of
-            false -> io:format("SKIPPED: chromedriver did not come up~n"), halt(0);
-            true -> ok
-        end,
-        {ok, D} = selenium:chrome("http://127.0.0.1:" ++ CdPortS, chrome_opts()),
+        {ok, D} = selenium:chrome(selenium:driver_url(Dh), chrome_opts()),
         try
             Sid = selenium:session_id(D),
             true = byte_size(Sid) > 0,
@@ -307,24 +307,10 @@ run(DriverBin) ->
             selenium:quit(D)
         end
     after
-        stop_driver_port(Cd),
+        selenium:stop_driver(Dh),
         WebPid ! stop
     end,
     halt(0).
-
-%% Closing an Erlang port only closes the pipes; chromedriver ignores that and
-%% keeps running, one orphan per run. Kill the OS process the port started.
-stop_driver_port(Port) ->
-    OsPid = case erlang:port_info(Port, os_pid) of
-                {os_pid, P} -> P;
-                undefined -> undefined
-            end,
-    catch port_close(Port),
-    case OsPid of
-        undefined -> ok;
-        _ -> os:cmd("kill " ++ integer_to_list(OsPid))
-    end,
-    ok.
 
 %% No-browser sanity of the convenience tier: the W3C key code points and the
 %% wait_until timeout contract. (The full unit suite with a fake NIF is in
@@ -448,25 +434,6 @@ uri_pct(<<C, R/binary>>, Acc)
 uri_pct(<<C, R/binary>>, Acc) ->
     Hex = list_to_binary(io_lib:format("%~2.16.0B", [C])),
     uri_pct(R, <<Acc/binary, Hex/binary>>).
-
-which(Cmd) ->
-    case os:find_executable(Cmd) of
-        false -> false;
-        Path -> Path
-    end.
-
-free_port() ->
-    {ok, S} = gen_tcp:listen(0, [{ip, {127,0,0,1}}]),
-    {ok, Port} = inet:port(S),
-    gen_tcp:close(S),
-    Port.
-
-wait_up(_Port, T) when T =< 0 -> false;
-wait_up(Port, T) ->
-    case gen_tcp:connect({127,0,0,1}, Port, [], 500) of
-        {ok, S} -> gen_tcp:close(S), true;
-        _ -> timer:sleep(100), wait_up(Port, T - 100)
-    end.
 
 %% A minimal gen_tcp HTTP/1.1 content server on its own process.
 start_content_server() ->
