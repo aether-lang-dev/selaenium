@@ -14,6 +14,7 @@ import Data.List (isInfixOf)
 import System.Exit (exitFailure)
 
 import Selenium
+import Selenium.Native (selByLocator)
 
 main :: IO ()
 main = do
@@ -34,6 +35,17 @@ main = do
   -- "*[id=" here pinned the binding to browser-only behaviour, which is why
   -- desktop locators could not survive the trip.
   check (loc == "{\"using\":\"id\",\"value\":\"main\"}") "locator passes the strategy through raw"
+
+  -- Strings cross the ABI as UTF-8 whatever the process locale is. A key action
+  -- carries one private-use code point (Ctrl is U+E009); under the C locale the
+  -- old locale-encoded marshalling mangled it and chromedriver refused the
+  -- action ("'value' must be a single Unicode code point"). Round-trip one
+  -- through the engine and compare code points: nothing here needs a browser.
+  let ctrlAndAccent = "\xE009\x00E9\x4E2D"
+  loc2 <- selByLocator "name" ctrlAndAccent
+  putStrLn ("  engine returned: " ++ show loc2)
+  check (ctrlAndAccent `isInfixOf` loc2)
+        "non-ASCII + private-use code points survive the ABI as UTF-8"
 
   -- ---- By smart constructors (Selenium 4.x shape) ----
   check (locStrategy (byId "x") == "id") "byId"

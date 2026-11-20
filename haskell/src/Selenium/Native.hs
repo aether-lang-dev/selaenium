@@ -69,7 +69,9 @@ module Selenium.Native
   , selBidiNetSetCacheBehavior
   ) where
 
-import Foreign.C.String (CString, newCString, peekCString)
+import Foreign.C.String (CString)
+import qualified GHC.Foreign as GHC
+import System.IO (utf8)
 import Foreign.C.Types (CInt (..))
 import Foreign.Ptr (Ptr, nullPtr)
 import Foreign.Marshal.Alloc (free)
@@ -182,8 +184,14 @@ foreign import ccall safe "aether_sel_embed_bidi_network_set_cache_behavior"
   c_bidi_net_set_cache_behavior :: Ptr () -> CInt -> CString -> CInt -> IO CString
 
 -- | Marshal a Haskell 'String' to a temporary @CString@ for the call.
+--
+-- Always UTF-8, never the process locale. The engine and the W3C wire are UTF-8;
+-- the locale-dependent @newCString@ encodes through the C\/POSIX locale's ASCII
+-- (the default under a service manager or a CI shell with no LANG), which cannot
+-- carry a private-use key code point such as the Ctrl key U+E009 and hands the
+-- driver a mangled string ("'value' must be a single Unicode code point").
 withC :: String -> (CString -> IO a) -> IO a
-withC s = bracket (newCString s) free
+withC s = bracket (GHC.newCString utf8 s) free
 
 -- | Copy an ABI-returned @CString@ into a Haskell 'String' and free the
 -- original via the engine's allocator. @""@ for NULL.
@@ -191,7 +199,7 @@ takeString :: CString -> IO String
 takeString p
   | p == nullPtr = pure ""
   | otherwise = do
-      s <- peekCString p
+      s <- GHC.peekCString utf8 p
       c_free_string p
       pure s
 
