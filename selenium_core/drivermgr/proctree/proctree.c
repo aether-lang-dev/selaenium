@@ -329,6 +329,24 @@ static int write_all(int fd, const void* buf, size_t n) {
 }
 
 static void close_from(int lo, int keep_a, int keep_b) {
+#if defined(__linux__)
+    /* close_range (Linux 5.9) also reaches descriptors above the 65536 cap the
+     * loop below uses, which a JVM with a raised RLIMIT_NOFILE can hold. */
+    {
+        int a = keep_a < keep_b ? keep_a : keep_b;
+        int b = keep_a < keep_b ? keep_b : keep_a;
+        unsigned int from = (unsigned int)lo;
+        int ok = 1;
+        int keeps[2] = { a, b };
+        for (int k = 0; k < 2 && ok; k++) {
+            if (keeps[k] < lo) continue;
+            if ((unsigned int)keeps[k] > from &&
+                syscall(436 /* SYS_close_range */, from, (unsigned int)keeps[k] - 1, 0) != 0) ok = 0;
+            from = (unsigned int)keeps[k] + 1;
+        }
+        if (ok && syscall(436, from, ~0U, 0) == 0) return;
+    }
+#endif
     int hi = (int)sysconf(_SC_OPEN_MAX);
     if (hi <= 0 || hi > 65536) hi = 65536;
     for (int fd = lo; fd < hi; fd++) {
