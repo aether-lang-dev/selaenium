@@ -285,7 +285,8 @@ _which_first() -> string {
     while i < n {
         nm, _ = list.get(names, i)
         if string.length(out) == 0 {
-            p = _which(nm)
+            nms, _nms = string.from_ptr(nm)
+            p = _which(nms)
             if string.length(p) > 0 { out = p }
         }
         i = i + 1

@@ -190,7 +190,7 @@ _chrome_args(_ctx: ptr) -> string {
     extra = ""
     if _ctx != null {
         if map_has(_ctx, "headless") == 1 {
-            hv, _e = string.to_int(map_get_raw(_ctx, "headless"))
+            hv, _e = string.to_int(_map_str(_ctx, "headless"))
             if hv == 0 { headed = 1 }
         }
         if map_has(_ctx, "extra_args") == 1 { extra, _ = map.get_string(_ctx, "extra_args") }
@@ -210,7 +210,7 @@ _firefox_args(_ctx: ptr) -> string {
     extra = ""
     if _ctx != null {
         if map_has(_ctx, "headless") == 1 {
-            hv, _e = string.to_int(map_get_raw(_ctx, "headless"))
+            hv, _e = string.to_int(_map_str(_ctx, "headless"))
             if hv == 0 { headed = 1 }
         }
         if map_has(_ctx, "extra_args") == 1 { extra, _ = map.get_string(_ctx, "extra_args") }
@@ -1283,8 +1283,8 @@ _rslash(s: string, before: int) -> int {
 _hint(cfg: ptr) -> string {
     if cfg == null { return "" }
     fields = ""
-    if map_has(cfg, "version") == 1 { fields = _hint_add(fields, "browserVersion", map_get_raw(cfg, "version")) }
-    if map_has(cfg, "cache") == 1 { fields = _hint_add(fields, "cachePath", map_get_raw(cfg, "cache")) }
+    if map_has(cfg, "version") == 1 { fields = _hint_add(fields, "browserVersion", _map_str(cfg, "version")) }
+    if map_has(cfg, "cache") == 1 { fields = _hint_add(fields, "cachePath", _map_str(cfg, "cache")) }
     if map_has(cfg, "offline") == 1 { fields = _hint_add(fields, "offline", "true") }
     if string.length(fields) == 0 { return "" }
     return string.concat("{", string.concat(fields, "}"))
@@ -1299,9 +1299,18 @@ _hint_add(acc: string, key: string, val: string) -> string {
 _timeout(cfg: ptr) -> int {
     if cfg != null {
         if map_has(cfg, "timeout_ms") == 1 {
-            t, _e = string.to_int(map_get_raw(cfg, "timeout_ms"))
+            t, _e = string.to_int(_map_str(cfg, "timeout_ms"))
             if t > 0 { return t }
         }
     }
     return 15000
+}
+
+// A string value out of a std.map, or "" when absent or not a string. (std.map's
+// raw getter returns a ptr, which Aether 0.926 no longer lets stand in for a
+// string; map.get_string is the checked form and exists from 0.912.)
+_map_str(m: ptr, key: string) -> string {
+    v, _e = map.get_string(m, key)
+    if v == null { return "" }
+    return v
 }

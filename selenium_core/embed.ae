@@ -244,7 +244,7 @@ sel_embed_is_displayed(h: ptr, elem_id: string) -> int {
 // Convenience: the classic getAttribute(name) (property-or-attribute). last_value
 // is a JSON string or null.
 sel_embed_get_attribute(h: ptr, elem_id: string, name: string) -> int {
-    return selenium_core.execute_atom(h, "getAttribute", elem_id, sel_embed_atom_str_arg(name))
+    return selenium_core.execute_atom(h, "getAttribute", elem_id, selenium_core.atom_str_arg(name))
 }
 
 // Build a one-string JSON array arg ["<s>"] for an atom's extra_json. Caller frees.

@@ -172,7 +172,8 @@ demux_poll_event_method(dp: ptr, method: string) -> string {
         // Every queued event is re-parsed on every poll, so free each parse:
         // a leak here grows with queue depth times poll count.
         hit = 0
-        root, perr = json.parse(e)
+        es, _es = string.from_ptr(e)
+        root, perr = json.parse(es)
         if string.length(perr) == 0 {
             mv, _m = json.object_get(root, "method")
             if mv != null {

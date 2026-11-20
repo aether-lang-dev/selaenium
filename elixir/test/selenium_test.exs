@@ -277,13 +277,27 @@ defmodule SeleniumTest do
             Selenium.quit(d)
           end
         after
-          Port.close(cd)
+          stop_driver_port(cd)
           send(web, :stop)
         end
     end
   end
 
   # ---- helpers ----
+
+  # Port.close/1 only closes the pipes; chromedriver ignores that and keeps
+  # running, one orphan per run. Kill the OS process the port started.
+  defp stop_driver_port(port) do
+    os_pid =
+      case Port.info(port, :os_pid) do
+        {:os_pid, pid} -> pid
+        nil -> nil
+      end
+
+    Port.close(port)
+    if os_pid, do: System.cmd("kill", [Integer.to_string(os_pid)])
+    :ok
+  end
 
   defp free_port do
     {:ok, s} = :gen_tcp.listen(0, ip: {127, 0, 0, 1})

@@ -307,10 +307,24 @@ run(DriverBin) ->
             selenium:quit(D)
         end
     after
-        catch port_close(Cd),
+        stop_driver_port(Cd),
         WebPid ! stop
     end,
     halt(0).
+
+%% Closing an Erlang port only closes the pipes; chromedriver ignores that and
+%% keeps running, one orphan per run. Kill the OS process the port started.
+stop_driver_port(Port) ->
+    OsPid = case erlang:port_info(Port, os_pid) of
+                {os_pid, P} -> P;
+                undefined -> undefined
+            end,
+    catch port_close(Port),
+    case OsPid of
+        undefined -> ok;
+        _ -> os:cmd("kill " ++ integer_to_list(OsPid))
+    end,
+    ok.
 
 %% No-browser sanity of the convenience tier: the W3C key code points and the
 %% wait_until timeout contract. (The full unit suite with a fake NIF is in
