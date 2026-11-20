@@ -19,11 +19,16 @@ with no W3C endpoint), `driver.ae` + `drivermgr/` (resolve/launch/stop a
 driver — this repo's Selenium-Manager), `selenium_bidi.ae` + `bidi_demux.ae`
 (WebDriver-BiDi over a WebSocket), and `embed.ae` (the flat C ABI,
 `aether_sel_embed_*`). It compiles to `libselenium_core.so`. Every
-`<lang>/` directory is a thin FFI shim over that one artifact. The only C is
-`selenium_core/_embed_strdup.c` — two functions, 12 lines of actual code: the
-caller-owned-string bridge (`sel_embed_dup` / `sel_embed_free`). It cannot be
-Aether because `std.mem` is access-only with no allocation primitive, and the
-bindings free returned pointers with C `free()`.
+`<lang>/` directory is a thin FFI shim over that one artifact. There are two
+pieces of C. `selenium_core/_embed_strdup.c` is two functions, 12 lines of
+actual code: the caller-owned-string bridge (`sel_embed_dup` /
+`sel_embed_free`). It cannot be Aether because `std.mem` is access-only with no
+allocation primitive, and the bindings free returned pointers with C `free()`.
+`selenium_core/drivermgr/proctree/proctree.c` runs each driver so that its whole
+tree (the browser included) ends on stop AND when the client process dies; the
+stdlib has no primitive for the second half yet
+(`asks/aether-spawn-tree-dies-with-parent.md`). It is pulled in by `@source`, so
+no build file names it.
 
 **Desktop is not browser-only.** The same engine drives desktop applications
 through any W3C desktop driver (WinAppDriver, Appium mac2, KDE's AT-SPI one):
@@ -171,8 +176,14 @@ against Chrome for the WebAuthn and log-type commands.
   live node hung in 14 of 20 consecutive runs and the Erlang node took 65 s). Every
   entry point that does I/O is now `ERL_NIF_DIRTY_JOB_IO_BOUND`; Elixir 20 of 20,
   Erlang 29 s. Keep new I/O NIFs dirty.
-- **A BEAM port does not kill its OS process when closed.** The Erlang and Elixir
-  live tests now kill the chromedriver they start (they leaked one per run).
+- **Start drivers through the engine, never by hand.** `ensure_driver` /
+  `stop_driver` end the driver's whole tree, and end it when the client dies
+  (docs/Selenium-Manager-Port.md, "Driver and browser lifetime"). A test that
+  spawns chromedriver itself gets none of that. The Erlang and Elixir live tests
+  did, as a BEAM port: closing a port does not end its process, so they added a
+  `kill <ospid>`, and that SIGTERM reached chromedriver alone. A port program
+  runs in its own session, so any Chromium whose session was not quit was left
+  with ppid 1: 18 of them on cachyos on 2026-11-20. Both now use the engine.
 - **`function_exported?/3` needs a loaded module.** ExUnit's random test order made
   the Elixir "full public surface" test fail whenever it ran before any test had
   called into `Selenium`; it now calls `Code.ensure_loaded?/1` first.
@@ -218,8 +229,10 @@ against Chrome for the WebAuthn and log-type commands.
   BEAM/erlang binary noise.
 - **Live tests leak browsers, and that is how you OOM the box.** A test whose
   session is never quit leaves chromedriver + Chrome alive. 28 of them plus a
-  pile of background waiters exhausted memory in one session. After a live run:
-  `pkill -f 'cache/selenium'`. This is also how a "hang" happens: orphans inherit
+  pile of background waiters exhausted memory in one session. A driver from
+  `ensure_driver` can no longer outlive its test process; one a test spawns by
+  hand still can. Never clean up with `pkill -f` or by name on a shared lab
+  host: other people's browsers run there. This is also how a "hang" happens: orphans inherit
   the test's stdout pipe and hold the write end open, so whoever is reading it
   (aeb) blocks forever on a test that finished in seconds. That was `aeb
   d/.tests.ae` for a while — the cause was the D binding's `quit()` not issuing

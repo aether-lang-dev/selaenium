@@ -203,3 +203,80 @@ that no older compiler is accepted.
 `trap '' CHLD`. It fails on 0.926 with the plain call and passes on 0.931. Under
 a real BEAM host, the Erlang, Elixir and LFE live legs resolve the chromedriver
 that matches the installed Chromium.
+
+## Driver and browser lifetime
+
+A driver started by the engine (`launch`, `ensure`, and so every binding's
+`launch_driver` / `ensure_driver`), and the browser it starts, end:
+
+1. when `stop` (`stop_driver`) is called: SIGTERM to the driver's process group,
+   up to 5 s for it to go, then SIGKILL to the group and to every descendant
+   that left the group. A driver that ignores or blocks SIGTERM is the
+   escalation path, not a leak. `stop` returns once the tree is gone.
+2. when the program that started it dies, however it dies: a test killed by a
+   timeout or SIGKILL, a crash, a program that exits without calling `stop`.
+   This does not depend on any signal reaching the client, so it holds for
+   hosts that block or ignore signals (the BEAM, the JVM, Julia).
+
+`release` frees the handle and leaves the driver running, for a caller that
+records the pid and ends it later with `reap(pid)` (the Grid hub and node do
+this). A released driver still ends when the program that started it ends:
+`release` decouples the driver from the handle, not from the process. Before
+2026-11-20 a released driver outlived its process; nothing relied on that.
+
+### How, per platform
+
+The engine runs each driver through `selenium_core/drivermgr/proctree/`, a
+small module with its own C file (`@source`, so every program that imports the
+engine gets it with no build change).
+
+| Platform | stop | client dies | descendant that left the group | Status |
+|----------|------|-------------|--------------------------------|--------|
+| Linux | group SIGTERM, grace, group SIGKILL, then SIGKILL to every child of the supervisor | supervisor watches the client with a pidfd | covered: the supervisor is a child subreaper, so orphans come to it and are killed | implemented and tested (cachyos) |
+| FreeBSD | same | supervisor watches the client with kqueue `NOTE_EXIT` | covered: `procctl(PROC_REAP_ACQUIRE)`, then `PROC_REAP_KILL` | compile-checked only (zig cc, x86_64-freebsd); not run |
+| macOS | same, group only | supervisor watches the client with kqueue `NOTE_EXIT` | **not covered**: macOS has no subreaper; a descendant that calls `setsid` survives | compile-checked only (clang on the Mac); not run |
+| Other POSIX | same, group only | supervisor polls the client pid every 250 ms | **not covered** | compiles; not run |
+| Windows | `TerminateJobObject` (Windows has no polite signal) | the job has `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` and the client holds its only handle, so the kernel kills the job when the client ends | covered: a job holds everything started inside it | compile-checked only (zig cc, x86_64-windows-gnu); not run |
+
+`driver.lifetime_guarantee()` returns the line for the platform it runs on.
+
+On POSIX the client forks a short-lived intermediate, which forks the
+supervisor and exits, so the client never has to reap the supervisor and a
+released driver leaves no zombie. The supervisor is a fork of the client with
+no exec (there is no supervisor binary to ship with every binding), so after
+the fork it makes only async-signal-safe calls. It closes every descriptor it
+inherited, so it never holds a client's pipe or listening socket open. It
+watches the client from a pidfd (or kqueue) opened while the client is provably
+alive (blocked reading the supervisor's status pipe), so pid reuse cannot fool
+it. The driver itself gets a clean signal mask and default dispositions, stdin
+`/dev/null`, and its own log file as stdout and stderr.
+
+Why not `PR_SET_PDEATHSIG`: it fires when the parent THREAD exits, and a managed
+runtime calls the engine from pooled or short-lived threads, so it would kill a
+live client's driver. Why not a process group alone: that is what the stdlib
+already gave (`os.spawn_proc_to` plus `os.kill` on the token), and it covers
+neither a dead client nor a descendant that left the group. The stdlib
+primitive that would replace this module is asked for in
+`asks/aether-spawn-tree-dies-with-parent.md`.
+
+`selenium_core/tests/driver_lifetime_live.ae` pins all of it on Linux with a
+real chromedriver and Chromium, asserting by pid on the tree it created:
+`stop_plain`, `stop_ignoring_sigterm`, `stop_escaped_descendant`,
+`client_sigkilled`, `client_exits`, `released_client_exits`. On the old code
+the last four failed (everything survived in the three client cases; the
+setsid'd descendant survived `stop`).
+
+### What stranded 18 Chromiums on the lab host (2026-11-20)
+
+Not the engine. They came from the Erlang and Elixir live tests, which started
+their own chromedriver as a BEAM port instead of through `ensure_driver`, and
+ended it with `kill <ospid>`: a SIGTERM to chromedriver alone. A BEAM port
+program runs in a session of its own, so the Chromium it had started (still in
+that session, its session not quit) was left with ppid 1. Every one of the 18
+had that signature: ppid 1, process group and session id equal to a pid that no
+longer existed, stdout a pipe with no reader (an engine-launched driver writes
+to a log file). Reproduced on purpose with an escript doing the same thing. Both
+tests now use `ensure_driver`/`stop_driver`. Many other bindings' live tests
+still start chromedriver themselves (python, ruby, go, rust, java, kotlin,
+groovy, clojure, scala, dotnet, dart, nim, the lua and zig example scripts);
+they get none of the guarantee above until they move to `ensure_driver` too.
