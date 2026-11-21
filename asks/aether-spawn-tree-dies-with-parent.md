@@ -1,9 +1,15 @@
 # Ask (aether std.os): a spawned process tree that ends with its parent
 
-**Status:** OPEN. Filed from selaenium 2026-11-20; not yet filed upstream in
-`~/scm/aether/asks/` (this agent was told not to touch the aether checkout).
-Worked around in selaenium by `selenium_core/drivermgr/proctree/` (C, about 300
-lines), which can be deleted once std.os has what is asked for here.
+**Status:** ANSWERED. Aether 0.934.0 (PR #3799) has `os.spawn_tree_to`,
+`os.tree_pid`, `os.tree_token`, `os.tree_kill` and `os.tree_free`; the reply, with
+the per-platform mechanism, is aether's `asks/REPLY-aether-spawn-tree-dies-with-parent.md`.
+selaenium has not switched: `selenium_core/drivermgr/proctree/` (C, about 700
+lines) is still what the drivers run under. What a switch needs (a `release()`
+and reap-by-pid that the stdlib handle does not offer) is written up in the
+report that accompanied this note, not yet in code.
+
+Originally: filed from selaenium 2026-11-20, worked around by proctree, which can
+be deleted once std.os has what is asked for here.
 
 ## Motivation
 
