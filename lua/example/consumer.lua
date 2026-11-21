@@ -32,12 +32,14 @@ local function mode_discovery()
 end
 
 local function mode_live()
-  local cd_url = os.getenv("SEL_CHROMEDRIVER_URL")
-  if not cd_url then
-    print("consumer(live): SKIPPED — SEL_CHROMEDRIVER_URL not set (no chromedriver)")
+  -- The engine starts the driver, so the whole tree (browser included) ends on
+  -- stop() and when this process dies.
+  local cd = s.ensure_driver("chrome")
+  if not cd then
+    print("consumer(live): SKIPPED — the engine cannot resolve a chromedriver")
     return
   end
-  local d = s.headless_chrome(cd_url)
+  local d = s.headless_chrome(cd:url())
   local ok, err = pcall(function()
     local html = "<!doctype html><title>Installed</title><h1 id=\"h\">Hi</h1>"
     -- percent-encode spaces/quotes for the data: URL
@@ -47,6 +49,7 @@ local function mode_live()
     if d:element_text(d:find_element(s.By.ID, "h")) ~= "Hi" then fail("text mismatch") end
   end)
   d:quit()
+  cd:stop()
   if not ok then error(err, 0) end
   print("consumer(live): OK — installed package drove real headless Chrome")
 end

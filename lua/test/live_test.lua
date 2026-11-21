@@ -1,8 +1,11 @@
 -- Live end-to-end + surface test (Lua): a real headless Chrome session driven
 -- through the pure-Aether engine via the C extension. Lua's stdlib has no
--- sockets/process, so chromedriver and a content server are started by
--- lua/.tests.ae, which passes their URLs in via env:
---   SEL_CHROMEDRIVER_URL, SEL_BASE_URL  (absent = skip)
+-- sockets, so the content server runs out of process (lua/content_server.py)
+-- and its URL comes in via env:
+--   SEL_BASE_URL  (absent = skip the surface half)
+-- The chromedriver is started by the engine (ensure_driver), which owns its
+-- lifetime: its whole tree, browser included, ends on stop() and when this
+-- process dies, however it dies.
 local s = require("selenium")
 
 local function assert_eq(got, want, label)
@@ -13,7 +16,7 @@ local function assert_eq(got, want, label)
 end
 
 -- ---- driver orchestration (self-spawned driver; no chromedriver on PATH) ----
--- Runs regardless of the SEL_CHROMEDRIVER_URL harness below; self-skips only if
+-- Runs regardless of the SEL_BASE_URL harness below; self-skips only if
 -- the engine cannot resolve a driver here (offline, empty cache).
 do
   local sel_chrome_bin = os.getenv("SEL_CHROME_BINARY")
@@ -82,10 +85,14 @@ do
   end
 end
 
-local cd_url = os.getenv("SEL_CHROMEDRIVER_URL")
 local base = os.getenv("SEL_BASE_URL")
-if not cd_url or not base then
-  print("SKIPPED: SEL_CHROMEDRIVER_URL / SEL_BASE_URL not set (no chromedriver)")
+if not base then
+  print("SKIPPED: SEL_BASE_URL not set (no content server)")
+  os.exit(0)
+end
+local cd = s.ensure_driver("chrome")
+if not cd then
+  print("SKIPPED: engine cannot resolve a chromedriver")
   os.exit(0)
 end
 
@@ -94,7 +101,7 @@ end
 local chrome_opts = { args = { "--headless=new", "--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage" } }
 local chrome_bin = os.getenv("SEL_CHROME_BINARY")
 if chrome_bin and #chrome_bin > 0 then chrome_opts.binary = chrome_bin end
-local d = s.chrome(cd_url, { ["goog:chromeOptions"] = chrome_opts })
+local d = s.chrome(cd:url(), { ["goog:chromeOptions"] = chrome_opts })
 local ok, err = pcall(function()
   assert(#d:session_id() > 0, "session id present")
   print("  ok: session started")
@@ -252,6 +259,7 @@ local ok, err = pcall(function()
 end)
 
 d:quit()
+cd:stop()
 if not ok then
   print("FAIL: " .. tostring(err and err.message or err))
   os.exit(1)

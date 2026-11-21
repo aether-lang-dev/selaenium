@@ -2,10 +2,13 @@
 //! through the pure-Aether engine via the linked .so.
 //!
 //! Zig 0.16 reworked std.net/std.process around the new Io interface; to keep
-//! this test free of that churn, chromedriver and a content server are started
-//! by the .tests.ae shell, which passes their URLs in via env:
-//!   SEL_CHROMEDRIVER_URL  — e.g. http://127.0.0.1:PORT (required; absent = skip)
+//! this test free of that churn, the content server runs out of process
+//! (zig/content_server.py) and its URL comes in via env:
 //!   SEL_BASE_URL          — the content server base, e.g. http://127.0.0.1:PORT
+//!                           (absent = skip the surface half)
+//! The chromedriver is started by the engine (ensureDriver), which owns its
+//! lifetime: its whole tree, browser included, ends on stop() and when this
+//! process dies, however it dies.
 //! Everything below is pure WebDriver + std.mem/json/fmt (stable APIs).
 const std = @import("std");
 const sel = @import("selenium");
@@ -37,17 +40,20 @@ pub fn main() !void {
 
     // ---- driver orchestration (self-spawned driver; no chromedriver on PATH) ----
     // Runs whenever the engine can resolve a driver here — independent of the
-    // SEL_CHROMEDRIVER_URL harness below.
+    // SEL_BASE_URL harness below.
     try driverOrchestration(a);
 
-    const cd_url = getenv("SEL_CHROMEDRIVER_URL") orelse {
-        std.debug.print("SKIPPED: SEL_CHROMEDRIVER_URL not set (no chromedriver)\n", .{});
-        return;
-    };
     const base = getenv("SEL_BASE_URL") orelse {
-        std.debug.print("SKIPPED: SEL_BASE_URL not set\n", .{});
+        std.debug.print("SKIPPED: SEL_BASE_URL not set (no content server)\n", .{});
         return;
     };
+    var cd = sel.ensureDriver(a, "chrome", "", 15000) catch {
+        std.debug.print("SKIPPED: engine cannot resolve a chromedriver\n", .{});
+        return;
+    };
+    defer cd.stop();
+    const cd_url = try cd.url();
+    defer a.free(cd_url);
 
     var d = try sel.WebDriver.headlessChrome(a, cd_url);
     defer d.deinit();

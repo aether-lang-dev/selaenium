@@ -4,8 +4,8 @@
 //! links). Modes: ffi | live. Run with SELENIUM_CORE_LIB unset.
 //!
 //! Zig 0.16's std.net/std.process are Io-reworked; to stay clear of that churn
-//! the live mode reads SEL_CHROMEDRIVER_URL from env (the .example.ae shell
-//! spawns chromedriver) and navigates a data: URL — no in-process networking.
+//! the live mode gets its chromedriver from the engine (ensureDriver, which owns
+//! its lifetime) and navigates a data: URL — no in-process networking.
 const std = @import("std");
 const sel = @import("selenium");
 
@@ -37,10 +37,15 @@ fn modeFfi(a: std.mem.Allocator) !void {
 }
 
 fn modeLive(a: std.mem.Allocator) !void {
-    const cd_url = getenv("SEL_CHROMEDRIVER_URL") orelse {
-        std.debug.print("consumer(live): SKIPPED — SEL_CHROMEDRIVER_URL not set (no chromedriver)\n", .{});
+    // The engine starts the driver, so the whole tree (browser included) ends on
+    // stop() and when this process dies.
+    var cd = sel.ensureDriver(a, "chrome", "", 15000) catch {
+        std.debug.print("consumer(live): SKIPPED — the engine cannot resolve a chromedriver\n", .{});
         return;
     };
+    defer cd.stop();
+    const cd_url = try cd.url();
+    defer a.free(cd_url);
     var d = try sel.WebDriver.headlessChrome(a, cd_url);
     defer d.deinit();
     const page =

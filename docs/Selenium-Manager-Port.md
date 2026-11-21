@@ -276,7 +276,9 @@ that session, its session not quit) was left with ppid 1. Every one of the 18
 had that signature: ppid 1, process group and session id equal to a pid that no
 longer existed, stdout a pipe with no reader (an engine-launched driver writes
 to a log file). Reproduced on purpose with an escript doing the same thing. Both
-tests now use `ensure_driver`/`stop_driver`. Many other bindings' live tests
-still start chromedriver themselves (python, ruby, go, rust, java, kotlin,
-groovy, clojure, scala, dotnet, dart, nim, the lua and zig example scripts);
-they get none of the guarantee above until they move to `ensure_driver` too.
+tests now use `ensure_driver`/`stop_driver`. Every other binding's live tests and consumer examples started chromedriver
+(or geckodriver) themselves as well, and ended it with a plain kill of the driver
+pid, so each had the same hole. They were moved to `ensure_driver` on
+2026-11-21: python, ruby, go, rust, java, kotlin, groovy, clojure, scala, dotnet,
+dart, nim, javascript, and the lua and zig examples. A live test now obtains its
+driver from the engine or it is wrong; see the rule in `AGENTS.md`.

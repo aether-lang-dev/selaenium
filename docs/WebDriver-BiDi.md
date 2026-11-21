@@ -289,8 +289,8 @@ W3C): **network interception** (`network.*`), **console/JS log capture**
    cached Chrome-for-Testing.
    All 11 own-FFI bindings bind the 22 `bidi_*` verbs and ship a `BiDi` wrapper +
    `.bidi` accessor; zig/lua have the tests written and pass the C-ABI smoke but
-   need their fixture harness to run here (zig wants SEL_CHROMEDRIVER_URL + a
-   specific content-server fixture). REMAINING: elixir/gleam/lfe (over the Erlang
+   need their fixture harness to run here (zig wants SEL_BASE_URL + a
+   specific content-server fixture; the driver itself comes from the engine). REMAINING: elixir/gleam/lfe (over the Erlang
    NIF — the NIF has all 22, but these wrap the NIF DIRECTLY so each must mirror
    the bidi orchestration that `erlang/src/selenium.erl` does: the
    bidi_send→pump→poll_reply await loop); haskell/julia/crystal/fsharp (need the

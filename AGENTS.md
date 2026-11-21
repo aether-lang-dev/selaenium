@@ -183,7 +183,11 @@ against Chrome for the WebAuthn and log-type commands.
   did, as a BEAM port: closing a port does not end its process, so they added a
   `kill <ospid>`, and that SIGTERM reached chromedriver alone. A port program
   runs in its own session, so any Chromium whose session was not quit was left
-  with ppid 1: 18 of them on cachyos on 2026-11-20. Both now use the engine.
+  with ppid 1: 18 of them on cachyos on 2026-11-20. Both now use the engine, and
+  so does every other binding's live test and consumer example (moved 2026-11-21;
+  python, ruby, go and rust had each been leaving the driver and its browser
+  behind when the test process was SIGKILLed). A new live test starts its driver
+  with `ensure_driver`, takes the URL from the handle, and ends it with `stop`.
 - **`function_exported?/3` needs a loaded module.** ExUnit's random test order made
   the Elixir "full public surface" test fail whenever it ran before any test had
   called into `Selenium`; it now calls `Code.ensure_loaded?/1` first.
@@ -231,7 +235,7 @@ against Chrome for the WebAuthn and log-type commands.
   session is never quit leaves chromedriver + Chrome alive. 28 of them plus a
   pile of background waiters exhausted memory in one session. A driver from
   `ensure_driver` can no longer outlive its test process; one a test spawns by
-  hand still can. Never clean up with `pkill -f` or by name on a shared lab
+  hand still can, which is why none do now. Never clean up with `pkill -f` or by name on a shared lab
   host: other people's browsers run there. This is also how a "hang" happens: orphans inherit
   the test's stdout pipe and hold the write end open, so whoever is reading it
   (aeb) blocks forever on a test that finished in seconds. That was `aeb
