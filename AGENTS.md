@@ -188,6 +188,20 @@ against Chrome for the WebAuthn and log-type commands.
   python, ruby, go and rust had each been leaving the driver and its browser
   behind when the test process was SIGKILLed). A new live test starts its driver
   with `ensure_driver`, takes the URL from the handle, and ends it with `stop`.
+- **Two Firefox sessions at once used to collide on BiDi port 9222.** geckodriver's
+  `--websocket-port` defaults to a fixed 9222 and every selaenium session asks for
+  `webSocketUrl`, so the second of two overlapping Firefox sessions got "could
+  not start server on port 9222 (NS_ERROR_SOCKET_ADDRESS_IN_USE)" from Firefox's
+  Remote Agent and, at new session, "Failed to decode response from marionette".
+  That was the Firefox leg flake in full presubmit sweeps (erlang, ruby, nim,
+  swift, 2026-11-20), always green when re-run alone. It was not load: six
+  concurrent Firefox sessions through the engine failed 38 of 60 times, ten
+  concurrent plus four Chrome failed 0 of 80 once the engine started geckodriver
+  with `--websocket-port=0`. `drivermgr` does that now (`_driver_args` in
+  `driver.ae`); `selenium_core/tests/firefox_concurrent_live.ae` fails on the old
+  code (all three sessions report 9222). Any new place that starts geckodriver
+  must go through the engine for the same reason. The Marionette port is already
+  system-allocated by geckodriver and was not involved.
 - **`function_exported?/3` needs a loaded module.** ExUnit's random test order made
   the Elixir "full public surface" test fail whenever it ran before any test had
   called into `Selenium`; it now calls `Code.ensure_loaded?/1` first.

@@ -212,6 +212,22 @@ _driver_log(port: int) -> string {
     return "${t}/selaenium-driver-${port}.log"
 }
 
+// The argument list (newline separated) for a driver on `port`. geckodriver gets
+// a second argument: --websocket-port=0. Its default BiDi port is a FIXED 9222,
+// and every selaenium session asks for webSocketUrl, so two Firefox sessions at
+// once (two legs of a parallel build, two test processes) fight over 9222: the
+// second Firefox's Remote Agent fails to listen ("could not start server on port
+// 9222 ... NS_ERROR_SOCKET_ADDRESS_IN_USE") and Marionette's newSession then
+// answers with something geckodriver cannot decode, which surfaces as "Failed to
+// decode response from marionette" at new session. 0 lets Firefox pick a free
+// port per session, and geckodriver puts that port in the session's webSocketUrl.
+_driver_args(driver_path: string, port: int) -> string {
+    if string.ends_with(driver_path, "geckodriver") == 1 || string.ends_with(driver_path, "geckodriver.exe") == 1 {
+        return "--port=${port}\n--websocket-port=0"
+    }
+    return "--port=${port}"
+}
+
 // Spawn an EXPLICIT driver binary on a free port and wait until it accepts
 // connections (bounded by timeout_ms). Returns an opaque Driver handle (as ptr),
 // or null if the path is empty, the spawn failed, or it never came up.
@@ -221,7 +237,7 @@ launch(driver_path: string, timeout_ms: int) -> ptr {
     port = free_port()
     if port <= 0 { return null }
 
-    tree = proctree.start(driver_path, "--port=${port}", _driver_log(port), STOP_GRACE_MS)
+    tree = proctree.start(driver_path, _driver_args(driver_path, port), _driver_log(port), STOP_GRACE_MS)
     if tree == null { return null }
 
     if wait_ready(port, timeout_ms) == 0 {

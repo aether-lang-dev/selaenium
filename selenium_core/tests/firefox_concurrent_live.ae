@@ -1,0 +1,93 @@
+// Several Firefox sessions at once must not share a BiDi port.
+//
+// Every selaenium session asks for webSocketUrl (BiDi). geckodriver's default
+// --websocket-port is a FIXED 9222, so with two Firefox sessions open at once
+// the second Firefox's Remote Agent cannot listen ("could not start server on
+// port 9222 ... NS_ERROR_SOCKET_ADDRESS_IN_USE"), its newSession answers with
+// something geckodriver cannot decode, and the caller sees "Failed to decode
+// response from marionette" at new session. A parallel presubmit hits exactly
+// that whenever two Firefox legs overlap: erlang, ruby, nim and swift each failed
+// this way once in full sweeps on 2026-11-20 and passed when re-run alone.
+//
+// The engine now starts geckodriver with --websocket-port=0, so every session's
+// Firefox picks its own free port and geckodriver reports it in the session's
+// webSocketUrl. This test opens three Firefox sessions through three engine-started
+// geckodrivers, all open at the same time, and asserts that each one succeeds and
+// that the three webSocketUrl ports differ. On the old code the sessions either fail
+// or all three report port 9222.
+//
+// Real geckodriver + Firefox. Self-skips (green) when no geckodriver resolves.
+import driver
+import std.json
+import std.string
+import std.http.client
+
+extern exit(code: int)
+
+// POST a headless Firefox newSession asking for BiDi. Returns the webSocketUrl
+// of the session, or "" when the session could not be created (the reason is
+// printed).
+open_session(base: string) -> string {
+    caps = "{\"capabilities\":{\"alwaysMatch\":{\"browserName\":\"firefox\",\"webSocketUrl\":true,\"moz:firefoxOptions\":{\"args\":[\"-headless\"]}}}}"
+    req = client.request("POST", "${base}/session")
+    _h = client.set_header(req, "Content-Type", "application/json")
+    _b = client.set_body(req, string.bytes(caps), "application/json")
+    _t = client.set_timeout(req, 90000000000ns)
+    resp, err = client.send_request(req)
+    client.request_free(req)
+    if err != "" { println("  new session transport error: ${err}"); return "" }
+    st = client.response_status(resp)
+    body = client.response_body(resp)
+    client.response_free(resp)
+    if st != 200 { println("  new session HTTP ${st}: ${body}"); return "" }
+    parsed, _pp = json.parse(body)
+    value, _v = json.object_get(parsed, "value")
+    capsv, _cv = json.object_get(value, "capabilities")
+    wsv, _w = json.object_get(capsv, "webSocketUrl")
+    out = ""
+    if wsv != null { out, _e = json.get_string(wsv) }
+    return out
+}
+
+// The port in "ws://127.0.0.1:PORT/session/ID", or 0.
+port_of(ws: string) -> int {
+    marker = "127.0.0.1:"
+    at = string.index_of(ws, marker)
+    if at < 0 { return 0 }
+    rest = string.substring(ws, at + string.length(marker), string.length(ws))
+    slash = string.index_of(rest, "/")
+    if slash < 0 { return 0 }
+    v, _e = string.to_int(string.substring(rest, 0, slash))
+    return v
+}
+
+main() {
+    gd = driver.resolve_driver("firefox", "")
+    if string.length(gd) == 0 { println("SKIPPED: no geckodriver resolvable"); exit(0) }
+
+    // Three geckodrivers, three sessions, all open at once.
+    d0 = driver.launch(gd, 20000)
+    d1 = driver.launch(gd, 20000)
+    d2 = driver.launch(gd, 20000)
+    if d0 == null || d1 == null || d2 == null { println("FAIL: a geckodriver did not start"); exit(1) }
+    ws0 = open_session(driver.url_of(d0))
+    ws1 = open_session(driver.url_of(d1))
+    ws2 = open_session(driver.url_of(d2))
+    println("  session 0: webSocketUrl=${ws0}")
+    println("  session 1: webSocketUrl=${ws1}")
+    println("  session 2: webSocketUrl=${ws2}")
+    p0 = port_of(ws0)
+    p1 = port_of(ws1)
+    p2 = port_of(ws2)
+    driver.stop(d0)
+    driver.stop(d1)
+    driver.stop(d2)
+
+    if p0 == 0 || p1 == 0 || p2 == 0 { println("FAIL: a concurrent Firefox session did not start or reported no BiDi URL"); exit(1) }
+    if p0 == p1 || p0 == p2 || p1 == p2 {
+        println("FAIL: concurrent Firefox sessions share a BiDi port: ${p0} ${p1} ${p2}")
+        exit(1)
+    }
+    println("PASS: 3 concurrent Firefox sessions, each with its own BiDi port (${p0} ${p1} ${p2})")
+    exit(0)
+}

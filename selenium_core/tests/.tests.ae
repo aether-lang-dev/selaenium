@@ -136,6 +136,16 @@ aeb(cap) {
             lib("../drivermgr")
             caps("net,os,fs")
         }
+        // Concurrent Firefox sessions must not share geckodriver's fixed BiDi
+        // port 9222 (the cause of "Failed to decode response from marionette" at
+        // new session in parallel sweeps). Real geckodriver + Firefox; self-skips
+        // when no geckodriver resolves.
+        aether.program_test() {
+            source("firefox_concurrent_live.ae")
+            lib("..")
+            lib("../drivermgr")
+            caps("net,os,fs")
+        }
         // BiDi live slice — drives real Chrome through the shape-C demux:
         // commands, concurrency, AND the event round-trip (session.subscribe →
         // navigate → async browsingContext.load via the event queue). Self-skips
