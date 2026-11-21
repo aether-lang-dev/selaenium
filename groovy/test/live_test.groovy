@@ -1,7 +1,7 @@
 // FFI + live surface test for the Groovy binding — pure JVM interop over the one
 // Java FFM binding (no second FFI). A plain script (no Spock), run by
 // groovy/.tests.ae with the Java classes + groovy/src on the classpath. The live
-// test needs chromedriver; skips otherwise.
+// test starts its chromedriver through the engine; skips if none resolves.
 //
 // NOTE: authored on a box without a JDK-24-capable Groovy (Debian's 2.4 on JVM
 // 17 can't read the Panama-FFM binding). Verified on a box with a modern Groovy
@@ -15,8 +15,6 @@ import org.openqa.selenium.groovy.Selenium
 import com.sun.net.httpserver.HttpServer
 import com.sun.net.httpserver.HttpHandler
 import java.net.InetSocketAddress
-import java.net.ServerSocket
-import java.net.Socket
 import java.nio.charset.StandardCharsets
 import java.util.Base64
 
@@ -29,21 +27,6 @@ def PAGE_ONE = '<!doctype html><title>Page One</title><h1 id="hdr">One</h1>' +
     '<a id="go" href="/two">to two</a>' +
     '<button id="btn" onclick="document.getElementById(\'hdr\').textContent=\'clicked\'">b</button>'
 def PAGE_TWO = '<!doctype html><title>Page Two</title><h1 id="hdr">Two</h1>'
-
-def which = { String cmd ->
-    (System.getenv("PATH") ?: "").split(":").findResult { dir ->
-        def f = new File(dir, cmd)
-        (f.canExecute() && !f.isDirectory()) ? f.absolutePath : null
-    }
-}
-def freePort = { new ServerSocket(0, 0, InetAddress.getByName("127.0.0.1")).withCloseable { it.localPort } }
-def waitUp = { int port, long timeoutMs ->
-    def deadline = System.currentTimeMillis() + timeoutMs
-    while (System.currentTimeMillis() < deadline) {
-        try { new Socket("127.0.0.1", port).close(); return true } catch (ignored) { Thread.sleep(100) }
-    }
-    false
-}
 
 // ---- FFI (no browser) ----
 check(RemoteWebDriver.route("get") == "POST /session/:sessionId/url", "route get")
@@ -67,9 +50,11 @@ check(Selenium.metaClass.methods.any { it.name == "withLocalChrome" }, "withLoca
 check(By.className("g").toString().contains("class name"), "By.className -> \"class name\"")
 
 // ---- live surface ----
-def driverBin = which("chromedriver")
-if (driverBin == null) {
-    println "  (live) SKIPPED: chromedriver not on PATH"
+// The engine starts and owns the chromedriver: its whole tree, browser included,
+// ends on stop() and when this JVM dies, however it dies.
+def cd = RemoteWebDriver.ensureDriver("chrome")
+if (cd == null) {
+    println "  (live) SKIPPED: the engine cannot resolve a chromedriver"
 } else {
     def web = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0)
     web.createContext("/", { ex ->
@@ -81,103 +66,94 @@ if (driverBin == null) {
     web.start()
     def base = "http://127.0.0.1:${web.address.port}"
 
-    def cdPort = freePort()
-    def cd = new ProcessBuilder(driverBin, "--port=${cdPort}")
-        .redirectOutput(ProcessBuilder.Redirect.DISCARD)
-        .redirectError(ProcessBuilder.Redirect.DISCARD)
-        .start()
     try {
-        if (!waitUp(cdPort, 10000)) {
-            println "  (live) SKIPPED: chromedriver did not come up"
-        } else {
-            Selenium.withHeadlessChrome("http://127.0.0.1:${cdPort}") { d ->
-                check(d.sessionId().length() > 0, "session started")
+        Selenium.withHeadlessChrome(cd.url()) { d ->
+            check(d.sessionId().length() > 0, "session started")
 
-                d.get("${base}/one")
-                check(d.getTitle() == "Page One", "title")
-                check(d.findElement(By.id("hdr")).getText() == "One", "hdr text")
-                check(d.findElement(By.cssSelector("#go")).getTagName().toLowerCase() == "a", "tag name")
+            d.get("${base}/one")
+            check(d.getTitle() == "Page One", "title")
+            check(d.findElement(By.id("hdr")).getText() == "One", "hdr text")
+            check(d.findElement(By.cssSelector("#go")).getTagName().toLowerCase() == "a", "tag name")
 
-                // navigation
-                d.findElement(By.id("go")).click()
-                check(d.getTitle() == "Page Two", "after click")
-                d.back(); check(d.getTitle() == "Page One", "after back")
-                d.forward(); check(d.getTitle() == "Page Two", "after forward")
-                d.back()
+            // navigation
+            d.findElement(By.id("go")).click()
+            check(d.getTitle() == "Page Two", "after click")
+            d.back(); check(d.getTitle() == "Page One", "after back")
+            d.forward(); check(d.getTitle() == "Page Two", "after forward")
+            d.back()
 
-                // cookies
-                d.deleteAllCookies()
-                d.addCookie([name: "flavor", value: "mint"])
-                check(d.getCookie("flavor").get("value") == "mint", "cookie value")
-                d.deleteCookie("flavor")
+            // cookies
+            d.deleteAllCookies()
+            d.addCookie([name: "flavor", value: "mint"])
+            check(d.getCookie("flavor").get("value") == "mint", "cookie value")
+            d.deleteCookie("flavor")
 
-                // windows
-                check(d.windowHandles().size() >= 1, "window handles")
-                d.setWindowRect([width: 900, height: 650])
-                check((d.getWindowRect().get("width") as Number).intValue() == 900, "window width")
+            // windows
+            check(d.windowHandles().size() >= 1, "window handles")
+            d.setWindowRect([width: 900, height: 650])
+            check((d.getWindowRect().get("width") as Number).intValue() == 900, "window width")
 
-                // script shapes
-                check((d.executeScript("return 6*7;") as Number).intValue() == 42, "script scalar")
-                check((d.executeScript("return arguments[0]+arguments[1];", 40, 2) as Number).intValue() == 42, "script args")
+            // script shapes
+            check((d.executeScript("return 6*7;") as Number).intValue() == 42, "script scalar")
+            check((d.executeScript("return arguments[0]+arguments[1];", 40, 2) as Number).intValue() == 42, "script args")
 
-                // W3C actions
-                def r = d.findElement(By.id("btn")).rect()
-                def cx = ((r.get("x") as Number).doubleValue() + (r.get("width") as Number).doubleValue() / 2) as int
-                def cy = ((r.get("y") as Number).doubleValue() + (r.get("height") as Number).doubleValue() / 2) as int
-                d.performActions([[
-                    type: "pointer", id: "mouse",
-                    parameters: [pointerType: "mouse"],
-                    actions: [
-                        [type: "pointerMove", duration: 0, x: cx, y: cy],
-                        [type: "pointerDown", button: 0],
-                        [type: "pointerUp", button: 0]
-                    ]
-                ]])
-                check(d.findElement(By.id("hdr")).getText() == "clicked", "actions click fired")
-                d.clearActions()
+            // W3C actions
+            def r = d.findElement(By.id("btn")).rect()
+            def cx = ((r.get("x") as Number).doubleValue() + (r.get("width") as Number).doubleValue() / 2) as int
+            def cy = ((r.get("y") as Number).doubleValue() + (r.get("height") as Number).doubleValue() / 2) as int
+            d.performActions([[
+                type: "pointer", id: "mouse",
+                parameters: [pointerType: "mouse"],
+                actions: [
+                    [type: "pointerMove", duration: 0, x: cx, y: cy],
+                    [type: "pointerDown", button: 0],
+                    [type: "pointerUp", button: 0]
+                ]
+            ]])
+            check(d.findElement(By.id("hdr")).getText() == "clicked", "actions click fired")
+            d.clearActions()
 
-                // screenshot
-                def png = Base64.decoder.decode(d.screenshotBase64())
-                check(png.length > 8 && png[1] == (byte) 'P' && png[2] == (byte) 'N', "screenshot is PNG")
+            // screenshot
+            def png = Base64.decoder.decode(d.screenshotBase64())
+            check(png.length > 8 && png[1] == (byte) 'P' && png[2] == (byte) 'N', "screenshot is PNG")
 
-                // shadow DOM: the Java WebElement.getShadowRoot() / ShadowRoot search
-                // context reached directly through Groovy/Java interop (no Groovy FFI).
-                d.executeScript('var h=document.createElement("div");h.id="shost";document.body.appendChild(h);' +
-                    'var r=h.attachShadow({mode:"open"});r.innerHTML=\'<p id="sinner">shadowtext</p>\';')
-                def root = d.findElement(By.id("shost")).getShadowRoot()
-                check(root instanceof org.openqa.selenium.ShadowRoot, "getShadowRoot returns a ShadowRoot")
-                check(root.findElement(By.cssSelector("#sinner")).getText() == "shadowtext",
-                    "findElement inside the shadow root")
-                def noShadow = false
-                try { d.findElement(By.id("hdr")).getShadowRoot() }
-                catch (org.openqa.selenium.NoSuchShadowRootException e) { noShadow = e.code() == 19 }
-                check(noShadow, "getShadowRoot on a non-host -> NoSuchShadowRootException (19)")
+            // shadow DOM: the Java WebElement.getShadowRoot() / ShadowRoot search
+            // context reached directly through Groovy/Java interop (no Groovy FFI).
+            d.executeScript('var h=document.createElement("div");h.id="shost";document.body.appendChild(h);' +
+                'var r=h.attachShadow({mode:"open"});r.innerHTML=\'<p id="sinner">shadowtext</p>\';')
+            def root = d.findElement(By.id("shost")).getShadowRoot()
+            check(root instanceof org.openqa.selenium.ShadowRoot, "getShadowRoot returns a ShadowRoot")
+            check(root.findElement(By.cssSelector("#sinner")).getText() == "shadowtext",
+                "findElement inside the shadow root")
+            def noShadow = false
+            try { d.findElement(By.id("hdr")).getShadowRoot() }
+            catch (org.openqa.selenium.NoSuchShadowRootException e) { noShadow = e.code() == 19 }
+            check(noShadow, "getShadowRoot on a non-host -> NoSuchShadowRootException (19)")
 
-                // WebDriver-BiDi over the shared Java Panama binding (Groovy
-                // reaches the Java BiDi class directly — no Groovy-side FFI).
-                check(d.bidiAvailable(), "bidi available (webSocketUrl negotiated)")
-                def bidi = d.bidi()
-                check(bidi.subscribe(BidiEvent.LOG_ENTRY_ADDED)["type"] == "success",
-                    "bidi.subscribe(log.entryAdded)")
-                d.executeScript("console.log('bidi-hello');")
-                def ev = bidi.nextEvent(BidiEvent.LOG_ENTRY_ADDED, 8000)
-                check(ev != null && ev.toString().contains("bidi-hello"),
-                    "log.entryAdded event received async, carries the text")
-                check(bidi.command("session.status", null, 10000)["type"] == "success",
-                    "bidi.command(session.status)")
-                check(!bidi.topContext(10000).isEmpty(), "bidi topContext")
-                check(((Number) bidi.evaluateValue("6*7", 30000)).intValue() == 42,
-                    "bidi.evaluate 6*7 -> 42")
+            // WebDriver-BiDi over the shared Java Panama binding (Groovy
+            // reaches the Java BiDi class directly — no Groovy-side FFI).
+            check(d.bidiAvailable(), "bidi available (webSocketUrl negotiated)")
+            def bidi = d.bidi()
+            check(bidi.subscribe(BidiEvent.LOG_ENTRY_ADDED)["type"] == "success",
+                "bidi.subscribe(log.entryAdded)")
+            d.executeScript("console.log('bidi-hello');")
+            def ev = bidi.nextEvent(BidiEvent.LOG_ENTRY_ADDED, 8000)
+            check(ev != null && ev.toString().contains("bidi-hello"),
+                "log.entryAdded event received async, carries the text")
+            check(bidi.command("session.status", null, 10000)["type"] == "success",
+                "bidi.command(session.status)")
+            check(!bidi.topContext(10000).isEmpty(), "bidi topContext")
+            check(((Number) bidi.evaluateValue("6*7", 30000)).intValue() == 42,
+                "bidi.evaluate 6*7 -> 42")
 
-                // negative path
-                def nse = false
-                try { d.findElement(By.id("does-not-exist")) }
-                catch (NoSuchElementException ignored) { nse = true }
-                check(nse, "no such element error")
-            }
+            // negative path
+            def nse = false
+            try { d.findElement(By.id("does-not-exist")) }
+            catch (NoSuchElementException ignored) { nse = true }
+            check(nse, "no such element error")
         }
     } finally {
-        cd.destroy()
+        cd.stop()
         web.stop(0)
     }
 }

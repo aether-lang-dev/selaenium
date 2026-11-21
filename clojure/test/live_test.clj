@@ -1,16 +1,15 @@
 (ns live-test
   "FFI + live surface test for the Clojure binding — pure JVM interop over the
   one Java FFM binding (no second FFI). Run via clojure/.tests.ae. The live test
-  needs chromedriver + a content server (started here via com.sun.net.httpserver
-  and ProcessBuilder); skips if chromedriver is absent."
+  needs a content server (started here via com.sun.net.httpserver) and a chromedriver
+  started through the engine (ensureDriver); skips if none resolves."
   (:require [selenium :as sel])
   (:import [org.openqa.selenium WebDriverException NoSuchElementException BidiEvent
-            NoSuchShadowRootException ShadowRoot By]
+            NoSuchShadowRootException RemoteWebDriver ShadowRoot By]
            [com.sun.net.httpserver HttpServer HttpHandler]
-           [java.net InetSocketAddress ServerSocket Socket InetAddress]
+           [java.net InetSocketAddress]
            [java.nio.charset StandardCharsets]
-           [java.util Base64]
-           [java.io File]))
+           [java.util Base64]))
 
 (def ^:private failures (atom 0))
 
@@ -25,25 +24,6 @@
        "<button id=\"btn\" onclick=\"document.getElementById('hdr').textContent='clicked'\">b</button>"))
 (def page-two "<!doctype html><title>Page Two</title><h1 id=\"hdr\">Two</h1>")
 
-(defn- which [cmd]
-  (some (fn [dir]
-          (let [f (File. dir cmd)]
-            (when (and (.canExecute f) (not (.isDirectory f))) (.getAbsolutePath f))))
-        (.split (or (System/getenv "PATH") "") ":")))
-
-(defn- free-port []
-  (with-open [s (ServerSocket. 0 0 (InetAddress/getByName "127.0.0.1"))]
-    (.getLocalPort s)))
-
-(defn- wait-up [port timeout-ms]
-  (let [deadline (+ (System/currentTimeMillis) timeout-ms)]
-    (loop []
-      (if (< (System/currentTimeMillis) deadline)
-        (if (try (.close (Socket. "127.0.0.1" port)) true (catch Exception _ false))
-          true
-          (do (Thread/sleep 100) (recur)))
-        false))))
-
 (defn- content-server []
   (let [server (HttpServer/create (InetSocketAddress. "127.0.0.1" 0) 0)]
     (.createContext server "/"
@@ -57,17 +37,11 @@
     (.start server)
     server))
 
-(defn- live-surface [driver-bin]
+(defn- live-surface [cd]
   (let [web (content-server)
-        base (str "http://127.0.0.1:" (.getPort (.getAddress web)))
-        cd-port (free-port)
-        cd (.start (doto (ProcessBuilder. [driver-bin (str "--port=" cd-port)])
-                     (.redirectOutput java.lang.ProcessBuilder$Redirect/DISCARD)
-                     (.redirectError java.lang.ProcessBuilder$Redirect/DISCARD)))]
+        base (str "http://127.0.0.1:" (.getPort (.getAddress web)))]
     (try
-      (if-not (wait-up cd-port 10000)
-        (println "  (live) SKIPPED: chromedriver did not come up")
-        (sel/with-chrome [d (str "http://127.0.0.1:" cd-port)]
+        (sel/with-chrome [d (.url cd)]
           (check (pos? (count (sel/session-id d))) "session started")
 
           (sel/navigate d (str base "/one"))
@@ -145,9 +119,9 @@
           ;; negative path
           (let [nse (try (sel/find-element d :id "does-not-exist") false
                          (catch NoSuchElementException _ true))]
-            (check nse "no such element error"))))
+            (check nse "no such element error")))
       (finally
-        (.destroy cd)
+        (.stop cd)
         (.stop web 0)))))
 
 (defn -main [& _]
@@ -173,9 +147,11 @@
   (check (fn? (deref #'sel/local-chrome)) "local-chrome fn present")
   (check (var? #'sel/with-local-chrome) "with-local-chrome macro present")
 
-  (if-let [driver-bin (which "chromedriver")]
-    (live-surface driver-bin)
-    (println "  (live) SKIPPED: chromedriver not on PATH"))
+  ;; The engine starts and owns the chromedriver: its whole tree, browser
+  ;; included, ends on stop and when this JVM dies, however it dies.
+  (if-let [cd (RemoteWebDriver/ensureDriver "chrome")]
+    (live-surface cd)
+    (println "  (live) SKIPPED: the engine cannot resolve a chromedriver"))
 
   (if (zero? @failures)
     (println "PASS: Clojure tests green")

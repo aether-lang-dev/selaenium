@@ -3,15 +3,16 @@
 //! real cookie/nav origin (std threads, so a blocking FFI call on the test
 //! thread doesn't stall the server). The whole pipeline — Rust -> extern "C" ->
 //! libselenium_core.so -> std.http.client -> chromedriver -> Chrome. Skips if
-//! chromedriver is absent. No external crates (a hand-rolled server + `which`).
+//! the engine cannot resolve a chromedriver. No external crates (a hand-rolled
+//! server). The driver is started by the engine (ensure_driver), which owns its
+//! lifetime: the whole tree ends on drop and when this process dies.
 
 use std::io::{BufRead, BufReader, Write};
 use std::net::{TcpListener, TcpStream};
-use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use selenium::{json, BidiEvent, By, ErrorKind, Frame, Json, WebDriver};
 
@@ -32,33 +33,6 @@ const PAGE_FRAMES: &str = concat!(
     "<input id=\"in\" name=\"q\" value=\"hi\"></form>"
 );
 
-fn which(cmd: &str) -> Option<String> {
-    let path = std::env::var("PATH").ok()?;
-    for dir in path.split(':') {
-        let full = format!("{dir}/{cmd}");
-        if std::path::Path::new(&full).is_file() {
-            return Some(full);
-        }
-    }
-    None
-}
-
-fn free_port() -> u16 {
-    TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port()
-}
-
-fn wait_up(port: u16, timeout: Duration) -> bool {
-    let deadline = Instant::now() + timeout;
-    while Instant::now() < deadline {
-        if TcpStream::connect(("127.0.0.1", port)).is_ok() {
-            return true;
-        }
-        thread::sleep(Duration::from_millis(100));
-    }
-    false
-}
-
-/// A minimal HTTP/1.1 server serving PAGE_ONE / PAGE_TWO, run on its own thread.
 fn start_content_server() -> (u16, Arc<AtomicBool>) {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();
@@ -109,40 +83,20 @@ fn handle_conn(mut stream: TcpStream) {
     let _ = stream.flush();
 }
 
-struct DriverGuard(Child);
-impl Drop for DriverGuard {
-    fn drop(&mut self) {
-        let _ = self.0.kill();
-        let _ = self.0.wait();
-    }
-}
-
 #[test]
 fn live_chrome_surface() {
-    let Some(driver_bin) = which("chromedriver") else {
-        eprintln!("SKIPPED: chromedriver not on PATH");
+    // The engine starts and owns the driver: its whole tree, browser included,
+    // ends when `cd` is dropped and when this process dies.
+    let Some(cd) = selenium::ensure_driver("chrome", "", 15000).unwrap() else {
+        eprintln!("SKIPPED: engine cannot resolve a chromedriver");
         return;
     };
+    let cd_url = cd.url().unwrap();
 
     let (web_port, stop) = start_content_server();
     let base = format!("http://127.0.0.1:{web_port}");
 
-    let cd_port = free_port();
-    let cd = Command::new(&driver_bin)
-        .arg(format!("--port={cd_port}"))
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .expect("spawn chromedriver");
-    let _guard = DriverGuard(cd);
-
-    if !wait_up(cd_port, Duration::from_secs(10)) {
-        stop.store(true, Ordering::Relaxed);
-        eprintln!("SKIPPED: chromedriver did not come up");
-        return;
-    }
-
-    let d = WebDriver::headless_chrome(&format!("http://127.0.0.1:{cd_port}")).expect("new session");
+    let d = WebDriver::headless_chrome(&cd_url).expect("new session");
     assert!(!d.session_id().is_empty(), "session id present");
 
     d.get(&format!("{base}/one")).unwrap();
@@ -323,27 +277,16 @@ fn live_chrome_surface() {
 /// self-skip if chromedriver absent, a data: URL for a real document).
 #[test]
 fn live_bidi() {
-    let Some(driver_bin) = which("chromedriver") else {
-        eprintln!("SKIPPED: chromedriver not on PATH");
+    // The engine starts and owns the driver: its whole tree, browser included,
+    // ends when `cd` is dropped and when this process dies.
+    let Some(cd) = selenium::ensure_driver("chrome", "", 15000).unwrap() else {
+        eprintln!("SKIPPED: engine cannot resolve a chromedriver");
         return;
     };
-
-    let cd_port = free_port();
-    let cd = Command::new(&driver_bin)
-        .arg(format!("--port={cd_port}"))
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .expect("spawn chromedriver");
-    let _guard = DriverGuard(cd);
-
-    if !wait_up(cd_port, Duration::from_secs(10)) {
-        eprintln!("SKIPPED: chromedriver did not come up");
-        return;
-    }
+    let cd_url = cd.url().unwrap();
 
     let mut d =
-        WebDriver::headless_chrome(&format!("http://127.0.0.1:{cd_port}")).expect("new session");
+        WebDriver::headless_chrome(&cd_url).expect("new session");
     assert!(d.bidi_available(), "session negotiated a webSocketUrl (BiDi available)");
 
     // A real document origin for the console.log to run against.
@@ -506,26 +449,15 @@ fn live_bidi() {
 /// port, self-skip if chromedriver absent, a data: URL for a real document).
 #[test]
 fn live_atoms() {
-    let Some(driver_bin) = which("chromedriver") else {
-        eprintln!("SKIPPED: chromedriver not on PATH");
+    // The engine starts and owns the driver: its whole tree, browser included,
+    // ends when `cd` is dropped and when this process dies.
+    let Some(cd) = selenium::ensure_driver("chrome", "", 15000).unwrap() else {
+        eprintln!("SKIPPED: engine cannot resolve a chromedriver");
         return;
     };
+    let cd_url = cd.url().unwrap();
 
-    let cd_port = free_port();
-    let cd = Command::new(&driver_bin)
-        .arg(format!("--port={cd_port}"))
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .expect("spawn chromedriver");
-    let _guard = DriverGuard(cd);
-
-    if !wait_up(cd_port, Duration::from_secs(10)) {
-        eprintln!("SKIPPED: chromedriver did not come up");
-        return;
-    }
-
-    let d = WebDriver::headless_chrome(&format!("http://127.0.0.1:{cd_port}")).expect("new session");
+    let d = WebDriver::headless_chrome(&cd_url).expect("new session");
 
     d.get(concat!(
         "data:text/html,<!doctype html><title>atoms</title>",
@@ -671,26 +603,15 @@ fn live_convenience_tier() {
     use std::time::Duration;
     use selenium::{By, Keys, Select};
 
-    let Some(driver_bin) = which("chromedriver") else {
-        eprintln!("SKIPPED: chromedriver not on PATH");
+    // The engine starts and owns the driver: its whole tree, browser included,
+    // ends when `cd` is dropped and when this process dies.
+    let Some(cd) = selenium::ensure_driver("chrome", "", 15000).unwrap() else {
+        eprintln!("SKIPPED: engine cannot resolve a chromedriver");
         return;
     };
+    let cd_url = cd.url().unwrap();
 
-    let cd_port = free_port();
-    let cd = Command::new(&driver_bin)
-        .arg(format!("--port={cd_port}"))
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .expect("spawn chromedriver");
-    let _guard = DriverGuard(cd);
-
-    if !wait_up(cd_port, Duration::from_secs(10)) {
-        eprintln!("SKIPPED: chromedriver did not come up");
-        return;
-    }
-
-    let d = WebDriver::headless_chrome(&format!("http://127.0.0.1:{cd_port}")).expect("new session");
+    let d = WebDriver::headless_chrome(&cd_url).expect("new session");
 
     // A page with: a native <select>, a button that (250ms later) reveals a
     // hidden #panel via JS, and a text input the Actions builder types into.
@@ -774,26 +695,15 @@ fn live_convenience_tier() {
 fn live_runner_surface() {
     use selenium::WebDriver;
 
-    let Some(driver_bin) = which("chromedriver") else {
-        eprintln!("SKIPPED: chromedriver not on PATH");
+    // The engine starts and owns the driver: its whole tree, browser included,
+    // ends when `cd` is dropped and when this process dies.
+    let Some(cd) = selenium::ensure_driver("chrome", "", 15000).unwrap() else {
+        eprintln!("SKIPPED: engine cannot resolve a chromedriver");
         return;
     };
+    let cd_url = cd.url().unwrap();
 
-    let cd_port = free_port();
-    let cd = Command::new(&driver_bin)
-        .arg(format!("--port={cd_port}"))
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .expect("spawn chromedriver");
-    let _guard = DriverGuard(cd);
-
-    if !wait_up(cd_port, Duration::from_secs(10)) {
-        eprintln!("SKIPPED: chromedriver did not come up");
-        return;
-    }
-
-    let d = WebDriver::headless_chrome(&format!("http://127.0.0.1:{cd_port}")).expect("new session");
+    let d = WebDriver::headless_chrome(&cd_url).expect("new session");
 
     // ---- Runner shell: drive the session through the engine-side "wee shell"
     //      (shell.ae, exposed over the C ABI as shell_eval). Front-end-agnostic.

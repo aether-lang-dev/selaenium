@@ -3,8 +3,6 @@ import org.openqa.selenium.RemoteWebDriver;
 import org.openqa.selenium.WebDriverException;
 import org.openqa.selenium.WebDriver;
 
-import java.io.File;
-import java.net.Socket;
 
 /**
  * Third-party consumer example. Uses the INSTALLED selenium-core JAR (on the
@@ -61,25 +59,15 @@ public class ConsumerExample {
     }
 
     static void modeLive() throws Exception {
-        String driver = which("chromedriver");
-        if (driver == null) {
-            System.out.println("consumer(live): SKIPPED — chromedriver not on PATH");
+        // The engine starts the driver, so the whole tree (browser included) ends
+        // on stop() and when this JVM dies.
+        RemoteWebDriver.DriverProcess cd = RemoteWebDriver.ensureDriver("chrome");
+        if (cd == null) {
+            System.out.println("consumer(live): SKIPPED — the engine cannot resolve a chromedriver");
             return;
         }
-        int port;
-        try (java.net.ServerSocket s = new java.net.ServerSocket(0, 0, java.net.InetAddress.getByName("127.0.0.1"))) {
-            port = s.getLocalPort();
-        }
-        Process cd = new ProcessBuilder(driver, "--port=" + port)
-                .redirectOutput(ProcessBuilder.Redirect.DISCARD)
-                .redirectError(ProcessBuilder.Redirect.DISCARD)
-                .start();
         try {
-            if (!waitUp(port, 10000)) {
-                System.out.println("consumer(live): SKIPPED — chromedriver did not come up");
-                return;
-            }
-            WebDriver d = RemoteWebDriver.headlessChrome("http://127.0.0.1:" + port);
+            WebDriver d = RemoteWebDriver.headlessChrome(cd.url());
             try {
                 String html = "<!doctype html><title>Installed</title><h1 id=\"h\">Hi</h1>";
                 d.get("data:text/html;charset=utf-8," + java.net.URLEncoder.encode(html, java.nio.charset.StandardCharsets.UTF_8)
@@ -95,42 +83,12 @@ public class ConsumerExample {
                 d.quit();
             }
         } finally {
-            cd.destroy();
+            cd.stop();
         }
     }
 
     static void fail(String msg) {
         System.err.println("FAIL: " + msg);
         System.exit(1);
-    }
-
-    static String which(String cmd) {
-        String path = System.getenv("PATH");
-        if (path == null) {
-            return null;
-        }
-        for (String dir : path.split(":")) {
-            File f = new File(dir, cmd);
-            if (f.canExecute() && !f.isDirectory()) {
-                return f.getAbsolutePath();
-            }
-        }
-        return null;
-    }
-
-    static boolean waitUp(int port, long timeoutMs) {
-        long deadline = System.currentTimeMillis() + timeoutMs;
-        while (System.currentTimeMillis() < deadline) {
-            try (Socket s = new Socket("127.0.0.1", port)) {
-                return true;
-            } catch (Exception e) {
-                try {
-                    Thread.sleep(100);
-                } catch (InterruptedException ignored) {
-                    Thread.currentThread().interrupt();
-                }
-            }
-        }
-        return false;
     }
 }

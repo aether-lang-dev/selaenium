@@ -5,10 +5,6 @@
 //!
 //! Modes (argv[1]): ffi | live.
 
-use std::net::{TcpListener, TcpStream};
-use std::process::{Command, Stdio};
-use std::time::{Duration, Instant};
-
 use selenium::{error_code, route, By, ErrorKind, WebDriver};
 
 fn fail(msg: &str) -> ! {
@@ -34,65 +30,25 @@ fn mode_ffi() {
     println!("consumer(ffi): OK — bundled crate linked its own .so via build.rs rpath");
 }
 
-fn which(cmd: &str) -> Option<String> {
-    let path = std::env::var("PATH").ok()?;
-    for dir in path.split(':') {
-        let full = format!("{dir}/{cmd}");
-        if std::path::Path::new(&full).is_file() {
-            return Some(full);
-        }
-    }
-    None
-}
-
-fn free_port() -> u16 {
-    TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port()
-}
-
-fn wait_up(port: u16, timeout: Duration) -> bool {
-    let deadline = Instant::now() + timeout;
-    while Instant::now() < deadline {
-        if TcpStream::connect(("127.0.0.1", port)).is_ok() {
-            return true;
-        }
-        std::thread::sleep(Duration::from_millis(100));
-    }
-    false
-}
-
 fn mode_live() {
-    let Some(driver_bin) = which("chromedriver") else {
-        println!("consumer(live): SKIPPED — chromedriver not on PATH");
+    // The engine starts the driver, so the whole tree (browser included) ends
+    // when `cd` is dropped and when this process dies.
+    let Some(cd) = selenium::ensure_driver("chrome", "", 15000).expect("ensure_driver") else {
+        println!("consumer(live): SKIPPED — the engine cannot resolve a chromedriver");
         return;
     };
-    let port = free_port();
-    let mut cd = Command::new(&driver_bin)
-        .arg(format!("--port={port}"))
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .expect("spawn chromedriver");
-    let result = (|| {
-        if !wait_up(port, Duration::from_secs(10)) {
-            println!("consumer(live): SKIPPED — chromedriver did not come up");
-            return;
-        }
-        let d = WebDriver::headless_chrome(&format!("http://127.0.0.1:{port}")).expect("session");
-        let html = "<!doctype html><title>Installed</title><h1 id=\"h\">Hi</h1>";
-        let url = format!("data:text/html;charset=utf-8,{}", urlencode(html));
-        d.get(&url).unwrap();
-        if d.title().unwrap() != "Installed" {
-            fail("title mismatch");
-        }
-        if d.find_element(By::id("h")).unwrap().text().unwrap() != "Hi" {
-            fail("text mismatch");
-        }
-        d.quit().unwrap();
-        println!("consumer(live): OK — bundled crate drove real headless Chrome");
-    })();
-    let _ = cd.kill();
-    let _ = cd.wait();
-    result
+    let d = WebDriver::headless_chrome(&cd.url().unwrap()).expect("session");
+    let html = "<!doctype html><title>Installed</title><h1 id=\"h\">Hi</h1>";
+    let url = format!("data:text/html;charset=utf-8,{}", urlencode(html));
+    d.get(&url).unwrap();
+    if d.title().unwrap() != "Installed" {
+        fail("title mismatch");
+    }
+    if d.find_element(By::id("h")).unwrap().text().unwrap() != "Hi" {
+        fail("text mismatch");
+    }
+    d.quit().unwrap();
+    println!("consumer(live): OK — bundled crate drove real headless Chrome");
 }
 
 fn urlencode(s: &str) -> String {

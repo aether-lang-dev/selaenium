@@ -1,7 +1,6 @@
 package org.openqa.selenium.scala
 
 import org.openqa.selenium.{BidiEvent, By, RemoteWebDriver, WebDriverException}
-import java.net.ServerSocket
 
 /**
  * No-browser FFI test: proves the Scala binding drives the ONE Java FFM binding
@@ -69,22 +68,16 @@ object FfiTest:
 
   /** A live WebDriver-BiDi round-trip against real Chrome, over the shared Java
    *  Panama binding (Scala reaches the Java BiDi class via JVM interop — no
-   *  Scala-side FFI). Skips if chromedriver is absent. */
+   *  Scala-side FFI). Skips if the engine cannot resolve a chromedriver. */
   private def liveBidi(): Unit =
-    val driverBin = which("chromedriver")
-    if driverBin.isEmpty then
-      println("  (live) SKIPPED: chromedriver not on PATH")
+    // The engine starts and owns the chromedriver: its whole tree, browser
+    // included, ends on stop() and when this JVM dies, however it dies.
+    val proc = RemoteWebDriver.ensureDriver("chrome")
+    if proc == null then
+      println("  (live) SKIPPED: the engine cannot resolve a chromedriver")
       return
-    val port = freePort()
-    val proc = new ProcessBuilder(driverBin.get, s"--port=$port")
-      .redirectOutput(ProcessBuilder.Redirect.DISCARD)
-      .redirectError(ProcessBuilder.Redirect.DISCARD)
-      .start()
     try
-      if !waitUp(port, 10000) then
-        println("  (live) SKIPPED: chromedriver did not come up")
-        return
-      Selenium.headlessChrome(s"http://127.0.0.1:$port") { d =>
+      Selenium.headlessChrome(proc.url()) { d =>
         check(d.bidiAvailable(), "bidi available (webSocketUrl negotiated)")
         val bidi = d.bidi()
         check(bidi.subscribe(BidiEvent.LOG_ENTRY_ADDED).get("type") == "success",
@@ -99,25 +92,4 @@ object FfiTest:
         check(bidi.evaluateValue("6*7", 30000).asInstanceOf[Number].intValue == 42,
           "bidi.evaluate 6*7 -> 42")
       }
-    finally proc.destroy()
-
-  private def which(cmd: String): Option[String] =
-    val path = Option(System.getenv("PATH")).getOrElse("")
-    path.split(java.io.File.pathSeparator).iterator
-      .map(d => new java.io.File(d, cmd))
-      .find(f => f.canExecute && !f.isDirectory)
-      .map(_.getAbsolutePath)
-
-  private def freePort(): Int =
-    val s = new ServerSocket(0, 0, java.net.InetAddress.getByName("127.0.0.1"))
-    try s.getLocalPort finally s.close()
-
-  private def waitUp(port: Int, timeoutMs: Long): Boolean =
-    val deadline = System.currentTimeMillis() + timeoutMs
-    var up = false
-    while !up && System.currentTimeMillis() < deadline do
-      try
-        val sock = new java.net.Socket("127.0.0.1", port)
-        sock.close(); up = true
-      catch case _: Throwable => Thread.sleep(100)
-    up
+    finally proc.stop()

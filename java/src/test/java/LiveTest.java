@@ -3,10 +3,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 import com.sun.net.httpserver.HttpServer;
-import java.io.IOException;
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
-import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
 import java.util.HashMap;
@@ -56,19 +54,14 @@ class LiveTest {
     // absent (Firefox is optional on a CI box).
     @Test
     void liveFirefoxSurface() throws Exception {
-        String driverBin = which("geckodriver");
-        assumeTrue(driverBin != null, "geckodriver not on PATH");
-        assumeTrue(RemoteWebDriver.resolveDriver("firefox") != null,
-                "engine cannot resolve firefox");
+        assumeTrue(hasDriver("firefox"), "engine cannot resolve a geckodriver");
 
-        int gdPort = freePort();
-        Process gd = new ProcessBuilder(driverBin, "--port=" + gdPort)
-                .redirectOutput(ProcessBuilder.Redirect.DISCARD)
-                .redirectError(ProcessBuilder.Redirect.DISCARD)
-                .start();
+        // The engine starts and owns the driver: its whole tree, browser included,
+        // ends on stop() and when this JVM dies, however it dies.
+        RemoteWebDriver.DriverProcess gd = RemoteWebDriver.ensureDriver("firefox");
+        assumeTrue(gd != null, "engine could not start a geckodriver");
         try {
-            assumeTrue(waitUp(gdPort, 10000), "geckodriver did not come up");
-            RemoteWebDriver d = RemoteWebDriver.headlessFirefox("http://127.0.0.1:" + gdPort);
+            RemoteWebDriver d = RemoteWebDriver.headlessFirefox(gd.url());
             try {
                 assertTrue(!d.sessionId().isEmpty(), "firefox session id present");
                 assertEquals("firefox", d.getCapabilities().getBrowserName(), "browserName firefox");
@@ -81,14 +74,13 @@ class LiveTest {
                 d.quit();
             }
         } finally {
-            gd.destroy();
+            gd.stop();
         }
     }
 
     @Test
     void liveChromeSurface() throws Exception {
-        String driverBin = which("chromedriver");
-        assumeTrue(driverBin != null, "chromedriver not on PATH");
+        assumeTrue(hasDriver("chrome"), "engine cannot resolve a chromedriver");
 
         HttpServer web = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         web.createContext("/", ex -> {
@@ -103,14 +95,12 @@ class LiveTest {
         web.start();
         String base = "http://127.0.0.1:" + web.getAddress().getPort();
 
-        int cdPort = freePort();
-        Process cd = new ProcessBuilder(driverBin, "--port=" + cdPort)
-                .redirectOutput(ProcessBuilder.Redirect.DISCARD)
-                .redirectError(ProcessBuilder.Redirect.DISCARD)
-                .start();
+        // The engine starts and owns the driver: its whole tree, browser included,
+        // ends on stop() and when this JVM dies, however it dies.
+        RemoteWebDriver.DriverProcess cd = RemoteWebDriver.ensureDriver("chrome");
+        assumeTrue(cd != null, "engine could not start a chromedriver");
         try {
-            assumeTrue(waitUp(cdPort, 10000), "chromedriver did not come up");
-            WebDriver d = headlessChromeAt("http://127.0.0.1:" + cdPort);
+            WebDriver d = headlessChromeAt(cd.url());
             try {
                 assertTrue(!d.sessionId().isEmpty(), "session id present");
 
@@ -180,7 +170,7 @@ class LiveTest {
                 d.quit();
             }
         } finally {
-            cd.destroy();
+            cd.stop();
             web.stop(0);
         }
     }
@@ -253,17 +243,14 @@ class LiveTest {
 
     @Test
     void liveChromeBidi() throws Exception {
-        String driverBin = which("chromedriver");
-        assumeTrue(driverBin != null, "chromedriver not on PATH");
+        assumeTrue(hasDriver("chrome"), "engine cannot resolve a chromedriver");
 
-        int cdPort = freePort();
-        Process cd = new ProcessBuilder(driverBin, "--port=" + cdPort)
-                .redirectOutput(ProcessBuilder.Redirect.DISCARD)
-                .redirectError(ProcessBuilder.Redirect.DISCARD)
-                .start();
+        // The engine starts and owns the driver: its whole tree, browser included,
+        // ends on stop() and when this JVM dies, however it dies.
+        RemoteWebDriver.DriverProcess cd = RemoteWebDriver.ensureDriver("chrome");
+        assumeTrue(cd != null, "engine could not start a chromedriver");
         try {
-            assumeTrue(waitUp(cdPort, 10000), "chromedriver did not come up");
-            WebDriver d = headlessChromeAt("http://127.0.0.1:" + cdPort);
+            WebDriver d = headlessChromeAt(cd.url());
             try {
                 assertTrue(d.bidiAvailable(), "BiDi negotiated (webSocketUrl present)");
 
@@ -338,7 +325,7 @@ class LiveTest {
                 d.quit();
             }
         } finally {
-            cd.destroy();
+            cd.stop();
         }
     }
 
@@ -351,17 +338,14 @@ class LiveTest {
 
     @Test
     void liveChromeAtoms() throws Exception {
-        String driverBin = which("chromedriver");
-        assumeTrue(driverBin != null, "chromedriver not on PATH");
+        assumeTrue(hasDriver("chrome"), "engine cannot resolve a chromedriver");
 
-        int cdPort = freePort();
-        Process cd = new ProcessBuilder(driverBin, "--port=" + cdPort)
-                .redirectOutput(ProcessBuilder.Redirect.DISCARD)
-                .redirectError(ProcessBuilder.Redirect.DISCARD)
-                .start();
+        // The engine starts and owns the driver: its whole tree, browser included,
+        // ends on stop() and when this JVM dies, however it dies.
+        RemoteWebDriver.DriverProcess cd = RemoteWebDriver.ensureDriver("chrome");
+        assumeTrue(cd != null, "engine could not start a chromedriver");
         try {
-            assumeTrue(waitUp(cdPort, 10000), "chromedriver did not come up");
-            WebDriver d = headlessChromeAt("http://127.0.0.1:" + cdPort);
+            WebDriver d = headlessChromeAt(cd.url());
             try {
                 d.get("data:text/html," + ATOM_PAGE);
 
@@ -397,23 +381,20 @@ class LiveTest {
                 d.quit();
             }
         } finally {
-            cd.destroy();
+            cd.stop();
         }
     }
 
     @Test
     void liveChromeShadowRoot() throws Exception {
-        String driverBin = which("chromedriver");
-        assumeTrue(driverBin != null, "chromedriver not on PATH");
+        assumeTrue(hasDriver("chrome"), "engine cannot resolve a chromedriver");
 
-        int cdPort = freePort();
-        Process cd = new ProcessBuilder(driverBin, "--port=" + cdPort)
-                .redirectOutput(ProcessBuilder.Redirect.DISCARD)
-                .redirectError(ProcessBuilder.Redirect.DISCARD)
-                .start();
+        // The engine starts and owns the driver: its whole tree, browser included,
+        // ends on stop() and when this JVM dies, however it dies.
+        RemoteWebDriver.DriverProcess cd = RemoteWebDriver.ensureDriver("chrome");
+        assumeTrue(cd != null, "engine could not start a chromedriver");
         try {
-            assumeTrue(waitUp(cdPort, 10000), "chromedriver did not come up");
-            WebDriver d = headlessChromeAt("http://127.0.0.1:" + cdPort);
+            WebDriver d = headlessChromeAt(cd.url());
             try {
                 d.get("data:text/html,<!doctype html><title>Shadow</title><p id=\"plain\">plain</p>");
                 // Attach an open shadow root hosting #sinner (contract setup).
@@ -442,44 +423,14 @@ class LiveTest {
                 d.quit();
             }
         } finally {
-            cd.destroy();
+            cd.stop();
         }
     }
 
-    // ---- process/net helpers ----
-    static String which(String cmd) {
-        String path = System.getenv("PATH");
-        if (path == null) {
-            return null;
-        }
-        for (String dir : path.split(":")) {
-            java.io.File f = new java.io.File(dir, cmd);
-            if (f.canExecute() && !f.isDirectory()) {
-                return f.getAbsolutePath();
-            }
-        }
-        return null;
-    }
-
-    static int freePort() throws IOException {
-        try (java.net.ServerSocket s = new java.net.ServerSocket(0, 0, java.net.InetAddress.getByName("127.0.0.1"))) {
-            return s.getLocalPort();
-        }
-    }
-
-    static boolean waitUp(int port, long timeoutMs) {
-        long deadline = System.currentTimeMillis() + timeoutMs;
-        while (System.currentTimeMillis() < deadline) {
-            try (Socket s = new Socket("127.0.0.1", port)) {
-                return true;
-            } catch (IOException e) {
-                try {
-                    Thread.sleep(100);
-                } catch (InterruptedException ignored) {
-                    Thread.currentThread().interrupt();
-                }
-            }
-        }
-        return false;
+    // ---- driver helper ----
+    // True when the engine can resolve a driver for the browser (no PATH lookup).
+    static boolean hasDriver(String browser) {
+        String path = RemoteWebDriver.resolveDriver(browser);
+        return path != null && !path.isEmpty();
     }
 }

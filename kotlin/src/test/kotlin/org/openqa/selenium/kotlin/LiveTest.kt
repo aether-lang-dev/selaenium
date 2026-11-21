@@ -7,15 +7,13 @@ import org.openqa.selenium.RemoteWebDriver
 import org.openqa.selenium.WebDriver
 import org.openqa.selenium.WebDriverException
 import java.net.InetSocketAddress
-import java.net.ServerSocket
-import java.net.Socket
 import java.nio.charset.StandardCharsets
 import java.util.Base64
 
 // FFI + live surface test for the Kotlin binding. No JUnit — a plain main() with
 // assertions, run by kotlin/.tests.ae with `kotlin -classpath ...`. Exercises the
 // Kotlin sugar (which is pure Java-interop over the FFM binding → the shared
-// engine). Live test needs chromedriver; skips otherwise.
+// engine). Live test starts its chromedriver through the engine; skips if none resolves.
 
 private var failures = 0
 
@@ -65,11 +63,13 @@ fun main() {
     check((WebDriver::script) != null, "WebDriver.script extension present")
 
     // ---- live surface ----
-    val driverBin = which("chromedriver")
-    if (driverBin == null) {
-        println("  (live) SKIPPED: chromedriver not on PATH")
+    // The engine starts and owns the chromedriver: its whole tree, browser
+    // included, ends on stop() and when this JVM dies, however it dies.
+    val cd = RemoteWebDriver.ensureDriver("chrome")
+    if (cd == null) {
+        println("  (live) SKIPPED: the engine cannot resolve a chromedriver")
     } else {
-        liveSurface(driverBin)
+        liveSurface(cd)
     }
 
     if (failures == 0) {
@@ -80,7 +80,7 @@ fun main() {
     }
 }
 
-private fun liveSurface(driverBin: String) {
+private fun liveSurface(cd: RemoteWebDriver.DriverProcess) {
     val web = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
     web.createContext("/") { ex ->
         val body = (if (ex.requestURI.path.startsWith("/two")) PAGE_TWO else PAGE_ONE)
@@ -92,17 +92,8 @@ private fun liveSurface(driverBin: String) {
     web.start()
     val base = "http://127.0.0.1:${web.address.port}"
 
-    val cdPort = freePort()
-    val cd = ProcessBuilder(driverBin, "--port=$cdPort")
-        .redirectOutput(ProcessBuilder.Redirect.DISCARD)
-        .redirectError(ProcessBuilder.Redirect.DISCARD)
-        .start()
     try {
-        if (!waitUp(cdPort, 10_000)) {
-            println("  (live) SKIPPED: chromedriver did not come up")
-            return
-        }
-        headlessChrome("http://127.0.0.1:$cdPort") { d ->
+        headlessChrome(cd.url()) { d ->
             check(d.sessionId().isNotEmpty(), "session started")
 
             d.get("$base/one")
@@ -205,31 +196,7 @@ private fun liveSurface(driverBin: String) {
             check(nse, "no such element error")
         }
     } finally {
-        cd.destroy()
+        cd.stop()
         web.stop(0)
     }
-}
-
-private fun which(cmd: String): String? {
-    val path = System.getenv("PATH") ?: return null
-    for (dir in path.split(":")) {
-        val f = java.io.File(dir, cmd)
-        if (f.canExecute() && !f.isDirectory) return f.absolutePath
-    }
-    return null
-}
-
-private fun freePort(): Int = ServerSocket(0, 0, java.net.InetAddress.getByName("127.0.0.1")).use { it.localPort }
-
-private fun waitUp(port: Int, timeoutMs: Long): Boolean {
-    val deadline = System.currentTimeMillis() + timeoutMs
-    while (System.currentTimeMillis() < deadline) {
-        try {
-            Socket("127.0.0.1", port).close()
-            return true
-        } catch (_: Exception) {
-            Thread.sleep(100)
-        }
-    }
-    return false
 }
