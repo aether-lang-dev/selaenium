@@ -8,7 +8,7 @@
 //               transport-error round-trip. Always runnable.
 //   discovery — like ffi, but asserts the .so was found by the package's own
 //               bundled native/ discovery (no env var, no explicit path).
-//   live      — real headless Chrome if chromedriver is on PATH; skips otherwise.
+//   live      — real headless Chrome through an engine-started driver; skips if none resolves.
 'use strict'
 
 const path = require('node:path')
@@ -62,65 +62,19 @@ function modeDiscovery() {
   console.log('consumer(discovery): OK — zero-config bundled-.so discovery works')
 }
 
-function which(cmd) {
-  const { execFileSync } = require('node:child_process')
-  for (const dir of (process.env.PATH || '').split(':')) {
-    try {
-      execFileSync('test', ['-x', `${dir}/${cmd}`])
-      return `${dir}/${cmd}`
-    } catch {
-      /* not here */
-    }
-  }
-  return null
-}
-
 async function modeLive() {
-  const net = require('node:net')
-  const { spawn } = require('node:child_process')
-  const driver = which('chromedriver')
-  if (!driver) {
-    console.log('consumer(live): SKIPPED — chromedriver not on PATH')
+  checkInstalled()
+  // The engine starts the driver, so the whole tree (browser included) ends on
+  // stop() and when this process dies.
+  const cd = s.ensureDriver('chrome')
+  if (!cd) {
+    console.log('consumer(live): SKIPPED — the engine cannot resolve a chromedriver')
     return
   }
-  checkInstalled()
-
-  const freePort = () =>
-    new Promise((resolve, reject) => {
-      const srv = net.createServer()
-      srv.listen(0, '127.0.0.1', () => {
-        const { port } = srv.address()
-        srv.close(() => resolve(port))
-      })
-      srv.on('error', reject)
-    })
-  const waitUp = (port, t = 10000) =>
-    new Promise((resolve) => {
-      const dl = Date.now() + t
-      const go = () => {
-        const so = net.connect(port, '127.0.0.1')
-        so.on('connect', () => {
-          so.destroy()
-          resolve(true)
-        })
-        so.on('error', () => {
-          so.destroy()
-          Date.now() > dl ? resolve(false) : setTimeout(go, 100)
-        })
-      }
-      go()
-    })
-
-  const port = await freePort()
-  const cd = spawn(driver, [`--port=${port}`], { stdio: 'ignore' })
   try {
-    if (!(await waitUp(port))) {
-      console.log('consumer(live): SKIPPED — chromedriver did not come up')
-      return
-    }
     const html =
       '<!doctype html><title>Installed</title><h1 id="h">Hi</h1>'
-    const d = s.WebDriver.headlessChrome(`http://127.0.0.1:${port}`)
+    const d = s.WebDriver.headlessChrome(cd.url)
     try {
       await d.get('data:text/html;charset=utf-8,' + encodeURIComponent(html))
       const title = await d.getTitle()
@@ -131,7 +85,7 @@ async function modeLive() {
       await d.quit()
     }
   } finally {
-    cd.kill()
+    cd.stop()
   }
 }
 

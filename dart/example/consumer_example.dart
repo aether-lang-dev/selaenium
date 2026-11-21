@@ -61,53 +61,17 @@ Future<void> modeDiscovery() async {
   print('consumer(discovery): OK — zero-config bundled-.so discovery works');
 }
 
-String? which(String cmd) {
-  final path = Platform.environment['PATH'] ?? '';
-  for (final dir in path.split(':')) {
-    final f = File('$dir/$cmd');
-    if (f.existsSync()) return f.path;
-  }
-  return null;
-}
-
-Future<int> freePort() async {
-  final s = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
-  final p = s.port;
-  await s.close();
-  return p;
-}
-
-Future<bool> waitUp(int port) async {
-  final deadline = DateTime.now().add(const Duration(seconds: 10));
-  while (DateTime.now().isBefore(deadline)) {
-    try {
-      final s = await Socket.connect('127.0.0.1', port,
-          timeout: const Duration(milliseconds: 500));
-      await s.close();
-      return true;
-    } catch (_) {
-      await Future<void>.delayed(const Duration(milliseconds: 100));
-    }
-  }
-  return false;
-}
-
 Future<void> modeLive() async {
-  final driver = which('chromedriver');
-  if (driver == null) {
-    print('consumer(live): SKIPPED — chromedriver not on PATH');
+  await configureBundled();
+  // The engine starts the driver, so the whole tree (browser included) ends on
+  // stop() and when this process dies.
+  final cd = ensureDriver(browser: 'chrome');
+  if (cd == null) {
+    print('consumer(live): SKIPPED — the engine cannot resolve a chromedriver');
     return;
   }
-  await configureBundled();
-  final port = await freePort();
-  final cd = await Process.start(driver, ['--port=$port'],
-      mode: ProcessStartMode.detachedWithStdio);
   try {
-    if (!await waitUp(port)) {
-      print('consumer(live): SKIPPED — chromedriver did not come up');
-      return;
-    }
-    final d = WebDriver.headlessChrome('http://127.0.0.1:$port');
+    final d = WebDriver.headlessChrome(cd.url);
     try {
       const html = '<!doctype html><title>Installed</title><h1 id="h">Hi</h1>';
       d.get('data:text/html;charset=utf-8,${Uri.encodeComponent(html)}');
@@ -118,7 +82,7 @@ Future<void> modeLive() async {
       d.quit();
     }
   } finally {
-    cd.kill();
+    cd.stop();
   }
 }
 
@@ -137,7 +101,6 @@ Future<void> main(List<String> args) async {
     default:
       fail('unknown mode: $mode');
   }
-  // Exit explicitly: a killed chromedriver child can otherwise keep the Dart
-  // process alive on its attached stdio, hanging after a successful run.
+  // Exit explicitly so a lingering isolate or handle cannot hang a finished run.
   exit(0);
 }

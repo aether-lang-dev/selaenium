@@ -1,7 +1,7 @@
 // Live end-to-end + surface test (Node): a real headless Chrome session driven
 // through the pure-Aether engine from JS. The whole pipeline — Node -> koffi ->
-// libselenium_core.so -> std.http.client -> chromedriver -> Chrome. Skips if
-// chromedriver is absent. Uses node:test.
+// libselenium_core.so -> std.http.client -> chromedriver -> Chrome. Skips if the
+// engine cannot resolve a chromedriver. Uses node:test.
 //
 // IMPORTANT: the WebDriver surface is async (Promise-returning) exactly like
 // mainstream selenium-webdriver, but each command is a blocking FFI round-trip
@@ -15,54 +15,11 @@
 
 const { test } = require('node:test')
 const assert = require('node:assert')
-const net = require('node:net')
 const path = require('node:path')
-const { spawn, execFileSync } = require('node:child_process')
+const { spawn } = require('node:child_process')
 const fs = require('node:fs')
 
 const s = require('..')
-
-function which(cmd) {
-  for (const dir of (process.env.PATH || '').split(':')) {
-    try {
-      execFileSync('test', ['-x', `${dir}/${cmd}`])
-      return `${dir}/${cmd}`
-    } catch {
-      /* not here */
-    }
-  }
-  return null
-}
-
-function freePort() {
-  return new Promise((resolve, reject) => {
-    const srv = net.createServer()
-    srv.listen(0, '127.0.0.1', () => {
-      const { port } = srv.address()
-      srv.close(() => resolve(port))
-    })
-    srv.on('error', reject)
-  })
-}
-
-function waitUp(port, timeoutMs = 10000) {
-  return new Promise((resolve) => {
-    const deadline = Date.now() + timeoutMs
-    const tryOnce = () => {
-      const sock = net.connect(port, '127.0.0.1')
-      sock.on('connect', () => {
-        sock.destroy()
-        resolve(true)
-      })
-      sock.on('error', () => {
-        sock.destroy()
-        if (Date.now() > deadline) resolve(false)
-        else setTimeout(tryOnce, 100)
-      })
-    }
-    tryOnce()
-  })
-}
 
 // Start the out-of-process content server and resolve to [child, port].
 function startContentServer() {
@@ -189,35 +146,30 @@ test('firefox/edge/safari factories set the right browserName', () => {
 })
 
 test('live chrome + surface', async (t) => {
-  // Source the driver from the engine's Selenium-Manager port (a VERSION-MATCHED
-  // binary), not PATH — a PATH chromedriver can mismatch the installed Chrome
-  // (skew). This test still exercises the BYO-endpoint path (spawn a driver, then
-  // usingServer(url)/headlessChrome(url)) — distinct from the fully
-  // engine-managed 'driver orchestration' test; only the binary source changed.
-  const driverBin = s.resolveDriver('chrome') || which('chromedriver')
-  if (!driverBin || !fs.existsSync(driverBin)) {
-    t.skip('no chromedriver (engine could not resolve one, none on PATH)')
+  // The engine resolves a VERSION-MATCHED chromedriver (not PATH) and, below,
+  // starts it and owns its lifetime. The session still goes through the
+  // BYO-endpoint path (usingServer(url) / headlessChrome(url)), distinct from the
+  // fully engine-managed 'driver orchestration' test.
+  if (!s.resolveDriver('chrome')) {
+    t.skip('the engine cannot resolve a chromedriver')
     return
   }
 
   const [web, webPort] = await startContentServer()
   const base = `http://127.0.0.1:${webPort}`
 
-  const cdPort = await freePort()
-  const cd = spawn(driverBin, [`--port=${cdPort}`], { stdio: 'ignore' })
+  // Its whole tree, browser included, ends on stop() and when this process
+  // dies, however it dies.
+  const cd = s.ensureDriver('chrome')
+  assert.ok(cd, 'engine could not start a chromedriver')
 
   try {
-    if (!(await waitUp(cdPort))) {
-      t.skip('chromedriver did not come up')
-      return
-    }
-
     // Builder with an explicit usingServer() -> the Remote/WebDriver path against
     // a running driver. The surface is async (Promise-returning) exactly like
     // mainstream selenium-webdriver, so every command is awaited.
     const d = new s.Builder()
       .forBrowser('chrome')
-      .usingServer(`http://127.0.0.1:${cdPort}`)
+      .usingServer(cd.url)
       .withCapabilities({
         'goog:chromeOptions': {
           args: ['--headless=new', '--no-sandbox', '--disable-gpu', '--disable-dev-shm-usage'],
@@ -299,39 +251,34 @@ test('live chrome + surface', async (t) => {
       await d.quit()
     }
   } finally {
-    cd.kill()
+    cd.stop()
     web.kill()
   }
 })
 
 // Live WebDriver-BiDi: subscribe to log.entryAdded, emit a console.log via
 // executeScript, receive the event, and issue a plain BiDi command. Same fixture
-// as above: own chromedriver on an ephemeral port, self-skip if absent. All BiDi
+// as above: a chromedriver started by the engine, self-skip if none resolves. All BiDi
 // calls are synchronous blocking FFI.
 test('live chrome + bidi', async (t) => {
-  // Source the driver from the engine's Selenium-Manager port (a VERSION-MATCHED
-  // binary), not PATH — a PATH chromedriver can mismatch the installed Chrome
-  // (skew). This test still exercises the BYO-endpoint path (spawn a driver, then
-  // usingServer(url)/headlessChrome(url)) — distinct from the fully
-  // engine-managed 'driver orchestration' test; only the binary source changed.
-  const driverBin = s.resolveDriver('chrome') || which('chromedriver')
-  if (!driverBin || !fs.existsSync(driverBin)) {
-    t.skip('no chromedriver (engine could not resolve one, none on PATH)')
+  // The engine resolves a VERSION-MATCHED chromedriver (not PATH) and, below,
+  // starts it and owns its lifetime. The session still goes through the
+  // BYO-endpoint path (usingServer(url) / headlessChrome(url)), distinct from the
+  // fully engine-managed 'driver orchestration' test.
+  if (!s.resolveDriver('chrome')) {
+    t.skip('the engine cannot resolve a chromedriver')
     return
   }
 
-  const cdPort = await freePort()
-  const cd = spawn(driverBin, [`--port=${cdPort}`], { stdio: 'ignore' })
+  // Its whole tree, browser included, ends on stop() and when this process
+  // dies, however it dies.
+  const cd = s.ensureDriver('chrome')
+  assert.ok(cd, 'engine could not start a chromedriver')
 
   try {
-    if (!(await waitUp(cdPort))) {
-      t.skip('chromedriver did not come up')
-      return
-    }
-
     // The classic WebDriver surface is async (Promise-returning); the BiDi
     // channel (d.bidi.*) is synchronous blocking FFI.
-    const d = s.WebDriver.headlessChrome(`http://127.0.0.1:${cdPort}`)
+    const d = s.WebDriver.headlessChrome(cd.url)
     try {
       assert.ok(d.sessionId, 'no session id after newSession')
       assert.ok(d.bidiAvailable(), 'session negotiated no BiDi webSocketUrl')
@@ -432,39 +379,34 @@ test('live chrome + bidi', async (t) => {
       await d.quit()
     }
   } finally {
-    cd.kill()
+    cd.stop()
   }
 })
 
 // Live atom-backed commands: isDisplayed / getAttribute / relative locators all
-// run the shared JS atoms in-page via the engine. Same fixture as above: own
-// chromedriver on an ephemeral port, self-skip if absent. Uses a data: URL so no
+// run the shared JS atoms in-page via the engine. Same fixture as above: a
+// chromedriver started by the engine, self-skip if none resolves. Uses a data: URL so no
 // content server is needed. The surface is async (Promise-returning), so every
 // command is awaited.
 test('live chrome + atoms', async (t) => {
-  // Source the driver from the engine's Selenium-Manager port (a VERSION-MATCHED
-  // binary), not PATH — a PATH chromedriver can mismatch the installed Chrome
-  // (skew). This test still exercises the BYO-endpoint path (spawn a driver, then
-  // usingServer(url)/headlessChrome(url)) — distinct from the fully
-  // engine-managed 'driver orchestration' test; only the binary source changed.
-  const driverBin = s.resolveDriver('chrome') || which('chromedriver')
-  if (!driverBin || !fs.existsSync(driverBin)) {
-    t.skip('no chromedriver (engine could not resolve one, none on PATH)')
+  // The engine resolves a VERSION-MATCHED chromedriver (not PATH) and, below,
+  // starts it and owns its lifetime. The session still goes through the
+  // BYO-endpoint path (usingServer(url) / headlessChrome(url)), distinct from the
+  // fully engine-managed 'driver orchestration' test.
+  if (!s.resolveDriver('chrome')) {
+    t.skip('the engine cannot resolve a chromedriver')
     return
   }
 
-  const cdPort = await freePort()
-  const cd = spawn(driverBin, [`--port=${cdPort}`], { stdio: 'ignore' })
+  // Its whole tree, browser included, ends on stop() and when this process
+  // dies, however it dies.
+  const cd = s.ensureDriver('chrome')
+  assert.ok(cd, 'engine could not start a chromedriver')
 
   try {
-    if (!(await waitUp(cdPort))) {
-      t.skip('chromedriver did not come up')
-      return
-    }
-
     // The classic surface is async (Promise-returning); the atom-backed commands
     // (isDisplayed/getAttribute) and findRelative are exposed through it too.
-    const d = s.WebDriver.headlessChrome(`http://127.0.0.1:${cdPort}`)
+    const d = s.WebDriver.headlessChrome(cd.url)
     try {
       assert.ok(d.sessionId, 'no session id after newSession')
 
@@ -517,6 +459,6 @@ test('live chrome + atoms', async (t) => {
       await d.quit()
     }
   } finally {
-    cd.kill()
+    cd.stop()
   }
 })

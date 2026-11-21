@@ -1,49 +1,18 @@
 // Live end-to-end + surface test (Dart): a real headless Chrome session driven
 // through the pure-Aether engine via dart:ffi. The content server runs
 // out-of-process (test/content_server.dart) because the synchronous FFI calls
-// block the isolate. Skips if chromedriver is absent.
+// block the isolate. The chromedriver is started by the engine (ensureDriver), which
+// owns its lifetime. Skips if the engine cannot resolve one.
 import 'dart:convert';
 import 'dart:io';
 
 import 'package:selenium/selenium.dart';
 import 'package:test/test.dart';
 
-String? which(String cmd) {
-  final path = Platform.environment['PATH'] ?? '';
-  for (final dir in path.split(':')) {
-    final f = File('$dir/$cmd');
-    if (f.existsSync()) return f.path;
-  }
-  return null;
-}
-
-Future<int> freePort() async {
-  final s = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
-  final port = s.port;
-  await s.close();
-  return port;
-}
-
-Future<bool> waitUp(int port, Duration timeout) async {
-  final deadline = DateTime.now().add(timeout);
-  while (DateTime.now().isBefore(deadline)) {
-    try {
-      final s = await Socket.connect('127.0.0.1', port,
-          timeout: const Duration(milliseconds: 500));
-      await s.close();
-      return true;
-    } catch (_) {
-      await Future<void>.delayed(const Duration(milliseconds: 100));
-    }
-  }
-  return false;
-}
-
 void main() {
   test('live chrome + surface', () async {
-    final driverBin = which('chromedriver');
-    if (driverBin == null) {
-      markTestSkipped('chromedriver not on PATH');
+    if (resolveDriver(browser: 'chrome').isEmpty) {
+      markTestSkipped('engine cannot resolve a chromedriver');
       return;
     }
 
@@ -57,15 +26,15 @@ void main() {
     final webPort = int.parse(portLine.substring(5).trim());
     final base = 'http://127.0.0.1:$webPort';
 
-    final cdPort = await freePort();
-    final cd = await Process.start(driverBin, ['--port=$cdPort']);
+    // The engine starts and owns the driver: its whole tree, browser included,
+    // ends on stop() and when this process dies, however it dies.
+    final cd = ensureDriver(browser: 'chrome');
+    if (cd == null) {
+      markTestSkipped('engine could not start a chromedriver');
+      return;
+    }
     try {
-      if (!await waitUp(cdPort, const Duration(seconds: 10))) {
-        markTestSkipped('chromedriver did not come up');
-        return;
-      }
-
-      final d = WebDriver.headlessChrome('http://127.0.0.1:$cdPort');
+      final d = WebDriver.headlessChrome(cd.url);
       try {
         expect(d.sessionId, isNotEmpty);
 
@@ -137,27 +106,26 @@ void main() {
         d.quit();
       }
     } finally {
-      cd.kill();
+      cd.stop();
       server.kill();
     }
   }, timeout: const Timeout(Duration(seconds: 90)));
 
   test('live chrome + atoms', () async {
-    final driverBin = which('chromedriver');
-    if (driverBin == null) {
-      markTestSkipped('chromedriver not on PATH');
+    if (resolveDriver(browser: 'chrome').isEmpty) {
+      markTestSkipped('engine cannot resolve a chromedriver');
       return;
     }
 
-    final cdPort = await freePort();
-    final cd = await Process.start(driverBin, ['--port=$cdPort']);
+    // The engine starts and owns the driver: its whole tree, browser included,
+    // ends on stop() and when this process dies, however it dies.
+    final cd = ensureDriver(browser: 'chrome');
+    if (cd == null) {
+      markTestSkipped('engine could not start a chromedriver');
+      return;
+    }
     try {
-      if (!await waitUp(cdPort, const Duration(seconds: 10))) {
-        markTestSkipped('chromedriver did not come up');
-        return;
-      }
-
-      final d = WebDriver.headlessChrome('http://127.0.0.1:$cdPort');
+      final d = WebDriver.headlessChrome(cd.url);
       try {
         // A self-contained fixture served straight from a data: URL.
         const html = '<!doctype html><title>Atoms</title>'
@@ -204,7 +172,7 @@ void main() {
         d.quit();
       }
     } finally {
-      cd.kill();
+      cd.stop();
     }
   }, timeout: const Timeout(Duration(seconds: 90)));
 
@@ -288,9 +256,8 @@ void main() {
   }, timeout: const Timeout(Duration(seconds: 120)));
 
   test('live convenience tier: wait + Select + Actions', () async {
-    final driverBin = which('chromedriver');
-    if (driverBin == null) {
-      markTestSkipped('chromedriver not on PATH');
+    if (resolveDriver(browser: 'chrome').isEmpty) {
+      markTestSkipped('engine cannot resolve a chromedriver');
       return;
     }
 
@@ -305,15 +272,15 @@ void main() {
     final webPort = int.parse(portLine.substring(5).trim());
     final base = 'http://127.0.0.1:$webPort';
 
-    final cdPort = await freePort();
-    final cd = await Process.start(driverBin, ['--port=$cdPort']);
+    // The engine starts and owns the driver: its whole tree, browser included,
+    // ends on stop() and when this process dies, however it dies.
+    final cd = ensureDriver(browser: 'chrome');
+    if (cd == null) {
+      markTestSkipped('engine could not start a chromedriver');
+      return;
+    }
     try {
-      if (!await waitUp(cdPort, const Duration(seconds: 10))) {
-        markTestSkipped('chromedriver did not come up');
-        return;
-      }
-
-      final d = WebDriver.headlessChrome('http://127.0.0.1:$cdPort');
+      final d = WebDriver.headlessChrome(cd.url);
       try {
         d.get('$base/form');
 
@@ -362,15 +329,14 @@ void main() {
         d.quit();
       }
     } finally {
-      cd.kill();
+      cd.stop();
       server.kill();
     }
   }, timeout: const Timeout(Duration(seconds: 90)));
 
   test('live chrome + bidi', () async {
-    final driverBin = which('chromedriver');
-    if (driverBin == null) {
-      markTestSkipped('chromedriver not on PATH');
+    if (resolveDriver(browser: 'chrome').isEmpty) {
+      markTestSkipped('engine cannot resolve a chromedriver');
       return;
     }
 
@@ -384,15 +350,15 @@ void main() {
     final webPort = int.parse(portLine.substring(5).trim());
     final base = 'http://127.0.0.1:$webPort';
 
-    final cdPort = await freePort();
-    final cd = await Process.start(driverBin, ['--port=$cdPort']);
+    // The engine starts and owns the driver: its whole tree, browser included,
+    // ends on stop() and when this process dies, however it dies.
+    final cd = ensureDriver(browser: 'chrome');
+    if (cd == null) {
+      markTestSkipped('engine could not start a chromedriver');
+      return;
+    }
     try {
-      if (!await waitUp(cdPort, const Duration(seconds: 10))) {
-        markTestSkipped('chromedriver did not come up');
-        return;
-      }
-
-      final d = WebDriver.headlessChrome('http://127.0.0.1:$cdPort');
+      final d = WebDriver.headlessChrome(cd.url);
       try {
         expect(d.bidiAvailable, isTrue);
 
@@ -461,7 +427,7 @@ void main() {
         d.quit();
       }
     } finally {
-      cd.kill();
+      cd.stop();
       server.kill();
     }
   }, timeout: const Timeout(Duration(seconds: 90)));

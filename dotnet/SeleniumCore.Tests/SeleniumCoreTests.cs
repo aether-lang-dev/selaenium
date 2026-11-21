@@ -54,28 +54,27 @@ namespace SeleniumCore.Tests
         [SkippableFact]
         public void HeadlessChromeSurface()
         {
-            string? driver = Which("chromedriver");
-            Skip.If(driver is null, "chromedriver not on PATH");
+            Skip.If(string.IsNullOrEmpty(RemoteWebDriver.ResolveDriver("chrome")),
+                "engine cannot resolve a chromedriver");
 
             int webPort = FreePort();
             using var webCts = new System.Threading.CancellationTokenSource();
             StartContentServer(webPort, webCts.Token);
             string baseUrl = $"http://127.0.0.1:{webPort}";
 
-            int cdPort = FreePort();
-            var cd = Process.Start(new ProcessStartInfo(driver!, $"--port={cdPort}")
-                { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true })!;
+            // The engine starts and owns the driver: its whole tree, browser
+            // included, ends on Stop() and when this process dies, however it dies.
+            DriverProcess cd = RemoteWebDriver.EnsureDriver("chrome")
+                ?? throw new SkipException("engine could not start a chromedriver");
             try
             {
-                Skip.IfNot(WaitUp(cdPort, 10000), "chromedriver did not come up");
-
                 // Headless Chrome; point at an explicit binary when SEL_CHROME_BINARY
                 // is set (a box with no system Chrome but a cached Chrome-for-Testing).
                 var chromeArgs = new List<object?> { "--headless=new", "--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage" };
                 var chromeOpts = new Dictionary<string, object?> { ["args"] = chromeArgs };
                 string? chromeBin = Environment.GetEnvironmentVariable("SEL_CHROME_BINARY");
                 if (!string.IsNullOrEmpty(chromeBin)) chromeOpts["binary"] = chromeBin;
-                var d = RemoteWebDriver.Chrome($"http://127.0.0.1:{cdPort}",
+                var d = RemoteWebDriver.Chrome(cd.Url,
                     new Dictionary<string, object?> { ["goog:chromeOptions"] = chromeOpts });
                 try
                 {
@@ -177,7 +176,7 @@ namespace SeleniumCore.Tests
             }
             finally
             {
-                try { cd.Kill(); } catch { /* already gone */ }
+                cd.Stop();
                 webCts.Cancel();
             }
         }
@@ -232,23 +231,22 @@ namespace SeleniumCore.Tests
         [SkippableFact]
         public void HeadlessChromeBidi()
         {
-            string? driver = Which("chromedriver");
-            Skip.If(driver is null, "chromedriver not on PATH");
+            Skip.If(string.IsNullOrEmpty(RemoteWebDriver.ResolveDriver("chrome")),
+                "engine cannot resolve a chromedriver");
 
-            int cdPort = FreePort();
-            var cd = Process.Start(new ProcessStartInfo(driver!, $"--port={cdPort}")
-                { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true })!;
+            // The engine starts and owns the driver: its whole tree, browser
+            // included, ends on Stop() and when this process dies, however it dies.
+            DriverProcess cd = RemoteWebDriver.EnsureDriver("chrome")
+                ?? throw new SkipException("engine could not start a chromedriver");
             try
             {
-                Skip.IfNot(WaitUp(cdPort, 10000), "chromedriver did not come up");
-
                 // Headless Chrome; point at an explicit binary when SEL_CHROME_BINARY
                 // is set (a box with no system Chrome but a cached Chrome-for-Testing).
                 var chromeArgs = new List<object?> { "--headless=new", "--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage" };
                 var chromeOpts = new Dictionary<string, object?> { ["args"] = chromeArgs };
                 string? chromeBin = Environment.GetEnvironmentVariable("SEL_CHROME_BINARY");
                 if (!string.IsNullOrEmpty(chromeBin)) chromeOpts["binary"] = chromeBin;
-                var d = RemoteWebDriver.Chrome($"http://127.0.0.1:{cdPort}",
+                var d = RemoteWebDriver.Chrome(cd.Url,
                     new Dictionary<string, object?> { ["goog:chromeOptions"] = chromeOpts });
                 try
                 {
@@ -308,7 +306,7 @@ namespace SeleniumCore.Tests
             }
             finally
             {
-                try { cd.Kill(); } catch { /* already gone */ }
+                cd.Stop();
             }
         }
 
@@ -317,21 +315,20 @@ namespace SeleniumCore.Tests
         [SkippableFact]
         public void HeadlessChromeAtoms()
         {
-            string? driver = Which("chromedriver");
-            Skip.If(driver is null, "chromedriver not on PATH");
+            Skip.If(string.IsNullOrEmpty(RemoteWebDriver.ResolveDriver("chrome")),
+                "engine cannot resolve a chromedriver");
 
-            int cdPort = FreePort();
-            var cd = Process.Start(new ProcessStartInfo(driver!, $"--port={cdPort}")
-                { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true })!;
+            // The engine starts and owns the driver: its whole tree, browser
+            // included, ends on Stop() and when this process dies, however it dies.
+            DriverProcess cd = RemoteWebDriver.EnsureDriver("chrome")
+                ?? throw new SkipException("engine could not start a chromedriver");
             try
             {
-                Skip.IfNot(WaitUp(cdPort, 10000), "chromedriver did not come up");
-
                 var chromeArgs = new List<object?> { "--headless=new", "--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage" };
                 var chromeOpts = new Dictionary<string, object?> { ["args"] = chromeArgs };
                 string? chromeBin = Environment.GetEnvironmentVariable("SEL_CHROME_BINARY");
                 if (!string.IsNullOrEmpty(chromeBin)) chromeOpts["binary"] = chromeBin;
-                var d = RemoteWebDriver.Chrome($"http://127.0.0.1:{cdPort}",
+                var d = RemoteWebDriver.Chrome(cd.Url,
                     new Dictionary<string, object?> { ["goog:chromeOptions"] = chromeOpts });
                 try
                 {
@@ -356,7 +353,7 @@ namespace SeleniumCore.Tests
             }
             finally
             {
-                try { cd.Kill(); } catch { /* already gone */ }
+                cd.Stop();
             }
         }
 
@@ -367,8 +364,8 @@ namespace SeleniumCore.Tests
         [SkippableFact]
         public void ConvenienceTierSurface()
         {
-            string? driver = Which("chromedriver");
-            Skip.If(driver is null, "chromedriver not on PATH");
+            Skip.If(string.IsNullOrEmpty(RemoteWebDriver.ResolveDriver("chrome")),
+                "engine cannot resolve a chromedriver");
 
             var page = "<!doctype html><title>Convenience</title>"
                 + "<select id='cheese'><option value='ched'>Cheddar</option>"
@@ -379,18 +376,17 @@ namespace SeleniumCore.Tests
                 + "d.id='late';d.textContent='here';document.body.appendChild(d);},400);</script>";
             string url = "data:text/html;charset=utf-8," + Uri.EscapeDataString(page);
 
-            int cdPort = FreePort();
-            var cd = Process.Start(new ProcessStartInfo(driver!, $"--port={cdPort}")
-                { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true })!;
+            // The engine starts and owns the driver: its whole tree, browser
+            // included, ends on Stop() and when this process dies, however it dies.
+            DriverProcess cd = RemoteWebDriver.EnsureDriver("chrome")
+                ?? throw new SkipException("engine could not start a chromedriver");
             try
             {
-                Skip.IfNot(WaitUp(cdPort, 10000), "chromedriver did not come up");
-
                 var chromeArgs = new List<object?> { "--headless=new", "--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage" };
                 var chromeOpts = new Dictionary<string, object?> { ["args"] = chromeArgs };
                 string? chromeBin = Environment.GetEnvironmentVariable("SEL_CHROME_BINARY");
                 if (!string.IsNullOrEmpty(chromeBin)) chromeOpts["binary"] = chromeBin;
-                var d = RemoteWebDriver.Chrome($"http://127.0.0.1:{cdPort}",
+                var d = RemoteWebDriver.Chrome(cd.Url,
                     new Dictionary<string, object?> { ["goog:chromeOptions"] = chromeOpts });
                 try
                 {
@@ -421,7 +417,7 @@ namespace SeleniumCore.Tests
             }
             finally
             {
-                try { cd.Kill(); } catch { /* already gone */ }
+                cd.Stop();
             }
         }
 
@@ -455,16 +451,6 @@ namespace SeleniumCore.Tests
             t.Start();
         }
 
-        private static string? Which(string cmd)
-        {
-            foreach (var dir in (Environment.GetEnvironmentVariable("PATH") ?? "").Split(':'))
-            {
-                var p = Path.Combine(dir, cmd);
-                if (File.Exists(p)) return p;
-            }
-            return null;
-        }
-
         private static int FreePort()
         {
             var l = new TcpListener(IPAddress.Loopback, 0);
@@ -472,17 +458,6 @@ namespace SeleniumCore.Tests
             int port = ((IPEndPoint)l.LocalEndpoint).Port;
             l.Stop();
             return port;
-        }
-
-        private static bool WaitUp(int port, int timeoutMs)
-        {
-            var until = DateTime.UtcNow.AddMilliseconds(timeoutMs);
-            while (DateTime.UtcNow < until)
-            {
-                try { using var c = new TcpClient(); c.Connect("127.0.0.1", port); return true; }
-                catch { Thread.Sleep(100); }
-            }
-            return false;
         }
     }
 }

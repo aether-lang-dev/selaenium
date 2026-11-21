@@ -2,8 +2,9 @@
 ## through the pure-Aether engine via the linked .so, with a std/net content
 ## server (on its own thread — Nim threads are OS threads, so a blocking FFI
 ## call on the main thread doesn't stall the server) for a real cookie/nav
-## origin. Skips if chromedriver is absent.
-import std/[json, os, osproc, net, strutils, base64, times]
+## origin. The chromedriver is started by the engine (ensureDriver), which owns its
+## lifetime. Skips if the engine cannot resolve one.
+import std/[json, os, net, strutils, base64, times]
 import selenium
 
 const
@@ -32,18 +33,6 @@ proc freePort(): Port =
   s.close()
   p
 
-proc waitUp(port: Port, timeoutMs: int): bool =
-  let deadline = epochTime() + timeoutMs.float / 1000.0
-  while epochTime() < deadline:
-    try:
-      let s = newSocket()
-      s.connect("127.0.0.1", port)
-      s.close()
-      return true
-    except OSError, CatchableError:
-      sleep(100)
-  false
-
 proc contentServer(port: Port) {.thread.} =
   let listener = newSocket()
   listener.setSockOpt(OptReuseAddr, true)
@@ -69,16 +58,9 @@ proc contentServer(port: Port) {.thread.} =
     client.close()
   listener.close()
 
-proc which(cmd: string): string =
-  for dir in getEnv("PATH").split(':'):
-    let p = dir / cmd
-    if fileExists(p): return p
-  ""
-
 proc main() =
-  let driverBin = which("chromedriver")
-  if driverBin.len == 0:
-    echo "SKIPPED: chromedriver not on PATH"
+  if resolveDriver("chrome").len == 0:
+    echo "SKIPPED: the engine cannot resolve a chromedriver"
     return
 
   let webPort = freePort()
@@ -86,14 +68,12 @@ proc main() =
   createThread(srvThread, contentServer, webPort)
   let base = "http://127.0.0.1:" & $webPort.int
 
-  let cdPort = freePort()
-  let cd = startProcess(driverBin, args = ["--port=" & $cdPort.int],
-                        options = {poUsePath})
+  # The engine starts and owns the driver: its whole tree, browser included,
+  # ends on stop() and when this process dies, however it dies.
+  let cd = ensureDriver("chrome")
+  doAssert cd != nil, "ensureDriver(chrome) returned nil"
   try:
-    if not waitUp(cdPort, 10000):
-      echo "SKIPPED: chromedriver did not come up"
-      return
-    let d = headlessChrome("http://127.0.0.1:" & $cdPort.int)
+    let d = headlessChrome(cd.url)
     try:
       doAssert d.sessionId.len > 0
       echo "  ok: session started"
@@ -325,8 +305,7 @@ proc main() =
     finally:
       d.quit()
   finally:
-    cd.terminate()
-    discard cd.waitForExit()
+    cd.stop()
     serverStop = true
     # nudge the server out of accept()
     try:

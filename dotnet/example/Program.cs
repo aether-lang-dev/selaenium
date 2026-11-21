@@ -1,8 +1,6 @@
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.IO;
-using System.Net.Sockets;
 using SeleniumCore;
 
 // Third-party consumer example. References the INSTALLED SeleniumCore NuGet
@@ -69,30 +67,17 @@ internal static class Program
 
     private static void ModeLive()
     {
-        string? driver = Which("chromedriver");
-        if (driver == null)
+        // The engine starts the driver, so the whole tree (browser included) ends
+        // on Stop() and when this process dies.
+        var cd = WebDriver.EnsureDriver("chrome");
+        if (cd == null)
         {
-            Console.WriteLine("consumer(live): SKIPPED — chromedriver not on PATH");
+            Console.WriteLine("consumer(live): SKIPPED — the engine cannot resolve a chromedriver");
             return;
         }
-        int port;
-        var l = new TcpListener(System.Net.IPAddress.Loopback, 0);
-        l.Start();
-        port = ((System.Net.IPEndPoint)l.LocalEndpoint).Port;
-        l.Stop();
-        var cd = Process.Start(new ProcessStartInfo(driver, $"--port={port}")
-        {
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-        })!;
         try
         {
-            if (!WaitUp(port, 10000))
-            {
-                Console.WriteLine("consumer(live): SKIPPED — chromedriver did not come up");
-                return;
-            }
-            var d = WebDriver.HeadlessChrome($"http://127.0.0.1:{port}");
+            var d = WebDriver.HeadlessChrome(cd.Url);
             try
             {
                 string html = "<!doctype html><title>Installed</title><h1 id=\"h\">Hi</h1>";
@@ -108,38 +93,7 @@ internal static class Program
         }
         finally
         {
-            try { cd.Kill(); } catch { /* gone */ }
+            cd.Stop();
         }
-    }
-
-    private static string? Which(string cmd)
-    {
-        string? path = Environment.GetEnvironmentVariable("PATH");
-        if (path == null) return null;
-        foreach (string dir in path.Split(':'))
-        {
-            string full = Path.Combine(dir, cmd);
-            if (File.Exists(full)) return full;
-        }
-        return null;
-    }
-
-    private static bool WaitUp(int port, int timeoutMs)
-    {
-        var deadline = DateTime.UtcNow.AddMilliseconds(timeoutMs);
-        while (DateTime.UtcNow < deadline)
-        {
-            try
-            {
-                using var c = new TcpClient();
-                c.Connect(System.Net.IPAddress.Loopback, port);
-                return true;
-            }
-            catch
-            {
-                System.Threading.Thread.Sleep(100);
-            }
-        }
-        return false;
     }
 }

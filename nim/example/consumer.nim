@@ -3,7 +3,7 @@
 ## core/ sibling — so {.passL.}'s ../selenium_core/native can't resolve and only the
 ## package's own bundled native/ .so satisfies the link/rpath). Run with
 ## SELENIUM_CORE_LIB unset. Modes: ffi | live.
-import std/[os, osproc, net, strutils, times]
+import std/[os, strutils]
 import selenium
 
 proc fail(msg: string) =
@@ -24,31 +24,6 @@ proc modeFfi() =
     if e.code != -1: fail("wrong transport code")
   echo "consumer(ffi): OK — bundled package linked its own .so via {.passL.} rpath"
 
-proc which(cmd: string): string =
-  for dir in getEnv("PATH").split(':'):
-    let p = dir / cmd
-    if fileExists(p): return p
-  ""
-
-proc freePort(): Port =
-  let s = newSocket()
-  s.bindAddr(Port(0), "127.0.0.1")
-  let p = s.getLocalAddr()[1]
-  s.close()
-  p
-
-proc waitUp(port: Port, timeoutMs: int): bool =
-  let deadline = epochTime() + timeoutMs.float / 1000.0
-  while epochTime() < deadline:
-    try:
-      let s = newSocket()
-      s.connect("127.0.0.1", port)
-      s.close()
-      return true
-    except CatchableError:
-      sleep(100)
-  false
-
 proc urlencode(s: string): string =
   for ch in s:
     if ch in {'A'..'Z', 'a'..'z', '0'..'9', '-', '_', '.', '~'}:
@@ -57,17 +32,14 @@ proc urlencode(s: string): string =
       result.add '%' & toHex(ord(ch), 2)
 
 proc modeLive() =
-  let driverBin = which("chromedriver")
-  if driverBin.len == 0:
-    echo "consumer(live): SKIPPED — chromedriver not on PATH"
+  # The engine starts the driver, so the whole tree (browser included) ends on
+  # stop() and when this process dies.
+  let cd = ensureDriver("chrome")
+  if cd == nil:
+    echo "consumer(live): SKIPPED — the engine cannot resolve a chromedriver"
     return
-  let port = freePort()
-  let cd = startProcess(driverBin, args = ["--port=" & $port.int], options = {poUsePath})
   try:
-    if not waitUp(port, 10000):
-      echo "consumer(live): SKIPPED — chromedriver did not come up"
-      return
-    let d = headlessChrome("http://127.0.0.1:" & $port.int)
+    let d = headlessChrome(cd.url)
     try:
       let html = "<!doctype html><title>Installed</title><h1 id=\"h\">Hi</h1>"
       d.get("data:text/html;charset=utf-8," & urlencode(html))
@@ -77,8 +49,7 @@ proc modeLive() =
     finally:
       d.quit()
   finally:
-    cd.terminate()
-    discard cd.waitForExit()
+    cd.stop()
 
 when isMainModule:
   let mode = if paramCount() >= 1: paramStr(1) else: "ffi"
