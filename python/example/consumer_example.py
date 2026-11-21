@@ -16,11 +16,7 @@ Exit 0 = pass/skip; non-zero = failure.
 
 import json
 import os
-import shutil
-import socket
-import subprocess
 import sys
-import time
 
 
 def _check_import_is_installed():
@@ -77,41 +73,19 @@ def mode_discovery():
     print("consumer(discovery): OK — zero-config bundled-.so discovery works")
 
 
-def _free_port():
-    s = socket.socket(); s.bind(("127.0.0.1", 0)); p = s.getsockname()[1]; s.close()
-    return p
-
-
-def _wait_up(port, timeout=10.0):
-    end = time.time() + timeout
-    while time.time() < end:
-        try:
-            with socket.create_connection(("127.0.0.1", port), timeout=0.5):
-                return True
-        except OSError:
-            time.sleep(0.1)
-    return False
-
-
 def mode_live():
-    driver = shutil.which("chromedriver")
-    if not driver:
-        print("consumer(live): SKIPPED — chromedriver not on PATH")
-        return
     sc = _check_import_is_installed()
-    from selenium.webdriver import By
+    from selenium.webdriver import By, Remote, ensure_driver
 
-    port = _free_port()
-    proc = subprocess.Popen([driver, f"--port={port}"],
-                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    # The engine starts the driver, so the whole tree (browser included) ends on
+    # stop() and when this process dies.
+    proc = ensure_driver("chrome")
+    if proc is None:
+        print("consumer(live): SKIPPED — the engine cannot resolve a chromedriver")
+        return
     try:
-        if not _wait_up(port):
-            print("consumer(live): SKIPPED — chromedriver did not come up")
-            return
         opts = {"goog:chromeOptions": {"args": ["--headless=new", "--no-sandbox", "--disable-gpu"]}}
-        from selenium.webdriver import Remote
-        d = Remote(f"http://127.0.0.1:{port}",
-                   {"browserName": "chrome", **opts})
+        d = Remote(proc.url, {"browserName": "chrome", **opts})
         try:
             import urllib.parse
             html = '<html><head><title>Installed</title></head><body><h1 id="h">Hi</h1></body></html>'
@@ -122,11 +96,7 @@ def mode_live():
         finally:
             d.quit()
     finally:
-        proc.terminate()
-        try:
-            proc.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            proc.kill()
+        proc.stop()
 
 
 def main():

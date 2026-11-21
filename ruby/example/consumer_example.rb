@@ -14,7 +14,6 @@
 
 require 'selenium-webdriver'
 require 'json'
-require 'socket'
 require 'cgi'
 
 def check_installed
@@ -51,49 +50,17 @@ def mode_discovery
   puts 'consumer(discovery): OK — zero-config bundled-.so discovery works'
 end
 
-def which(cmd)
-  ENV['PATH'].split(File::PATH_SEPARATOR).each do |dir|
-    p = File.join(dir, cmd)
-    return p if File.executable?(p) && !File.directory?(p)
-  end
-  nil
-end
-
-def free_port
-  s = TCPServer.new('127.0.0.1', 0)
-  port = s.addr[1]
-  s.close
-  port
-end
-
-def wait_up(port, timeout = 10.0)
-  deadline = Time.now + timeout
-  while Time.now < deadline
-    begin
-      TCPSocket.new('127.0.0.1', port).close
-      return true
-    rescue Errno::ECONNREFUSED
-      sleep 0.1
-    end
-  end
-  false
-end
-
 def mode_live
-  driver = which('chromedriver')
-  if driver.nil?
-    puts 'consumer(live): SKIPPED — chromedriver not on PATH'
+  check_installed
+  # The engine starts the driver, so the whole tree (browser included) ends on
+  # stop and when this process dies.
+  cd = Selenium::WebDriver.ensure_driver('chrome')
+  if cd.nil?
+    puts 'consumer(live): SKIPPED — the engine cannot resolve a chromedriver'
     return
   end
-  check_installed
-  port = free_port
-  cd = spawn(driver, "--port=#{port}", out: File::NULL, err: File::NULL)
   begin
-    unless wait_up(port)
-      puts 'consumer(live): SKIPPED — chromedriver did not come up'
-      return
-    end
-    d = Selenium::WebDriver.headless_chrome("http://127.0.0.1:#{port}")
+    d = Selenium::WebDriver.headless_chrome(cd.url)
     begin
       html = '<html><head><title>Installed</title></head><body><h1 id="h">Hi</h1></body></html>'
       d.get('data:text/html;charset=utf-8,' + CGI.escape(html).gsub('+', '%20'))
@@ -104,12 +71,7 @@ def mode_live
       d.quit
     end
   ensure
-    begin
-      Process.kill('TERM', cd)
-      Process.wait(cd)
-    rescue Errno::ESRCH, Errno::ECHILD
-      # gone
-    end
+    cd.stop
   end
 end
 

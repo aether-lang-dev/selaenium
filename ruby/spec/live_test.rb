@@ -25,26 +25,23 @@ class LiveTest < Minitest::Test
     # chromedriver harness. test_live_firefox drives geckodriver, not chromedriver.
     return if %w[test_live_driver_orchestration test_live_firefox].include?(name)
 
-    @driver_bin = which('chromedriver')
-    skip 'chromedriver not on PATH' unless @driver_bin
-    @port = free_port
-    @cd = spawn(@driver_bin, "--port=#{@port}", out: File::NULL, err: File::NULL)
-    skip 'chromedriver did not come up' unless wait_up(@port)
+    # The engine starts and owns the driver: its whole tree, browser included,
+    # ends on stop and when this process dies (docs/Selenium-Manager-Port.md,
+    # "Driver and browser lifetime").
+    @cd = Selenium::WebDriver.ensure_driver('chrome')
+    skip 'engine cannot resolve a chromedriver' unless @cd
   end
 
   def teardown
     return unless @cd
 
-    Process.kill('TERM', @cd)
-    Process.wait(@cd)
-  rescue Errno::ESRCH, Errno::ECHILD
-    # already gone
+    @cd.stop
   end
 
   def test_live_chrome
     # Selenium::WebDriver.for(:chrome, command_executor:) dispatches to a Chrome
     # session against the running chromedriver (headless options passed through).
-    driver = Selenium::WebDriver.for(:chrome, command_executor: "http://127.0.0.1:#{@port}",
+    driver = Selenium::WebDriver.for(:chrome, command_executor: @cd.url,
                                               options: {
                                                 'goog:chromeOptions' => {
                                                   'args' => ['--headless=new', '--no-sandbox',
@@ -159,7 +156,7 @@ class LiveTest < Minitest::Test
   # one via the classic script channel, and receive the event asynchronously —
   # the bidirectional half, driven from Ruby through the demux C ABI.
   def test_live_bidi
-    driver = Selenium::WebDriver.headless_chrome("http://127.0.0.1:#{@port}")
+    driver = Selenium::WebDriver.headless_chrome(@cd.url)
     begin
       assert driver.bidi_available?, 'session negotiated no webSocketUrl'
 
@@ -233,7 +230,7 @@ class LiveTest < Minitest::Test
   # authRequired -> provideCredentials round-trip.
   def test_live_bidi_auth
     server, srv_port = basic_auth_server
-    driver = Selenium::WebDriver.headless_chrome("http://127.0.0.1:#{@port}")
+    driver = Selenium::WebDriver.headless_chrome(@cd.url)
     begin
       assert driver.bidi_available?, 'session negotiated no webSocketUrl'
 
@@ -280,7 +277,7 @@ class LiveTest < Minitest::Test
                '</body></html>'
 
   def test_live_atoms
-    driver = Selenium::WebDriver.headless_chrome("http://127.0.0.1:#{@port}")
+    driver = Selenium::WebDriver.headless_chrome(@cd.url)
     begin
       page = 'data:text/html;charset=utf-8,' + CGI.escape(ATOMS_HTML).gsub('+', '%20')
       driver.get(page)
@@ -318,7 +315,7 @@ class LiveTest < Minitest::Test
               '</body></html>'
 
   def test_live_convenience_tier
-    driver = Selenium::WebDriver.headless_chrome("http://127.0.0.1:#{@port}")
+    driver = Selenium::WebDriver.headless_chrome(@cd.url)
     begin
       page = 'data:text/html;charset=utf-8,' + CGI.escape(CONV_HTML).gsub('+', '%20')
       driver.get(page)
@@ -380,7 +377,7 @@ class LiveTest < Minitest::Test
     # Keep the modal open for the switch_to.alert round-trip (the W3C default is
     # "dismiss and notify", which auto-dismisses before we can read it).
     caps['unhandledPromptBehavior'] = 'ignore'
-    driver = Selenium::WebDriver.chrome("http://127.0.0.1:#{@port}", options: caps)
+    driver = Selenium::WebDriver.chrome(@cd.url, options: caps)
     begin
       page = 'data:text/html;charset=utf-8,' + CGI.escape(FACADE_HTML).gsub('+', '%20')
 
@@ -494,18 +491,6 @@ class LiveTest < Minitest::Test
     port
   end
 
-  def wait_up(port, timeout = 10.0)
-    deadline = Time.now + timeout
-    while Time.now < deadline
-      begin
-        TCPSocket.new('127.0.0.1', port).close
-        return true
-      rescue Errno::ECONNREFUSED
-        sleep 0.1
-      end
-    end
-    false
-  end
 end
 
 # Grid CLIENT: drive a session THROUGH a real Selenium Grid hub —

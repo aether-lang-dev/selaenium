@@ -8,17 +8,10 @@ import (
 	"encoding/base64"
 	"net/http"
 	"net/http/httptest"
-	"os/exec"
-	"strconv"
 	"testing"
-	"time"
 )
 
 func TestLiveSurface(t *testing.T) {
-	driverBin, err := exec.LookPath("chromedriver")
-	if err != nil {
-		t.Skip("chromedriver not on PATH")
-	}
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -32,17 +25,9 @@ func TestLiveSurface(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	port := freePort(t)
-	cmd := exec.Command(driverBin, "--port="+strconv.Itoa(port))
-	if err := cmd.Start(); err != nil {
-		t.Skipf("could not start chromedriver: %v", err)
-	}
-	defer func() { _ = cmd.Process.Kill(); _, _ = cmd.Process.Wait() }()
-	if !waitUp(port, 10*time.Second) {
-		t.Skip("chromedriver did not come up")
-	}
+	cd := engineChromeDriver(t)
 
-	d, err := NewChrome("http://127.0.0.1:"+strconv.Itoa(port), Headless())
+	d, err := NewChrome(cd.URL(), Headless())
 	if err != nil {
 		t.Fatalf("NewChrome: %v", err)
 	}
@@ -143,10 +128,6 @@ func TestLiveSurface(t *testing.T) {
 // headless Chrome: active element, new/close window, frame switching, element
 // CSS value, form submit, print-to-PDF, Exists, and alert-present probing.
 func TestLiveFullFeatureSurface(t *testing.T) {
-	driverBin, err := exec.LookPath("chromedriver")
-	if err != nil {
-		t.Skip("chromedriver not on PATH")
-	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		if r.URL.Path == "/framed" {
@@ -160,17 +141,9 @@ func TestLiveFullFeatureSurface(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	port := freePort(t)
-	cmd := exec.Command(driverBin, "--port="+strconv.Itoa(port))
-	if err := cmd.Start(); err != nil {
-		t.Skipf("could not start chromedriver: %v", err)
-	}
-	defer func() { _ = cmd.Process.Kill(); _, _ = cmd.Process.Wait() }()
-	if !waitUp(port, 10*time.Second) {
-		t.Skip("chromedriver did not come up")
-	}
+	cd := engineChromeDriver(t)
 
-	d, err := NewHeadlessChrome("http://127.0.0.1:" + strconv.Itoa(port))
+	d, err := NewHeadlessChrome(cd.URL())
 	if err != nil {
 		t.Fatalf("NewHeadlessChrome: %v", err)
 	}

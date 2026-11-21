@@ -6,8 +6,6 @@ package selenium
 
 import (
 	"net/url"
-	"os/exec"
-	"strconv"
 	"testing"
 	"time"
 )
@@ -28,26 +26,9 @@ const convenienceHTML = `<html><head><title>Convenience</title></head><body>` +
 	`</body></html>`
 
 func TestLiveConvenience(t *testing.T) {
-	driverBin, err := exec.LookPath("chromedriver")
-	if err != nil {
-		t.Skip("chromedriver not on PATH")
-	}
-	port := freePort(t)
-	cmd := exec.Command(driverBin, "--port="+strconv.Itoa(port))
-	cmd.Stdout = nil
-	cmd.Stderr = nil
-	if err := cmd.Start(); err != nil {
-		t.Skipf("could not start chromedriver: %v", err)
-	}
-	defer func() {
-		_ = cmd.Process.Kill()
-		_, _ = cmd.Process.Wait()
-	}()
-	if !waitUp(port, 10*time.Second) {
-		t.Skip("chromedriver did not come up")
-	}
+	cd := engineChromeDriver(t)
 
-	drv, err := NewChrome("http://127.0.0.1:"+strconv.Itoa(port), Headless())
+	drv, err := NewChrome(cd.URL(), Headless())
 	if err != nil {
 		t.Fatalf("NewChrome: %v", err)
 	}

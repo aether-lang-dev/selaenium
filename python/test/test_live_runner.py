@@ -11,10 +11,8 @@ browser. Skips loudly if chromedriver is absent.
 import os
 import http.server
 import pytest
-import shutil
 import socket
 import socketserver
-import subprocess
 import sys
 import threading
 import time
@@ -22,6 +20,7 @@ import time
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from selenium.webdriver import By, Chrome  # noqa: E402
+from _engine_driver import chrome_driver  # noqa: E402
 
 
 PAGE_ONE = b"""<!doctype html><html><head><title>Page One</title></head>
@@ -45,21 +44,8 @@ def _free_port():
     return p
 
 
-def _wait_up(port, timeout=10.0):
-    end = time.time() + timeout
-    while time.time() < end:
-        try:
-            with socket.create_connection(("127.0.0.1", port), timeout=0.5):
-                return True
-        except OSError:
-            time.sleep(0.1)
-    return False
-
 
 def test_live_runner():
-    driver_bin = shutil.which("chromedriver")
-    if not driver_bin:
-        pytest.skip("chromedriver not on PATH")
 
     web_port = _free_port()
     httpd = socketserver.ThreadingTCPServer(("127.0.0.1", web_port), Handler)
@@ -67,15 +53,11 @@ def test_live_runner():
     threading.Thread(target=httpd.serve_forever, daemon=True).start()
     base = f"http://127.0.0.1:{web_port}"
 
-    cd_port = _free_port()
-    proc = subprocess.Popen([driver_bin, f"--port={cd_port}"],
-                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    proc = chrome_driver()
     try:
-        if not _wait_up(cd_port):
-            pytest.skip("chromedriver did not come up")
         opts = {"goog:chromeOptions": {"args": ["--headless=new", "--no-sandbox",
                                                 "--disable-gpu", "--disable-dev-shm-usage"]}}
-        d = Chrome(f"http://127.0.0.1:{cd_port}", options=opts)
+        d = Chrome(proc.url, options=opts)
         try:
             # Runner shell: one line -> a JSON result, dispatched engine-side.
             ro = d.shell("open data:text/html,<title>Sh</title><h1 id=q>hey</h1>")
@@ -175,9 +157,5 @@ def test_live_runner():
         finally:
             d.quit()
     finally:
-        proc.terminate()
-        try:
-            proc.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            proc.kill()
+        proc.stop()
         httpd.shutdown()

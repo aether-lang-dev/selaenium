@@ -5,17 +5,13 @@
 //
 // Modes (argv[1]):
 //   ffi  — no browser: pure engine helpers + a transport-error round-trip.
-//   live — real headless Chrome if chromedriver is on PATH; skips otherwise.
+//   live — real headless Chrome through an engine-started driver; skips if none resolves.
 package main
 
 import (
 	"fmt"
-	"net"
 	"os"
-	"os/exec"
 	"net/url"
-	"strconv"
-	"time"
 
 	selenium "github.com/seleniumhq/selenium-aether-go"
 )
@@ -42,42 +38,16 @@ func modeFFI() {
 	fmt.Println("consumer(ffi): OK — bundled module loaded its own .so via cgo rpath")
 }
 
-func freePort() int {
-	l, _ := net.Listen("tcp", "127.0.0.1:0")
-	defer l.Close()
-	return l.Addr().(*net.TCPAddr).Port
-}
-
-func waitUp(port int) bool {
-	end := time.Now().Add(10 * time.Second)
-	for time.Now().Before(end) {
-		if c, err := net.DialTimeout("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)), 500*time.Millisecond); err == nil {
-			c.Close()
-			return true
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-	return false
-}
-
 func modeLive() {
-	driver, err := exec.LookPath("chromedriver")
+	// The engine starts the driver, so the whole tree (browser included) ends
+	// on Stop and when this process dies.
+	cd, err := selenium.EnsureDriver("chrome", "")
 	if err != nil {
-		fmt.Println("consumer(live): SKIPPED — chromedriver not on PATH")
+		fmt.Println("consumer(live): SKIPPED — the engine cannot resolve a chromedriver")
 		return
 	}
-	port := freePort()
-	cmd := exec.Command(driver, "--port="+strconv.Itoa(port))
-	if err := cmd.Start(); err != nil {
-		fmt.Println("consumer(live): SKIPPED — could not start chromedriver")
-		return
-	}
-	defer func() { _ = cmd.Process.Kill(); _, _ = cmd.Process.Wait() }()
-	if !waitUp(port) {
-		fmt.Println("consumer(live): SKIPPED — chromedriver did not come up")
-		return
-	}
-	d, err := selenium.NewChrome("http://127.0.0.1:"+strconv.Itoa(port), selenium.Headless())
+	defer cd.Stop()
+	d, err := selenium.NewChrome(cd.URL(), selenium.Headless())
 	if err != nil {
 		fail("NewChrome: " + err.Error())
 	}

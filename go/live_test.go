@@ -1,19 +1,16 @@
 // Live end-to-end test: a real headless Chrome session driven entirely through
 // the pure-Aether engine from Go. The whole pipeline —
 // Go -> cgo -> libselenium_core.so -> std.http.client -> chromedriver -> Chrome.
-// Skips if chromedriver is absent.
+// Skips if the engine cannot resolve a chromedriver.
 package selenium
 
 import (
 	"encoding/base64"
 	"encoding/json"
-	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
-	"os/exec"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -24,49 +21,26 @@ const liveHTML = `<html><head><title>Aether Selenium</title></head>` +
 	`<a href="#" id="lnk" class="nav">click me</a>` +
 	`<input id="box" name="q"/></body></html>`
 
-func freePort(t *testing.T) int {
-	l, err := net.Listen("tcp", "127.0.0.1:0")
+// engineChromeDriver starts a chromedriver through the engine and returns it,
+// or skips the test when the engine cannot resolve one. The engine owns the
+// driver's lifetime: its whole tree, browser included, ends on Stop and also
+// when this process dies, however it dies (docs/Selenium-Manager-Port.md,
+// "Driver and browser lifetime"). A test that spawned chromedriver itself got
+// neither, and a browser whose session was not quit outlived it.
+func engineChromeDriver(t *testing.T) *DriverProcess {
+	t.Helper()
+	cd, err := EnsureDriver("chrome", "")
 	if err != nil {
-		t.Fatal(err)
+		t.Skipf("engine cannot resolve a chromedriver: %v", err)
 	}
-	defer l.Close()
-	return l.Addr().(*net.TCPAddr).Port
-}
-
-func waitUp(port int, d time.Duration) bool {
-	deadline := time.Now().Add(d)
-	for time.Now().Before(deadline) {
-		c, err := net.DialTimeout("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)), 500*time.Millisecond)
-		if err == nil {
-			c.Close()
-			return true
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-	return false
+	t.Cleanup(cd.Stop)
+	return cd
 }
 
 func TestLiveChrome(t *testing.T) {
-	driverBin, err := exec.LookPath("chromedriver")
-	if err != nil {
-		t.Skip("chromedriver not on PATH")
-	}
-	port := freePort(t)
-	cmd := exec.Command(driverBin, "--port="+strconv.Itoa(port))
-	cmd.Stdout = nil
-	cmd.Stderr = nil
-	if err := cmd.Start(); err != nil {
-		t.Skipf("could not start chromedriver: %v", err)
-	}
-	defer func() {
-		_ = cmd.Process.Kill()
-		_, _ = cmd.Process.Wait()
-	}()
-	if !waitUp(port, 10*time.Second) {
-		t.Skip("chromedriver did not come up")
-	}
+	cd := engineChromeDriver(t)
 
-	drv, err := NewChrome("http://127.0.0.1:"+strconv.Itoa(port), Headless())
+	drv, err := NewChrome(cd.URL(), Headless())
 	if err != nil {
 		t.Fatalf("NewChrome: %v", err)
 	}
@@ -154,26 +128,9 @@ const liveAtomsHTML = `<html><head><title>Aether Atoms</title></head>` +
 // (isDisplayed / getAttribute / relative locators), all run in-page by the
 // engine via the aether_sel_embed_* atom C ABI. Mirrors the Python fixture.
 func TestLiveAtoms(t *testing.T) {
-	driverBin, err := exec.LookPath("chromedriver")
-	if err != nil {
-		t.Skip("chromedriver not on PATH")
-	}
-	port := freePort(t)
-	cmd := exec.Command(driverBin, "--port="+strconv.Itoa(port))
-	cmd.Stdout = nil
-	cmd.Stderr = nil
-	if err := cmd.Start(); err != nil {
-		t.Skipf("could not start chromedriver: %v", err)
-	}
-	defer func() {
-		_ = cmd.Process.Kill()
-		_, _ = cmd.Process.Wait()
-	}()
-	if !waitUp(port, 10*time.Second) {
-		t.Skip("chromedriver did not come up")
-	}
+	cd := engineChromeDriver(t)
 
-	drv, err := NewChrome("http://127.0.0.1:"+strconv.Itoa(port), Headless())
+	drv, err := NewChrome(cd.URL(), Headless())
 	if err != nil {
 		t.Fatalf("NewChrome: %v", err)
 	}
@@ -231,26 +188,9 @@ func TestLiveAtoms(t *testing.T) {
 // event asynchronously, and issue a raw session.status command. Mirrors the
 // canonical live BiDi test already passing in Python/Ruby.
 func TestLiveBidi(t *testing.T) {
-	driverBin, err := exec.LookPath("chromedriver")
-	if err != nil {
-		t.Skip("chromedriver not on PATH")
-	}
-	port := freePort(t)
-	cmd := exec.Command(driverBin, "--port="+strconv.Itoa(port))
-	cmd.Stdout = nil
-	cmd.Stderr = nil
-	if err := cmd.Start(); err != nil {
-		t.Skipf("could not start chromedriver: %v", err)
-	}
-	defer func() {
-		_ = cmd.Process.Kill()
-		_, _ = cmd.Process.Wait()
-	}()
-	if !waitUp(port, 10*time.Second) {
-		t.Skip("chromedriver did not come up")
-	}
+	cd := engineChromeDriver(t)
 
-	drv, err := NewChrome("http://127.0.0.1:"+strconv.Itoa(port), Headless())
+	drv, err := NewChrome(cd.URL(), Headless())
 	if err != nil {
 		t.Fatalf("NewChrome: %v", err)
 	}
@@ -575,10 +515,6 @@ var (
 // raises for a protected fetch, answer it with credentials, and prove the page
 // reads the protected body.
 func TestLiveBidiAuth(t *testing.T) {
-	driverBin, err := exec.LookPath("chromedriver")
-	if err != nil {
-		t.Skip("chromedriver not on PATH")
-	}
 
 	const authUser, authPass = "neo", "trinity"
 	expected := "Basic " + base64.StdEncoding.EncodeToString([]byte(authUser+":"+authPass))
@@ -600,20 +536,9 @@ func TestLiveBidiAuth(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	port := freePort(t)
-	cmd := exec.Command(driverBin, "--port="+strconv.Itoa(port))
-	if err := cmd.Start(); err != nil {
-		t.Skipf("could not start chromedriver: %v", err)
-	}
-	defer func() {
-		_ = cmd.Process.Kill()
-		_, _ = cmd.Process.Wait()
-	}()
-	if !waitUp(port, 10*time.Second) {
-		t.Skip("chromedriver did not come up")
-	}
+	cd := engineChromeDriver(t)
 
-	drv, err := NewChrome("http://127.0.0.1:"+strconv.Itoa(port), Headless())
+	drv, err := NewChrome(cd.URL(), Headless())
 	if err != nil {
 		t.Fatalf("NewChrome: %v", err)
 	}

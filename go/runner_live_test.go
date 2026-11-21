@@ -6,44 +6,21 @@
 package selenium
 
 import (
-	"os/exec"
-	"strconv"
 	"testing"
-	"time"
 )
 
 // startChrome spins up a chromedriver + headless Chrome session for a runner
-// test, or skips cleanly when chromedriver is absent. It returns the session and
+// test, or skips cleanly when the engine cannot resolve a chromedriver. It returns the session and
 // a cleanup func (the caller defers the cleanup).
 func startChrome(t *testing.T) (*WebDriver, func()) {
 	t.Helper()
-	driverBin, err := exec.LookPath("chromedriver")
+	cd := engineChromeDriver(t)
+	drv, err := NewChrome(cd.URL(), Headless())
 	if err != nil {
-		t.Skip("chromedriver not on PATH")
-	}
-	port := freePort(t)
-	cmd := exec.Command(driverBin, "--port="+strconv.Itoa(port))
-	cmd.Stdout = nil
-	cmd.Stderr = nil
-	if err := cmd.Start(); err != nil {
-		t.Skipf("could not start chromedriver: %v", err)
-	}
-	stopDriver := func() {
-		_ = cmd.Process.Kill()
-		_, _ = cmd.Process.Wait()
-	}
-	if !waitUp(port, 10*time.Second) {
-		stopDriver()
-		t.Skip("chromedriver did not come up")
-	}
-	drv, err := NewChrome("http://127.0.0.1:"+strconv.Itoa(port), Headless())
-	if err != nil {
-		stopDriver()
 		t.Fatalf("NewChrome: %v", err)
 	}
 	return drv, func() {
 		_ = drv.Quit()
-		stopDriver()
 	}
 }
 

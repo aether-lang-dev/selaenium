@@ -20,14 +20,13 @@ class SurfaceTest < Minitest::Test
   PAGE_TWO = '<!doctype html><title>Page Two</title><h1 id="hdr">Two</h1>'
 
   def setup
-    @driver_bin = which('chromedriver')
-    skip 'chromedriver not on PATH' unless @driver_bin
+    # The engine starts and owns the driver: its whole tree, browser included,
+    # ends on stop and when this process dies (docs/Selenium-Manager-Port.md,
+    # "Driver and browser lifetime").
+    @cd = Selenium::WebDriver.ensure_driver('chrome')
+    skip 'engine cannot resolve a chromedriver' unless @cd
 
     @web, @web_thread, @web_port = start_content_server
-
-    @port = free_port
-    @cd = spawn(@driver_bin, "--port=#{@port}", out: File::NULL, err: File::NULL)
-    skip 'chromedriver did not come up' unless wait_up(@port)
   end
 
   def teardown
@@ -35,15 +34,12 @@ class SurfaceTest < Minitest::Test
     @web_thread&.kill
     return unless @cd
 
-    Process.kill('TERM', @cd)
-    Process.wait(@cd)
-  rescue Errno::ESRCH, Errno::ECHILD
-    # gone
+    @cd.stop
   end
 
   def test_surface
     base = "http://127.0.0.1:#{@web_port}"
-    d = Selenium::WebDriver.headless_chrome("http://127.0.0.1:#{@port}")
+    d = Selenium::WebDriver.headless_chrome(@cd.url)
     begin
       d.get("#{base}/one")
       assert_equal 'Page One', d.title
@@ -156,14 +152,6 @@ class SurfaceTest < Minitest::Test
     [server, thread, server.addr[1]]
   end
 
-  def which(cmd)
-    ENV['PATH'].split(File::PATH_SEPARATOR).each do |dir|
-      p = File.join(dir, cmd)
-      return p if File.executable?(p) && !File.directory?(p)
-    end
-    nil
-  end
-
   def free_port
     s = TCPServer.new('127.0.0.1', 0)
     port = s.addr[1]
@@ -171,16 +159,4 @@ class SurfaceTest < Minitest::Test
     port
   end
 
-  def wait_up(port, timeout = 10.0)
-    deadline = Time.now + timeout
-    while Time.now < deadline
-      begin
-        TCPSocket.new('127.0.0.1', port).close
-        return true
-      rescue Errno::ECONNREFUSED
-        sleep 0.1
-      end
-    end
-    false
-  end
 end

@@ -3,43 +3,26 @@ through the pure-Aether engine. This is the whole pipeline —
 Python -> ctypes -> libselenium_core.so -> std.http.client -> chromedriver ->
 Chrome — proving the shared core actually drives a browser.
 
-Requires chromedriver on PATH and a Chrome/Chromium binary. The test starts its
-own chromedriver on an ephemeral port, runs against a data: URL (no network),
-and tears everything down. Skips loudly if chromedriver is absent.
+Requires a Chrome/Chromium binary. The engine starts and owns the chromedriver
+(ensure_driver), so its whole tree, browser included, ends on stop() and when
+this process dies. Runs against a data: URL (no network). Skips loudly if the
+engine cannot resolve a chromedriver.
 """
 
 import json
 import os
 import pytest
-import shutil
 import socket
-import subprocess
 import sys
 import time
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from selenium.webdriver import By, Chrome
+from _engine_driver import chrome_driver  # noqa: E402
 from selenium import NoSuchElementException  # noqa: E402
 
 
-def _free_port() -> int:
-    s = socket.socket()
-    s.bind(("127.0.0.1", 0))
-    port = s.getsockname()[1]
-    s.close()
-    return port
-
-
-def _wait_up(port: int, timeout: float = 10.0) -> bool:
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        try:
-            with socket.create_connection(("127.0.0.1", port), timeout=0.5):
-                return True
-        except OSError:
-            time.sleep(0.1)
-    return False
 
 
 import urllib.parse  # noqa: E402
@@ -104,18 +87,9 @@ def test_live_driver_orchestration():
 
 
 def test_live_chrome():
-    driver_bin = shutil.which("chromedriver")
-    if not driver_bin:
-        pytest.skip("chromedriver not on PATH")
 
-    port = _free_port()
-    proc = subprocess.Popen(
-        [driver_bin, f"--port={port}"],
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-    )
+    proc = chrome_driver()
     try:
-        if not _wait_up(port):
-            pytest.skip("chromedriver did not come up")
 
         options = {
             "goog:chromeOptions": {
@@ -123,7 +97,7 @@ def test_live_chrome():
                          "--disable-dev-shm-usage"]
             }
         }
-        driver = Chrome(f"http://127.0.0.1:{port}", options=options)
+        driver = Chrome(proc.url, options=options)
         try:
             assert driver.session_id, "no session id after newSession"
             print(f"  ok: session started ({driver.session_id[:8]}...)")
@@ -167,11 +141,7 @@ def test_live_chrome():
             driver.quit()
             print("  ok: quit")
     finally:
-        proc.terminate()
-        try:
-            proc.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            proc.kill()
+        proc.stop()
 
 
 def test_live_firefox():
@@ -260,9 +230,6 @@ def test_live_bidi_auth():
     WebDriver can't drive in headless."""
     from selenium.webdriver import BidiEvent, BiDi  # noqa: E402
 
-    driver_bin = shutil.which("chromedriver")
-    if not driver_bin:
-        pytest.skip("chromedriver not on PATH")
 
     # In-process Basic-Auth server (the page is served from its origin, so the
     # protected /secret fetch is same-origin and its 401 reaches the intercept).
@@ -272,14 +239,8 @@ def test_live_bidi_auth():
     srv_thread.start()
     origin = f"http://127.0.0.1:{srv_port}"
 
-    port = _free_port()
-    proc = subprocess.Popen(
-        [driver_bin, f"--port={port}"],
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-    )
+    proc = chrome_driver()
     try:
-        if not _wait_up(port):
-            pytest.skip("chromedriver did not come up")
 
         options = {
             "goog:chromeOptions": {
@@ -290,7 +251,7 @@ def test_live_bidi_auth():
         chrome_bin = os.environ.get("SEL_CHROME_BINARY")
         if chrome_bin:
             options["goog:chromeOptions"]["binary"] = chrome_bin
-        driver = Chrome(f"http://127.0.0.1:{port}", options=options)
+        driver = Chrome(proc.url, options=options)
         try:
             assert driver.bidi_available, "session negotiated no webSocketUrl"
 
@@ -332,28 +293,15 @@ def test_live_bidi_auth():
             driver.quit()
     finally:
         httpd.shutdown()
-        proc.terminate()
-        try:
-            proc.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            proc.kill()
+        proc.stop()
 
 
 def test_live_atoms():
     """Atom-backed commands (isDisplayed / getAttribute / relative locators) run
     in-page via the shared engine atoms, from Python through the C ABI."""
-    driver_bin = shutil.which("chromedriver")
-    if not driver_bin:
-        pytest.skip("chromedriver not on PATH")
 
-    port = _free_port()
-    proc = subprocess.Popen(
-        [driver_bin, f"--port={port}"],
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-    )
+    proc = chrome_driver()
     try:
-        if not _wait_up(port):
-            pytest.skip("chromedriver did not come up")
 
         options = {"goog:chromeOptions": {"args": ["--headless=new", "--no-sandbox",
                    "--disable-gpu", "--disable-dev-shm-usage"]}}
@@ -361,7 +309,7 @@ def test_live_atoms():
         if chrome_bin:
             options["goog:chromeOptions"]["binary"] = chrome_bin
         from selenium.webdriver import By  # noqa: E402
-        driver = Chrome(f"http://127.0.0.1:{port}", options=options)
+        driver = Chrome(proc.url, options=options)
         try:
             page = ("data:text/html;charset=utf-8," + urllib.parse.quote(
                 "<h1 id='hdr'>H</h1>"
@@ -388,11 +336,7 @@ def test_live_atoms():
         finally:
             driver.quit()
     finally:
-        proc.terminate()
-        try:
-            proc.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            proc.kill()
+        proc.stop()
 
 
 def test_live_bidi():
@@ -402,18 +346,9 @@ def test_live_bidi():
     demux C ABI."""
     from selenium.webdriver import BidiEvent, BiDi  # noqa: E402
 
-    driver_bin = shutil.which("chromedriver")
-    if not driver_bin:
-        pytest.skip("chromedriver not on PATH")
 
-    port = _free_port()
-    proc = subprocess.Popen(
-        [driver_bin, f"--port={port}"],
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-    )
+    proc = chrome_driver()
     try:
-        if not _wait_up(port):
-            pytest.skip("chromedriver did not come up")
 
         options = {
             "goog:chromeOptions": {
@@ -421,7 +356,7 @@ def test_live_bidi():
                          "--disable-dev-shm-usage"]
             }
         }
-        driver = Chrome(f"http://127.0.0.1:{port}", options=options)
+        driver = Chrome(proc.url, options=options)
         try:
             assert driver.bidi_available, "session negotiated no webSocketUrl"
             print("  ok: BiDi available (webSocketUrl negotiated)")
@@ -495,11 +430,7 @@ def test_live_bidi():
         finally:
             driver.quit()
     finally:
-        proc.terminate()
-        try:
-            proc.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            proc.kill()
+        proc.stop()
 
 
 
@@ -518,19 +449,12 @@ SHADOW_PAGE = "data:text/html;charset=utf-8," + urllib.parse.quote(SHADOW_HTML)
 def test_live_shadow_dom():
     """Shadow DOM end to end: element.shadow_root then finds scoped INSIDE the
     shadow tree (the host's light DOM must not match)."""
-    driver_bin = shutil.which("chromedriver")
-    if not driver_bin:
-        pytest.skip("chromedriver not on PATH")
 
     from selenium.webdriver import By, Remote, ShadowRoot
 
-    port = _free_port()
-    cd = subprocess.Popen([driver_bin, f"--port={port}"],
-                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    cd = chrome_driver()
     try:
-        if not _wait_up(port):
-            pytest.skip("chromedriver did not come up")
-        driver = Remote(f"http://127.0.0.1:{port}", {
+        driver = Remote(cd.url, {
             "browserName": "chrome",
             "goog:chromeOptions": {"args": ["--headless=new", "--no-sandbox",
                                             "--disable-gpu", "--disable-dev-shm-usage"]},
@@ -553,29 +477,21 @@ def test_live_shadow_dom():
         finally:
             driver.quit()
     finally:
-        cd.terminate()
-        cd.wait()
+        cd.stop()
 
 
 def test_live_virtual_authenticator():
     """The WebAuthn virtual-authenticator surface against real Chrome: add an
     authenticator, inject a resident credential, read it back, remove it."""
-    driver_bin = shutil.which("chromedriver")
-    if not driver_bin:
-        pytest.skip("chromedriver not on PATH")
 
     from selenium.webdriver import Remote
     from selenium.webdriver.common.virtual_authenticator import (
         Protocol, Transport, VirtualAuthenticatorOptions,
     )
 
-    port = _free_port()
-    cd = subprocess.Popen([driver_bin, f"--port={port}"],
-                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    cd = chrome_driver()
     try:
-        if not _wait_up(port):
-            pytest.skip("chromedriver did not come up")
-        driver = Remote(f"http://127.0.0.1:{port}", {
+        driver = Remote(cd.url, {
             "browserName": "chrome",
             "goog:chromeOptions": {"args": ["--headless=new", "--no-sandbox",
                                             "--disable-gpu", "--disable-dev-shm-usage"]},
@@ -599,26 +515,18 @@ def test_live_virtual_authenticator():
         finally:
             driver.quit()
     finally:
-        cd.terminate()
-        cd.wait()
+        cd.stop()
 
 
 def test_live_timeouts_property():
     """The mainstream timeouts property: set all three in seconds, read back."""
-    driver_bin = shutil.which("chromedriver")
-    if not driver_bin:
-        pytest.skip("chromedriver not on PATH")
 
     from selenium.webdriver import Remote
     from selenium.webdriver.common.timeouts import Timeouts
 
-    port = _free_port()
-    cd = subprocess.Popen([driver_bin, f"--port={port}"],
-                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    cd = chrome_driver()
     try:
-        if not _wait_up(port):
-            pytest.skip("chromedriver did not come up")
-        driver = Remote(f"http://127.0.0.1:{port}", {
+        driver = Remote(cd.url, {
             "browserName": "chrome",
             "goog:chromeOptions": {"args": ["--headless=new", "--no-sandbox",
                                             "--disable-gpu", "--disable-dev-shm-usage"]},
@@ -633,8 +541,7 @@ def test_live_timeouts_property():
         finally:
             driver.quit()
     finally:
-        cd.terminate()
-        cd.wait()
+        cd.stop()
 
 
 def test_live_grid():
