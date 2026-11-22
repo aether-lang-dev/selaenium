@@ -348,6 +348,48 @@ SELENIUM_CORE_LIB="$PWD/selenium_core/native/libselenium_core.so" python3 python
 SELENIUM_CORE_LIB="$PWD/selenium_core/native/libselenium_core.so" python3 python/test/test_live_chrome.py
 ```
 
+## For consideration: connection deadlines and cancellation
+
+Aether 0.936.0 added, in `std.tcp` and `std.cryptography.tls13_client`
+(design: aether `docs/design/tcp-tls-deadlines-and-cancellation.md`):
+
+- **One absolute deadline per connection** on the monotonic clock
+  (`tcp.connect_until(host, port, due_ms, cancel)`, `tcp.set_deadline(sock,
+  due_ms, cancel)`, `tls13_client.conn_set_deadline(conn, due_ms, cancel)`,
+  and `due_ms:` / `cancel:` on the `tls13_client.connect*` calls). It covers
+  the dial, the handshake and every read and write after; a peer that
+  trickles a byte inside each per-call timeout no longer resets it.
+- **A cancel handle** (`tcp.cancel_new`, `cancel`, `cancel_retain`,
+  `cancel_free`) that another thread or actor trips to wake a blocked
+  connection. The canceller never touches the descriptor, so the owner stays
+  the only closer.
+- Two exact errors, `tcp.DEADLINE_EXCEEDED` and `tcp.CANCELLED`, distinct
+  from `"timeout"`, a peer's close and a TLS failure.
+
+It does **not** reach `std.http.client` or the WebSocket calls: those still
+have only their own per-request timeout. Nothing here is required; these are
+places it could help, not work that is planned.
+
+Where it might apply here:
+
+- **Stopping a session that is blocked.** A WebDriver command waits on the
+  driver's HTTP reply with `client.set_timeout(req, 300s)`
+  (`selenium_core/selenium_core.ae`, `grid/hub.ae`, `grid/node.ae`), and the
+  BiDi pump waits in `http.ws_recv_timeout` (`selenium_core/selenium_bidi.ae`).
+  Neither call takes a cancel, so nothing can wake those waits early; a
+  cancel handle per session would let `stop` end one at once instead of
+  waiting out the timeout. That needs the HTTP client and WebSocket calls to
+  accept a deadline and cancel first, which is an Aether addition to ask for
+  (or make), not something 0.936.0 has.
+- **A whole-command budget.** The 300 s is per request; a command that makes
+  several requests has no single bound. One `due_ms` carried through the command would give it one.
+- **Driver downloads** (`selenium_core/drivermgr/resolve.ae`,
+  `drivercache.ae`): a mirror that trickles bytes keeps a per-read timeout
+  alive indefinitely; an absolute deadline would bound the fetch.
+
+The driver-process side (killing chromedriver and its browsers) is a separate
+matter, already handled by `drivermgr/proctree`.
+
 ## Status — end-to-end green ✅
 
 Needs **Aether ≥ 0.838.0** and **aeb v0.330 or newer**, as recorded in
