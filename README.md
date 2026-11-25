@@ -38,7 +38,7 @@ bindings resolve their Maven deps on a fresh binary install:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/aether-lang-dev/aeb/v0.348/get.sh \
-  | AE_PIN=0.941.0 AEB_REF=v0.348 sh
+  | AE_PIN=0.944.0 AEB_REF=v0.348 sh
 ```
 
 `get.sh` is also a sourceable library — a CI step can source it (set
@@ -46,7 +46,7 @@ curl -fsSL https://raw.githubusercontent.com/aether-lang-dev/aeb/v0.348/get.sh \
 
 ```bash
 AEBGET_SOURCE_ONLY=1 . <(curl -fsSL https://raw.githubusercontent.com/aether-lang-dev/aeb/v0.348/get.sh)
-AE_PIN=0.941.0 AEB_REF=v0.348 aeb_bootstrap
+AE_PIN=0.944.0 AEB_REF=v0.348 aeb_bootstrap
 ```
 
 Then build the engine (the one thing every binding needs) and, for a given
